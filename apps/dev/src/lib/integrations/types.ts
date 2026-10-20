@@ -123,7 +123,46 @@ export interface McpConfig {
 	 * providers carry a `server` is what holds that line.
 	 */
 	server?: McpServerSpec
+	/**
+	 * How an agent's `tools.mcpServers.<key>` entry for this provider is
+	 * recognised. Omit for the common case: one shared entry that is exactly
+	 * `server`. A provider that declares `mcp` must carry either `server` or a
+	 * non-shared `entry` — a contract test fails otherwise, because an entry
+	 * nothing can recognise is an entry that disconnect leaves behind on every
+	 * agent.
+	 */
+	entry?: McpEntryDeclaration
 }
+
+/** The fields of an `integrations` row that an entry declaration reads. */
+export interface McpEntryOwner {
+	config: unknown
+	unipileAccSlug: string | null
+}
+
+/**
+ * Where a provider's entries sit on an agent, stated as data beside the rest
+ * of the provider config rather than in a second list (integrations-mcp.md,
+ * "Explicitly rejected").
+ *
+ * - `shared`: one entry for the whole provider. It outlives any single
+ *   connection, so it is only removed when no other active integration of the
+ *   provider still needs it.
+ * - `per-identity`: one entry per credential identity, served by this API at
+ *   `{urlPath}/{instanceSlug}` (LinkedIn). `slugPrefix` is the part of the slug
+ *   one credential owns, null when it never enumerated an identity.
+ * - `per-installation`: one stdio entry per installation (GitHub), recognised
+ *   by the env var it reads its token from. `envKey` is that variable's name,
+ *   null when the row names no owner.
+ */
+export type McpEntryDeclaration =
+	| { kind: 'shared' }
+	| {
+			kind: 'per-identity'
+			urlPath: string
+			slugPrefix: (owner: McpEntryOwner) => string | null
+	  }
+	| { kind: 'per-installation'; envKey: (owner: McpEntryOwner) => string | null }
 
 // ── Events ─────────────────────────────────────────────────────────────────
 

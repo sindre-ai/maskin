@@ -117,6 +117,7 @@ vi.mock('../../../services/workspace-briefing', () => ({
 
 vi.mock('../../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: vi.fn(),
+	classifySessionExit: vi.fn(),
 }))
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────

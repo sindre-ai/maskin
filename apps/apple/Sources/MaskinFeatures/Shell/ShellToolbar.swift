@@ -14,7 +14,7 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, the avatar, then Live and New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
+/// Order in the pill is Display, Live, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
@@ -37,12 +37,19 @@ public struct ShellActions {
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
+	/// Hides the profile avatar on this screen (Team).
+	public var hidesAvatar: Bool
+	/// Keeps the "+" button in the bar while the content scrolls (Team).
+	public var newAlwaysVisible: Bool
 
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
-		displayActive: Bool = false, displayToggle: (() -> Void)? = nil
+		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
+		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false
 	) {
+		self.hidesAvatar = hidesAvatar
+		self.newAlwaysVisible = newAlwaysVisible
 		self.displayToggle = displayToggle
 		self.displaySymbol = displaySymbol
 		self.new = new
@@ -97,9 +104,13 @@ private struct ShellToolbarModifier: ViewModifier {
 			.backChevronOnly()
 			.trackScrolled($scrolled)
 			.toolbar {
-				// One group, one glass capsule: the tools and the avatar share it (separate items or a
-				// ToolbarSpacer would split them into separate capsules).
+				// One item, one glass capsule: the tools and the avatar share it (separate items or a
+				// ToolbarSpacer would split them into separate capsules). The buttons sit in a
+				// zero-spacing stack because a ToolbarItemGroup puts system spacing between its
+				// items, which left a wide gap between Live and the avatar; v6 packs 44 pt slots
+				// edge to edge.
 				ToolbarItemGroup(placement: .primaryAction) {
+					Group {
 					if let display = actions.display {
 						Menu {
 							display.content
@@ -122,7 +133,17 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
 					}
-					if showsAvatar {
+					// Live sits before the avatar, which stays last (as in the v6 bar).
+					if actions.live {
+						Button {
+							liveMeeting.present(.dailyBriefing)
+						} label: {
+							ShellInkCircle(
+								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
+						}
+						.buttonStyle(.plain)
+					}
+					if showsAvatar, !actions.hidesAvatar {
 						Button {
 							runtime?.showProfile = true
 						} label: {
@@ -133,20 +154,13 @@ private struct ShellToolbarModifier: ViewModifier {
 						.buttonStyle(.plain)
 						.accessibilityLabel("Account")
 					}
-					if actions.live {
-						Button {
-							liveMeeting.present(.dailyBriefing)
-						} label: {
-							ShellInkCircle(
-								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
-						}
-						.buttonStyle(.plain)
-					}
-					if let new = actions.new, !scrolled {
+					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
 						Button(action: new) {
 							ShellInkCircle(symbol: "plus", label: actions.newLabel)
 						}
 						.buttonStyle(.plain)
+					}
+
 					}
 				}
 			}

@@ -72,7 +72,6 @@ private struct ChatsContainer: View {
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
 				events: environment.events, cache: environment.snapshotCache,
-				flowRooms: LoopFlowRoomsSource(api: APILoopsSource(client: environment.client, workspaceID: workspaceID)),
 				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
 	}
 
@@ -86,14 +85,16 @@ private struct ChatsContainer: View {
 				isLive: environment.events.connection != .failed,
 				sendTick: sendTick,
 				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
-				onSearchEverywhere: { _ in runtime?.selectedTab = .search }
+				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
+				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } }
 			)
 			.shellToolbar(
 				environment: environment, title: "Team",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
-					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault))
+					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
+					hidesAvatar: true, newAlwaysVisible: true))
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
@@ -119,6 +120,15 @@ private struct ChatsContainer: View {
 			guard runtime?.newConversationRequested == true else { return }
 			runtime?.newConversationRequested = false
 			newChat = NewChatRequest()
+		}
+		.onChange(of: runtime?.agentChatRequest, initial: true) {
+			guard let request = runtime?.agentChatRequest else { return }
+			runtime?.agentChatRequest = nil
+			if request.live {
+				Task { await startLive(with: request.agent) }
+			} else {
+				newChat = NewChatRequest(recipient: request.agent)
+			}
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
 			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
@@ -165,6 +175,20 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
+	/// A live call with `agent` from its page: a fresh one-to-one chat the call runs in. Falls back
+	/// to the new-chat sheet addressed to the agent if the chat can't be created.
+	fileprivate func startLive(with agent: ChatParticipant) async {
+		do {
+			let created = try await store.create(
+				title: ThreadLayout.defaultTitle(for: [agent.name]), participantIDs: [agent.id],
+				firstMessage: nil)
+			selection = created.id
+			liveMeeting.present(.conversation(id: created.id, lead: agent))
+		} catch {
+			newChat = NewChatRequest(recipient: agent)
+		}
+	}
+
 	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the
 	/// person and creates them. Opens a chat with it, or the new-chat sheet with the text filled in
 	/// when the workspace has no Chief of Staff (or the chat can't be created).

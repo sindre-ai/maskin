@@ -23,7 +23,7 @@ struct ForYouUrgencyTests {
 	@Test func aBlockedObjectBlocksTheAgentThatRaisedIt() {
 		let u = ForYouUrgency.make(for: card(status: "blocked"), agent: "Strategist")
 		#expect(u?.kind == .blocking)
-		#expect(u?.text == "Blocking Strategist")
+		#expect(u?.text == "Holding up Strategist")
 		#expect(u?.isHot == true)
 	}
 
@@ -36,7 +36,7 @@ struct ForYouUrgencyTests {
 	@Test func aCardThatHasWaitedADayShowsOneNeutralChip() {
 		let u = ForYouUrgency.make(for: card(age: 2 * 86_400 + 60), agent: "Forge")
 		#expect(u?.kind == .waiting)
-		#expect(u?.text == "Waiting 2d")
+		#expect(u?.text == "Asked 2 days ago")
 		#expect(u?.isHot == false)
 	}
 
@@ -51,7 +51,7 @@ struct ForYouUrgencyTests {
 		#expect(ForYouUrgency.rank(of: blocking) < ForYouUrgency.rank(of: due))
 		#expect(ForYouUrgency.rank(of: due) < ForYouUrgency.rank(of: waiting))
 		#expect(ForYouUrgency.rank(of: waiting) < ForYouUrgency.rank(of: nil))
-		#expect(blocking?.text == "Blocking work")
+		#expect(blocking?.text == "Holding up work")
 	}
 
 	@Test func intentsSeparateApprovalsFromQuestions() {

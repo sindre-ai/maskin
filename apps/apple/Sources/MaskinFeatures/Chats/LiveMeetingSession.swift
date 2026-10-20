@@ -2,17 +2,21 @@ import Foundation
 import MaskinCore
 import Observation
 
-/// One live call: the voice loop (`LiveVoiceController`) wired to a chat. What you say is sent as
-/// a message in that chat the moment it is final, and the agent's reply arrives as an ordinary
-/// message that is read aloud, so the thread holds the call as it happens (even if the app is killed); the call keeps its own clock and the
-/// names of anyone invited.
+/// One live call: a voice driver wired to a chat. By default that is the OpenAI Realtime call with
+/// the lead agent (`RealtimeVoiceCall`); when there is none, or the server won't take it, it is the
+/// dictation loop (`LiveVoiceController`): what you say is sent as a message in that chat the moment
+/// it is final, and the agent's reply arrives as an ordinary message that is read aloud, so the
+/// thread holds the call as it happens (even if the app is killed). The call keeps its own clock and
+/// the names of anyone invited.
 @MainActor
 @Observable
 final class LiveMeetingSession {
 	let kind: LiveMeetingKind
 	let chat: ChatStore
 	let lead: ChatParticipant
-	let voice: LiveVoiceController
+	/// What carries the conversation: the Realtime call when there is one, otherwise (or if the
+	/// server won't take the call) the dictation loop.
+	private(set) var voice: any LiveVoiceDriving
 
 	private(set) var guests: [ChatParticipant] = []
 	private(set) var startedAt: Date?
@@ -20,8 +24,15 @@ final class LiveMeetingSession {
 	@ObservationIgnored private var participantsAtStart: Set<String> = []
 	/// Where the call's sound goes ("iPhone Speaker", "AirPods"); empty until the call starts.
 	private(set) var routeName = ""
+	/// The dock folded down to a pill in its thread.
+	var isMinimized = false
+	/// Show the agent's latest words under the header.
+	var showsCaptions = true
+	/// Loudspeaker (true) or earpiece.
+	private(set) var usesSpeaker = true
 
 	@ObservationIgnored private let now: () -> Date
+	@ObservationIgnored let dictation: LiveVoiceController
 	@ObservationIgnored private let log: LiveCallLog
 	/// The call's record id, set when it begins; the send closure built in `init` reads it.
 	@ObservationIgnored private let callRef: CallRef
@@ -34,9 +45,12 @@ final class LiveMeetingSession {
 	#endif
 
 	/// `makePorts` receives the "send" action and returns the microphone/speaker ports around it.
+	/// With `realtime`, the call is a voice call with the lead agent; the ports are only used if it
+	/// falls back.
 	init(
 		kind: LiveMeetingKind, chat: ChatStore, lead: ChatParticipant,
 		makePorts: (@escaping @MainActor (String) -> Void) -> LiveVoiceController.Ports,
+		realtime: RealtimeVoiceCall? = nil,
 		now: @escaping () -> Date = { Date() }, log: LiveCallLog = .shared
 	) {
 		self.log = log
@@ -46,16 +60,35 @@ final class LiveMeetingSession {
 		self.now = now
 		let call = CallRef()
 		callRef = call
-		voice = LiveVoiceController(
+		let dictation = LiveVoiceController(
 			ports: makePorts { [chat] text in
 				_ = chat.send(text)
 				if let id = call.id { log.update(id) { $0.spoken.append(text.trimmingCharacters(in: .whitespacesAndNewlines)) } }
 			})
-		voice.agentName = lead.name
+		dictation.agentName = lead.name
+		self.dictation = dictation
+		if let realtime {
+			voice = realtime
+			realtime.onFallBack = { [weak self] in self?.useDictation() }
+		} else {
+			voice = dictation
+		}
 	}
 
+	/// The server can't take a voice call for this person: carry on as a dictated conversation.
+	private func useDictation() {
+		guard isLive else { return }
+		voice = dictation
+		dictation.begin(existing: chat.messages)
+	}
+
+	/// True while the dictation loop carries the call (so "Send now" and pace apply).
+	var isDictating: Bool { voice === dictation }
+
 	/// Words heard but not yet sent: "Send now" is offered while there are some.
-	var hasPendingWords: Bool { voice.phase != .speaking && voice.machine.pendingText != nil }
+	var hasPendingWords: Bool { isDictating && dictation.phase != .speaking && dictation.machine.pendingText != nil }
+
+	func sendNow() { dictation.sendNow() }
 
 	var isLive: Bool { startedAt != nil && endedAt == nil }
 
@@ -79,22 +112,50 @@ final class LiveMeetingSession {
 			try audio.activate(
 				title: "Live with \(lead.name)",
 				handlers: .init(
-					interruptionBegan: { [weak self] in self?.voice.interruptionBegan() },
-					interruptionEnded: { [weak self] in self?.voice.interruptionEnded(shouldResume: $0) },
+					interruptionBegan: { [weak self] in
+						guard let self, self.isDictating else { return }
+						self.dictation.interruptionBegan()
+					},
+					interruptionEnded: { [weak self] in
+						guard let self, self.isDictating else { return }
+						self.dictation.interruptionEnded(shouldResume: $0)
+					},
 					routeChanged: { [weak self] in self?.routeName = $0 },
-					mediaServicesReset: { [weak self] in self?.voice.audioReset() },
+					mediaServicesReset: { [weak self] in
+						guard let self, self.isDictating else { return }
+						self.dictation.audioReset()
+					},
 					setMuted: { [weak self] in self?.remoteMute($0) },
 					toggleMuted: { [weak self] in self?.remoteToggleMute() }))
 			routeName = audio.routeName
 		} catch {
 			SpeechReader.shared.usesExternalAudioSession = false
-			voice.begin(existing: chat.messages)
-			voice.fail("Couldn't open the audio session (\(error.localizedDescription)).")
+			// Nothing can run without the session: show the failure on the dictation loop.
+			voice = dictation
+			dictation.begin(existing: chat.messages)
+			dictation.fail("Couldn't open the audio session (\(error.localizedDescription)).")
 			return
 		}
 		#endif
 		voice.begin(existing: chat.messages)
 		watch()
+	}
+
+	func toggleSpeaker() {
+		usesSpeaker.toggle()
+		#if os(iOS)
+		audio.setSpeaker(usesSpeaker)
+		#endif
+	}
+
+	/// The agent's latest line for captions: the Realtime call's own transcript, or else the latest
+	/// line in the thread since the call began.
+	var latestAgentLine: String? {
+		if voice.capturesOwnTranscript { return voice.agentWords }
+		let since = startedAt ?? .distantPast
+		return chat.messages.last {
+			$0.kind == "message" && $0.actorID != chat.currentActorID && ($0.createdAt ?? .distantFuture) >= since
+		}?.content.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 
 	func toggleMute() {

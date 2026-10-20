@@ -30,7 +30,7 @@ import {
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -66,6 +66,8 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -85,6 +87,7 @@ const checkoutResponseSchema = z.object({
 const checkoutRoute = createRoute({
 	method: 'post',
 	path: '/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a Maskin subscription',
 	request: {
@@ -401,6 +404,7 @@ const buyCreditsBodySchema = z.object({
 const buyCreditsRoute = createRoute({
 	method: 'post',
 	path: '/credits/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
 	request: {
@@ -551,6 +555,7 @@ app.openapi(buyCreditsRoute, async (c) => {
 const cancelRoute = createRoute({
 	method: 'post',
 	path: '/cancel',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
 	request: { headers: workspaceIdHeader },
@@ -594,6 +599,9 @@ app.openapi(cancelRoute, async (c) => {
 	// predate `billing_owner_id`; those fall back to the human admin/owner
 	// check rather than being left open to every member.
 	const callerId = c.get('actorId')
+	// The billing owner branch below ignores the role, so a viewer who holds billing ownership
+	// (transfer-ownership does not look at the new owner's role) would pass it.
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const authorized = workspace.billingOwnerId
 		? workspace.billingOwnerId === callerId
 		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)

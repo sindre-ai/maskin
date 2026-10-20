@@ -25,7 +25,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	public static let scheme = "maskin"
 
 	/// Origins whose `https` URLs count as universal links. Anything else is foreign.
-	public static let defaultUniversalHosts: Set<String> = ["maskin.io", "www.maskin.io", "app.maskin.io"]
+	public static let defaultUniversalHosts: Set<String> = ["maskin.io", "www.maskin.io"]
 
 	public var workspaceId: String {
 		switch self {
@@ -92,6 +92,9 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			return nil
 		}
 		guard Self.isSafeID(workspace) else { return nil }
+		// `invite` is a route, not a workspace: invitation links are `InviteLink`'s, and a bare
+		// `/invite` must not be read as the inbox of a workspace called "invite".
+		guard workspace.lowercased() != "invite" else { return nil }
 
 		switch rest.count {
 		case 0:

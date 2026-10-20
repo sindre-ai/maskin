@@ -901,3 +901,62 @@ describe('Actors Integration — signup workspace provisioning', () => {
 		expect(chief?.name).toBe('Chief of Staff')
 	})
 })
+
+describe('Actors Integration — GET voice_enabled projection', () => {
+	// A read-time smoke check that the projection lives on every read path a
+	// UI consumer touches: list, get, and pause/run's returning clause.
+	it('GET /:id projects voice_enabled from metadata', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey Read' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, agent.id))
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(true)
+	})
+
+	it('GET /:id returns false when metadata is null or missing the key', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voiceless' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(false)
+	})
+
+	it('GET /api/actors workspace-scoped list projects voice_enabled per row', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const on = await insertActor(db, { type: 'agent', name: 'On' })
+		const off = await insertActor(db, { type: 'agent', name: 'Off' })
+		await db.insert(workspaceMembers).values([
+			{ workspaceId: ws.id, actorId: on.id, role: 'member' },
+			{ workspaceId: ws.id, actorId: off.id, role: 'member' },
+		])
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, on.id))
+
+		const res = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const rowFor = (name: string) => body.find((r: { name: string }) => r.name === name)
+		expect(rowFor('On')?.voice_enabled).toBe(true)
+		expect(rowFor('Off')?.voice_enabled).toBe(false)
+	})
+})

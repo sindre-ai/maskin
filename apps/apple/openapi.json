@@ -11,7 +11,175 @@
 		}
 	],
 	"components": {
-		"schemas": {},
+		"schemas": {
+			"CreateVoiceSessionResponse": {
+				"type": "object",
+				"properties": {
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					}
+				},
+				"required": [
+					"voice_session_id"
+				]
+			},
+			"VoiceSessionRateLimited": {
+				"type": "object",
+				"properties": {
+					"error": {
+						"type": "object",
+						"properties": {
+							"code": {
+								"type": "string",
+								"enum": [
+									"RATE_LIMITED"
+								]
+							},
+							"message": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"code",
+							"message"
+						]
+					},
+					"retry_after_seconds": {
+						"type": "number"
+					}
+				},
+				"required": [
+					"error",
+					"retry_after_seconds"
+				]
+			},
+			"CreateVoiceSessionBody": {
+				"type": "object",
+				"properties": {
+					"agent_actor_id": {
+						"type": "string",
+						"format": "uuid",
+						"description": "Actor id of the agent to call. Must be an agent that is a workspace member."
+					}
+				},
+				"required": [
+					"agent_actor_id"
+				]
+			},
+			"VoiceSessionOfferResponse": {
+				"type": "object",
+				"properties": {
+					"sdp": {
+						"type": "string",
+						"description": "The SDP answer to set as the remote description."
+					},
+					"tools_available": {
+						"type": "boolean",
+						"description": "False when the server could not attach its tool connection to the call. The browser then answers every tool call with an \"unavailable\" result so the agent says so."
+					},
+					"persist_transcripts": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"sdp",
+					"tools_available",
+					"persist_transcripts"
+				]
+			},
+			"VoiceSessionOfferBody": {
+				"type": "object",
+				"properties": {
+					"sdp": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 100000,
+						"description": "The browser’s WebRTC SDP offer."
+					}
+				},
+				"required": [
+					"sdp"
+				]
+			},
+			"HangupVoiceSessionResponse": {
+				"type": "object",
+				"properties": {
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"status": {
+						"type": "string"
+					},
+					"ended_reason": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"ended_at": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"duration_ms": {
+						"type": "number"
+					},
+					"total_cost_usd": {
+						"type": [
+							"number",
+							"null"
+						]
+					},
+					"conversation_id": {
+						"type": [
+							"string",
+							"null"
+						],
+						"format": "uuid"
+					}
+				},
+				"required": [
+					"voice_session_id",
+					"status",
+					"ended_reason",
+					"ended_at",
+					"duration_ms",
+					"total_cost_usd",
+					"conversation_id"
+				]
+			},
+			"HangupVoiceSessionBody": {
+				"type": "object",
+				"properties": {
+					"reason": {
+						"type": "string",
+						"enum": [
+							"user_hangup",
+							"network_error"
+						],
+						"description": "Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection."
+					},
+					"input_audio_seconds": {
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 86400,
+						"description": "Seconds of microphone audio the client sent. Clamped to the call length."
+					},
+					"output_audio_seconds": {
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 86400,
+						"description": "Seconds of agent audio the client received. Clamped to the call length."
+					}
+				},
+				"required": [
+					"reason"
+				]
+			}
+		},
 		"parameters": {}
 	},
 	"paths": {
@@ -4778,6 +4946,9 @@
 											],
 											"format": "uuid"
 										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
 										"skills": {
 											"type": "array",
 											"items": {
@@ -5330,6 +5501,9 @@
 											"role": {
 												"type": "string"
 											},
+											"voice_enabled": {
+												"type": "boolean"
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -5556,6 +5730,9 @@
 											],
 											"format": "uuid"
 										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
 										"skills": {
 											"type": "array",
 											"items": {
@@ -5663,6 +5840,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -5914,6 +6092,9 @@
 											],
 											"format": "uuid"
 										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
 										"skills": {
 											"type": "array",
 											"items": {
@@ -6135,6 +6316,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6354,6 +6536,7 @@
 		},
 		"/api/actors/{id}/api-keys": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6367,6 +6550,15 @@
 						"required": true,
 						"name": "id",
 						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "x-workspace-id",
+						"in": "header"
 					}
 				],
 				"responses": {
@@ -6507,6 +6699,7 @@
 		},
 		"/api/actors/{id}/reset": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6630,6 +6823,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -6797,6 +6993,7 @@
 		},
 		"/api/actors/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -6921,6 +7118,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7088,6 +7288,7 @@
 		},
 		"/api/actors/{id}/run": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -7228,6 +7429,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7521,6 +7725,9 @@
 												"null"
 											],
 											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
 										},
 										"skills": {
 											"type": "array",
@@ -7963,6 +8170,7 @@
 				}
 			},
 			"put": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8218,6 +8426,7 @@
 				}
 			},
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Skills"
 				],
@@ -8531,6 +8740,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -8862,6 +9072,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/batch": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -9049,6 +9260,7 @@
 		},
 		"/api/actors/{actorId}/workspace-skills/{workspaceSkillId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Agent Skill Attachments"
 				],
@@ -9765,6 +9977,14 @@
 													"plan"
 												]
 											},
+											"voice": {
+												"type": "object",
+												"properties": {
+													"persist_transcripts": {
+														"type": "boolean"
+													}
+												}
+											},
 											"north_star_metric": {
 												"type": "string"
 											},
@@ -9846,6 +10066,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -9883,6 +10122,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -10096,6 +10336,25 @@
 												],
 												"additionalProperties": {}
 											},
+											"llm_configured": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": "boolean"
+													},
+													"openai": {
+														"type": "boolean"
+													},
+													"custom_llm": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
 											"onboardingEnabled": {
 												"type": "boolean"
 											},
@@ -10143,6 +10402,7 @@
 											"id",
 											"name",
 											"settings",
+											"llm_configured",
 											"onboardingEnabled",
 											"enterprise",
 											"billingOwnerId",
@@ -10729,6 +10989,14 @@
 													"plan"
 												]
 											},
+											"voice": {
+												"type": "object",
+												"properties": {
+													"persist_transcripts": {
+														"type": "boolean"
+													}
+												}
+											},
 											"north_star_metric": {
 												"type": "string"
 											},
@@ -10807,6 +11075,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -10844,6 +11131,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11086,6 +11374,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11123,6 +11430,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11253,6 +11561,7 @@
 		},
 		"/api/workspaces/{id}/members": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11605,6 +11914,7 @@
 		},
 		"/api/workspaces/{id}/transfer-ownership": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
@@ -11660,6 +11970,25 @@
 											],
 											"additionalProperties": {}
 										},
+										"llm_configured": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": "boolean"
+												},
+												"openai": {
+													"type": "boolean"
+												},
+												"custom_llm": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -11697,6 +12026,7 @@
 										"id",
 										"name",
 										"settings",
+										"llm_configured",
 										"onboardingEnabled",
 										"enterprise",
 										"billingOwnerId",
@@ -11941,10 +12271,11 @@
 		},
 		"/api/workspaces/{id}/members/{actorId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspaces"
 				],
-				"summary": "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+				"summary": "Change a workspace member's role (admin/member/viewer; owner via transfer-ownership)",
 				"parameters": [
 					{
 						"schema": {
@@ -11975,7 +12306,8 @@
 										"type": "string",
 										"enum": [
 											"admin",
-											"member"
+											"member",
+											"viewer"
 										]
 									}
 								},
@@ -14507,6 +14839,467 @@
 				}
 			}
 		},
+		"/api/invites/{token}/accept": {
+			"post": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"operationId": "acceptInvite",
+				"summary": "Accept an invite by token (public path; reads Authorization itself)",
+				"description": "Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or `{ email, password, name? }` with no Authorization to sign up and join. Do not send X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1
+						},
+						"required": true,
+						"name": "token",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email"
+									},
+									"password": {
+										"type": "string",
+										"minLength": 8
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Authenticated accept: joined (or already a member)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"workspaceId",
+										"actorId"
+									]
+								}
+							}
+						}
+					},
+					"201": {
+						"description": "Signup accept: actor created and joined",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"actor": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"type": {
+													"type": "string"
+												},
+												"name": {
+													"type": "string"
+												},
+												"email": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"description": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"system_prompt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"tools": {},
+												"memory": {},
+												"llm_provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"llm_config": {},
+												"isSystem": {
+													"type": "boolean"
+												},
+												"agentState": {
+													"type": "string"
+												},
+												"agentStateUpdatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"createdAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"updatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"api_key": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"type",
+												"name",
+												"email",
+												"description",
+												"system_prompt",
+												"llm_provider",
+												"isSystem",
+												"agentState",
+												"agentStateUpdatedAt",
+												"createdAt",
+												"updatedAt",
+												"api_key"
+											]
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"actor",
+										"workspaceId"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing or invalid API key (authenticated branch)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Workspace seat cap reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Unknown token",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"410": {
+						"description": "Invite expired, revoked or already used",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/invites/preview": {
 			"get": {
 				"tags": [
@@ -14549,6 +15342,9 @@
 										"inviterName": {
 											"type": "string"
 										},
+										"role": {
+											"type": "string"
+										},
 										"inviteEmail": {
 											"type": "string"
 										},
@@ -14561,6 +15357,7 @@
 										"workspaceId",
 										"workspaceName",
 										"inviterName",
+										"role",
 										"inviteEmail",
 										"expiresAt"
 									]
@@ -14666,6 +15463,7 @@
 		},
 		"/api/invites": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15249,6 +16047,7 @@
 		},
 		"/api/invites/{id}/resend": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -15544,6 +16343,7 @@
 		},
 		"/api/invites/{id}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"workspace-invitations"
 				],
@@ -17611,6 +18411,12 @@
 															"null"
 														]
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -17725,6 +18531,7 @@
 													"pill",
 													"entryCondition",
 													"closeCondition",
+													"tags",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",
@@ -18608,6 +19415,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "LinkedIn-hosted install URL for the customer to complete LinkedIn auth in.",
@@ -18628,6 +19454,63 @@
 									"required": [
 										"install_url",
 										"integration_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "native_return_url is not an allowed return target",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -19652,6 +20535,25 @@
 						"in": "header"
 					}
 				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"native_return_url": {
+										"type": [
+											"string",
+											"null"
+										],
+										"description": "Where a native app is sent after the provider flow. Must exactly equal one of: maskin://integrations/callback, https://maskin.io/native/integrations/callback. Any other value is refused with 400."
+									}
+								}
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "Install URL for OAuth/GitHub App, or a webhook URL + integration id for manual-auth providers",
@@ -22986,6 +23888,7 @@
 		},
 		"/api/billing/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -23290,6 +24193,7 @@
 		},
 		"/api/billing/credits/checkout": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -23600,6 +24504,7 @@
 		},
 		"/api/billing/cancel": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -25172,6 +26077,10 @@
 														"recommended": {
 															"type": "boolean",
 															"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+														},
+														"destructive": {
+															"type": "boolean",
+															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 														}
 													},
 													"required": [
@@ -25182,6 +26091,35 @@
 												"minItems": 2,
 												"maxItems": 3,
 												"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+											},
+											"draft": {
+												"type": "object",
+												"properties": {
+													"object_id": {
+														"type": "string",
+														"format": "uuid",
+														"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+													},
+													"label": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 30,
+														"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+													},
+													"to": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300,
+														"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+													},
+													"body": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 20000,
+														"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+													}
+												},
+												"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
 											}
 										},
 										"required": [
@@ -25190,7 +26128,7 @@
 											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -25339,6 +26277,7 @@
 		},
 		"/api/conversations": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -25462,8 +26401,13 @@
 											"source": {
 												"type": "string",
 												"enum": [
-													"final_output"
+													"final_output",
+													"voice"
 												]
+											},
+											"voice_session_id": {
+												"type": "string",
+												"format": "uuid"
 											},
 											"final_output": {
 												"type": "object",
@@ -25891,10 +26835,7 @@
 				"parameters": [
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "pinned",
@@ -25902,10 +26843,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							],
+							"type": "boolean",
 							"default": false
 						},
 						"required": false,
@@ -25914,10 +26852,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "unread_only",
@@ -26302,6 +27237,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26520,6 +27456,7 @@
 		},
 		"/api/conversations/{id}/participants": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -26662,6 +27599,7 @@
 		},
 		"/api/conversations/{id}/participants/{actorId}": {
 			"delete": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27220,6 +28158,7 @@
 				}
 			},
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27339,8 +28278,13 @@
 											"source": {
 												"type": "string",
 												"enum": [
-													"final_output"
+													"final_output",
+													"voice"
 												]
+											},
+											"voice_session_id": {
+												"type": "string",
+												"format": "uuid"
 											},
 											"final_output": {
 												"type": "object",
@@ -27647,6 +28591,13 @@
 												"string",
 												"null"
 											]
+										},
+										"unresolved_mentions": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
 										}
 									},
 									"required": [
@@ -27728,6 +28679,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}": {
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -27974,6 +28926,7 @@
 		},
 		"/api/conversations/{id}/messages/{messageId}/retry": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Conversations"
 				],
@@ -28237,6 +29190,7 @@
 		},
 		"/api/sessions": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -28729,7 +29683,8 @@
 								"waiting_for_input",
 								"completed",
 								"failed",
-								"timeout"
+								"timeout",
+								"user_stopped"
 							]
 						},
 						"required": false,
@@ -28995,7 +29950,8 @@
 															"waiting_for_input",
 															"completed",
 															"failed",
-															"timeout"
+															"timeout",
+															"user_stopped"
 														]
 													},
 													"updated_at": {
@@ -29432,6 +30388,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -29492,6 +30505,7 @@
 				}
 			},
 			"patch": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -29797,6 +30811,7 @@
 		},
 		"/api/sessions/{id}/stop": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30005,6 +31020,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30067,6 +31139,7 @@
 		},
 		"/api/sessions/{id}/pause": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30275,6 +31348,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30337,6 +31467,7 @@
 		},
 		"/api/sessions/{id}/resume": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30545,6 +31676,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller did not start this session and is not a workspace admin",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -30607,6 +31795,7 @@
 		},
 		"/api/sessions/{id}/input": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -30976,6 +32165,7 @@
 		},
 		"/api/sessions/{id}/ask": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Sessions"
 				],
@@ -31808,6 +32998,399 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/activity": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Get the agent activity trace (steps) per conversation message",
+				"description": "Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most 2000 of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 20,
+							"default": 5
+						},
+						"required": false,
+						"name": "limit_turns",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "message_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "before_log_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Activity turns, oldest to newest",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"turns": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "integer"
+													},
+													"started_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"finished_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"running",
+															"completed",
+															"failed"
+														]
+													},
+													"contains_reply": {
+														"type": "boolean"
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"text": {
+																"type": "string",
+																"maxLength": 8000
+															},
+															"is_error": {
+																"type": "boolean"
+															},
+															"log_id": {
+																"type": "integer"
+															}
+														},
+														"required": [
+															"text",
+															"is_error",
+															"log_id"
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string"
+																},
+																"kind": {
+																	"type": "string",
+																	"enum": [
+																		"tool_use",
+																		"thinking",
+																		"text",
+																		"error"
+																	]
+																},
+																"label": {
+																	"type": "string",
+																	"maxLength": 120
+																},
+																"detail": {
+																	"type": "string",
+																	"maxLength": 300
+																},
+																"started_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"finished_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"running",
+																		"completed",
+																		"failed"
+																	]
+																}
+															},
+															"required": [
+																"id",
+																"kind",
+																"label",
+																"started_at",
+																"finished_at",
+																"status"
+															]
+														},
+														"maxItems": 100
+													},
+													"steps_truncated": {
+														"type": "boolean"
+													},
+													"partial": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"message_id",
+													"started_at",
+													"finished_at",
+													"status",
+													"contains_reply",
+													"result",
+													"steps",
+													"steps_truncated",
+													"partial"
+												]
+											}
+										},
+										"oldest_log_id": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"has_older": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"session_id",
+										"turns",
+										"oldest_log_id",
+										"has_older"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Session was started by a different actor",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -31991,6 +33574,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Session is private to the person who started it",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Session not found",
 						"content": {
@@ -32053,6 +33693,7 @@
 		},
 		"/api/notifications": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Notifications"
 				],
@@ -32491,6 +34132,19 @@
 						},
 						"required": false,
 						"name": "offset",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"asc",
+								"desc"
+							],
+							"default": "asc"
+						},
+						"required": false,
+						"name": "order",
 						"in": "query"
 					},
 					{
@@ -33244,6 +34898,7 @@
 		},
 		"/api/notifications/{id}/respond": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"Notifications"
 				],
@@ -33752,6 +35407,10 @@
 																				"recommended": {
 																					"type": "boolean",
 																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 																				}
 																			},
 																			"required": [
@@ -33762,6 +35421,35 @@
 																		"minItems": 2,
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+																	},
+																	"draft": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid",
+																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 30,
+																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																			},
+																			"to": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 300,
+																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																			},
+																			"body": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 20000,
+																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																			}
+																		},
+																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
 																	}
 																},
 																"required": [
@@ -33770,7 +35458,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -33805,6 +35493,574 @@
 					},
 					"400": {
 						"description": "Missing workspace ID",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/devices": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Register (or refresh) a push device for the current actor",
+				"description": "Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"platform": {
+										"type": "string",
+										"enum": [
+											"ios",
+											"macos",
+											"watchos",
+											"tvos"
+										]
+									},
+									"apns_token": {
+										"type": "string",
+										"minLength": 32,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"environment": {
+										"type": "string",
+										"enum": [
+											"sandbox",
+											"production"
+										]
+									},
+									"app_version": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									}
+								},
+								"required": [
+									"platform",
+									"apns_token",
+									"environment"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Device registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actor_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"platform": {
+											"type": "string",
+											"enum": [
+												"ios",
+												"macos",
+												"watchos",
+												"tvos"
+											]
+										},
+										"environment": {
+											"type": "string",
+											"enum": [
+												"sandbox",
+												"production"
+											]
+										},
+										"app_version": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"created_at": {
+											"type": "string"
+										},
+										"last_seen_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"actor_id",
+										"platform",
+										"environment",
+										"app_version",
+										"created_at",
+										"last_seen_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/devices/{id_or_token}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister one of the current actor’s push devices",
+				"description": "Prefer the device id (uuid) returned by POST /api/devices. The raw APNs token is also accepted for compatibility, but it is a credential in a URL path — clients should delete by id. Only the owner can delete.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 512
+						},
+						"required": true,
+						"name": "id_or_token",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Device removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"enum": [
+											"push_to_start",
+											"update"
+										]
+									},
+									"device_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"token": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"kind",
+									"device_id",
+									"token"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Token registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"kind": {
+											"type": "string",
+											"enum": [
+												"push_to_start",
+												"update"
+											]
+										},
+										"device_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"session_id": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"updated_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"kind",
+										"device_id",
+										"session_id",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device or session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens/{id}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister one of the caller’s ActivityKit tokens (e.g. the activity ended on-device)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Token removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -34698,6 +36954,10 @@
 																				"recommended": {
 																					"type": "boolean",
 																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 																				}
 																			},
 																			"required": [
@@ -34708,6 +36968,35 @@
 																		"minItems": 2,
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
+																	},
+																	"draft": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid",
+																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																			},
+																			"label": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 30,
+																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																			},
+																			"to": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 300,
+																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																			},
+																			"body": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 20000,
+																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																			}
+																		},
+																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
 																	}
 																},
 																"required": [
@@ -34716,7 +37005,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -43136,6 +45425,599 @@
 									},
 									"required": [
 										"flags"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Voice"
+				],
+				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
+				"description": "Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/CreateVoiceSessionBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Voice session reserved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CreateVoiceSessionResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Target agent is not voice-enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, or target agent not found in caller workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Caller already has a live voice session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionRateLimited"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "The reservation row could not be written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/offer": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Voice"
+				],
+				"summary": "Connect a reserved voice session to the vendor",
+				"description": "Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/VoiceSessionOfferBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "SDP answer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionOfferResponse"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, no such session for the caller, or membership lapsed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The session already took an offer, or is no longer pending",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited by the vendor; retry after `retry_after_seconds`",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceSessionRateLimited"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Vendor connect failed — the session row is marked errored so the caller can start again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/hangup": {
+			"post": {
+				"tags": [
+					"Voice"
+				],
+				"summary": "End a voice call",
+				"description": "Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/HangupVoiceSessionBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Call ended (or already ended)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HangupVoiceSessionResponse"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Flag off, or no such voice session for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}

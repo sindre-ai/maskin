@@ -96,6 +96,13 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	// Projected from actors.metadata->>'voice_enabled' — read-only surface,
+	// writes go through POST /actors/:id/voice-mode. Mirrors installedLoopId
+	// above so agents doing read-modify-write via MCP never accidentally
+	// overwrite the raw metadata JSONB. Optional at the type level so
+	// existing fixtures + callers that pre-date the voice bet don't need to
+	// synthesise a value.
+	voice_enabled: z.boolean().optional(),
 	skills: z.array(actorSkillSchema).optional(),
 	// Populated only when X-Workspace-Id is provided — the actor's membership
 	// role in that specific workspace (mirrors the `role` field on the
@@ -123,6 +130,13 @@ export const workspaceResponseSchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
+	// Whether a BYO key is stored, for every caller. Only a human admin or owner
+	// gets llm_keys, custom_llm, claude_oauth and billing inside settings.
+	llm_configured: z.object({
+		anthropic: z.boolean(),
+		openai: z.boolean(),
+		custom_llm: z.boolean(),
+	}),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
 	// column OR an enterprise billing owner), not the raw column. Derived, so it
@@ -351,6 +365,13 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+})
+
+// POST /conversations/:id/messages only: best-effort warning when some
+// `metadata.mentions` ids are neither participants nor workspace members. The
+// message still posts, but nobody was pulled in or woken for those ids.
+export const postMessageResponseSchema = messageResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
 })
 
 /**

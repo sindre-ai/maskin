@@ -857,6 +857,49 @@ export const agentSkills = pgTable(
 export type AgentSkill = typeof agentSkills.$inferSelect
 export type NewAgentSkill = typeof agentSkills.$inferInsert
 
+// ── Voice Sessions ──────────────────────────────────────────────────────────
+//
+// One row per 1:1 voice call between a workspace human and a voice-enabled
+// agent. `status` moves pending → active → ended; the partial unique index
+// (`voice_sessions_active_per_human_uniq`) is the concurrency guard for "one
+// live call per human" and produces the 409 branch on POST /api/voice-sessions
+// without an application-level TOCTOU shim. The audio/token/cost columns are
+// populated by the session-end pipeline (Task 4); this table's writers here
+// only fill the routing + auth fields at mint.
+export const voiceSessions = pgTable('voice_sessions', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	workspaceId: uuid('workspace_id')
+		.notNull()
+		.references(() => workspaces.id, { onDelete: 'cascade' }),
+	agentActorId: uuid('agent_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	humanActorId: uuid('human_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	conversationId: uuid('conversation_id').references(() => conversations.id, {
+		onDelete: 'set null',
+	}),
+	status: text('status').notNull(),
+	vendor: text('vendor').notNull().default('openai_realtime'),
+	vendorSessionId: text('vendor_session_id'),
+	model: text('model'),
+	transcriptStorageKey: text('transcript_storage_key'),
+	inputAudioSeconds: integer('input_audio_seconds'),
+	outputAudioSeconds: integer('output_audio_seconds'),
+	inputTokens: integer('input_tokens'),
+	outputTokens: integer('output_tokens'),
+	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+	endedReason: text('ended_reason'),
+	startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+	endedAt: timestamp('ended_at', { withTimezone: true }),
+	timeoutAt: timestamp('timeout_at', { withTimezone: true }).notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type VoiceSession = typeof voiceSessions.$inferSelect
+export type NewVoiceSession = typeof voiceSessions.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(
@@ -1795,6 +1838,85 @@ export const googleMeetSpaceIdempotency = pgTable(
 
 export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
 export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Device Tokens (APNs push) ───────────────────────────────────────────────
+//
+// One row per (APNs token, environment). The token is the identity: when a
+// device changes hands (sign-out / sign-in as someone else) re-registering the
+// same token by a different actor MOVES the row to that actor via
+// ON CONFLICT DO UPDATE — otherwise the previous user would keep receiving the
+// new user's pushes. Cascades with the actor.
+
+export const deviceTokens = pgTable(
+	'device_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		// 'ios' | 'macos' | 'watchos' | 'tvos' — validated by registerDeviceSchema.
+		platform: text('platform').notNull(),
+		apnsToken: text('apns_token').notNull(),
+		// 'sandbox' | 'production' — selects the APNs host.
+		environment: text('environment').notNull(),
+		appVersion: text('app_version'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('device_tokens_apns_token_environment_uniq').on(t.apnsToken, t.environment),
+		index('device_tokens_actor_id_idx').on(t.actorId),
+	],
+)
+
+// ── Live Activity tokens ────────────────────────────────────────────────────
+//
+// ActivityKit push tokens. Two kinds share one table:
+//  - 'push_to_start': one per device (iOS 17.2+), lets the server START an activity while
+//    the app is not running. At most one row per device (it rotates, so it is upserted).
+//  - 'update': one per running activity, tied to a session. Used for update/end pushes.
+// The APNs environment is taken from the owning device row. Rows cascade with the device,
+// the actor and (update tokens only) the session.
+
+export const liveActivityTokens = pgTable(
+	'live_activity_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		deviceId: uuid('device_id')
+			.notNull()
+			.references(() => deviceTokens.id, { onDelete: 'cascade' }),
+		// 'push_to_start' | 'update' — validated by registerLiveActivityTokenSchema.
+		kind: text('kind').notNull(),
+		token: text('token').notNull(),
+		// Set for 'update' tokens only.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'live_activity_tokens_kind_session_chk',
+			sql`(${t.kind} = 'push_to_start' AND ${t.sessionId} IS NULL) OR (${t.kind} = 'update' AND ${t.sessionId} IS NOT NULL)`,
+		),
+		uniqueIndex('live_activity_tokens_push_to_start_uniq')
+			.on(t.deviceId)
+			.where(sql`${t.kind} = 'push_to_start'`),
+		uniqueIndex('live_activity_tokens_update_uniq')
+			.on(t.deviceId, t.sessionId)
+			.where(sql`${t.kind} = 'update'`),
+		index('live_activity_tokens_session_idx').on(t.sessionId),
+		index('live_activity_tokens_actor_idx').on(t.actorId),
+	],
+)
+
+export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
+
+export type DeviceToken = typeof deviceTokens.$inferSelect
+export type NewDeviceToken = typeof deviceTokens.$inferInsert
 
 // ── Trigger cooldowns (S1 of the trigger-engine fix bet) ────────────────────
 //

@@ -394,7 +394,7 @@ For You is your list: the one ranked list of what the user must act on, and noth
 
 **Only what the team could not settle.** Before an item reaches the list, try to close it agent-to-agent (get_actor, then create_comment @mention or create_session with wait: true). Put it on the list only for priorities, approval, spend, risk, private context or access. Status reports, FYIs and finished work never go on the list.
 
-**One notification per item.** Call create_notification with type needs_input, target_actor_id the user, object_id (and session_id when there is one), and metadata { kind: "for_you", rank, headline, rationale, source_comment_id }. headline says what you need from them, not what happened. rationale says why the agents could not settle it. source_comment_id is the event id of the comment carrying the ask, so the item drops once they answer. Search for an existing for_you notification on the same object first and update_notification instead of adding a second one. Consolidate related asks into one item.
+**One notification per item.** Call create_notification with type needs_input, title (the same line as the headline), source_actor_id (your own actor id), target_actor_id the user, object_id (and session_id when there is one), and metadata { kind: "for_you", rank, headline, rationale, source_comment_id }. headline says what you need from them, not what happened. rationale says why the agents could not settle it. source_comment_id is the event id of the comment carrying the ask, so the item drops once they answer. To find an existing for_you notification on the same object, call list_notifications (status pending, type needs_input, limit 100) and keep only the ones whose metadata.kind is for_you; update_notification that one instead of adding a second. update_notification replaces metadata wholesale rather than merging, so every update must resend the full metadata (kind, rank, headline, rationale, source_comment_id), not just the field you are changing, or the item drops off the list. Consolidate related asks into one item.
 
 **Keep it fresh.** Every run, list your pending for_you notifications and re-rank them (rank 1 is most important, no ties). Resolve with update_notification status resolved anything that is no longer true: the object closed, an agent resolved it, the user answered elsewhere, or it was overtaken by a newer ask. A short, current list beats a long one. When the list is empty, it's empty.
 
@@ -573,6 +573,12 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 			maskin: PLATFORM_MCP_PRESET,
 		},
 	},
+	// Voice v1 (bet 16bd0042): Chief of Staff is the sole default-on voice
+	// agent. The 4 other launch candidates (Strategist, Sales Coach, PM
+	// Maskin, Personal Assistant) keep `voice_enabled` addressable via
+	// `update_actor` but off at seed. Read by the session-mint route
+	// (POST /api/voice-sessions) — anything without this key = 400.
+	metadata: { voice_enabled: true } as Record<string, unknown>,
 	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL],
 } as const
 
@@ -1293,7 +1299,7 @@ Order:
 			expression: '0 * * * *',
 		},
 		actionPrompt:
-			"Curate the user's For You list. 1) list_notifications for your pending `needs_input` items with metadata.kind = for_you. 2) Resolve (update_notification status resolved) every one that is no longer true: the object is closed, an agent has since settled it, or the user already answered. 3) Look for new escalations since your last pass: comments on objects that @-mention you with a `decision`, and blocked sessions or objects that only a human can unblock. For each, first try to settle it agent-to-agent; only if it truly needs the user, create one for_you notification (or update the existing one for that object). 4) Re-rank everything pending so rank 1 is the most important, no ties. If nothing changed, exit silently without posting anything.",
+			"Curate the user's For You list. 1) list_notifications (status pending, type needs_input, limit 100) and keep only the items whose metadata.kind is for_you. 2) Resolve (update_notification status resolved) every one that is no longer true: the object is closed, an agent has since settled it, or the user already answered. 3) Look for new escalations since your last pass: comments on objects that @-mention you with a `decision`, and blocked sessions or objects that only a human can unblock. For each, first try to settle it agent-to-agent; only if it truly needs the user, create one for_you notification (or update the existing one for that object). 4) Re-rank everything pending so rank 1 is the most important, no ties, by update_notification with the full existing metadata and only the rank changed (metadata is replaced, not merged). If nothing changed, exit silently without posting anything.",
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},

@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.19.13",
+		"@hono/node-ws": "^1.3.1",
 		"@hono/zod-openapi": "^0.18.0",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
@@ -47,6 +48,7 @@
 		"postgres": "^3.4.9",
 		"stripe": "17.x",
 		"tar-stream": "^3.1.0",
+		"ws": "^8.20.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

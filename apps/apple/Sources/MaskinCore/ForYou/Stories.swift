@@ -204,18 +204,60 @@ public final class StoriesStore {
 	@ObservationIgnored private let seen: SeenStories
 	@ObservationIgnored private let readerName: () -> String?
 	@ObservationIgnored private let now: () -> Date
+	@ObservationIgnored private let cache: SnapshotCache?
 
 	public init(
 		loops: any LoopsAPI, files: any FilesRemote, briefing: (any SpokenBriefing)?,
 		seen: SeenStories = SeenStories(), readerName: @escaping () -> String? = { nil },
-		now: @escaping () -> Date = Date.init
+		now: @escaping () -> Date = Date.init, cache: SnapshotCache? = nil
 	) {
+		self.cache = cache
 		self.loops = loops
 		self.files = files
 		self.briefing = briefing
 		self.seen = seen
 		self.readerName = readerName
 		self.now = now
+		seedFromCache()
+	}
+
+	/// The last row this device loaded, so For you paints at once and `load()` only refreshes it.
+	/// `hasLoaded` stays false: a cached row is a starting point, not a finished load.
+	private func seedFromCache() {
+		guard let cached = cache?.read([CachedStory].self, Self.cacheName)?.value, !cached.isEmpty else { return }
+		cards = cached.map(\.card)
+		seenIDs = Set(cards.filter { seen.isSeen($0) }.map(\.id))
+	}
+
+	private static let cacheName = "for-you-stories"
+
+	/// A page card as stored on disk (the card itself holds a `LoopOutput`, which is not `Codable`).
+	private struct CachedStory: Codable {
+		var id: String
+		var unit: String
+		var headline: String
+		var updatedAt: Date?
+		var loopID: String?
+		var fileName: String
+		var mimeType: String?
+
+		init?(_ card: StoryCard) {
+			guard case .page(let output) = card.content else { return nil }
+			id = card.id
+			unit = card.unit
+			headline = card.headline
+			updatedAt = card.updatedAt
+			loopID = card.loopID
+			fileName = output.name
+			mimeType = output.mimeType
+		}
+
+		var card: StoryCard {
+			StoryCard(
+				id: id, unit: unit, headline: headline, updatedAt: updatedAt,
+				content: .page(LoopOutput(id: id, name: fileName, mimeType: mimeType, updatedAt: updatedAt)),
+				loopID: loopID)
+		}
 	}
 
 	public func isSeen(_ card: StoryCard) -> Bool { seenIDs.contains(card.id) }
@@ -256,6 +298,10 @@ public final class StoriesStore {
 		isPartial = failures > 0
 		hasLoaded = true
 		seenIDs = Set(next.filter { seen.isSeen($0) }.map(\.id))
+		// Keep the last good row: a load that came back empty (offline, a failed list) must not
+		// wipe what the reader could already see.
+		let toCache = next.compactMap(CachedStory.init)
+		if !toCache.isEmpty { cache?.write(toCache, Self.cacheName) }
 	}
 
 	/// `load()` again, a couple of times with a growing pause, while it keeps coming back partial.
@@ -280,28 +326,31 @@ public final class StoriesStore {
 			return ([], [:], 1)
 		}
 		let chosen = StoryDerivation.pages(from: listed)
-		let (origin, lookupFailed) = await loopsAttached(to: Set(chosen.map(\.id)))
+		// The loop lookup (one request per flow) and the page downloads share nothing, so they run
+		// side by side: the row waits for the slower of the two, not the sum.
+		async let attached = loopsAttached(to: Set(chosen.map(\.id)))
 		let files = files
-		let fetched = await withTaskGroup(of: (Int, StoryCard, FileDetail?).self) { group in
+		let downloaded = await withTaskGroup(of: (Int, FileDetail?).self) { group in
 			for (index, briefing) in chosen.enumerated() {
-				group.addTask {
-					let detail = try? await files.file(id: briefing.id)
-					let loop = origin[briefing.id]
-					let output = LoopOutput(
-						id: briefing.id, name: briefing.name, mimeType: briefing.mimeType,
-						updatedAt: briefing.updatedAt)
-					return (
-						index,
-						StoryCard(
-							id: briefing.id, unit: loop?.name ?? StoryCard.chiefOfStaffUnit,
-							headline: StoryDerivation.headline(html: detail?.text, fileName: briefing.name),
-							updatedAt: briefing.updatedAt, content: .page(output), loopID: loop?.id),
-						detail)
-				}
+				group.addTask { (index, try? await files.file(id: briefing.id)) }
 			}
-			var result: [(Int, StoryCard, FileDetail?)] = []
-			for await part in group { result.append(part) }
-			return result.sorted { $0.0 < $1.0 }
+			var result: [Int: FileDetail?] = [:]
+			for await (index, detail) in group { result[index] = detail }
+			return result
+		}
+		let (origin, lookupFailed) = await attached
+		let fetched: [(Int, StoryCard, FileDetail?)] = chosen.enumerated().map { index, briefing in
+			let detail = downloaded[index] ?? nil
+			let loop = origin[briefing.id]
+			let output = LoopOutput(
+				id: briefing.id, name: briefing.name, mimeType: briefing.mimeType, updatedAt: briefing.updatedAt)
+			return (
+				index,
+				StoryCard(
+					id: briefing.id, unit: loop?.name ?? StoryCard.chiefOfStaffUnit,
+					headline: StoryDerivation.headline(html: detail?.text, fileName: briefing.name),
+					updatedAt: briefing.updatedAt, content: .page(output), loopID: loop?.id),
+				detail)
 		}
 		var details: [String: FileDetail] = [:]
 		for (card, detail) in fetched.map({ ($0.1, $0.2) }).prefix(Self.preloadCount) {

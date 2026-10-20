@@ -60,7 +60,7 @@ public struct FeedEntry: Identifiable, Sendable, Equatable {
 	public var card: ForYouCard
 	public var bucket: FeedBucket
 	public var record: DecisionRecord?
-	/// The reader deferred it and it has come due: the card says "Back from Later".
+	/// The reader deferred it and it has come due: the card says "Back again".
 	public var backFromLater: Bool
 	/// The one chip saying why it sits where it does.
 	public var urgency: ForYouUrgency?

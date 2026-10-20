@@ -23,10 +23,11 @@ struct ConversationListView: View {
 	/// New conversation, optionally with someone already in the To field.
 	let onNewChat: (ChatParticipant?) -> Void
 	var onSearchEverywhere: (String) -> Void = { _ in }
+	/// A suggested first message from the empty state, sent to the Chief of Staff.
+	var onSuggestion: (String) -> Void = { _ in }
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
-	@State private var searchPresented = false
 	@State private var expandedPeople: Set<String> = []
 	@State private var expandedSections: Set<String> = []
 	@State private var archivedExpanded = false
@@ -128,7 +129,7 @@ struct ConversationListView: View {
 				}
 			}
 			if let empty = layout.empty, store.phase == .loaded {
-				TeamEmptyState(empty: empty) { act(on: empty, query: search) }.plainRow()
+				TeamEmptyState(empty: empty, onSuggestion: onSuggestion) { act(on: empty, query: search) }.plainRow()
 			}
 			if layout.showsArchived, !picking.isActive {
 				ArchivedRow(
@@ -151,13 +152,13 @@ struct ConversationListView: View {
 		#endif
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
+		.teamSearch(text: $search)
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
-		.teamSearch(text: $search, isPresented: $searchPresented)
 		.teamRowMenu($menuTarget)
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",
@@ -374,13 +375,24 @@ struct ConversationListView: View {
 		Task { _ = await action(ids) }
 	}
 
+	/// Plain wording for people; debug builds add the underlying error so a bad response is findable.
+	private static func failureMessage(_ reason: String) -> String {
+		let plain = "Check your connection and try again."
+		#if DEBUG
+			return "\(plain)\n\(reason)"
+		#else
+			return plain
+		#endif
+	}
+
 	@ViewBuilder
 	private var overlay: some View {
 		switch store.phase {
 		case .idle, .loading:
 			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
-		case .failed(let message):
-			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: message) {
+		case .failed(let reason):
+			EmptyState(
+				symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: Self.failureMessage(reason)) {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
@@ -396,17 +408,17 @@ struct ChatsDisplayMenu: View {
 	@Bindable var store: ConversationsStore
 
 	var body: some View {
-		Picker("Layout", selection: $store.displayOptions.layout) {
+		Picker("Show as", selection: $store.displayOptions.layout) {
 			ForEach(TeamDisplayOptions.Layout.allCases, id: \.self) { Text($0.label).tag($0) }
 		}
 		.pickerStyle(.inline)
 		if store.displayOptions.layout == .sections {
-			Picker("Conversations", selection: $store.displayOptions.grouping) {
+			Picker("Group by", selection: $store.displayOptions.grouping) {
 				ForEach(TeamDisplayOptions.Grouping.allCases, id: \.self) { Text($0.label).tag($0) }
 			}
 			.pickerStyle(.inline)
 		}
-		Picker("Filter chips", selection: $store.displayOptions.showsFilterChips) {
+		Picker("Quick filters", selection: $store.displayOptions.showsFilterChips) {
 			Text("Show").tag(true)
 			Text("Hide").tag(false)
 		}

@@ -61,7 +61,7 @@ struct ObjectsBoardView: View {
 			if board.columns.allSatisfy({ $0.total == 0 }) {
 				EmptyState(
 					symbol: "square.stack.3d.up", title: "Nothing here yet",
-					message: "Objects from you and your agents land here.")
+					message: "Create an object, or ask an agent to. What you and your agents make shows up here.")
 			} else {
 				columns
 			}

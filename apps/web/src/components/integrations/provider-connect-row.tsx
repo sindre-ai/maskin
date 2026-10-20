@@ -37,6 +37,7 @@ export function ProviderRow({
 	onRequestLink,
 	returnTo,
 	variant = 'settings',
+	reconnect = false,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
@@ -56,6 +57,8 @@ export function ProviderRow({
 	returnTo?: string
 	/** `chat` swaps Disconnect for a read-only "Connected" state — disconnecting stays in Settings. */
 	variant?: 'settings' | 'chat'
+	/** The workspace has a row for this provider that is no longer active, so the sign-in button reads Reconnect. */
+	reconnect?: boolean
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -167,7 +170,7 @@ export function ProviderRow({
 							</Button>
 						)}
 						<Button size="sm" onClick={handleConnect} disabled={connect.isPending}>
-							Connect
+							{reconnect ? 'Reconnect' : 'Connect'}
 						</Button>
 					</div>
 				)
@@ -438,6 +441,7 @@ export function ProviderConnectRow({
 	workspaceId,
 	returnTo,
 	variant = 'settings',
+	reconnect,
 }: {
 	provider: ProviderInfo
 	/** This provider's active integrations in the workspace. */
@@ -445,6 +449,7 @@ export function ProviderConnectRow({
 	workspaceId: string
 	returnTo?: string
 	variant?: 'settings' | 'chat'
+	reconnect?: boolean
 }) {
 	const [apiKeyOpen, setApiKeyOpen] = useState(false)
 	const [apiKey, setApiKey] = useState('')
@@ -490,6 +495,7 @@ export function ProviderConnectRow({
 					onRequestLink={() => setLinkGithubOpen(true)}
 					returnTo={returnTo}
 					variant={variant}
+					reconnect={reconnect}
 				/>
 			)}
 			{provider.authType === 'api_key' && (
