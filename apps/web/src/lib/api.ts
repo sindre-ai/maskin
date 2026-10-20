@@ -528,10 +528,30 @@ export const api = {
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
 				{ workspaceId },
 			),
-		updateScope: (id: string, workspaceId: string, scopeGrants: KeychainScopeGrant[]) =>
-			request<{ id: string; scopeGrants: KeychainScopeGrant[] }>(`/integrations/${id}/scope`, {
+		getGrants: (id: string, workspaceId: string) =>
+			request<IntegrationGrants>(`/integrations/${id}/grants`, { workspaceId }),
+		/** Replaces every explicit grant on an integration in one step. */
+		replaceGrants: (id: string, workspaceId: string, grants: AgentGrant[]) =>
+			request<{ grants: AgentGrant[] }>(`/integrations/${id}/grants`, {
 				method: 'PUT',
-				body: { scopeGrants },
+				body: { grants },
+				workspaceId,
+			}),
+		setGrant: (id: string, workspaceId: string, actorId: string, access: AgentGrantAccess) =>
+			request<AgentGrant>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'PUT',
+				body: { access },
+				workspaceId,
+			}),
+		removeGrant: (id: string, workspaceId: string, actorId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
+			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+				method: 'PUT',
+				body: { defaultAgentAccess },
 				workspaceId,
 			}),
 		undo: (id: string, workspaceId: string) =>
@@ -1754,14 +1774,25 @@ export interface IntegrationResponse {
 	providerMode?: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
-	/** Keychain: who may read it. Empty means nobody (fail-closed). */
-	scopeGrants?: KeychainScopeGrant[]
+	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
+	defaultAgentAccess?: 'read' | 'none'
+	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
+	agentGrants?: AgentGrant[]
 }
 
-export type KeychainScopeGrant =
-	| { kind: 'actor'; actorId: string }
-	| { kind: 'loop'; loopId: string }
-	| { kind: 'workspace' }
+export type AgentGrantAccess = 'read' | 'write' | 'read_write'
+
+export interface AgentGrant {
+	actorId: string
+	access: AgentGrantAccess
+}
+
+export interface IntegrationGrants {
+	integrationId: string
+	mode: 'keychain' | 'standard'
+	defaultAgentAccess: 'read' | 'none'
+	grants: AgentGrant[]
+}
 
 export interface CredentialAuditEntry {
 	id: string
@@ -1786,8 +1817,8 @@ export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' |
 interface ChatCaptureBase {
 	sessionId: string
 	displayName: string
-	/** Omit for the default (the session's agent). [] means unassigned. */
-	scopeGrants?: Array<{ kind: 'actor'; actorId: string } | { kind: 'workspace' }>
+	/** Agents that may use it. Omit for the default (the session's agent). [] means unassigned. */
+	agentIds?: string[]
 	/** The secret was typed into a card an agent asked for, not the composer. */
 	fromCard?: boolean
 }

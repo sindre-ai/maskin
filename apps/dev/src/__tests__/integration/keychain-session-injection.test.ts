@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
-	type ScopeGrant,
 	conversationParticipants,
 	credentialAccessLog,
 	integrations,
@@ -94,18 +93,15 @@ async function vaultKey(
 	s: Awaited<ReturnType<typeof setup>>,
 	name: string,
 	value: string,
-	grants: ScopeGrant[],
+	agentIds: string[],
 ) {
 	const { integrationId } = await createByoApiKey(db, kms, {
 		workspaceId: s.ws.id,
 		actorId: s.human,
 		displayName: name,
 		rawSecret: value,
+		agentIds,
 	})
-	await db
-		.update(integrations)
-		.set({ scopeGrants: grants })
-		.where(eq(integrations.id, integrationId))
 	return integrationId
 }
 
@@ -122,7 +118,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('gives a granted actor KEYCHAIN_BYO_APIKEY_<SLUG> and an ungranted actor nothing', async () => {
 		const s = await setup()
 		const value = fake('coolify')
-		await vaultKey(s, 'Coolify', value, [{ kind: 'actor', actorId: s.agentA.id }])
+		await vaultKey(s, 'Coolify', value, [s.agentA.id])
 
 		const envA = await launchEnv(s.sessionA)
 		const envB = await launchEnv(s.sessionB)
@@ -135,7 +131,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('names a key from its display name, as the paste form and a chat capture both store it', async () => {
 		const s = await setup()
 		const pasted = fake('pasted')
-		await vaultKey(s, 'Notion team', pasted, [{ kind: 'actor', actorId: s.agentA.id }])
+		await vaultKey(s, 'Notion team', pasted, [s.agentA.id])
 		const captured = fake('captured')
 		const { integrationId } = await captureChatSecret(db, kms, {
 			workspaceId: s.ws.id,
@@ -144,7 +140,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 			detectedProvider: 'cloudflare',
 			displayName: 'Cloudflare deploy',
 			rawSecret: captured,
-			scopeGrants: [{ kind: 'actor', actorId: s.agentA.id }],
+			agentIds: [s.agentA.id],
 		})
 
 		const env = await launchEnv(s.sessionA)
@@ -159,16 +155,14 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('leaves out undone keys, keys with no grants and keys in other workspaces', async () => {
 		const s = await setup()
 		const other = await setup()
-		const undone = await vaultKey(s, 'Undone key', fake('undone'), [
-			{ kind: 'actor', actorId: s.agentA.id },
-		])
+		const undone = await vaultKey(s, 'Undone key', fake('undone'), [s.agentA.id])
 		await db
 			.update(integrations)
 			.set({ status: 'undone', credentials: null, dekCiphertext: null })
 			.where(eq(integrations.id, undone))
 		await vaultKey(s, 'Unscoped key', fake('unscoped'), [])
-		await vaultKey(other, 'Elsewhere', fake('elsewhere'), [{ kind: 'workspace' }])
-		await vaultKey(s, 'Visible key', fake('visible'), [{ kind: 'actor', actorId: s.agentA.id }])
+		await vaultKey(other, 'Elsewhere', fake('elsewhere'), [other.agentA.id])
+		await vaultKey(s, 'Visible key', fake('visible'), [s.agentA.id])
 
 		const env = await launchEnv(s.sessionA)
 		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([
@@ -178,12 +172,12 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 
 	it('leaves out a key whose config switches off agent sessions, and does not read it', async () => {
 		const s = await setup()
-		const off = await vaultKey(s, 'Switched off', fake('off'), [{ kind: 'workspace' }])
+		const off = await vaultKey(s, 'Switched off', fake('off'), [s.agentA.id, s.agentB.id])
 		await db
 			.update(integrations)
 			.set({ config: { expose_to_agent_sessions: false } })
 			.where(eq(integrations.id, off))
-		await vaultKey(s, 'Switched on', fake('on'), [{ kind: 'workspace' }])
+		await vaultKey(s, 'Switched on', fake('on'), [s.agentA.id, s.agentB.id])
 
 		const env = await launchEnv(s.sessionA)
 		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([
@@ -198,10 +192,10 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		expect(reads).toEqual([])
 	})
 
-	it('treats a workspace grant as every actor in the workspace, and a loop grant as nobody yet', async () => {
+	it('reaches every agent the key is granted to, and nobody when it is granted to no one', async () => {
 		const s = await setup()
-		await vaultKey(s, 'Shared', fake('shared'), [{ kind: 'workspace' }])
-		await vaultKey(s, 'Loop only', fake('loop'), [{ kind: 'loop', loopId: crypto.randomUUID() }])
+		await vaultKey(s, 'Shared', fake('shared'), [s.agentA.id, s.agentB.id])
+		await vaultKey(s, 'Nobody', fake('nobody'), [])
 
 		for (const session of [s.sessionA, s.sessionB]) {
 			const env = await launchEnv(session)
@@ -223,7 +217,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 			detectedProvider: 'slack',
 			displayName: 'Slack ops',
 			rawSecret: value,
-			scopeGrants: [{ kind: 'actor', actorId: s.agentB.id }],
+			agentIds: [s.agentB.id],
 		})
 		await db
 			.update(integrations)
@@ -247,9 +241,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 
 	it('writes one read audit row for the granted session, and no denied-read event for anyone else', async () => {
 		const s = await setup()
-		const id = await vaultKey(s, 'Audited', fake('audited'), [
-			{ kind: 'actor', actorId: s.agentA.id },
-		])
+		const id = await vaultKey(s, 'Audited', fake('audited'), [s.agentA.id])
 
 		await launchEnv(s.sessionA)
 		await launchEnv(s.sessionB)
@@ -271,11 +263,11 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 		const s = await setup()
 		const first = fake('first')
 		// The name rule now refuses an emoji-only name at the door, so rename a stored row.
-		const emoji = await vaultKey(s, 'Emoji key', fake('emoji'), [{ kind: 'workspace' }])
+		const emoji = await vaultKey(s, 'Emoji key', fake('emoji'), [s.agentA.id, s.agentB.id])
 		await db.update(integrations).set({ displayName: '🔑🔑' }).where(eq(integrations.id, emoji))
-		await vaultKey(s, 'My key', first, [{ kind: 'workspace' }])
+		await vaultKey(s, 'My key', first, [s.agentA.id, s.agentB.id])
 		// The slug check refuses a second 'my-KEY' at the door too, so rename a stored row.
-		const second = await vaultKey(s, 'Second key', fake('second'), [{ kind: 'workspace' }])
+		const second = await vaultKey(s, 'Second key', fake('second'), [s.agentA.id, s.agentB.id])
 		await db.update(integrations).set({ displayName: 'my-KEY' }).where(eq(integrations.id, second))
 
 		const env = await launchEnv(s.sessionA)
@@ -288,8 +280,8 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 
 	it('starts without a key it cannot read and logs it, rather than failing the launch', async () => {
 		const s = await setup()
-		const id = await vaultKey(s, 'Broken', fake('broken'), [{ kind: 'workspace' }])
-		await vaultKey(s, 'Fine', fake('fine'), [{ kind: 'workspace' }])
+		const id = await vaultKey(s, 'Broken', fake('broken'), [s.agentA.id, s.agentB.id])
+		await vaultKey(s, 'Fine', fake('fine'), [s.agentA.id, s.agentB.id])
 		await db
 			.update(integrations)
 			.set({ dekCiphertext: 'not-a-wrapped-key' })
@@ -311,7 +303,7 @@ describe('SessionManager.buildLaunchSpec — Keychain env injection (Integration
 	it('puts only redacted names in the container-start log, never a value', async () => {
 		const s = await setup()
 		const value = fake('logged')
-		await vaultKey(s, 'Logged', value, [{ kind: 'actor', actorId: s.agentA.id }])
+		await vaultKey(s, 'Logged', value, [s.agentA.id])
 		const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {})
 		try {
 			await launchEnv(s.sessionA)

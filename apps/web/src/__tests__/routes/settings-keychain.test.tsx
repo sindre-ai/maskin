@@ -102,7 +102,7 @@ const pasted = (over = {}) =>
 		providerMode: 'byo_apikey',
 		displayName: 'Linear · Sindre AI',
 		source: 'admin_ui',
-		scopeGrants: [{ kind: 'actor', actorId: 'actor-1' }],
+		agentGrants: [],
 		createdAt: '2026-10-04T10:00:00.000Z',
 		...over,
 	})
@@ -115,7 +115,7 @@ const captured = (over = {}) =>
 		source: 'chat_capture',
 		originSessionId: '9f2a3c1d-0000-4000-8000-000000000000',
 		status: 'pending_undo',
-		scopeGrants: [{ kind: 'actor', actorId: 'agent-1' }],
+		agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
 		createdAt: '2026-10-04T11:00:00.000Z',
 		...over,
 	})
@@ -163,7 +163,7 @@ describe('KeychainPage', () => {
 	it('lists held credentials newest first, with who can read each and the chat badge only where it applies', () => {
 		mockUseIntegrations.mockReturnValue({
 			data: [
-				pasted(),
+				pasted({ agentGrants: [{ actorId: 'agent-2', access: 'read_write' }] }),
 				captured(),
 				// Not Keychain rows: a registered provider, and a key that was undone.
 				buildIntegrationResponse({ id: 'slack', provider: 'slack', providerMode: 'registered' }),
@@ -182,7 +182,7 @@ describe('KeychainPage', () => {
 		expect(rows[0]).toHaveTextContent('Infra & DevOps')
 		expect(rows[1]).toHaveTextContent('Linear · Sindre AI')
 		expect(rows[1]).not.toHaveTextContent('Captured via chat')
-		expect(rows[1]).toHaveTextContent('Magnus')
+		expect(rows[1]).toHaveTextContent('Code Reviewer')
 		expect(screen.queryByText('Undone key')).not.toBeInTheDocument()
 		expect(screen.queryByText(/slack/i)).not.toBeInTheDocument()
 		// The footer helper line appears because a chat-captured row is on the page.
@@ -190,7 +190,7 @@ describe('KeychainPage', () => {
 	})
 
 	it('marks a credential nobody can read as unassigned and fail-closed', () => {
-		mockUseIntegrations.mockReturnValue({ data: [pasted({ scopeGrants: [] })], isLoading: false })
+		mockUseIntegrations.mockReturnValue({ data: [pasted({ agentGrants: [] })], isLoading: false })
 		render(<KeychainPage />)
 		expect(screen.getByText('Unassigned')).toBeInTheDocument()
 		expect(screen.getByText(/No agents — fail-closed/)).toBeInTheDocument()
@@ -559,20 +559,14 @@ describe('CredentialDetailPage: who can use this key', () => {
 		screen.getByRole('heading', { name: 'Agents' }).parentElement?.parentElement
 
 	it('lists the agents the key is granted to, and says so when there are none', () => {
-		openPasted({ scopeGrants: [{ kind: 'actor', actorId: 'agent-1' }] })
+		openPasted({ agentGrants: [{ actorId: 'agent-1', access: 'read_write' }] })
 		expect(agentsBlock()).toHaveTextContent('Available to 1 agent')
 		expect(agentsBlock()).toHaveTextContent('Infra & DevOps')
 	})
 
-	it('says no agent can use a key granted to nobody but a person', () => {
+	it('says no agent can use a key nobody has granted', () => {
 		openPasted()
 		expect(agentsBlock()).toHaveTextContent('No agent can use this key yet.')
-	})
-
-	it('names the whole workspace for a workspace grant', () => {
-		openPasted({ scopeGrants: [{ kind: 'workspace' }] })
-		expect(agentsBlock()).toHaveTextContent('Available to 2 agents')
-		expect(agentsBlock()).toHaveTextContent('All agents in this workspace')
 	})
 
 	it('shows Edit access to the person who saved the key, and to an admin', () => {
@@ -710,12 +704,8 @@ describe('CredentialDetailPage: who can use this key', () => {
 		await user.click(screen.getByRole('button', { name: 'Edit access' }))
 		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		// The pasting person's own grant stays; only the agent is added.
 		expect(mockUpdateScope).toHaveBeenCalledWith(
-			[
-				{ kind: 'actor', actorId: 'actor-1' },
-				{ kind: 'actor', actorId: 'agent-2' },
-			],
+			['agent-2'],
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 	})

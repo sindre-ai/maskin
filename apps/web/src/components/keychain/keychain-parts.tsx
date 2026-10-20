@@ -7,7 +7,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import type { IntegrationResponse, KeychainScopeGrant } from '@/lib/api'
+import type { AgentGrant, IntegrationResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 
@@ -45,24 +45,16 @@ export function credentialName(integration: IntegrationResponse): string {
 }
 
 export function isUnassigned(integration: IntegrationResponse): boolean {
-	return (integration.scopeGrants ?? []).length === 0
+	return (integration.agentGrants ?? []).length === 0
 }
 
-/** Plain-words scope: who can read this credential. Names come from the workspace's actors. */
+/** Plain-words scope: which agents can use this credential. Names come from the workspace's actors. */
 export function describeScope(
-	grants: KeychainScopeGrant[] | undefined,
+	grants: AgentGrant[] | undefined,
 	actorName: (actorId: string) => string | undefined,
 ): string {
 	if (!grants || grants.length === 0) return 'No agents — fail-closed'
-	const labels: string[] = []
-	let loops = 0
-	for (const grant of grants) {
-		if (grant.kind === 'workspace') labels.push('Whole workspace')
-		else if (grant.kind === 'loop') loops += 1
-		else labels.push(actorName(grant.actorId) ?? 'Unknown member')
-	}
-	if (loops > 0) labels.push(loops === 1 ? '1 loop' : `${loops} loops`)
-	const [first, ...rest] = labels
+	const [first, ...rest] = grants.map((g) => actorName(g.actorId) ?? 'Unknown agent')
 	return rest.length > 0 ? `${first} + ${rest.length} more` : (first ?? '')
 }
 

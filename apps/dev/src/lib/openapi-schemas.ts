@@ -232,6 +232,13 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
+export const agentGrantAccessSchema = z.enum(['read', 'write', 'read_write'])
+
+export const agentGrantSchema = z.object({
+	actorId: z.string().uuid(),
+	access: agentGrantAccessSchema,
+})
+
 export const integrationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -263,15 +270,10 @@ export const integrationResponseSchema = z.object({
 	// registered providers) and who may read it. Never the value.
 	providerMode: z.enum(['registered', 'byo_apikey', 'byo_login', 'byo_oauth']).optional(),
 	displayName: z.string().nullable().optional(),
-	scopeGrants: z
-		.array(
-			z.discriminatedUnion('kind', [
-				z.object({ kind: z.literal('actor'), actorId: z.string().uuid() }),
-				z.object({ kind: z.literal('loop'), loopId: z.string().uuid() }),
-				z.object({ kind: z.literal('workspace') }),
-			]),
-		)
-		.optional(),
+	// Agent grants. defaultAgentAccess is what an agent with no row of its own gets;
+	// agentGrants are the explicit rows. Keychain credentials are explicit-only.
+	defaultAgentAccess: z.enum(['read', 'none']).optional(),
+	agentGrants: z.array(agentGrantSchema).optional(),
 })
 
 export const providerEventSchema = z.object({

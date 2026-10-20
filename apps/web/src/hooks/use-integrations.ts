@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type KeychainScopeGrant, api } from '../lib/api'
+import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -223,8 +223,12 @@ export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
 	return useMutation({
 		// The sheet shows the failure inline, so the global error toast would only cover Save.
 		meta: { handlesOwnErrors: true },
-		mutationFn: (scopeGrants: KeychainScopeGrant[]) =>
-			api.integrations.updateScope(integrationId, workspaceId, scopeGrants),
+		mutationFn: (agentIds: string[]) =>
+			api.integrations.replaceGrants(
+				integrationId,
+				workspaceId,
+				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
+			),
 		onSuccess: () => {
 			toast.success('Access updated')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })

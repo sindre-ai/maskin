@@ -229,7 +229,7 @@ describe('Composer secret guard', () => {
 			detectedProvider: 'cloudflare',
 			displayName: 'Cloudflare key',
 			rawSecret: FAKE_CF,
-			scopeGrants: [{ kind: 'actor', actorId: 'agent-1' }],
+			agentIds: ['agent-1'],
 		})
 		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
 		const sent = (props.onSend as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string
@@ -259,7 +259,7 @@ describe('Composer secret guard', () => {
 		await waitFor(() =>
 			expect(chatCaptureMock).toHaveBeenCalledWith(
 				'ws-test',
-				expect.objectContaining({ scopeGrants: [] }),
+				expect.objectContaining({ agentIds: [] }),
 			),
 		)
 	})

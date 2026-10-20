@@ -16,7 +16,13 @@ import { verifyCredentialAccessChain } from '../../lib/integrations/credential-a
 import { getCredential } from '../../lib/integrations/lookup'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import {
+	grantedActorIds,
+	insertActor,
+	insertAgentGrant,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // Obviously fake, built at runtime so no token-shaped literal sits in the repo.
@@ -88,8 +94,9 @@ describe('POST /api/integrations/byo-apikey', () => {
 		expect(row?.credentials).not.toBe(CANARY)
 		expect(row?.credentials).not.toContain(CANARY)
 		expect(row?.dekCiphertext).toBeTruthy()
-		// Default scope: one actor grant for the member who pasted it.
-		expect(row?.scopeGrants).toEqual([{ kind: 'actor', actorId: human }])
+		// No agent can use it until a person grants one.
+		expect(await grantedActorIds(db, row?.id ?? '')).toEqual([])
+		expect(row?.defaultAgentAccess).toBe('none')
 
 		const log = await db
 			.select()
@@ -131,7 +138,7 @@ describe('POST /api/integrations/byo-apikey', () => {
 		expect(third.status).toBe(201)
 	})
 
-	it('is readable through getCredential by the member it is scoped to, and by nobody else', async () => {
+	it('is readable by nobody until an agent is granted, then only by that agent', async () => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)
 		const agent = await insertActor(db, { type: 'agent' })
@@ -144,9 +151,12 @@ describe('POST /api/integrations/byo-apikey', () => {
 			sessionId: session.id,
 			requestId: 'req-1',
 		})
-		const cred = await getCredential(db, ws.id, integrationId, ctx(human), { kms })
-		expect(cred.value).toBe(CANARY)
 		await expect(getCredential(db, ws.id, integrationId, ctx(agent.id), { kms })).rejects.toThrow()
+		await insertAgentGrant(db, { workspaceId: ws.id, integrationId, actorId: agent.id })
+		const cred = await getCredential(db, ws.id, integrationId, ctx(agent.id), { kms })
+		expect(cred.value).toBe(CANARY)
+		// A person needs a grant too: a saved key is explicit-grant for everyone.
+		await expect(getCredential(db, ws.id, integrationId, ctx(human), { kms })).rejects.toThrow()
 	})
 
 	it('rejects agent callers and writes nothing', async () => {

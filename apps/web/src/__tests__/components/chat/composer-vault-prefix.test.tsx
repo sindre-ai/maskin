@@ -351,7 +351,7 @@ describe('Composer vault mode (the ! prefix)', () => {
 			detectedProvider: 'manual',
 			displayName: 'Coolify',
 			rawSecret: FAKE_TOKEN,
-			scopeGrants: [{ kind: 'actor', actorId: 'agent-1' }],
+			agentIds: ['agent-1'],
 		})
 		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
 		const sent = (props.onSend as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string

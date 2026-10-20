@@ -3043,17 +3043,14 @@ ${HUMAN_MESSAGE_STYLE}`
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, whose scope grants name the
-	 * session's actor or the whole workspace. The scope filter runs in SQL so a key
+	 * keys and logins, active or still inside their undo window, that an agent grant names
+	 * for the session's actor. The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
 	 *
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
-	 *
-	 * A loop-kind grant matches nothing here: a session carries no loop id today, so a
-	 * loop grant stays fail-closed at launch.
 	 *
 	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
 	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
@@ -3079,10 +3076,10 @@ ${HUMAN_MESSAGE_STYLE}`
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
 					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
-					or(
-						sql`${integrations.scopeGrants} @> '[{"kind":"workspace"}]'::jsonb`,
-						sql`${integrations.scopeGrants} @> ${JSON.stringify([{ kind: 'actor', actorId: session.actorId }])}::jsonb`,
-					),
+					// Explicit grant only: a Keychain credential has no default access. Written as
+					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
+					// from those renders unqualified (known-pitfalls.md).
+					sql`EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId})`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))

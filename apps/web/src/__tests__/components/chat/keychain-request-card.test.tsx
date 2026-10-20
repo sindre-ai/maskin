@@ -132,7 +132,7 @@ describe('KeychainRequestCard', () => {
 			username: 'me@example.test',
 			password: PASSWORD,
 			fromCard: true,
-			scopeGrants: [{ kind: 'actor', actorId: ASKING_AGENT }],
+			agentIds: [ASKING_AGENT],
 		})
 	})
 

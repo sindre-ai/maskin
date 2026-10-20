@@ -313,11 +313,11 @@ export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' 
 
 export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 
-/** Who may read a credential through getCredential. Stored inline in integrations.scope_grants. */
-export type ScopeGrant =
-	| { kind: 'actor'; actorId: string }
-	| { kind: 'loop'; loopId: string }
-	| { kind: 'workspace' }
+/** What an agent may do with an integration. Keychain credentials only ever use 'read_write' (on/off). */
+export type AgentGrantAccess = 'read' | 'write' | 'read_write'
+
+/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
+export type IntegrationDefaultAccess = 'read' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -353,8 +353,12 @@ export const integrations = pgTable(
 			.default('registered'),
 		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
 		displayName: text('display_name'),
-		// JSONB array of ScopeGrant. Fail-closed: the empty default grants nobody.
-		scopeGrants: jsonb('scope_grants').$type<ScopeGrant[]>().notNull().default(sql`'[]'::jsonb`),
+		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
+		defaultAgentAccess: text('default_agent_access')
+			.$type<IntegrationDefaultAccess>()
+			.notNull()
+			.default('read'),
 		// Master-key-wrapped per-credential DEK. NULL = legacy row, decrypted under
 		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
 		dekCiphertext: text('dek_ciphertext'),
@@ -388,7 +392,10 @@ export const integrations = pgTable(
 			'integrations_byo_needs_display_name',
 			sql`${t.providerMode} = 'registered' OR ${t.displayName} IS NOT NULL`,
 		),
-		check('integrations_scope_grants_is_array', sql`jsonb_typeof(${t.scopeGrants}) = 'array'`),
+		check(
+			'integrations_default_agent_access_enum',
+			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+		),
 		check(
 			'integrations_source_enum',
 			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
@@ -403,6 +410,37 @@ export const integrations = pgTable(
 	],
 )
 export type Integration = typeof integrations.$inferSelect
+
+/**
+ * Which agents may use an integration, and how. One row per (integration, agent);
+ * an agent with no row falls back to integrations.default_agent_access. Humans are
+ * not subject to grants. Resolution lives in apps/dev/src/lib/integrations/agent-access.ts.
+ */
+export const agentGrants = pgTable(
+	'agent_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		access: text('access').$type<AgentGrantAccess>().notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
+		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
+		check('agent_grants_access_enum', sql`${t.access} IN ('read', 'write', 'read_write')`),
+	],
+)
+export type AgentGrant = typeof agentGrants.$inferSelect
 
 // ── Keychain ────────────────────────────────────────────────────────────────
 

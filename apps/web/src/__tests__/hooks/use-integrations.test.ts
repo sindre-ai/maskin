@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({
 			providers: vi.fn(),
 			disconnect: vi.fn(),
 			connect: vi.fn(),
-			updateScope: vi.fn(),
+			replaceGrants: vi.fn(),
 		},
 	},
 }))
@@ -170,7 +170,7 @@ describe('useIntegrations', () => {
 
 describe('useUpdateKeyScope', () => {
 	it('shows a failed save inside the sheet, not as a second global toast', async () => {
-		vi.mocked(api.integrations.updateScope).mockRejectedValue(new Error('nope'))
+		vi.mocked(api.integrations.replaceGrants).mockRejectedValue(new Error('nope'))
 
 		const { result } = renderHook(
 			() => ({ save: useUpdateKeyScope('ws-1', 'int-1'), queryClient: useQueryClient() }),

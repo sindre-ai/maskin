@@ -16,7 +16,7 @@ vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn(async
 import { createByoApiKey } from '../../lib/integrations/byo-apikey'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertAgentGrant, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // The header smoke assertion of the Keychain bet: a header written as
@@ -134,10 +134,7 @@ describe('Keychain header resolution (Integration)', () => {
 			displayName: 'Coolify',
 			rawSecret: TOKEN,
 		})
-		await db
-			.update(integrations)
-			.set({ scopeGrants: [{ kind: 'actor', actorId: granted.id }] })
-			.where(eq(integrations.id, integrationId))
+		await insertAgentGrant(db, { workspaceId: ws.id, integrationId, actorId: granted.id })
 
 		const manager = new SessionManager(db, stubStorage())
 		const specFor = async (actorId: string) => {
