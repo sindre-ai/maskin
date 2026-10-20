@@ -20606,6 +20606,936 @@
 				}
 			}
 		},
+		"/api/custom-mcp-servers": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Add a custom MCP server to the workspace (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Added. No agent has it until it is granted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/custom-mcp-servers/{id}": {
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Read a custom MCP server, with secret values masked",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Change a custom MCP server (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Saved. Applies to sessions started after this call",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/chat-capture": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -31000,9 +31930,55 @@
 												"maxItems": 3,
 												"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 											},
+											"drafts": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"id": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 40,
+															"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+														},
+														"object_id": {
+															"type": "string",
+															"format": "uuid",
+															"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+														},
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 30,
+															"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+														},
+														"to": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 300,
+															"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+														},
+														"body": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 20000,
+															"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+														}
+													}
+												},
+												"minItems": 1,
+												"maxItems": 10,
+												"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+											},
 											"draft": {
 												"type": "object",
 												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40,
+														"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+													},
 													"object_id": {
 														"type": "string",
 														"format": "uuid",
@@ -41920,9 +42896,55 @@
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 																	},
+																	"drafts": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"id": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 40,
+																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				},
+																				"object_id": {
+																					"type": "string",
+																					"format": "uuid",
+																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 30,
+																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				},
+																				"to": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300,
+																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				},
+																				"body": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 20000,
+																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				}
+																			}
+																		},
+																		"minItems": 1,
+																		"maxItems": 10,
+																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
+																			"id": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 40,
+																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																			},
 																			"object_id": {
 																				"type": "string",
 																				"format": "uuid",
@@ -42321,7 +43343,7 @@
 					"Devices"
 				],
 				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
-				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to the device's Agents working activity for the workspace in `X-Workspace-Id`; a new activity mints a new token (the old one is deleted by the app). The device must be one of the caller’s registered devices.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -42346,7 +43368,10 @@
 										"pattern": "^[0-9a-fA-F]+$"
 									},
 									"session_id": {
-										"type": "string",
+										"type": [
+											"string",
+											"null"
+										],
 										"format": "uuid"
 									}
 								},
@@ -42382,7 +43407,7 @@
 											"type": "string",
 											"format": "uuid"
 										},
-										"session_id": {
+										"workspace_id": {
 											"type": [
 												"string",
 												"null"
@@ -42397,7 +43422,7 @@
 										"id",
 										"kind",
 										"device_id",
-										"session_id",
+										"workspace_id",
 										"updated_at"
 									]
 								}
@@ -42462,7 +43487,7 @@
 						}
 					},
 					"404": {
-						"description": "Device or session not found",
+						"description": "Device or workspace not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -43467,9 +44492,55 @@
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 																	},
+																	"drafts": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"id": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 40,
+																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				},
+																				"object_id": {
+																					"type": "string",
+																					"format": "uuid",
+																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 30,
+																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				},
+																				"to": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300,
+																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				},
+																				"body": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 20000,
+																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				}
+																			}
+																		},
+																		"minItems": 1,
+																		"maxItems": 10,
+																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
+																			"id": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 40,
+																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																			},
 																			"object_id": {
 																				"type": "string",
 																				"format": "uuid",

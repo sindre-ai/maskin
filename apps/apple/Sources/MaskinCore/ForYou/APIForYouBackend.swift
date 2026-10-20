@@ -80,6 +80,12 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 							draft: d.draft.flatMap { draft in
 								guard let body = draft.body, !body.isEmpty else { return nil }
 								return DecisionDraft(label: draft.label ?? "Draft", to: draft.to, body: body)
+							},
+							// One card, several messages. A message without text is left out and the rest stay.
+							drafts: (d.drafts ?? []).compactMap { draft in
+								guard let body = draft.body, !body.isEmpty else { return nil }
+								return DecisionDraft(
+									id: draft.id, label: draft.label ?? "Draft", to: draft.to, body: body)
 							})
 					})
 			}

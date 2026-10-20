@@ -15,6 +15,8 @@ import UIKit
 struct DecisionCardView: View {
 	struct Actions {
 		var choose: (DecisionOption) -> Void = { _ in }
+		/// Sends or skips one message of a card that carries several. False: it could not be queued.
+		var actOnDraft: (DecisionDraft, DecisionService.DraftAction) -> Bool = { _, _ in true }
 		/// A hold with its optional reason ("Why are you holding it?"). Unset: holds go through `choose`.
 		var hold: ((DecisionOption, String?) -> Void)?
 		var reply: (String) -> Void = { _ in }
@@ -128,6 +130,9 @@ struct DecisionCardView: View {
 			}
 			say
 			if let draft = card.decision?.draft { DraftPreview(draft: draft) }
+			if let drafts = card.decision?.drafts, !drafts.isEmpty {
+				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
+			}
 
 			if let record, !isFailed(record) {
 				receipt(record).transition(.opacity)
@@ -796,6 +801,14 @@ extension DecisionCardView.Actions {
 			withAnimation(MaskinMotion.standard) { store.choose(option, on: card) }
 			announce("You chose \(option.label). Undo is available for a few seconds.")
 			offerUndo?(receipt(option.label)) { withAnimation(MaskinMotion.standard) { _ = store.undo(card) } }
+		}
+		actions.actOnDraft = { draft, action in
+			let queued = store.actOnDraft(draft, action: action, on: card)
+			if queued {
+				MaskinHaptics.play(.success)
+				announce(action == .send ? "Told the agent to send it." : "Skipped.")
+			}
+			return queued
 		}
 		actions.hold = { option, reason in
 			MaskinHaptics.play(.success)
