@@ -6527,4 +6527,29 @@ describe('X-Maskin-Session-Id source', () => {
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
+
+	// POST /api/actors reads this header to find the person behind the creating
+	// session, so the new agent can introduce itself to them.
+	async function createActorHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'actor-new' }),
+		} as Response)
+		const handler = handlers.get('create_actor')
+		if (!handler) throw new Error('create_actor handler not registered')
+		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		const call = vi
+			.mocked(fetch)
+			.mock.calls.find(
+				(c) => String(c[0]).endsWith('/api/actors') && (c[1] as RequestInit).method === 'POST',
+			)
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	it('create_actor for an agent sends config.maskinSessionId on the POST /api/actors call', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createActorHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
 })
