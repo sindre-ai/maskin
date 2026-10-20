@@ -226,6 +226,15 @@ async function seedWorkspace(owner: Actor, opts: { name?: string; settings?: unk
 		objectId: a.id,
 	})
 
+	// The Keychain audit trail: an insert-only log and an append-only snapshot table (a trigger
+	// rejects DELETE on it). Deleting the workspace has to remove both.
+	await sql`
+		INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+		VALUES (${ws.id}, ${randomUUID()}, ${agent.id}, ${randomUUID()})`
+	await sql`
+		INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+		VALUES (${ws.id}, CURRENT_DATE, 1, 'h')`
+
 	return { ws, agent, objectA: a, objectB: b, first, fileKey }
 }
 
@@ -380,6 +389,13 @@ describe('workspace deletion (integration)', () => {
 			]),
 		)
 		expect(storage.deleted.some((k) => k.includes(bystander.ws.id))).toBe(false)
+	})
+
+	it('leaves the audit-chain snapshots append-only outside a purge', async () => {
+		const target = await seedWorkspace(me)
+		await expect(
+			sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
 	})
 
 	it('keeps the people, and scrubs an agent that only lived in this workspace', async () => {
@@ -643,7 +659,7 @@ describe('workspace deletion (integration)', () => {
 			VALUES (${ws.id}, '2026-10-01', 1, 'h1'), (${ws.id}, '2026-10-02', 2, 'h2')`
 		const [head] = await sql<{ id: string; row_hash: string }[]>`
 			SELECT id::text AS id, row_hash FROM credential_access_log
-			WHERE workspace_id = ${ws.id} ORDER BY id DESC LIMIT 1`
+			WHERE workspace_id = ${ws.id} ORDER BY credential_access_log.id DESC LIMIT 1`
 
 		const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
 
