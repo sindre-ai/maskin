@@ -20,8 +20,15 @@ const UPSTREAMS = new Map([
 
 describe('GATEWAY_PROVIDERS', () => {
 	it('is exactly the hosted-HTTP providers, not the ones Maskin hosts or that need the token in the container', () => {
-		expect([...GATEWAY_PROVIDERS].sort()).toEqual(['gmail', 'google-calendar', 'linear', 'posthog'])
-		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet', 'resend']) {
+		expect([...GATEWAY_PROVIDERS].sort()).toEqual([
+			'gmail',
+			'google-calendar',
+			'linear',
+			'posthog',
+			'resend',
+			'ubersuggest',
+		])
+		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
 			expect(GATEWAY_PROVIDERS.has(other)).toBe(false)
 		}
 	})

@@ -62,7 +62,8 @@ vi.mock('../../lib/crypto', () => ({
 // The launch reads the agent's integration access with a query of its own. These tests queue
 // db.select() results by position, so the lookup is stubbed here and covered against real
 // Postgres in integration/agent-access-launch.test.ts.
-vi.mock('../../lib/integrations/agent-access', () => ({
+vi.mock('../../lib/integrations/agent-access', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/integrations/agent-access')>()),
 	listAgentAccess: vi.fn(async () => []),
 }))
 
@@ -2452,7 +2453,7 @@ describe('SessionManager', () => {
 				['absent', {}],
 				['true', { expose_to_agent_sessions: true }],
 			])(
-				'still injects both when the switch is %s (existing behaviour)',
+				'still attaches Resend through the gateway, token withheld, when the switch is %s',
 				async (_label, config) => {
 					const integration = buildIntegration({ provider: 'resend', config })
 					const fixtures = buildLaunchFixtures([integration])
@@ -2466,8 +2467,11 @@ describe('SessionManager', () => {
 					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
 						env: Record<string, string>
 					}
-					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					// Resend goes through the gateway: the key stays on the server.
+					expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+					expect(JSON.stringify(createArgs.env)).not.toContain('re_live_key')
 					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+					expect(createArgs.env.MCP_SERVERS_JSON).toContain('/api/integrations/resend/gateway')
 				},
 			)
 		})
@@ -2553,7 +2557,7 @@ describe('SessionManager', () => {
 					.env
 			}
 
-			it('gives an agent with no reference to a non-auto-injected integration no token for it', async () => {
+			it('attaches a granted integration without the agent referencing it, but gives it no token it does not use', async () => {
 				const env = await launchEnv({
 					provider: 'google-meet',
 					providerConfig: googleMeetProviderConfig,
@@ -2569,8 +2573,8 @@ describe('SessionManager', () => {
 					},
 				})
 				expect(env.GOOGLE_MEET_TOKEN).toBeUndefined()
-				// Not auto-injected, so no server either
-				expect(mcpKeysOf(env)).not.toContain('integration-google-meet')
+				// Granted by default (read), so the server is attached for the agent.
+				expect(mcpKeysOf(env)).toContain('integration-google-meet')
 			})
 
 			it('gives an agent whose own tools config references the token that token', async () => {

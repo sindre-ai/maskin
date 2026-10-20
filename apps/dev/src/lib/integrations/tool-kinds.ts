@@ -49,6 +49,13 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 	]),
 }
 
+/**
+ * Providers whose every tool only reads. Their servers send no annotations and their tool
+ * names are not read verbs (keyword_ideas, domain_overview), so without this a read-only
+ * agent could never use them.
+ */
+const ALL_READ_PROVIDERS: ReadonlySet<string> = new Set(['ubersuggest'])
+
 const READ_PREFIXES = [
 	'get_',
 	'list_',
@@ -86,6 +93,7 @@ export function classifyTool(
 		// no annotation or name can talk it into being a read.
 		return curated.has(toolName) || curated.has(verbOf(toolName)) ? 'read' : 'write'
 	}
+	if (ALL_READ_PROVIDERS.has(provider)) return 'read'
 	if (annotations?.destructiveHint === true) return 'write'
 	if (annotations?.readOnlyHint === true) return 'read'
 	const verb = verbOf(toolName).toLowerCase()

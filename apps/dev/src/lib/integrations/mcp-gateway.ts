@@ -18,16 +18,20 @@ import { type ToolAnnotationsLike, type ToolKind, classifyTool } from './tool-ki
  * Maskin already holds. Explicit, not derived: adding a provider here changes what a
  * container receives (no token env var), which is a decision, not a side effect.
  *
+ * Resend and Ubersuggest are here because a grant now attaches their MCP server to an agent
+ * by itself: with the token in the container, "read" could not stop Resend sending email.
+ *
  * Not here, on purpose:
  *  - slack, linkedin-unipile, google-meet: Maskin hosts the MCP, gated in-process.
  *  - github: a stdio server in the container that also needs the token for git itself.
- *  - resend, ubersuggest: API-key services the agent also calls over plain HTTP.
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'gmail',
 	'google-calendar',
 	'linear',
 	'posthog',
+	'resend',
+	'ubersuggest',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000

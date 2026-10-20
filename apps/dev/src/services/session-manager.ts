@@ -14,7 +14,9 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	const out = new Map<string, string>()
 	for (const provider of GATEWAY_PROVIDERS) {
 		try {
-			const url = (getProvider(provider)?.config.mcp?.server as { url?: unknown } | undefined)?.url
+			const resolved = getProvider(provider)
+			if (resolved?.config.name !== provider) continue
+			const url = (resolved.config.mcp?.server as { url?: unknown } | undefined)?.url
 			if (typeof url === 'string' && !url.startsWith('$')) out.set(provider, url)
 		} catch {
 			// A provider this build does not register has nothing to rewrite.
@@ -35,6 +37,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import {
 	AGENT_PUSH_DIRECTORIES,
 	HUMAN_MESSAGE_STYLE,
@@ -94,7 +97,11 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { buildAccessPreamble } from '../lib/integrations/access-preamble'
-import { listAgentAccess } from '../lib/integrations/agent-access'
+import {
+	type ActorIntegrationAccess,
+	effectiveAccess,
+	listAgentAccess,
+} from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CredentialUndoneError,
@@ -111,6 +118,7 @@ import {
 	stripSessionLevelMcps,
 } from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
+import { dropAlreadyConfigured, linkedInIdentityServer } from '../lib/integrations/mcp-attach'
 import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
@@ -2246,7 +2254,8 @@ export class SessionManager extends EventEmitter {
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
-		const accessPreamble = await this.buildAccessPreamble(session)
+		const accessRows = await this.loadAgentAccess(session)
+		const accessPreamble = buildAccessPreamble(accessRows)
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
 ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
@@ -2555,6 +2564,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		// Keys attached because the agent has access to the integration (not GitHub's per-org
+		// entries), so a duplicate of an entry the agent already carries can be dropped.
+		const attachedKeys = new Set<string>()
+		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
@@ -2589,7 +2602,30 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				continue
 			}
 			const mcp = resolved.config.mcp
-			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
+			// What this agent may do with the integration. Access is what attaches its tools:
+			// whoever grants it should not also have to open each agent and add the server.
+			const access =
+				accessByIntegration.get(integration.id) ??
+				effectiveAccess(
+					{
+						providerMode: 'registered',
+						defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
+					},
+					null,
+				)
+			const autoInjectServer = mcp?.server && access !== 'none' ? mcp.server : null
+
+			// LinkedIn has one server per connected identity and no single spec: attach each.
+			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {
+				if (access !== 'none') {
+					for (const cfg of getLinkedInMcpInstancesForIntegration(integration.id)) {
+						const key = instanceSlug(cfg)
+						autoInjectedMcpServers[key] = linkedInIdentityServer(key)
+						attachedKeys.add(key)
+					}
+				}
+				continue
+			}
 			// True when the provider's declared MCP server template references its
 			// own envKey via `${ENV_KEY}` — e.g. PostHog's
 			// `Authorization: Bearer ${POSTHOG_TOKEN}`. Such a server can't
@@ -2642,6 +2678,8 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 
 			if (integration.provider === 'github') {
+				// No access means no installation token and no MCP entry for this org.
+				if (access === 'none') continue
 				// Unreachable when accessToken is null: the catch above continues on
 				// getValidToken failure for github. Guard for the type checker.
 				if (accessToken === null) continue
@@ -2729,6 +2767,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 			if (autoInjectServer) {
 				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
+				attachedKeys.add(`integration-${integration.provider}`)
 				logger.info('Auto-injected MCP server for active integration', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -2977,11 +3016,18 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			stripFailedIdentities(agentToolsMcpServers, preflightVerdicts) ?? undefined,
 			gatewayUpstreams,
 		).servers
-		const gatedSessionMcpServers =
+		const rewrittenSessionMcpServers =
 			rewriteMcpServersForGateway(
 				stripFailedIdentities(sessionMcpServers, preflightVerdicts),
 				gatewayUpstreams,
 			).servers ?? {}
+		// An integration the agent was granted, and also added by hand, is one server, not two.
+		const gatedSessionMcpServers = dropAlreadyConfigured(rewrittenSessionMcpServers, attachedKeys, [
+			gatedAgentToolsMcpServers,
+			Object.fromEntries(
+				Object.entries(rewrittenSessionMcpServers).filter(([key]) => !attachedKeys.has(key)),
+			),
+		]).servers
 
 		// Stamp the session id onto every Maskin MCP entry so `POST /mcp` can
 		// attribute each tool call to this session (see routes/mcp.ts
@@ -3094,17 +3140,18 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
-	private async buildAccessPreamble(session: typeof sessions.$inferSelect): Promise<string> {
+	/** The agent's access per integration. Best effort: a failed lookup falls back to each integration's default. */
+	private async loadAgentAccess(
+		session: typeof sessions.$inferSelect,
+	): Promise<ActorIntegrationAccess[]> {
 		try {
-			return buildAccessPreamble(
-				await listAgentAccess(this.db, session.workspaceId, session.actorId),
-			)
+			return await listAgentAccess(this.db, session.workspaceId, session.actorId)
 		} catch (err) {
-			logger.warn('Could not build the integration access preamble', {
+			logger.warn('Could not load the agent integration access', {
 				sessionId: session.id,
 				error: err instanceof Error ? err.name : 'unknown',
 			})
-			return ''
+			return []
 		}
 	}
 
