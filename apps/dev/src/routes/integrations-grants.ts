@@ -13,6 +13,7 @@ import {
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { CUSTOM_MCP_PROVIDER, isGatedRow } from '../lib/integrations/custom-mcp'
 import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
@@ -105,7 +106,7 @@ app.openapi(getGrantsRoute, (async (c) => {
 // ── shared: who may change grants, on what ───────────────────────────────
 
 type Editable =
-	| { ok: true; provider: string; providerMode: string; before: unknown }
+	| { ok: true; provider: string; providerMode: string; gated: boolean; before: unknown }
 	| { ok: false; reason: 'not_found' | 'forbidden' | 'not_editable' }
 
 /** Locks the row and checks the caller may change its grants. Humans only. */
@@ -121,6 +122,7 @@ async function loadEditable(
 			status: integrations.status,
 			provider: integrations.provider,
 			defaultAgentAccess: integrations.defaultAgentAccess,
+			config: integrations.config,
 		})
 		.from(integrations)
 		.where(and(eq(integrations.id, input.id), eq(integrations.workspaceId, input.workspaceId)))
@@ -138,8 +140,30 @@ async function loadEditable(
 		ok: true,
 		provider: row.provider,
 		providerMode: row.providerMode,
+		gated: isGatedRow(row.config),
 		before: row.defaultAgentAccess,
 	}
+}
+
+/**
+ * Whether this access level makes no sense for the integration. A saved key or login is on or
+ * off (read_write or no row). A custom tool server has the full levels only when Maskin can
+ * sit in front of it (an HTTP server at a public address, see isGatewayable); otherwise, like
+ * a stdio server that runs inside the container, it is on (read_write) or off (none).
+ */
+function levelNotAllowed(
+	target: { provider: string; providerMode: string; gated: boolean },
+	access: string,
+): 'keychain_access' | 'custom_access' | 'ask_first_unsupported' | null {
+	if (isKeychainMode(target.providerMode as never)) {
+		return access !== 'read_write' ? 'keychain_access' : null
+	}
+	// "Ask first" is a promise that the tool can wait for a person; only some providers can.
+	if (access === 'ask_first' && !supportsAskFirst(target.provider)) return 'ask_first_unsupported'
+	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
+		return 'custom_access'
+	}
+	return null
 }
 
 function failure(reason: string): {
@@ -172,6 +196,14 @@ function failure(reason: string): {
 				error: createApiError(
 					'BAD_REQUEST',
 					'"Ask first" is only available for integrations that can wait for a person to approve an action (today: Gmail). Use read or read_write.',
+				),
+				status: 400,
+			}
+		case 'custom_access':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'This tool server runs inside the agent, so Maskin cannot limit it to reading: use read_write or none',
 				),
 				status: 400,
 			}
@@ -243,11 +275,9 @@ app.openapi(replaceGrantsRoute, (async (c) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
 		const keychain = isKeychainMode(target.providerMode as never)
-		if (keychain && grants.some((g) => g.access !== 'read_write')) {
-			return 'keychain_access' as const
-		}
-		if (grants.some((g) => g.access === 'ask_first') && !supportsAskFirst(target.provider)) {
-			return 'ask_first_unsupported' as const
+		for (const g of grants) {
+			const bad = levelNotAllowed(target, g.access)
+			if (bad) return bad
 		}
 		if (
 			!(await actorsAreWorkspaceAgents(
@@ -340,12 +370,8 @@ app.openapi(putGrantRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		if (isKeychainMode(target.providerMode as never) && access !== 'read_write') {
-			return 'keychain_access' as const
-		}
-		if (access === 'ask_first' && !supportsAskFirst(target.provider)) {
-			return 'ask_first_unsupported' as const
-		}
+		const bad = levelNotAllowed(target, access)
+		if (bad) return bad
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [actorId]))) return 'outside' as const
 
 		const previous = await upsertAgentGrant(tx, {

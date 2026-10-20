@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { providerLabel } from './access-preamble'
 import { attachesServer, listAgentAccess } from './agent-access'
+import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
 import { getProvider } from './registry'
 
 /**
@@ -11,6 +12,11 @@ import { getProvider } from './registry'
  * card or through a tool shows up the same everywhere.
  */
 export interface AgentAccessView {
+	/**
+	 * The Maskin MCP server: on every agent, read & write, and not something anyone can
+	 * change. Reported so every screen can show it the same way instead of each knowing it.
+	 */
+	maskin_mcp: { name: string; access: 'read_write'; locked: true }
 	integrations: Array<{
 		integration_id: string
 		provider: string
@@ -22,6 +28,10 @@ export interface AgentAccessView {
 		server_attached: boolean
 		/** Who connected it; they and workspace admins may change access. */
 		created_by: string
+		/** 'tool_server': a custom MCP server, on or off for the agent (no read-only level). */
+		kind: 'integration' | 'tool_server'
+		/** Tool server only: Maskin sits in front of it, so it has Read / Read & write / No access. */
+		gated: boolean
 	}>
 	credentials: Array<{
 		integration_id: string
@@ -37,6 +47,7 @@ export interface AgentAccessView {
 }
 
 function hasServer(provider: string): boolean {
+	if (provider === CUSTOM_MCP_PROVIDER) return true
 	try {
 		const mcp = getProvider(provider)?.config.mcp
 		// LinkedIn has one server per connected identity and no single spec, but it does attach.
@@ -54,18 +65,27 @@ export async function describeAgentAccess(
 	opts: { conversationId?: string | null } = {},
 ): Promise<AgentAccessView> {
 	const rows = await listAgentAccess(db, workspaceId, actorId, opts)
-	const view: AgentAccessView = { integrations: [], credentials: [] }
+	const view: AgentAccessView = {
+		maskin_mcp: { name: 'Maskin', access: 'read_write', locked: true },
+		integrations: [],
+		credentials: [],
+	}
 	for (const r of rows) {
 		if (r.providerMode === 'registered') {
 			view.integrations.push({
 				integration_id: r.integrationId,
 				provider: r.provider,
-				name: providerLabel(r.provider),
+				name:
+					r.provider === CUSTOM_MCP_PROVIDER
+						? (r.displayName ?? 'Tool server')
+						: providerLabel(r.provider),
 				access: r.access,
 				source: r.source === 'chat' ? 'grant' : r.source,
 				default_access: r.defaultAgentAccess,
 				server_attached: attachesServer(r, hasServer(r.provider)),
 				created_by: r.createdBy,
+				kind: r.provider === CUSTOM_MCP_PROVIDER ? 'tool_server' : 'integration',
+				gated: r.provider === CUSTOM_MCP_PROVIDER && r.gated,
 			})
 		} else if (r.providerMode === 'byo_apikey' || r.providerMode === 'byo_login') {
 			if (!r.displayName) continue

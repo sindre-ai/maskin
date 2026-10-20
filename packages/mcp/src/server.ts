@@ -5871,10 +5871,10 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Notifications ────────────────────────────────────────
-	// Temporarily hidden from the MCP surface while we rethink the notification
-	// product flow. Tool definitions remain in `tools.ts` so re-enabling is a
-	// matter of uncommenting these `registerAppTool` calls.
-	/*
+	// create_notification, list_notifications and update_notification are live: the
+	// Chief of Staff curates the For You list with them. get_notification and
+	// delete_notification stay hidden while we rethink the wider notification flow;
+	// their definitions remain in `tools.ts`, so re-enabling is uncommenting them.
 	registerAppTool(
 		server,
 		'create_notification',
@@ -5945,6 +5945,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	/*
 	registerAppTool(
 		server,
 		'get_notification',
@@ -5963,6 +5964,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+	*/
 
 	registerAppTool(
 		server,
@@ -5988,6 +5990,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	/*
 	registerAppTool(
 		server,
 		'delete_notification',
@@ -6144,20 +6147,27 @@ export function createMcpServer(config: McpConfig) {
 					'There is nobody to ask: this is not running inside an agent session. Decide for yourself and state the assumption you made.',
 				)
 			}
+			let deliveredTo: string | undefined
 			try {
-				await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
+				const posted = (await apiCall(config, 'POST', `/api/sessions/${sessionId}/ask`, {
 					questions: args.questions.map((q) => ({
 						question: q.question,
 						header: q.header,
 						multi_select: q.multi_select ?? false,
 						options: q.options,
 					})),
-				})
+				})) as { delivered_to?: string } | undefined
+				deliveredTo = posted?.delivered_to
 			} catch (err) {
 				// 409 is the normal answer for a session with no chat to ask in.
 				console.error('ask_user_question: could not post the question', err)
 				return reply(
 					'Nobody could be asked from this session. Decide for yourself, state the assumption you made, and continue.',
+				)
+			}
+			if (deliveredTo === 'chief_of_staff') {
+				return reply(
+					'Your question has been sent to the person in their chat with the Chief of Staff. Their answer goes there, not back to this session, so do not wait for it. Choose the most reasonable option yourself, state the assumption you made, and continue.',
 				)
 			}
 			return reply(

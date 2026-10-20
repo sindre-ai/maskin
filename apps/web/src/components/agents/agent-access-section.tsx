@@ -12,6 +12,7 @@ import type { ActorResponse, AgentAccessView, AgentGrantAccess } from '@/lib/api
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS, supportsAskFirst } from '@maskin/shared'
+import { Lock } from 'lucide-react'
 
 type IntegrationRowData = AgentAccessView['integrations'][number]
 type CredentialRowData = AgentAccessView['credentials'][number]
@@ -48,9 +49,6 @@ function IntegrationRow({
 		<li className="flex flex-wrap items-center gap-2 py-2">
 			<div className="min-w-0 flex-1 basis-40">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{row.server_attached ? 'Tools attached' : 'No tools attached'}
-				</p>
 			</div>
 			<Select
 				value={value}
@@ -79,15 +77,44 @@ function IntegrationRow({
 	)
 }
 
-/** Always, not at all, or only in the chats a person allowed it in. */
-export function credentialStatus(
-	row: Pick<CredentialRowData, 'has_access' | 'chat_count'>,
-): string {
-	if (row.has_access) return 'Always'
-	if (row.chat_count > 0) {
-		return `Only in ${row.chat_count} ${row.chat_count === 1 ? 'chat' : 'chats'}`
-	}
-	return 'No access'
+/**
+ * A custom tool server: on or off for this agent. Turning it on for one agent is the same
+ * grant as on the Integrations page, so this is a shortcut, not a second place to configure.
+ */
+function ToolServerRow({
+	row,
+	agentId,
+	workspaceId,
+}: {
+	row: IntegrationRowData
+	agentId: string
+	workspaceId: string
+}) {
+	const setGrant = useSetAgentGrant(workspaceId, row.integration_id)
+	const removeGrant = useRemoveAgentGrant(workspaceId, row.integration_id)
+	const canChange = useCanChange(row.created_by)
+	const busy = setGrant.isPending || removeGrant.isPending
+	const on = row.access !== 'none'
+	// Back to the default when the choice matches it, so the grant list stays free of redundant rows.
+	const matchesDefault = (next: boolean) => next === (row.default_access !== 'none')
+
+	return (
+		<li className="flex items-center gap-2 py-2">
+			<div className="min-w-0 flex-1">
+				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
+			</div>
+			<Switch
+				checked={on}
+				disabled={!canChange || busy}
+				aria-label={`${row.name} for this agent`}
+				onCheckedChange={(next) =>
+					matchesDefault(next)
+						? removeGrant.mutate(agentId)
+						: setGrant.mutate({ actorId: agentId, access: next ? 'read_write' : 'none' })
+				}
+			/>
+		</li>
+	)
 }
 
 function CredentialRow({
@@ -108,9 +135,6 @@ function CredentialRow({
 		<li className="flex items-center gap-2 py-2">
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{row.kind === 'login' ? 'Login' : 'API key'} · {credentialStatus(row)}
-				</p>
 			</div>
 			<Switch
 				checked={row.has_access}
@@ -134,24 +158,45 @@ function CredentialRow({
 export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data } = useAgentAccess(workspaceId, agent.id)
-	if (!data || (data.integrations.length === 0 && data.credentials.length === 0)) return null
+	if (!data) return null
+	// A tool server Maskin cannot sit in front of (one that runs in the container) is on or off;
+	// everything else, custom servers included, has Read / Read & write / No access.
+	const switchRows = data.integrations.filter((r) => r.kind === 'tool_server' && !r.gated)
+	const levelRows = data.integrations.filter((r) => !(r.kind === 'tool_server' && !r.gated))
 
 	return (
 		<section aria-labelledby="agent-access-heading" className="flex flex-col gap-2.5">
 			<AgentSectionHeading id="agent-access-heading" title="Access" />
 			<div className="rounded-xl border border-border bg-card px-4 py-2">
-				{data.integrations.length > 0 && (
-					<ul className="divide-y divide-border" aria-label="Integrations">
-						{data.integrations.map((row) => (
-							<IntegrationRow
-								key={row.integration_id}
-								row={row}
-								agentId={agent.id}
-								workspaceId={workspaceId}
-							/>
-						))}
-					</ul>
-				)}
+				<p className="settings-label pb-1 pt-1">Tools</p>
+				<ul className="divide-y divide-border" aria-label="Tools">
+					{/* On every agent and not changeable: without it an agent cannot do anything in Maskin. */}
+					<li className="flex items-center gap-2 py-2">
+						<p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+							{data.maskin_mcp.name}
+						</p>
+						<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+							<Lock className="h-3.5 w-3.5" aria-hidden="true" />
+							{AGENT_ACCESS_LABELS[data.maskin_mcp.access]}
+						</span>
+					</li>
+					{switchRows.map((row) => (
+						<ToolServerRow
+							key={row.integration_id}
+							row={row}
+							agentId={agent.id}
+							workspaceId={workspaceId}
+						/>
+					))}
+					{levelRows.map((row) => (
+						<IntegrationRow
+							key={row.integration_id}
+							row={row}
+							agentId={agent.id}
+							workspaceId={workspaceId}
+						/>
+					))}
+				</ul>
 				{data.credentials.length > 0 && (
 					<>
 						<p className="settings-label pb-1 pt-3">Keychain</p>
@@ -168,8 +213,8 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 					</>
 				)}
 				<p className="pb-2 pt-2 text-xs text-muted-foreground">
-					Applies to new sessions. The same access is shown under Settings → Integrations and
-					Keychain.
+					Applies to new sessions. Add or edit custom tools under Settings → Integrations; the same
+					access is shown there and under Keychain.
 				</p>
 			</div>
 		</section>

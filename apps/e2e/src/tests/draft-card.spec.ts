@@ -146,7 +146,11 @@ test.describe('Draft card', () => {
 		await body.fill('Typed in a stale tab.')
 		await page.getByRole('textbox', { name: 'Subject' }).click()
 
-		await expect(page.getByText(/has changed since you opened it/)).toBeVisible()
+		// The refusal shows on the card's own message and again as a notification; the
+		// card is what this test is about, so look inside the thread.
+		await expect(
+			page.getByTestId('thread-messages').getByText(/has changed since you opened it/),
+		).toBeVisible()
 		await expect(body).toHaveValue('Typed in a stale tab.')
 		expect((await account.api.getObject(taskId, account.workspaceId)).content).toBe(BODY)
 	})

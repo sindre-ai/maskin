@@ -499,7 +499,7 @@ export const credentialAccessLog = pgTable(
 	{
 		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		// No FKs on integration_id and actor_id: the log is insert-only, so a reference
 		// would make the actor or integration undeletable (migration 0094).
@@ -531,7 +531,7 @@ export const credentialChainSnapshots = pgTable(
 	'credential_chain_snapshots',
 	{
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		snapshotDate: date('snapshot_date').notNull(),
 		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),

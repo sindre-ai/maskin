@@ -32,6 +32,7 @@ import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { requireCredentials } from '../lib/integrations/credential-column'
+import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -256,24 +257,26 @@ const listProvidersRoute = createRoute({
 })
 
 app.openapi(listProvidersRoute, (async (c) => {
-	const providers = listProviders().map((p) => ({
-		name: p.config.name,
-		displayName: p.config.displayName,
-		authType: p.config.auth.type,
-		events: p.config.events?.definitions ?? [],
-		externalIdDisplay: p.config.externalIdDisplay,
-		// Serve the MCP surface so clients that aren't the web UI can discover
-		// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
-		// provider with autoInject=false is otherwise undiscoverable and reads
-		// as "OAuth connected, zero tools" with nothing explaining the gap.
-		...(p.config.mcp && {
-			mcp: {
-				envKey: p.config.mcp.envKey,
-				autoInject: p.config.mcp.autoInject ?? false,
-				...(p.config.mcp.server && { server: p.config.mcp.server }),
-			},
-		}),
-	}))
+	const providers = listProviders()
+		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.map((p) => ({
+			name: p.config.name,
+			displayName: p.config.displayName,
+			authType: p.config.auth.type,
+			events: p.config.events?.definitions ?? [],
+			externalIdDisplay: p.config.externalIdDisplay,
+			// Serve the MCP surface so clients that aren't the web UI can discover
+			// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
+			// provider with autoInject=false is otherwise undiscoverable and reads
+			// as "OAuth connected, zero tools" with nothing explaining the gap.
+			...(p.config.mcp && {
+				mcp: {
+					envKey: p.config.mcp.envKey,
+					autoInject: p.config.mcp.autoInject ?? false,
+					...(p.config.mcp.server && { server: p.config.mcp.server }),
+				},
+			}),
+		}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
 }) as RouteHandler<typeof listProvidersRoute, Env>)
@@ -881,6 +884,13 @@ app.openapi(connectRoute, (async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const actorId = c.get('actorId')
 
+	if (providerName === CUSTOM_MCP_PROVIDER) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
+			400,
+		)
+	}
+
 	let resolved: ResolvedProvider
 	try {
 		resolved = getProvider(providerName)
@@ -892,6 +902,7 @@ app.openapi(connectRoute, (async (c) => {
 				undefined,
 				`Available providers: ${listProviders()
 					.map((p) => p.config.name)
+					.filter((name) => name !== CUSTOM_MCP_PROVIDER)
 					.join(', ')}`,
 			),
 			400,

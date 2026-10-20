@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { resolveAgentAccess } from '../lib/integrations/agent-access'
+import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -129,6 +129,67 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 
 	const access = (await resolveAgentAccess(db, workspaceId, integration.id, actorId)) ?? 'none'
 
+	return proxyMcp(c, {
+		workspaceId,
+		actorId,
+		provider,
+		label,
+		integrationId: integration.id,
+		access,
+		cacheKey: `${workspaceId}:${provider}`,
+		upstreamUrl: server.url,
+		upstreamHeaders: async () => {
+			let token: string
+			try {
+				token = await new TokenManager().getValidToken(db, integration.id, resolved)
+			} catch (err) {
+				logger.warn('Gateway could not load the provider token', {
+					workspaceId,
+					integrationId: integration.id,
+					provider,
+					error: err instanceof Error ? err.name : 'unknown',
+				})
+				throw new GatewayUpstreamError(
+					`${label} needs to be reconnected. Ask a workspace admin to reconnect it under Settings → Integrations.`,
+				)
+			}
+			return buildUpstreamHeaders(server.headers, envKey, token)
+		},
+	})
+}
+
+/** What the proxy needs to know about one upstream MCP server and the agent calling it. */
+export interface ProxyContext {
+	workspaceId: string
+	actorId: string
+	/** Classifies tools (a provider name, or custom-mcp) and names the denied-call event. */
+	provider: string
+	label: string
+	integrationId: string
+	access: AgentAccess
+	/** Remembers each server's own tool annotations between a tools/list and a later call. */
+	cacheKey: string
+	upstreamUrl: string
+	/** The headers that sign in upstream. Throws GatewayUpstreamError when it cannot. */
+	upstreamHeaders: () => Promise<Record<string, string>>
+}
+
+export class GatewayUpstreamError extends Error {}
+
+/**
+ * Judges and forwards one MCP message to the upstream server: refuses a tool call the
+ * agent's access does not allow, marks each tool read or write in tools/list, and passes
+ * everything else through. Shared by the provider gateway and the custom-server gateway.
+ */
+export async function proxyMcp(
+	c: import('hono').Context<Env>,
+	ctx: ProxyContext,
+): Promise<Response> {
+	const db = c.get('db')
+	const { workspaceId, actorId, provider, label, access, cacheKey } = ctx
+	const integration = { id: ctx.integrationId }
+	const server = { url: ctx.upstreamUrl }
+
 	// Read the body once: it is both judged and forwarded.
 	const method = c.req.method
 	let bodyText: string | undefined
@@ -150,7 +211,6 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		}
 	}
 
-	const cacheKey = `${workspaceId}:${provider}`
 	const rpc = message?.ok ? message.message : undefined
 	const toolName = rpc ? toolsCallName(rpc) : null
 
@@ -189,21 +249,12 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		}
 	}
 
-	let token: string
+	let upstreamHeaders: Record<string, string>
 	try {
-		token = await new TokenManager().getValidToken(db, integration.id, resolved)
+		upstreamHeaders = await ctx.upstreamHeaders()
 	} catch (err) {
-		logger.warn('Gateway could not load the provider token', {
-			workspaceId,
-			integrationId: integration.id,
-			provider,
-			error: err instanceof Error ? err.name : 'unknown',
-		})
-		return jsonRpcError(
-			502,
-			-32002,
-			`${label} needs to be reconnected. Ask a workspace admin to reconnect it under Settings → Integrations.`,
-		)
+		if (err instanceof GatewayUpstreamError) return jsonRpcError(502, -32002, err.message)
+		throw err
 	}
 
 	const headers = new Headers()
@@ -212,7 +263,7 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		if (value) headers.set(name, value)
 	}
 	// Never the caller's Authorization: that is the agent's Maskin key.
-	for (const [name, value] of Object.entries(buildUpstreamHeaders(server.headers, envKey, token))) {
+	for (const [name, value] of Object.entries(upstreamHeaders)) {
 		headers.set(name, value)
 	}
 

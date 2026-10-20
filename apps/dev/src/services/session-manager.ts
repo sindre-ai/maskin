@@ -104,6 +104,13 @@ import {
 } from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
+	CUSTOM_MCP_PROVIDER,
+	customGatewayServerSpec,
+	customServerKey,
+	isGatedRow,
+	readCustomServer,
+} from '../lib/integrations/custom-mcp'
+import {
 	CredentialUndoneError,
 	ScopeDeniedError,
 	isAuthRevokedError,
@@ -163,7 +170,12 @@ import {
 	parseMcpInit,
 	registerMcpInit,
 } from '../lib/mcp-health'
-import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import {
+	MASKIN_MCP_SERVER,
+	MASKIN_MCP_SERVER_KEY,
+	hasMaskinMcpEntry,
+	stampMaskinSessionHeader,
+} from '../lib/mcp-session-header'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -2679,6 +2691,22 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					? mcp.server
 					: null
 
+			// A custom tool server is one row, one server: attached when the agent has access, and
+			// it never has a provider token to load.
+			if (integration.provider === CUSTOM_MCP_PROVIDER) {
+				const server = access !== 'none' ? readCustomServer(integration) : null
+				if (server) {
+					const key = customServerKey(integration)
+					// Gated: the agent reaches it through Maskin, which keeps the headers and
+					// enforces Read / Read & write. Otherwise it runs as configured.
+					autoInjectedMcpServers[key] = isGatedRow(integration.config)
+						? customGatewayServerSpec(integration.id)
+						: server
+					attachedKeys.add(key)
+				}
+				continue
+			}
+
 			// LinkedIn has one server per connected identity and no single spec: attach each.
 			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {
 				if (access !== 'none') {
@@ -2995,6 +3023,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					sessionMcpServers[`session-mcp-${i}`] = mcp
 				}
 			}
+		}
+
+		// The Maskin MCP server is on every agent, whether or not its own config lists it: without
+		// it the agent cannot do anything in Maskin. It is not a per-agent choice.
+		if (!hasMaskinMcpEntry(agentToolsMcpServers, sessionMcpServers)) {
+			sessionMcpServers[MASKIN_MCP_SERVER_KEY] = MASKIN_MCP_SERVER
 		}
 
 		// Startup preflight: live-validate every attached GitHub identity BEFORE the
