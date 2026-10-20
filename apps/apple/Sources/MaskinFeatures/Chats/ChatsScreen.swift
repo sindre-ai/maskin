@@ -121,6 +121,15 @@ private struct ChatsContainer: View {
 			runtime?.newConversationRequested = false
 			newChat = NewChatRequest()
 		}
+		.onChange(of: runtime?.agentChatRequest, initial: true) {
+			guard let request = runtime?.agentChatRequest else { return }
+			runtime?.agentChatRequest = nil
+			if request.live {
+				Task { await startLive(with: request.agent) }
+			} else {
+				newChat = NewChatRequest(recipient: request.agent)
+			}
+		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
 			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
 			guard let draft = runtime?.chatDraft else { return }
@@ -166,6 +175,20 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
+	/// A live call with `agent` from its page: a fresh one-to-one chat the call runs in. Falls back
+	/// to the new-chat sheet addressed to the agent if the chat can't be created.
+	fileprivate func startLive(with agent: ChatParticipant) async {
+		do {
+			let created = try await store.create(
+				title: ThreadLayout.defaultTitle(for: [agent.name]), participantIDs: [agent.id],
+				firstMessage: nil)
+			selection = created.id
+			liveMeeting.present(.conversation(id: created.id, lead: agent))
+		} catch {
+			newChat = NewChatRequest(recipient: agent)
+		}
+	}
+
 	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the
 	/// person and creates them. Opens a chat with it, or the new-chat sheet with the text filled in
 	/// when the workspace has no Chief of Staff (or the chat can't be created).

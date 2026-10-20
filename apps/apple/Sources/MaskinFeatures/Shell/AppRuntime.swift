@@ -124,6 +124,21 @@ public final class AppRuntime {
 		newConversationRequested = true
 	}
 
+	/// A chat with one agent started from its page. `ChatsScreen` takes it and resets it to nil:
+	/// a new conversation with the agent (the composer sheet), or straight into a live call.
+	public struct AgentChatRequest: Equatable, Identifiable, Sendable {
+		public let id = UUID()
+		public let agent: ChatParticipant
+		public let live: Bool
+	}
+	public var agentChatRequest: AgentChatRequest?
+
+	public func startChat(with agent: ChatParticipant, live: Bool = false) {
+		presentation = nil
+		selectedTab = .chats
+		agentChatRequest = AgentChatRequest(agent: agent, live: live)
+	}
+
 	public func buildInChat(_ text: String) {
 		presentation = nil
 		selectedTab = .chats

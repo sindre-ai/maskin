@@ -12,7 +12,10 @@ struct AgentDetailView: View {
 	var onDeleted: () -> Void = {}
 	/// The flows this agent works in, by name. Empty while loading or when it is in none.
 	var flows: [LoopSummary] = []
+	/// The workspace's triggers; the ones that wake this agent show as a card. Nil in previews.
+	var triggers: TriggersStore?
 	@State private var showRun = false
+	@State private var showNewTrigger = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmReset = false
 	@State private var confirmDelete = false
@@ -24,12 +27,22 @@ struct AgentDetailView: View {
 		runtime?.buildInChat("I'd like to change the agent \(name). ")
 	}
 
+	/// Start a conversation with this agent, or straight into a live call with it.
+	private func startChat(live: Bool) {
+		guard let profile = store.profile else { return }
+		runtime?.startChat(
+			with: ChatParticipant(id: profile.id, name: profile.name, kind: .agent), live: live)
+	}
+
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				if let profile = store.profile {
 					AgentDetailContent(
 						profile: profile, store: store, flows: flows,
+						triggers: triggers?.triggers.filter { $0.targetActorID == profile.id } ?? [],
+						onToggleTrigger: { id, on in Task { await triggers?.setEnabled(id, on) } },
+						onNewTrigger: triggers == nil ? nil : { showNewTrigger = true },
 						onRun: { runTapped() },
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
@@ -50,9 +63,12 @@ struct AgentDetailView: View {
 		#endif
 		.toolbar {
 			if store.profile != nil {
-				ToolbarItem(placement: .primaryAction) {
+				ToolbarItemGroup(placement: .primaryAction) {
+					Button { startChat(live: true) } label: { Image(systemName: "waveform") }
+						.accessibilityLabel("Live with \(store.profile?.name ?? "agent")")
+					Button { startChat(live: false) } label: { Image(systemName: "plus") }
+						.accessibilityLabel("New chat with \(store.profile?.name ?? "agent")")
 					Menu {
-						Button { changeInChat() } label: { Label("Change in chat", systemImage: "bubble.left") }
 						if store.canReset {
 							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
 						}
@@ -76,6 +92,11 @@ struct AgentDetailView: View {
 			}
 			.presentationDetents([.medium, .large])
 			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
+		}
+		.sheet(isPresented: $showNewTrigger) {
+			if let triggers {
+				NewTriggerSheet(store: triggers, onCreated: { _ in }, presetAgentID: store.profile?.id)
+			}
 		}
 		.confirmationDialog(
 			"Reset \(store.profile?.name ?? "agent") to factory defaults?", isPresented: $confirmReset,
@@ -139,32 +160,42 @@ struct AgentDetailContent: View {
 	let profile: AgentProfile
 	let store: AgentDetailStore
 	var flows: [LoopSummary] = []
+	/// The triggers that wake this agent, already filtered.
+	var triggers: [Trigger] = []
+	var onToggleTrigger: (String, Bool) -> Void = { _, _ in }
+	/// Nil hides the card's "New trigger" action (previews, or no trigger store).
+	var onNewTrigger: (() -> Void)?
 	var onRun: () -> Void = {}
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
 	var onChangeInChat: () -> Void = {}
 
+	/// The agent page's two tabs: how it is set up, and what it has done.
+	enum Tab: String, CaseIterable, Identifiable {
+		case setup = "Setup"
+		case sessions = "Sessions"
+		var id: String { rawValue }
+	}
+
+	@State private var tab: Tab = .setup
+
 	var body: some View {
 		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
 		}
-		if !flows.isEmpty {
-			card("Flows") {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(flows) { flow in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: "arrow.triangle.2.circlepath")
-								.foregroundStyle(MaskinColor.ink4)
-								.accessibilityHidden(true)
-							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
-							Spacer(minLength: 0)
-						}
-					}
-				}
-			}
+		Picker("Show", selection: $tab) {
+			ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
 		}
+		.pickerStyle(.segmented)
+		switch tab {
+		case .setup: setupCards
+		case .sessions: sessionCards
+		}
+	}
+
+	@ViewBuilder private var setupCards: some View {
 		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
 			if let prompt = profile.systemPrompt, !prompt.isEmpty {
 				Text(prompt)
@@ -196,12 +227,81 @@ struct AgentDetailContent: View {
 				}
 			}
 		}
+		card("Skills") {
+			if profile.skills.isEmpty {
+				Text("No skills.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(profile.skills, id: \.self) { skill in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "sparkles")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(skill).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+							Spacer(minLength: 0)
+						}
+					}
+				}
+			}
+		}
+		card("Triggers", action: onNewTrigger.map { ("New trigger", "plus", $0) }) {
+			if triggers.isEmpty {
+				Text("Nothing wakes this agent yet. Add a schedule or an event.")
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+			} else {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(triggers) { trigger in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: trigger.kind.symbol)
+								.foregroundStyle(trigger.enabled ? MaskinColor.ink3 : MaskinColor.ink5)
+								.accessibilityHidden(true)
+							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+								Text(trigger.name)
+									.maskinText(.subhead)
+									.foregroundStyle(trigger.enabled ? MaskinColor.ink2 : MaskinColor.ink4)
+									.lineLimit(1)
+								Text(trigger.summary)
+									.maskinText(.caption)
+									.foregroundStyle(MaskinColor.ink5)
+									.lineLimit(2)
+							}
+							Spacer(minLength: MaskinSpace.s3)
+							Toggle(
+								"Enabled",
+								isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
+							)
+							.labelsHidden()
+							.controlSize(.small)
+							.accessibilityLabel("\(trigger.name) enabled")
+						}
+					}
+				}
+			}
+		}
+		if !flows.isEmpty {
+			card("Flows") {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					ForEach(flows) { flow in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "arrow.triangle.2.circlepath")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
+							Spacer(minLength: 0)
+						}
+					}
+				}
+			}
+		}
 		card("Setup") {
 			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				fact("Model", profile.llmProvider ?? "Workspace default")
-				fact("Skills", profile.skills.isEmpty ? "None" : profile.skills.joined(separator: ", "))
 			}
 		}
+	}
+
+	@ViewBuilder private var sessionCards: some View {
 		card("Recent sessions") {
 			if store.sessions.isEmpty {
 				Text("No runs yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
@@ -251,15 +351,19 @@ struct AgentDetailContent: View {
 
 	@ViewBuilder
 	private var actionButtons: some View {
+		runPauseButton
+	}
+
+	@ViewBuilder
+	private var runPauseButton: some View {
 		if AgentActions.canPause(store.status) {
 			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.fill") }
 				.buttonStyle(.primaryAction)
 				.disabled(!store.canPause)
-		} else {
+		} else if store.status == .paused {
+			// No "Run now": work starts from Chat, Live or a trigger. Only a paused agent resumes here.
 			Button(action: onRun) {
-				Label(
-					store.busy == .run ? "Starting…" : (store.status == .paused ? "Resume" : "Run now"),
-					systemImage: "play.fill")
+				Label(store.busy == .run ? "Starting…" : "Resume", systemImage: "play.fill")
 			}
 			.buttonStyle(.primaryAction)
 			.disabled(!store.canRun)
