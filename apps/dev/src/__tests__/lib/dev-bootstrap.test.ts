@@ -1,3 +1,4 @@
+import { hashApiKey } from '@maskin/auth'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	maybeBootstrapDev,
@@ -65,20 +66,32 @@ describe('maybeBootstrapDev', () => {
 	it('returns existing credentials when actor + workspace already exist', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
-		const { db, mockResults } = createTestContext()
-		mockResults.select = [
-			{
-				apiKey: 'ank_existingkey',
-				actorName: 'Alice',
-				actorEmail: 'alice@example.com',
-				workspaceId: 'ws-existing',
-				workspaceName: 'Team Space',
-			},
+		const { db, mockResults, calls } = createTestContext()
+		// First select is findExistingCredentials, second is issueLoginKey's overflow check.
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'actor-existing',
+					actorName: 'Alice',
+					actorEmail: 'alice@example.com',
+					workspaceId: 'ws-existing',
+					workspaceName: 'Team Space',
+				},
+			],
+			[],
 		]
 
 		const result = await maybeBootstrapDev(db)
 		expect(result).not.toBeNull()
-		expect(result?.apiKey).toBe('ank_existingkey')
+		// Stored keys are hashed, so an existing one can't be read back: a fresh login key is minted.
+		expect(result?.apiKey.startsWith('ank_')).toBe(true)
+		expect(calls.inserts).toEqual([
+			expect.objectContaining({
+				actorId: 'actor-existing',
+				kind: 'login',
+				keyHash: hashApiKey(result?.apiKey ?? ''),
+			}),
+		])
 		expect(result?.workspaceId).toBe('ws-existing')
 		expect(result?.workspaceName).toBe('Team Space')
 		expect(result?.created).toBe(false)
@@ -94,6 +107,7 @@ describe('maybeBootstrapDev', () => {
 		// of the seven default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
+			[], // api_keys insert for the human's primary key
 			[{ id: 'ws-1', name: 'My Workspace' }],
 			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
 			// Default agents seed in DEFAULT_AGENT_IDS order, each an actor insert
@@ -121,6 +135,21 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.workspaceName).toBe('My Workspace')
 		expect(result?.apiKey.startsWith('ank_')).toBe(true)
 		expect(result?.created).toBe(true)
+
+		// The human is inserted without a key; the key lives in api_keys as a hash only.
+		const humanInsert = calls.inserts.find(
+			(v): v is Record<string, unknown> =>
+				typeof v === 'object' && v !== null && (v as { email?: string }).email === 'dev@local',
+		)
+		expect(humanInsert).toBeDefined()
+		expect(humanInsert).not.toHaveProperty('apiKey')
+		expect(calls.inserts).toContainEqual(
+			expect.objectContaining({
+				actorId: 'actor-1',
+				kind: 'primary',
+				keyHash: hashApiKey(result?.apiKey ?? ''),
+			}),
+		)
 
 		// The dev bootstrap now goes through the same provisionWorkspace() path as
 		// signup and POST /api/workspaces, so it seeds the whole roster rather than
@@ -157,6 +186,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]]
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
+			[], // api_keys insert for the human's primary key
 			[{ id: 'ws-1', name: 'My Workspace' }],
 			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
 			[], // Workspace Coach actor insert returns empty → should throw
@@ -172,6 +202,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]]
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
+			[], // api_keys insert for the human's primary key
 			[{ id: 'ws-1', name: 'My Workspace' }],
 			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
 			[{ id: 'coach-1', name: 'Workspace Coach', isSystem: true }],

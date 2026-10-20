@@ -5,11 +5,15 @@ import {
 	createAuthCaches,
 	evictActor,
 	evictApiKey,
+	evictApiKeyHash,
 	evictMembership,
 	resolveAuthCacheTtlMs,
 } from '../auth-cache'
+import { hashApiKey } from '../key-hash'
 
 const present = (v: unknown) => v !== null
+// The cache is keyed on the key's hash, never the plaintext token.
+const KEY_1 = hashApiKey('ank_1')
 
 describe('TtlPromiseCache', () => {
 	it('serves a settled value from cache until it expires', async () => {
@@ -89,7 +93,7 @@ describe('eviction', () => {
 		const caches = createAuthCaches(60_000)
 		const keyLoad = vi.fn(async () => ({ actorId: 'actor-1', type: 'human' }))
 		const memberLoad = vi.fn(async (): Promise<string | null> => 'member')
-		await caches.apiKeys.get('ank_1', keyLoad, present)
+		await caches.apiKeys.get(KEY_1, keyLoad, present)
 		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v !== null)
 		keyLoad.mockClear()
 		memberLoad.mockClear()
@@ -100,7 +104,16 @@ describe('eviction', () => {
 		const { caches, keyLoad } = await warmedCaches()
 
 		evictApiKey('ank_1')
-		await caches.apiKeys.get('ank_1', keyLoad, present)
+		await caches.apiKeys.get(KEY_1, keyLoad, present)
+
+		expect(keyLoad).toHaveBeenCalledTimes(1)
+	})
+
+	it('evictApiKeyHash drops the entry for a hash without needing the plaintext key', async () => {
+		const { caches, keyLoad } = await warmedCaches()
+
+		evictApiKeyHash(KEY_1)
+		await caches.apiKeys.get(KEY_1, keyLoad, present)
 
 		expect(keyLoad).toHaveBeenCalledTimes(1)
 	})
@@ -121,7 +134,7 @@ describe('eviction', () => {
 		const { caches, keyLoad, memberLoad } = await warmedCaches()
 
 		evictActor('actor-1')
-		await caches.apiKeys.get('ank_1', keyLoad, present)
+		await caches.apiKeys.get(KEY_1, keyLoad, present)
 		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v !== null)
 
 		expect(keyLoad).toHaveBeenCalledTimes(1)
