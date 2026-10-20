@@ -103,7 +103,6 @@ struct MessagePreview: View {
 		Text(ChatPreviewText.plain(message.content).isEmpty ? "Attachment" : ChatPreviewText.plain(message.content))
 			.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
 			.lineSpacing(BubbleShape.lineSpacing)
-			.lineLimit(6)
 			.foregroundStyle(isOwn ? MaskinSurface.onInverse : MaskinColor.ink2)
 			.padding(.vertical, isOwn ? BubbleShape.myVertical : BubbleShape.theirVertical)
 			.padding(.horizontal, BubbleShape.horizontal)

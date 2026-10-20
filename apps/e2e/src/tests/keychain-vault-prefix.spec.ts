@@ -3,7 +3,7 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Vault mode, the ! prefix (flag: keychain-chat-capture). Mock-free: the page talks to
+ * Vault mode, the ! prefix. Mock-free: the page talks to
  * the real backend and the spec watches the network. Typing or pasting ! plus a token in
  * the main chat composer and in a thread must send no message and create nothing, and
  * leave the token out of both web storages. The token is obviously fake and built at
@@ -60,9 +60,6 @@ test.describe('Vault mode (the ! prefix)', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:keychain-chat-capture', 'on')
-			})
 			const requests = watchMessageRequests(page)
 
 			await page.goto(`/${account.workspaceId}/chats/new`)
@@ -90,9 +87,6 @@ test.describe('Vault mode (the ! prefix)', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:keychain-chat-capture', 'on')
-			})
 			const conversation = await account.api.createConversation(account.workspaceId, {
 				title: `Vault prefix ${Date.now()}`,
 				participant_actor_ids: [],
@@ -124,9 +118,6 @@ test.describe('Vault mode (the ! prefix)', () => {
 	}
 
 	test('a leading space then ! is an ordinary message', async ({ page, account }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem('ff:keychain-chat-capture', 'on')
-		})
 		const conversation = await account.api.createConversation(account.workspaceId, {
 			title: `Plain bang ${Date.now()}`,
 			participant_actor_ids: [],

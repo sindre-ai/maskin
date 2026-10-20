@@ -180,3 +180,21 @@ When adding a new provider:
 - If custom auth: test `getInstallUrl()`, `handleCallback()`, `getAccessToken()`
 - If custom normalizer: test event normalization with sample payloads
 - Test location: `apps/dev/src/__tests__/lib/integrations/providers/{provider}.test.ts`
+
+## Native app return target
+
+`POST /api/integrations/:provider/connect` (generic OAuth2 / GitHub) and `POST /api/integrations/linkedin-unipile/connect`
+accept an optional `native_return_url`. It must equal, byte for byte, an entry of `NATIVE_OAUTH_RETURN_URLS`
+(`packages/shared/src/schemas/native-oauth-return.ts`); anything else is a 400. It is sealed into the OAuth `state`
+(generic) or the pending credentials blob (LinkedIn), and the callback ends by redirecting to it with
+`status` / `provider` / `workspace_id` / `integration_id` / `reason` — never a token. Without the field the web
+flow is unchanged. Generic providers return a `/native-launch` URL as `install_url` so the state-binding cookie is
+set in the browser that finishes the flow (a URLSession cookie jar is not that browser).
+
+A new `auth.type: 'oauth2'` provider gets native connect with no backend change: the connect route and callback are
+shared. `api_key` and `manual` providers have no browser round trip and end with `reason=unsupported`. If a provider
+needs a step after the token exchange (GitHub installation selection, Google Meet's people-id fetch, the LinkedIn
+wizard), add an `if (native) return nativeEnd({ status: 'error', reason: ... })` branch to every failure path of that
+step in `routes/integrations.ts`; otherwise a native client is left on a bare JSON error. The Apple app also needs a
+connect button for the provider. Only Slack, GitHub and LinkedIn have been verified native; the others are untested.
+A second native app needs its return URL added to `NATIVE_OAUTH_RETURN_URLS`.

@@ -240,7 +240,7 @@ public struct WidgetDecisionService: Sendable {
 				records[index].phase == .sending
 			else { return }
 			switch outcome {
-			case .answered, .queued: records[index].phase = .sent
+			case .answered, .queued, .deferred: records[index].phase = .sent
 			case .failed(let message):
 				records[index].phase = .failed
 				records[index].message = message

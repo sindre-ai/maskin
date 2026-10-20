@@ -8,13 +8,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
-const flags = vi.hoisted(() => ({ on: true }))
 const chatCaptureMock = vi.hoisted(() => vi.fn())
 const undoMock = vi.hoisted(() => vi.fn())
 const relaunchMock = vi.hoisted(() => vi.fn())
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => (id === 'keychain-chat-capture' ? flags.on : false),
+	useFeatureFlag: () => false,
 }))
 vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/lib/analytics', () => ({
@@ -112,7 +115,6 @@ const vaulted = (id: string, relaunch: 'stopped' | 'failed' = 'stopped') => ({
 })
 
 beforeEach(() => {
-	flags.on = true
 	sessionStorage.clear()
 	localStorage.clear()
 	chatCaptureMock.mockReset()
@@ -239,16 +241,6 @@ describe('Composer vault mode (the ! prefix)', () => {
 		await user.paste('!abc')
 		expect(screen.queryByLabelText('Secret to vault')).not.toBeInTheDocument()
 		expect(screen.getByRole('textbox')).toHaveValue('see !abc')
-	})
-
-	it('does nothing when the flag is off', async () => {
-		flags.on = false
-		const props = renderComposer()
-		const user = userEvent.setup()
-		await user.type(screen.getByRole('textbox'), '!abc')
-		expect(screen.queryByLabelText('Secret to vault')).not.toBeInTheDocument()
-		await user.keyboard('{Enter}')
-		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith('!abc'))
 	})
 
 	describe('empty vault mode', () => {

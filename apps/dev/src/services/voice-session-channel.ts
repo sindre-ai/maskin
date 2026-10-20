@@ -1,5 +1,4 @@
 import type { Database } from '@maskin/db'
-import { UnknownToolError, VoiceToolNotAllowedError, parseVoiceToolArgs } from '@maskin/mcp'
 import type { InvokeTool } from '@maskin/mcp'
 import { z } from 'zod'
 import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytics/voice-events'
@@ -145,7 +144,12 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			} catch {
 				rawArgs = null
 			}
-			const args = parseVoiceToolArgs(msg.name, rawArgs, session.workspaceId)
+			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
+				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
+			}
+			// Same call a chat agent makes. The voice model is told the workspace id
+			// in its instructions; this only fills it in when it leaves it out.
+			const args = { workspace_id: session.workspaceId, ...(rawArgs as object) }
 			const result = await invokeTool(msg.name, args, {
 				actorId: session.agentActorId,
 				workspaceId: session.workspaceId,
@@ -159,25 +163,17 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				output = cap(text)
 			}
 		} catch (err) {
-			if (err instanceof VoiceToolNotAllowedError) {
-				errorCode = err.code
-				output = JSON.stringify({ error: err.message, error_code: err.code })
-			} else if (err instanceof UnknownToolError) {
-				errorCode = 'voice_tool_not_allowed'
-				output = JSON.stringify({ error: err.message, error_code: errorCode })
-			} else {
-				errorCode = 'voice_tool_failed'
-				logger.error('Voice tool call failed', {
-					voice_session_id: session.id,
-					tool_name: msg.name,
-					error: err instanceof Error ? err.message : String(err),
-				})
-				captureVoiceException(session.id, err)
-				output = JSON.stringify({
-					error: `The ${msg.name} call failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 300)}`,
-					error_code: errorCode,
-				})
-			}
+			errorCode = 'voice_tool_failed'
+			logger.error('Voice tool call failed', {
+				voice_session_id: session.id,
+				tool_name: msg.name,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			captureVoiceException(session.id, err)
+			output = JSON.stringify({
+				error: `The ${msg.name} call failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 300)}`,
+				error_code: errorCode,
+			})
 		}
 
 		send({

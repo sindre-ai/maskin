@@ -9,13 +9,7 @@ import { type Env, getOpenApiConfig } from '../app-factory'
  *     the OpenAPI document), meaning a viewer gets a 403 on it,
  *   - on HAND_GATED_ROUTES: gated in the handler but not built with createRoute,
  *     so it has no OpenAPI entry to tag (the viewer 403 test proves the gate), or
- *   - on OPEN_ROUTES, with the reason a viewer may reach it, or
- *   - on PENDING_ROUTES, with the group (see the write route list on the
- *     "Viewers are read-only" task) whose pull request will tag it.
- *
- * A tagged route must leave PENDING_ROUTES in the same change, so the pending
- * list only shrinks. The parent task closes when it is empty, and that pull
- * request deletes it.
+ *   - on OPEN_ROUTES, with the reason a viewer may reach it.
  *
  * Paths are Hono paths, as in app.routes (':id', not '{id}').
  * Extension routes under /api/m are not mounted by the test app, and a route
@@ -27,7 +21,6 @@ export const VIEWER_POLICY_KEY = 'x-viewer-policy'
 export const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
 
 export type OpenRoute = readonly [method: string, path: string, reason: string]
-export type PendingRoute = readonly [method: string, path: string, group: string]
 
 export const OPEN_ROUTES: OpenRoute[] = [
 	// The allowlist in app-factory.ts that skips authMiddleware: no workspace caller.
@@ -100,17 +93,25 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'looks up public DNS records for a typed domain, touches no workspace data',
 	],
 	// Group E: personal state a viewer may keep.
-	['POST', '/api/notifications', 'Group E, personal state'],
 	[
 		'PATCH',
 		'/api/notifications/:id',
-		'Group E, personal state: mark read (the route also takes metadata)',
+		'Group E, personal state: a viewer may change only a notification addressed to them (mark read); changing anyone else’s needs the writer check in the handler',
 	],
-	['DELETE', '/api/notifications/:id', 'Group E, personal state'],
+	[
+		'DELETE',
+		'/api/notifications/:id',
+		'Group E, personal state: a viewer may delete only a notification addressed to them; deleting anyone else’s needs the writer check in the handler',
+	],
 	[
 		'PATCH',
 		'/api/conversations/:id/me',
 		"Group E, personal state: the caller's own pin, archive and read marker",
+	],
+	[
+		'PUT',
+		'/api/conversations/:id/messages/:messageId/thread/read',
+		"Group E, personal state: the caller's own thread read marker",
 	],
 	['POST', '/api/subscriptions', 'Group E, personal state'],
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
@@ -166,8 +167,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'refreshes stored credentials'],
 ]
 
-export const PENDING_ROUTES: PendingRoute[] = []
-
 export interface WriteRoute {
 	method: string
 	path: string
@@ -194,43 +193,35 @@ export function listWriteRoutes(app: OpenAPIHono<Env>): WriteRoute[] {
 }
 
 export interface RouteAudit {
-	/** Neither tagged, nor open, nor pending. */
+	/** Neither tagged, nor open, nor hand-gated. */
 	unaccounted: string[]
 	/** Carries an x-viewer-policy value other than 'writer'. */
 	badTag: string[]
-	taggedAndPending: string[]
 	taggedAndOpen: string[]
 	taggedAndHandGated: string[]
-	openAndPending: string[]
-	handGatedAndOpenOrPending: string[]
-	/** On the open or pending list but not a route on the app. */
+	handGatedAndOpen: string[]
+	/** On the open or hand-gated list but not a route on the app. */
 	staleEntries: string[]
 	taggedCount: number
 	handGatedCount: number
 	openCount: number
-	pendingByGroup: Record<string, number>
 }
 
 export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 	const open = new Set(OPEN_ROUTES.map(([m, p]) => key(m, p)))
 	const handGated = new Set(HAND_GATED_ROUTES.map(([m, p]) => key(m, p)))
-	const pending = new Set(PENDING_ROUTES.map(([m, p]) => key(m, p)))
-	const group = new Map(PENDING_ROUTES.map(([m, p, g]) => [key(m, p), g]))
 	const real = new Set(routes.map((r) => key(r.method, r.path)))
 
 	const audit: RouteAudit = {
 		unaccounted: [],
 		badTag: [],
-		taggedAndPending: [],
 		taggedAndOpen: [],
 		taggedAndHandGated: [],
-		openAndPending: [],
-		handGatedAndOpenOrPending: [],
+		handGatedAndOpen: [],
 		staleEntries: [],
 		taggedCount: 0,
 		handGatedCount: 0,
 		openCount: 0,
-		pendingByGroup: {},
 	}
 
 	for (const r of routes) {
@@ -238,20 +229,15 @@ export function auditWriteRoutes(routes: WriteRoute[]): RouteAudit {
 		const hasTag = r.policy !== undefined
 		const tagged = r.policy === 'writer'
 		if (hasTag && !tagged) audit.badTag.push(k)
-		if (tagged && pending.has(k)) audit.taggedAndPending.push(k)
 		if (tagged && open.has(k)) audit.taggedAndOpen.push(k)
 		if (tagged && handGated.has(k)) audit.taggedAndHandGated.push(k)
-		if (open.has(k) && pending.has(k)) audit.openAndPending.push(k)
-		if (handGated.has(k) && (open.has(k) || pending.has(k))) audit.handGatedAndOpenOrPending.push(k)
+		if (handGated.has(k) && open.has(k)) audit.handGatedAndOpen.push(k)
 		if (tagged) audit.taggedCount++
 		else if (handGated.has(k)) audit.handGatedCount++
 		else if (open.has(k)) audit.openCount++
-		else if (pending.has(k)) {
-			const g = group.get(k) as string
-			audit.pendingByGroup[g] = (audit.pendingByGroup[g] ?? 0) + 1
-		} else audit.unaccounted.push(k)
+		else audit.unaccounted.push(k)
 	}
 
-	for (const k of [...open, ...handGated, ...pending]) if (!real.has(k)) audit.staleEntries.push(k)
+	for (const k of [...open, ...handGated]) if (!real.has(k)) audit.staleEntries.push(k)
 	return audit
 }

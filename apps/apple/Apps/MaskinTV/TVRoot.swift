@@ -16,6 +16,8 @@ struct TVRoot: View {
 	@State private var openDecision: String?
 	/// A flow a briefing's last slide asked to open.
 	@State private var openFlow: String?
+	/// The Top Shelf briefing item asked to play today's briefing.
+	@State private var playBriefing = false
 
 	enum Tab: Hashable {
 		case forYou, team, flows, objects, search, profile
@@ -59,13 +61,21 @@ struct TVRoot: View {
 			}
 		}
 		.onOpenURL { url in
-			// A Top Shelf item: open that decision, but only in the workspace the TV is showing.
-			guard let link = DeepLink(url: url), case .object(let workspace, let id) = link,
-				workspace == environment.workspaceId
-			else { return }
-			tab = .forYou
-			openDecision = id
+			// A Top Shelf item: open that decision or play the briefing, but only in the workspace
+			// the TV is showing.
+			guard let link = DeepLink(url: url), link.workspaceId == environment.workspaceId else { return }
+			switch link {
+			case .object(_, let id):
+				tab = .forYou
+				openDecision = id
+			case .notifications:
+				tab = .forYou
+				playBriefing = true
+			default: break
+			}
 		}
+		// A flow's NEEDS YOU row opens its decision on For you.
+		.onChange(of: openDecision) { _, id in if id != nil { tab = .forYou } }
 		.task(id: environment.auth.credentials) {
 			async let flows: Void = startLoops()
 			async let briefings: Void = startStories()
@@ -79,9 +89,11 @@ struct TVRoot: View {
 		switch tab {
 		case .forYou:
 			TVForYou(environment: environment, forYou: forYou, stories: stories, openDecision: $openDecision,
-				chromeHidden: $chromeHidden, openFlow: $openFlow)
+				chromeHidden: $chromeHidden, openFlow: $openFlow, playBriefing: $playBriefing)
 		case .team: TVTeam(environment: environment)
-		case .flows: TVFlows(environment: environment, loops: loops, chromeHidden: $chromeHidden, openFlow: $openFlow)
+		case .flows: TVFlows(
+				environment: environment, loops: loops, forYou: forYou, chromeHidden: $chromeHidden, openFlow: $openFlow,
+				openDecision: $openDecision)
 		case .objects: TVObjects(environment: environment, forYou: forYou)
 		case .search: TVSearch(environment: environment, forYou: forYou, loops: loops)
 		case .profile: TVProfile(environment: environment, resetToForYou: { tab = .forYou })

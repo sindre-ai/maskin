@@ -1,6 +1,5 @@
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { Lock } from 'lucide-react'
@@ -216,7 +215,6 @@ export function VaultedCard({
 	onRetry,
 }: VaultedCardProps) {
 	// The detail page only exists behind this flag, so the link would 404 without it.
-	const settingsUi = useFeatureFlag('keychain-settings-ui')
 	if (phase === 'undone') {
 		return (
 			<output className="flex flex-col gap-1 rounded-xl border border-border bg-muted p-4 text-sm">
@@ -280,38 +278,34 @@ export function VaultedCard({
 					{error}
 				</p>
 			) : null}
-			{failed || undoAvailable || settingsUi ? (
-				<div className="flex flex-col gap-1">
-					<div className="flex flex-wrap gap-2">
-						{failed ? (
-							<Button type="button" size="sm" onClick={onRetry}>
-								Retry
-							</Button>
-						) : null}
-						{settingsUi ? (
-							<Button asChild variant="outline" size="sm">
-								<Link
-									to="/$workspaceId/settings/keychain/$integrationId"
-									params={{ workspaceId, integrationId }}
-								>
-									View credential
-								</Link>
-							</Button>
-						) : null}
-						{undoAvailable ? (
-							<Button type="button" variant="outline" size="sm" disabled={undoing} onClick={onUndo}>
-								{undoing ? 'Undoing…' : 'Undo'}
-							</Button>
-						) : null}
-					</div>
+			<div className="flex flex-col gap-1">
+				<div className="flex flex-wrap gap-2">
+					{failed ? (
+						<Button type="button" size="sm" onClick={onRetry}>
+							Retry
+						</Button>
+					) : null}
+					<Button asChild variant="outline" size="sm">
+						<Link
+							to="/$workspaceId/settings/keychain/$integrationId"
+							params={{ workspaceId, integrationId }}
+						>
+							View credential
+						</Link>
+					</Button>
 					{undoAvailable ? (
-						<p className="text-xs text-muted-foreground">
-							Undo within 5 min. Undoing ends this session; your next message starts a new one
-							without it.
-						</p>
+						<Button type="button" variant="outline" size="sm" disabled={undoing} onClick={onUndo}>
+							{undoing ? 'Undoing…' : 'Undo'}
+						</Button>
 					) : null}
 				</div>
-			) : null}
+				{undoAvailable ? (
+					<p className="text-xs text-muted-foreground">
+						Undo within 5 min. Undoing ends this session; your next message starts a new one without
+						it.
+					</p>
+				) : null}
+			</div>
 		</output>
 	)
 }

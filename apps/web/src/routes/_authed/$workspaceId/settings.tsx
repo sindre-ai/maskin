@@ -1,6 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -41,12 +40,11 @@ function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	const keychainUi = useFeatureFlag('keychain-settings-ui')
 	// Keychain sits right under Integrations: the two are where access is managed.
 	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
 	const navItems = [
 		...settingsNav.slice(0, at),
-		...(keychainUi ? [keychainNavItem] : []),
+		keychainNavItem,
 		...settingsNav.slice(at),
 		...(workspace?.enterprise ? [keysNavItem] : []),
 	]

@@ -25,8 +25,12 @@ const sessionsStore = vi.hoisted(() => {
 	}
 })
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'keychain-chat-capture',
+	useFeatureFlag: () => false,
 }))
 vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/lib/analytics', () => ({

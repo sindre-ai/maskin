@@ -6,7 +6,7 @@ import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * In-chat vault, relaunch and undo (flag: keychain-chat-capture), spec file 12.
+ * In-chat vault, relaunch and undo, spec file 12.
  *
  * Real: the vault write (POST /api/integrations/chat-capture), the marker message,
  * the undo, and the server-side backstop. Not real: the agent. The web E2E stack has
@@ -81,9 +81,6 @@ async function presentSessions(page: Page, live: LiveChatSession) {
 }
 
 async function openChat(page: Page, account: { workspaceId: string }, live: LiveChatSession) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:keychain-chat-capture', 'on')
-	})
 	await page.goto(`/${account.workspaceId}/chats/${live.conversationId}`)
 	await expect(page.getByRole('textbox', { name: 'Message this conversation' })).toBeVisible({
 		timeout: 15_000,
@@ -223,9 +220,6 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:keychain-settings-ui', 'on')
-			})
 			await grantPlanHeadroom(account.apiKey, account.workspaceId)
 			const agent = await account.api.createAgentActor(`E2E Scope Agent ${Date.now()}`)
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)

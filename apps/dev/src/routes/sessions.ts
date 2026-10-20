@@ -31,6 +31,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -951,6 +952,17 @@ app.openapi(inputSessionRoute, (async (c) => {
 		)
 	}
 
+	// Keychain backstop; the turn goes straight to the agent's stdin and into the chat.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		entityType: 'session',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
+
 	try {
 		await sessionManager.writeInput(
 			id,
@@ -1827,7 +1839,7 @@ app.get('/:id/logs/stream', async (c) => {
 
 	// Include 'paused' so a client subscribing to an already-paused session
 	// receives replay + done instead of hanging in the keep-alive loop below.
-	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped', 'paused']
 
 	// Disable proxy response buffering so frames reach the browser as they're
 	// written rather than when an intermediary's buffer happens to fill.
@@ -1902,6 +1914,7 @@ app.get('/:id/logs/stream', async (c) => {
 		const TERMINAL_SYSTEM_LOGS: Array<{ prefix: string; done: string }> = [
 			{ prefix: 'Session completed', done: 'completed' },
 			{ prefix: 'Session failed', done: 'failed' },
+			{ prefix: 'Session stopped', done: 'user_stopped' },
 			{ prefix: 'Session timed out', done: 'timeout' },
 			{ prefix: 'Session paused', done: 'paused' },
 		]
