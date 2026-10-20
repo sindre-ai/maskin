@@ -49,6 +49,10 @@ struct ChatThreadView: View {
 	/// True once the reader has scrolled the thread themselves; until then a late read cursor may
 	/// still move the opening position to the NEW divider.
 	@State private var userScrolled = false
+	/// The opening position has been chosen (once; see `settleOpen`).
+	@State private var settled = false
+	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
+	@State private var openedOnUnread = false
 	@State private var renaming = false
 	@State private var newTitle = ""
 	@State private var searching = false
@@ -77,6 +81,8 @@ struct ChatThreadView: View {
 	/// How long a thread stays hidden after it appears, while its rows measure and the scroll pins.
 	/// Held back too long it reads as a blank screen on open (it was 320ms).
 	private static let revealDelay = 120
+	/// How long the thread waits for its read cursor before opening at the bottom (offline).
+	private static let openTimeout: Duration = .milliseconds(1500)
 
 	private var isNearBottom: Bool { distanceFromBottom <= JumpToLatest.showAfterDistance }
 	private var flow: ChatFlowContext? { store.flowContext }
@@ -160,6 +166,8 @@ struct ChatThreadView: View {
 					// Drafts are per conversation: restored here, saved on every keystroke.
 					if composer.boundConversationID == nil { composer.bind(conversationID: store.conversationID) }
 					store.isActive = scenePhase == .active
+					// Nothing counts as read until the opening position is chosen (`settleOpen`).
+					if !settled { store.isAtBottom = false }
 					await store.start()
 					primeHandsFree()
 				}
@@ -424,24 +432,19 @@ struct ChatThreadView: View {
 				if followingOpen { followingOpen = false }
 				if !revealed { revealed = true }
 			}
-			// A cold open has no read cursor yet, so it first settles at the bottom. When the cursor
-			// arrives, move to the first unread message instead, unless the reader already scrolled.
-			.onChange(of: store.openedReadCursor) { _, _ in
-				guard !userScrolled, opensOnUnread else { return }
-				followingOpen = false
-				store.isAtBottom = false
-				Task { @MainActor in
-					await Task.yield()
-					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
-					try? await Task.sleep(for: .milliseconds(Self.revealDelay))
-					if !userScrolled { proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset)) }
-					revealed = true
-				}
+			// The opening position waits for the read cursor (see `settleOpen`); this runs it the
+			// moment the cursor is known, and a timer opens at the bottom if it never arrives.
+			.onChange(of: store.openPositionKnown) { _, _ in settleOpen(proxy) }
+			.task {
+				try? await Task.sleep(for: Self.openTimeout)
+				if !settled { settleOpen(proxy, force: true) }
 			}
 			.trackingDistanceFromBottom { distance in
 				distanceFromBottom = distance
 				let atBottom = distance < MaskinSpace.touchMin
-				if atBottom != store.isAtBottom {
+				// Before the opening position is chosen the thread sits at the bottom by default:
+				// that is not the reader reaching the end of it.
+				if revealed, atBottom != store.isAtBottom {
 					store.isAtBottom = atBottom
 					// Reaching the end of the unread messages is what reads them.
 					if atBottom { Task { await store.markReadIfNeeded() } }
@@ -458,10 +461,7 @@ struct ChatThreadView: View {
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is near the bottom (or just sent one);
 				// otherwise leave them where they are and count them on the jump button.
-				switch ThreadScrollPolicy.onNewestChanged(
-					followingOpen: followingOpen, isAtBottom: isNearBottom,
-					newestIsMine: store.messages.last?.actorID == store.currentActorID)
-				{
+				switch newestAction() {
 				case .jump: jumpToBottom(proxy)
 				case .follow:
 					let last = store.messages.last
@@ -488,7 +488,10 @@ struct ChatThreadView: View {
 				guard isNearBottom, !followingOpen else { return }
 				Task { @MainActor in
 					await Task.yield()
-					scrollToBottom(proxy)
+					// Not animated: the card's own height is animating, and a second animation on top
+					// of it makes the thread bounce.
+					unseenCount = 0
+					proxy.scrollTo(Self.bottomID, anchor: .bottom)
 				}
 			}
 			// The working card appears under your message a moment after the send (once the agent has
@@ -711,6 +714,15 @@ struct ChatThreadView: View {
 		unseenCount = 0
 	}
 
+	/// What the thread does when its newest row changes. Opened on the NEW divider and not scrolled
+	/// yet, a reply arriving must not pull the reader off the first unread message.
+	private func newestAction() -> ThreadScrollAction {
+		let mine = store.messages.last?.actorID == store.currentActorID
+		if openedOnUnread && !userScrolled && !mine { return .countUnseen }
+		return ThreadScrollPolicy.onNewestChanged(
+			followingOpen: followingOpen, isAtBottom: isNearBottom, newestIsMine: mine)
+	}
+
 	/// An anchor that puts the target `offset` points below the top of the viewport.
 	private func topAnchor(_ offset: CGFloat) -> UnitPoint {
 		UnitPoint(x: 0.5, y: viewportHeight > 0 ? min(offset / viewportHeight, 1) : 0)
@@ -722,20 +734,30 @@ struct ChatThreadView: View {
 			.contains { if case .unreadDivider = $0 { true } else { false } }
 	}
 
-	/// Pin to the opening position (the NEW divider 150pt below the top, else the newest message),
-	/// again after the rows have measured, then show the thread.
-	private func settleOpen(_ proxy: ScrollViewProxy) {
+	/// Choose the opening position, once, when the read cursor is known: the NEW divider 150pt below
+	/// the top if there is one, else the newest message. The thread stays hidden until then, so the
+	/// reader never sees it land somewhere and then move. `force` opens at the bottom when the cursor
+	/// never arrived (offline).
+	private func settleOpen(_ proxy: ScrollViewProxy, force: Bool = false) {
+		guard !settled, store.openPositionKnown || force else { return }
+		settled = true
 		if opensOnUnread {
+			openedOnUnread = true
 			followingOpen = false
 			store.isAtBottom = false
 			proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+			// From here on, rows scrolling into view are the reader reading.
+			store.countsSeen = true
 			Task {
 				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
-				proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				if !userScrolled { proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset)) }
 				revealed = true
 			}
 			return
 		}
+		store.isAtBottom = true
+		store.countsSeen = true
+		Task { await store.markReadIfNeeded() }
 		jumpToBottom(proxy)
 		Task {
 			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
@@ -972,6 +994,9 @@ struct ThreadTranscript: View {
 						.allowsHitTesting(false)
 				}
 			}
+			// A hairline at the message's foot: once it scrolls into view the message has been read
+			// to its end, however many screens long it is.
+			.seenAtFoot(of: message, in: store)
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn).padding(.top, MaskinSpace.s3)
 			}
@@ -980,6 +1005,22 @@ struct ThreadTranscript: View {
 }
 
 extension View {
+	/// Tells the store the reader has scrolled past this message (iOS 18+; earlier systems mark
+	/// read at the bottom only).
+	@ViewBuilder
+	fileprivate func seenAtFoot(of message: ChatMessage, in store: ChatStore) -> some View {
+		if #available(iOS 18, macOS 15, *), let id = message.serverID, message.actorID != store.currentActorID {
+			overlay(alignment: .bottom) {
+				Color.clear.frame(height: 1)
+					.onScrollVisibilityChange(threshold: 0.5) { visible in
+						if visible { store.noteSeen(id) }
+					}
+			}
+		} else {
+			self
+		}
+	}
+
 	/// Reports how far the reader is from the end of a scroll view, in points. Lazy-stack
 	/// sentinels fire `onAppear`/`onDisappear` unreliably, so iOS 18+ reads the real geometry;
 	/// iOS 17 keeps the sentinel (which reports 0 or "far").

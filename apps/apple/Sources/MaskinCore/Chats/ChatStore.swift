@@ -66,6 +66,16 @@ public final class ChatStore {
 	/// divider, or scrolled up). Read state only advances at the bottom, so a chat left half-read
 	/// keeps its unread badge in the list.
 	public var isAtBottom = true
+	/// True once the read cursor this visit opened with is known (from the saved thread or the
+	/// server), so the thread can choose its opening position once instead of correcting it later.
+	public private(set) var openPositionKnown = false
+	/// The newest message the reader has scrolled past; read state advances to it while they are
+	/// still above the bottom. Only the thread view feeds it.
+	public private(set) var seenThrough = 0
+	/// False until the thread has chosen its opening position: rows that happen to be on screen
+	/// while it is still hidden at the bottom have not been read.
+	public var countsSeen = false
+	@ObservationIgnored private var seenTask: Task<Void, Never>?
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
@@ -530,6 +540,8 @@ public final class ChatStore {
 	}
 
 	public func stop() {
+		seenTask?.cancel()
+		seenTask = nil
 		listener?.cancel()
 		listener = nil
 		queueListener?.cancel()
@@ -586,6 +598,8 @@ public final class ChatStore {
 		else { return }
 		detail = entry.value.detail
 		readSent = max(readSent, entry.value.detail.lastReadMessageID ?? 0)
+		if openedReadCursor == nil { openedReadCursor = entry.value.detail.lastReadMessageID }
+		openPositionKnown = true
 		merge(entry.value.messages.map(\.message))
 		hasEarlier = confirmed.count >= ChatCaching.threadMessageLimit
 		phase = .loaded
@@ -667,6 +681,7 @@ public final class ChatStore {
 			if let loadedDetail {
 				detail = loadedDetail
 				if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
+				openPositionKnown = true
 				readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
 			}
 			freshness.refreshed(at: cache?.now() ?? now())
@@ -986,18 +1001,39 @@ public final class ChatStore {
 
 	// MARK: - Read state
 
-	/// Advance the read cursor to the newest confirmed message. Never regresses, never repeats.
-	/// Only while the thread is visible, the app is active and the reader is at the bottom.
+	/// Advance the read cursor. At the bottom that is the newest confirmed message; above it, the
+	/// newest message the reader has scrolled past (`noteSeen`). Never regresses, never repeats.
+	/// Only while the thread is visible and the app is active.
 	public func markReadIfNeeded() async {
-		guard isActive, isAtBottom, let last = lastServerID, last > readSent else { return }
+		guard isActive, let last = lastServerID else { return }
+		let target = isAtBottom ? last : min(last, seenThrough)
+		guard target > readSent else { return }
 		let previous = readSent
-		readSent = last
+		readSent = target
 		do {
-			try await api.markRead(conversationID: conversationID, lastMessageID: last)
-			detail?.unreadCount = 0
-			onMarkedRead?(conversationID, last)
+			try await api.markRead(conversationID: conversationID, lastMessageID: target)
+			detail?.lastReadMessageID = target
+			if target >= last {
+				detail?.unreadCount = 0
+				onMarkedRead?(conversationID, last)
+			}
+			// The saved thread must carry the new cursor, or the next open shows NEW over read messages.
+			writeCache()
 		} catch {
 			readSent = previous
+		}
+	}
+
+	/// The reader has scrolled past message `serverID`: read state follows a moment later, so a
+	/// long thread reads down as it is read instead of staying unread until the very end.
+	public func noteSeen(_ serverID: Int) {
+		guard countsSeen, serverID > seenThrough else { return }
+		seenThrough = serverID
+		seenTask?.cancel()
+		seenTask = Task { [weak self] in
+			try? await Task.sleep(for: .milliseconds(350))
+			if Task.isCancelled { return }
+			await self?.markReadIfNeeded()
 		}
 	}
 

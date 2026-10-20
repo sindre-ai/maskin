@@ -445,6 +445,36 @@ struct ChatStoreTests {
 		#expect(told == [2, 3])
 	}
 
+	@Test("above the bottom, read state follows what the reader has scrolled past")
+	func readFollowsSeen() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "relay", agent: true)],
+			detail: chatConvo("c1", lastRead: 0))
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		h.store.isAtBottom = false
+		await h.store.start()
+		// Rows on screen before the opening position is chosen are not the reader reading.
+		h.store.noteSeen(3)
+		#expect(h.store.seenThrough == 0)
+		h.store.countsSeen = true
+		h.store.noteSeen(2)
+		#expect(await eventually { await h.api.readCalls == [2] })
+		#expect(told.isEmpty)  // the list keeps its badge until the thread is read to the end
+		h.store.isAtBottom = true
+		await h.store.markReadIfNeeded()
+		#expect(await h.api.readCalls == [2, 3])
+		#expect(told == [3])
+	}
+
+	@Test("the opening position is known from the saved thread or the server")
+	func openPositionKnown() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 1))
+		#expect(!h.store.openPositionKnown)
+		await h.store.start()
+		#expect(h.store.openPositionKnown)
+		#expect(h.store.openedReadCursor == 1)
+	}
+
 	@Test("an already-read thread doesn't call the server again")
 	func alreadyRead() async {
 		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 2))
