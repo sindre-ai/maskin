@@ -67,6 +67,10 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// Agent access has its own tests; here it only has to render.
+	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected

@@ -25,6 +25,7 @@ import {
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -261,6 +262,18 @@ app.openapi(createConversationRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	if (body.initial_message) {
+		const secretRefusal = await refuseRawSecret(db, {
+			content: body.initial_message,
+			workspaceId,
+			actorId: callerId,
+			actorType: c.get('actorType'),
+			entityType: 'workspace',
+			entityId: workspaceId,
+		})
+		if (secretRefusal) return c.json(secretRefusal, 400)
+	}
 
 	// Every participant (including the creator, deduped) must already be a
 	// workspace member — conversations don't extend membership, they're
@@ -971,6 +984,10 @@ const postMessageRoute = createRoute({
 			content: { 'application/json': { schema: postMessageResponseSchema } },
 			description: 'Message posted',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Body contains a raw secret (RAW_SECRET_DETECTED)',
+		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
 	},
 })
@@ -989,6 +1006,17 @@ app.openapi(postMessageRoute, (async (c) => {
 	if (!row || row.conversation.workspaceId !== workspaceId) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
+
+	// Keychain backstop; see refuseRawSecret.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId: callerId,
+		actorType: callerType,
+		entityType: 'conversation',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
 
 	// Stamp session_id only when the caller is the agent that ran that
 	// session, for this same conversation — otherwise silently drop it
@@ -1196,6 +1224,10 @@ const editMessageRoute = createRoute({
 			content: { 'application/json': { schema: messageResponseSchema } },
 			description: 'Message updated',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Edit looks like it contains a secret',
+		},
 		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
 	},
@@ -1231,6 +1263,16 @@ app.openapi(editMessageRoute, (async (c) => {
 	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
 		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be edited'), 403)
 	}
+
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId: callerId,
+		actorType: c.get('actorType'),
+		entityType: 'conversation',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
 
 	const editedAt = new Date()
 	const [updated] = await db

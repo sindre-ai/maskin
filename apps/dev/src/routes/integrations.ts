@@ -2,7 +2,15 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
+import {
+	type AgentGrantAccess,
+	actors,
+	agentChatGrants,
+	agentGrants,
+	integrations,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
@@ -23,6 +31,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { requireCredentials } from '../lib/integrations/credential-column'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -160,9 +169,40 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.from(integrations)
 		.where(eq(integrations.workspaceId, workspaceId))
 
+	const grantRows = await db
+		.select({
+			integrationId: agentGrants.integrationId,
+			actorId: agentGrants.actorId,
+			access: agentGrants.access,
+		})
+		.from(agentGrants)
+		.where(eq(agentGrants.workspaceId, workspaceId))
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			actorId: agentChatGrants.actorId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(eq(agentChatGrants.workspaceId, workspaceId))
+	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+	for (const g of chatRows) {
+		const list = chatsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		chatsByIntegration.set(g.integrationId, list)
+	}
+	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
+	for (const g of grantRows) {
+		const list = grantsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, access: g.access })
+		grantsByIntegration.set(g.integrationId, list)
+	}
+
 	// Never expose credentials
 	const safe = results.map((r) => {
-		const { credentials, ...rest } = r
+		// dekCiphertext is the wrapped data key: ciphertext, but it has no
+		// business leaving the server.
+		const { credentials, dekCiphertext: _dekCiphertext, ...rest } = r
 
 		// Flag installs whose token predates a scope the provider now requires.
 		// Only the scope NAMES leave this function — the decrypted blob does not.
@@ -170,7 +210,8 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		// undecryptable blob (almost always an encryption-key rotation) or an
 		// inactive row must never take the whole integrations list down.
 		let missingScopes: string[] = []
-		if (rest.status === 'active' && credentials) {
+		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
+		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
 			try {
 				const provider = getProvider(rest.provider)
 				if (provider) {
@@ -187,7 +228,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			}
 		}
 
-		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0 }
+		return {
+			...rest,
+			missingScopes,
+			needsReconnect: missingScopes.length > 0,
+			agentGrants: grantsByIntegration.get(rest.id) ?? [],
+			chatGrants: chatsByIntegration.get(rest.id) ?? [],
+		}
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
@@ -510,7 +557,7 @@ app.openapi(linkInstallationRoute, (async (c) => {
 
 	// Re-encrypt rather than copying the source ciphertext, so the rows stay
 	// independent if credential storage ever becomes per-row keyed.
-	const credentials: StoredCredentials = JSON.parse(decrypt(source.credentials))
+	const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(source)))
 	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
 
 	const row = await bindGithubInstallation({
@@ -2021,6 +2068,10 @@ const deleteIntegrationRoute = createRoute({
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'Keychain credential: use POST /integrations/:id/remove',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -2039,6 +2090,19 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
+	// A vaulted Keychain credential is removed through POST /:id/remove, which
+	// limits it to its creator or an admin, zeroises the secret and appends to the
+	// audit chain. This route would only flip the status and leave the ciphertext.
+	if (existing.providerMode === 'byo_apikey' || existing.providerMode === 'byo_login') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This is a Keychain credential. Remove it from Keychain (POST /api/integrations/:id/remove).',
+			),
+			409,
+		)
+	}
+
 	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
 	// credentials are still readable so the provider can call its remote API
 	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
@@ -2050,7 +2114,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(existing)))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
@@ -2199,7 +2263,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
 	// Never expose credentials
-	const { credentials: _credentials, ...safe } = updated
+	const { credentials: _credentials, dekCiphertext: _dekCiphertext, ...safe } = updated
 	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
 }) as RouteHandler<typeof updateIntegrationRoute, Env>)
 
@@ -2486,7 +2550,7 @@ app.openapi(githubTokenRoute, (async (c) => {
 
 	if (recoveryRepo) {
 		try {
-			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(integration)))
 			const result = await mintInstallationTokenWithRecovery(credentials, {
 				repo: recoveryRepo,
 				expectedOwnerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
@@ -3143,7 +3207,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 		if (typeof value === 'string') headers[key.toLowerCase()] = value
 	}
 
-	const secret = decrypt(integration.credentials)
+	const secret = decrypt(requireCredentials(integration))
 	const verified = verifyTimestampSignature(body, headers, secret, {
 		signatureHeader: 'x-skjald-signature',
 		timestampHeader: 'x-skjald-timestamp',
@@ -3347,7 +3411,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
 	let stored: { accessToken: string; webhookSecret: string }
 	try {
-		stored = JSON.parse(decrypt(integration.credentials)) as {
+		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
 			accessToken: string
 			webhookSecret: string
 		}

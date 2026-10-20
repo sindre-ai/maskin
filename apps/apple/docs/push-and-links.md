@@ -6,7 +6,7 @@
 | `aps-environment` (`development` Debug / `production` Release, via `MASKIN_APS_ENVIRONMENT`) | iOS: `Apps/Maskin/Maskin.entitlements`; macOS: `com.apple.developer.aps-environment` in `Apps/Maskin/Maskin-macOS.entitlements` |
 | `UIBackgroundModes: remote-notification` | `project.yml` (Maskin Info) |
 | `maskin://` URL scheme | `CFBundleURLTypes` in `project.yml` |
-| Universal links `applinks:maskin.io`, `applinks:www.maskin.io` | both entitlements files |
+| Universal links `applinks:maskin.io` | both entitlements files |
 | Cleartext `localhost` ATS exception | Debug only; `scripts/strip-dev-ats.sh` removes it from Release for Maskin, MaskinWatch, MaskinTV |
 | macOS entitlements | Release only by default (restricted entitlements kill unsigned/ad-hoc builds). Debug: set `MASKIN_MACOS_ENTITLEMENTS=Apps/Maskin/Maskin-macOS.entitlements` + `DEVELOPMENT_TEAM` for a signed local build |
 
@@ -45,8 +45,8 @@ Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and 
 ## Apple App Site Association
 Serve at `https://maskin.io/.well-known/apple-app-site-association`: HTTPS, **no redirect**,
 `Content-Type: application/json`, no file extension. The web host's SPA catch-all must not shadow it.
-Replace `TEAMID` with the Apple Team ID. Serve the same file on `www.maskin.io`
-(the app declares both hosts; Apple does not follow redirects, so `www` must serve it directly, not 301 to the apex). The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
+Replace `TEAMID` with the Apple Team ID. The app declares only `maskin.io`: `www.maskin.io` 301s to the apex and
+Apple does not follow redirects, and `app.maskin.io` has no DNS record. The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
 the JSON below is what that serves. Paths come from the web routes
 `/{workspaceId}/objects/{objectId}`, `/{workspaceId}/chats/{id}` and the workspace inbox
 `/{workspaceId}/notifications` (see `DeepLink.swift`), plus workspace invitations,
@@ -76,7 +76,7 @@ then on a device `xcrun simctl openurl booted https://maskin.io/<workspaceId>/ob
 needs `applinks:maskin.io?mode=developer` or a real install). `xcrun simctl openurl booted maskin://<workspaceId>/objects/<id>` tests the custom scheme with no hosting.
 
 ## Invitation links
-`https://maskin.io/invite?token=<raw>` (also `www.` and `app.`) and `maskin://invite?token=<raw>` open the invite screen
+`https://maskin.io/invite?token=<raw>` and `maskin://invite?token=<raw>` open the invite screen
 (`MaskinFeatures/Invites/InviteView.swift`). `InviteCoordinator` keeps the token in `UserDefaults` (`invite.pending.v1`, at most 7 days)
 so it survives sign-in and a cold launch; it is forgotten on Accept, Decline, a dead invite, or closing the screen while signed in.
 Signed in, Accept posts `POST /api/invites/{token}/accept` with the stored key and no `X-Workspace-Id`, then switches to the returned

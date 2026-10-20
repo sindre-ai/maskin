@@ -6,6 +6,8 @@ import {
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatIntegrationConnectAsMarkdown,
+	formatKeychainAccessRequestAsMarkdown,
+	formatKeychainRequestAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionActivityQuerySchema,
@@ -13,6 +15,8 @@ import {
 	sessionAskSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
+	sessionKeychainAccessCardSchema,
+	sessionKeychainCardSchema,
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
 	sessionLogsDeepQuerySchema,
@@ -21,10 +25,13 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { resolveAgentAccess } from '../lib/integrations/agent-access'
+import { describeAgentAccess } from '../lib/integrations/agent-access-view'
+import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -945,6 +952,17 @@ app.openapi(inputSessionRoute, (async (c) => {
 		)
 	}
 
+	// Keychain backstop; the turn goes straight to the agent's stdin and into the chat.
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		entityType: 'session',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
+
 	try {
 		await sessionManager.writeInput(
 			id,
@@ -1268,6 +1286,332 @@ app.openapi(connectCardRoute, (async (c) => {
 
 	return c.json({ posted: true, message_id: created.id })
 }) as RouteHandler<typeof connectCardRoute, Env>)
+
+// POST /:id/keychain-card - Ask the human for a credential with a card in the chat
+//
+// Called by the `request_keychain_credential` MCP tool when it runs inside a chat
+// session. The human types the credential into the card, which sends it straight to
+// the vault, so a password never passes through the model and the agent never has to
+// ask for one in plain text. Same gates as /connect-card: only the agent that owns an
+// interactive chat session may post, and anything else gets a 409 so the tool can say
+// there is nobody to ask.
+const keychainCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/keychain-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a Keychain credential card into the session chat',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionKeychainCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ posted: z.literal(true), message_id: z.number() }),
+				},
+			},
+			description: 'Card posted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(keychainCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { kind, suggested_name: suggestedName, hint } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is nobody to show a card to',
+			),
+			409,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatKeychainRequestAsMarkdown(kind, suggestedName, hint),
+		metadata: {
+			keychain_request: {
+				session_id: session.id,
+				kind,
+				...(suggestedName ? { suggested_name: suggestedName } : {}),
+				...(hint ? { hint } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+
+	// Null means a unique constraint suppressed the insert, which this caller has
+	// no dedupe key to trigger. Surface it as a 500, never a 409 (see /ask).
+	if (!created) {
+		logger.error('Keychain card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			kind,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Keychain card could not be posted'), 500)
+	}
+
+	// The kind only: the suggested name and hint are the agent's words, not secrets,
+	// but there is no reason for them to be in a log line either.
+	logger.info('Posted keychain card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		kind,
+	})
+
+	return c.json({ posted: true as const, message_id: created.id }, 200)
+}) as RouteHandler<typeof keychainCardRoute, Env>)
+
+// GET /:id/keychain-credentials - What this session's agent can ask for from the Keychain
+//
+// Called by the `list_keychain_credentials` MCP tool. Names and kinds only, never a value,
+// and only for credentials a person can actually grant: active saved keys and logins.
+// Same gate as the card routes: only the agent that owns the session may ask.
+const keychainCredentialsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/keychain-credentials',
+	tags: ['Sessions'],
+	summary:
+		"List the Keychain credentials in this workspace and whether the session's agent has each",
+	request: { headers: workspaceIdHeader, params: sessionParamsSchema },
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						credentials: z.array(
+							z.object({
+								name: z.string(),
+								kind: z.enum(['api_key', 'login']),
+								has_access: z.boolean(),
+								scope: z.enum(['always', 'this_chat']).nullable(),
+							}),
+						),
+					}),
+				},
+			},
+			description: 'Credentials by name',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(keychainCredentialsRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	// The same view the agent page and get_actor read, so the lists cannot disagree.
+	const { credentials } = await describeAgentAccess(db, session.workspaceId, session.actorId, {
+		conversationId: session.conversationId,
+	})
+	return c.json(
+		{
+			credentials: credentials.map((cr) => ({
+				name: cr.name,
+				kind: cr.kind,
+				has_access: cr.has_access,
+				scope: cr.scope,
+			})),
+		},
+		200,
+	)
+}) as RouteHandler<typeof keychainCredentialsRoute, Env>)
+
+// POST /:id/keychain-access-card - Ask the human to let this agent use an existing credential
+//
+// Called by the `request_keychain_access` MCP tool. Posts a card with Allow / Not now. The
+// card holds no secret: allowing it grants the agent access (a person only) and restarts
+// the agent so the credential is in its environment. Same gates as the other cards.
+const keychainAccessCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/keychain-access-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a card in the session chat asking the person to share an existing credential',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionKeychainAccessCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						posted: z.boolean(),
+						already_granted: z.boolean(),
+						message_id: z.number().nullable(),
+					}),
+				},
+			},
+			description: 'Card posted, or the agent already has the credential',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session or credential not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(keychainAccessCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { credential_name: credentialName, hint } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is nobody to show a card to',
+			),
+			409,
+		)
+	}
+
+	// By name, the way a person and the list tool know it. Active saved keys and logins only.
+	const [credential] = await db
+		.select({
+			id: integrations.id,
+			name: integrations.displayName,
+			mode: integrations.providerMode,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, session.workspaceId),
+				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+				eq(integrations.status, 'active'),
+				sql`lower(${integrations.displayName}) = lower(${credentialName})`,
+			),
+		)
+		.limit(1)
+	if (!credential?.name) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No credential with that name. Use list_keychain_credentials for the names, or request_keychain_credential to ask for a new one.',
+			),
+			404,
+		)
+	}
+
+	// A grant, or an Allow for this very chat, both mean the agent has it already.
+	const current = await resolveAgentAccess(
+		db,
+		session.workspaceId,
+		credential.id,
+		session.actorId,
+		{
+			conversationId: session.conversationId,
+		},
+	)
+	if (current && current !== 'none')
+		return c.json({ posted: false, already_granted: true, message_id: null }, 200)
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatKeychainAccessRequestAsMarkdown(credential.name, hint),
+		metadata: {
+			keychain_access_request: {
+				session_id: session.id,
+				integration_id: credential.id,
+				credential_name: credential.name,
+				kind: credential.mode === 'byo_login' ? 'login' : 'api_key',
+				...(hint ? { hint } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+	if (!created) {
+		logger.error('Keychain access card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Keychain access card could not be posted'), 500)
+	}
+	logger.info('Posted keychain access card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		integrationId: credential.id,
+	})
+	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
+}) as RouteHandler<typeof keychainAccessCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({
