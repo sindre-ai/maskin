@@ -143,17 +143,21 @@ export interface McpEntryOwner {
 /**
  * Where a provider's entries sit on an agent, stated as data beside the rest
  * of the provider config rather than in a second list (integrations-mcp.md,
- * "Explicitly rejected").
+ * "Explicitly rejected"). The same declaration drives both directions:
+ * recognising an agent's entry on disconnect (mcp-entries.ts) and building the
+ * entry offered to attach (mcp-presets.ts).
  *
- * - `shared`: one entry for the whole provider. It outlives any single
- *   connection, so it is only removed when no other active integration of the
- *   provider still needs it.
+ * - `shared`: one entry for the whole provider, exactly `mcp.server`. It
+ *   outlives any single connection, so it is only removed when no other active
+ *   integration of the provider still needs it.
  * - `per-identity`: one entry per credential identity, served by this API at
  *   `{urlPath}/{instanceSlug}` (LinkedIn). `slugPrefix` is the part of the slug
- *   one credential owns, null when it never enumerated an identity.
+ *   one credential owns, null when it never enumerated an identity. `server`
+ *   builds the entry for one live instance slug; the key an agent files it under
+ *   is the slug itself.
  * - `per-installation`: one stdio entry per installation (GitHub), recognised
  *   by the env var it reads its token from. `envKey` is that variable's name,
- *   null when the row names no owner.
+ *   null when the row names no owner. `key`, `label` and `server` build the entry.
  */
 export type McpEntryDeclaration =
 	| { kind: 'shared' }
@@ -161,8 +165,17 @@ export type McpEntryDeclaration =
 			kind: 'per-identity'
 			urlPath: string
 			slugPrefix: (owner: McpEntryOwner) => string | null
+			server: (instanceSlug: string) => McpServerSpec
 	  }
-	| { kind: 'per-installation'; envKey: (owner: McpEntryOwner) => string | null }
+	| {
+			kind: 'per-installation'
+			envKey: (owner: McpEntryOwner) => string | null
+			/** The key an agent files this installation's entry under, null when the row names no owner. */
+			key: (owner: McpEntryOwner) => string | null
+			/** What a person sees on the attach button, e.g. the organisation's name. */
+			label: (owner: McpEntryOwner) => string | null
+			server: (owner: McpEntryOwner) => McpServerSpec | null
+	  }
 
 // ── Events ─────────────────────────────────────────────────────────────────
 

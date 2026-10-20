@@ -181,6 +181,26 @@ export const messageIntegrationConnectSchema = z.object({
 	provider: z.string().min(1).max(100),
 })
 
+/**
+ * Set by the backend when an agent in a chat calls `propose_integration_attach`:
+ * the chat renders an Approve card. The agent never writes to the target actor;
+ * a human admin's click on the card calls the approve route, which re-derives
+ * the entry server side. Never accepted from a client (stripped like
+ * `integration_connect`).
+ *
+ * Only ids are stored. The card reads the live preset list, so a preset whose
+ * integration was since disconnected shows as no longer available instead of
+ * offering a stale button.
+ */
+export const messageIntegrationAttachSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** The agent that would receive the entry. */
+	actor_id: z.string().uuid(),
+	/** Key from `GET /api/integrations/mcp-presets`. */
+	preset_id: z.string().min(1).max(200),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -205,6 +225,8 @@ export const messageMetadataSchema = z.object({
 	question_answer: messageQuestionAnswerSchema.optional(),
 	/** Backend-owned: an agent's request to connect an integration, shown as a card. */
 	integration_connect: messageIntegrationConnectSchema.optional(),
+	/** Backend-owned: an agent's proposal to attach an integration's tools to an agent, shown as an Approve card. */
+	integration_attach: messageIntegrationAttachSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 })
@@ -224,6 +246,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		question: _question,
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
+		integration_attach: _integrationAttach,
 		...rest
 	} = metadata
 	return rest as T
@@ -318,6 +341,7 @@ export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
 export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>
+export type MessageIntegrationAttach = z.infer<typeof messageIntegrationAttachSchema>
 export type MessageQuestionItem = z.infer<typeof messageQuestionItemSchema>
 export type MessageQuestionAnswer = z.infer<typeof messageQuestionAnswerSchema>
 
@@ -347,6 +371,20 @@ export const sessionConnectCardSchema = z.object({
  */
 export function formatIntegrationConnectAsMarkdown(displayName: string): string {
 	return `Connect **${displayName}** to continue — use the Connect card below, or go to Settings → Integrations.`
+}
+
+/** The `attach-card` request body: what `propose_integration_attach` was called with. */
+export const sessionAttachCardSchema = z.object({
+	actor_id: z.string().uuid(),
+	preset_id: z.string().min(1).max(200),
+})
+
+/**
+ * The plain-markdown rendering of an attach card, used as the message's
+ * `content` so every reader that isn't the chat UI still says what is asked.
+ */
+export function formatIntegrationAttachAsMarkdown(agentName: string, label: string): string {
+	return `Allow **${agentName}** to use **${label}**. Approve with the card below (workspace admins only).`
 }
 
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */

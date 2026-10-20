@@ -1,5 +1,8 @@
 import type { ProviderConfig } from '../../types'
 
+// Expanded inside the session container, never here.
+const MASKIN_API_URL_PLACEHOLDER = '${MASKIN_API_URL}'
+
 /**
  * linkedin-unipile provider config.
  *
@@ -59,6 +62,14 @@ export const config: ProviderConfig = {
 			kind: 'per-identity',
 			urlPath: '/api/integrations/linkedin-unipile/mcp',
 			slugPrefix: (owner) => (owner.unipileAccSlug ? `linkedin-${owner.unipileAccSlug}-` : null),
+			server: (instanceSlug) => ({
+				type: 'http',
+				url: `${MASKIN_API_URL_PLACEHOLDER}/api/integrations/linkedin-unipile/mcp/${instanceSlug}`,
+				headers: {
+					Authorization: 'Bearer ${MASKIN_API_KEY}',
+					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				},
+			}),
 		},
 	},
 
