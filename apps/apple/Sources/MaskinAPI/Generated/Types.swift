@@ -503,6 +503,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/notifications/{id}/respond`.
     /// - Remark: Generated from `#/paths//api/notifications/{id}/respond/post`.
     func post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond(_ input: Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Input) async throws -> Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Output
+    /// The Chief of Staff's ranked list of what needs the current actor
+    ///
+    /// - Remark: HTTP `GET /api/for-you`.
+    /// - Remark: Generated from `#/paths//api/for-you/get`.
+    func get_sol_api_sol_for_hyphen_you(_ input: Operations.get_sol_api_sol_for_hyphen_you.Input) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output
     /// Subscribe current actor to an entity
     ///
     /// - Remark: HTTP `POST /api/subscriptions`.
@@ -1869,6 +1874,13 @@ extension APIProtocol {
             headers: headers,
             body: body
         ))
+    }
+    /// The Chief of Staff's ranked list of what needs the current actor
+    ///
+    /// - Remark: HTTP `GET /api/for-you`.
+    /// - Remark: Generated from `#/paths//api/for-you/get`.
+    public func get_sol_api_sol_for_hyphen_you(headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
+        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(headers: headers))
     }
     /// Subscribe current actor to an entity
     ///

@@ -24,6 +24,7 @@ filter:
     - /api/notifications/{id}
     - /api/notifications/{id}/respond
     - /api/briefing
+    - /api/for-you
     - /api/events/history
     - /api/feature-flags
     - /api/events
