@@ -23,7 +23,7 @@ function renderSheet(over: Partial<React.ComponentProps<typeof ScopeEditorSheet>
 			onOpenChange={() => {}}
 			credentialName="Linear key"
 			agents={AGENTS}
-			grants={[]}
+			grantedIds={[]}
 			saving={false}
 			error={null}
 			onSave={onSave}
@@ -69,53 +69,29 @@ describe('ScopeEditorSheet', () => {
 
 	it('starts from the saved grants and counts the ticked agents', async () => {
 		const user = userEvent.setup()
-		const { onSave } = renderSheet({ grants: [{ kind: 'actor', actorId: 'agent-1' }] })
+		const { onSave } = renderSheet({ grantedIds: ['agent-1'] })
 		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).toBeChecked()
 		expect(screen.getByText('Available to 1 agent')).toBeInTheDocument()
 		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
 		expect(screen.getByText('Available to 2 agents')).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		expect(onSave).toHaveBeenCalledWith([
-			{ kind: 'actor', actorId: 'agent-1' },
-			{ kind: 'actor', actorId: 'agent-2' },
-		])
-	})
-
-	it('sends a workspace grant for the all-agents row and disables the individual boxes', async () => {
-		const user = userEvent.setup()
-		const { onSave } = renderSheet({ grants: [{ kind: 'actor', actorId: 'agent-1' }] })
-		await user.click(screen.getByRole('checkbox', { name: 'All agents in this workspace' }))
-		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).toBeDisabled()
-		expect(screen.getByRole('checkbox', { name: 'Code Reviewer' })).toBeDisabled()
-		expect(screen.getByText('Available to 2 agents')).toBeInTheDocument()
-		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		expect(onSave).toHaveBeenCalledWith([{ kind: 'workspace' }])
+		expect(onSave).toHaveBeenCalledWith(['agent-1', 'agent-2'])
 	})
 
 	it('saves an empty list when everything is un-ticked', async () => {
 		const user = userEvent.setup()
-		const { onSave } = renderSheet({ grants: [{ kind: 'actor', actorId: 'agent-1' }] })
+		const { onSave } = renderSheet({ grantedIds: ['agent-1'] })
 		await user.click(screen.getByRole('checkbox', { name: 'Infra & DevOps' }))
 		expect(screen.getByText(NO_AGENT_LINE)).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
 		expect(onSave).toHaveBeenCalledWith([])
 	})
 
-	it('keeps the grants to people and loops when agents are changed', async () => {
+	it('drops ids that are not agents in the workspace', async () => {
 		const user = userEvent.setup()
-		const person = { kind: 'actor', actorId: 'a-person' } as const
-		const loop = { kind: 'loop', loopId: 'loop-1' } as const
-		const { onSave } = renderSheet({
-			grants: [person, loop, { kind: 'actor', actorId: 'agent-1' }],
-		})
-		await user.click(screen.getByRole('checkbox', { name: 'Infra & DevOps' }))
-		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
+		const { onSave } = renderSheet({ grantedIds: ['a-person', 'agent-1'] })
 		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		expect(onSave).toHaveBeenLastCalledWith([person, loop, { kind: 'actor', actorId: 'agent-2' }])
-
-		await user.click(screen.getByRole('checkbox', { name: 'All agents in this workspace' }))
-		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		expect(onSave).toHaveBeenLastCalledWith([person, loop, { kind: 'workspace' }])
+		expect(onSave).toHaveBeenCalledWith(['agent-1'])
 	})
 
 	it('shows a spinner state and disables the controls while saving', () => {
@@ -127,18 +103,9 @@ describe('ScopeEditorSheet', () => {
 })
 
 describe('countAgents', () => {
-	it('counts only agents, not people or loops', () => {
-		expect(
-			countAgents(
-				[
-					{ kind: 'actor', actorId: 'agent-1' },
-					{ kind: 'actor', actorId: 'a-person' },
-					{ kind: 'loop', loopId: 'loop-1' },
-				],
-				AGENTS,
-			),
-		).toBe(1)
-		expect(countAgents([{ kind: 'workspace' }], AGENTS)).toBe(2)
+	it('counts only workspace agents, once each', () => {
+		expect(countAgents(['agent-1', 'a-person', 'agent-1'], AGENTS)).toBe(1)
+		expect(countAgents(['agent-1', 'agent-2'], AGENTS)).toBe(2)
 		expect(countAgents([], AGENTS)).toBe(0)
 	})
 

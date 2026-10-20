@@ -21,7 +21,14 @@ import { getCredential } from '../../lib/integrations/lookup'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
+import {
+	grantedActorIds,
+	insertActor,
+	insertAgentGrant,
+	insertConversation,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 import { fakeSessionControl } from './session-control-fake'
 
@@ -138,12 +145,15 @@ describe('POST /api/integrations/byo-login', () => {
 			provider: 'login',
 			displayName: 'e-conomic',
 			source: 'admin_ui',
-			scopeGrants: [{ kind: 'actor', actorId: human }],
 		})
+		// No agent holds it until a person grants one.
+		expect(await grantedActorIds(db, integrationId)).toEqual([])
 		expect(row?.dekCiphertext).toBeTruthy()
 
+		const agent = await insertActor(db, { type: 'agent' })
+		await insertAgentGrant(db, { workspaceId: ws.id, integrationId, actorId: agent.id })
 		const credential = await getCredential(db, ws.id, integrationId, {
-			requestingActorId: human,
+			requestingActorId: agent.id,
 			requestId: 'test:byo-login-roundtrip',
 		})
 		expect(decodeLogin(credential.value)).toEqual({ username: USERNAME, password: PASSWORD })
@@ -244,7 +254,7 @@ describe('POST /api/integrations/chat-capture — login from a card', () => {
 			displayName: 'e-conomic',
 			username: USERNAME,
 			password: PASSWORD,
-			scopeGrants: [{ kind: 'actor', actorId: s.agent.id }],
+			agentIds: [s.agent.id],
 			fromCard: true,
 		})
 		expect(res.status).toBe(201)
@@ -266,8 +276,8 @@ describe('POST /api/integrations/chat-capture — login from a card', () => {
 			provider: 'login',
 			source: 'chat_capture',
 			originSessionId: s.session.id,
-			scopeGrants: [{ kind: 'actor', actorId: s.agent.id }],
 		})
+		expect(await grantedActorIds(db, integrationId)).toEqual([s.agent.id])
 
 		// The agent the person ticked can read it; the agent they did not, cannot.
 		const mine = await getCredential(db, s.ws.id, integrationId, {
@@ -310,7 +320,7 @@ describe('POST /api/integrations/chat-capture — login from a card', () => {
 			detectedProvider: 'manual',
 			displayName: 'Stripe',
 			rawSecret: `key_${'CANARY0123'.repeat(3)}`,
-			scopeGrants: [{ kind: 'actor', actorId: s.agent.id }],
+			agentIds: [s.agent.id],
 			fromCard: true,
 		})
 
@@ -341,7 +351,7 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 			displayName: name,
 			username: USERNAME,
 			password: PASSWORD,
-			scopeGrants: [{ kind: 'actor', actorId: s.agent.id }],
+			agentIds: [s.agent.id],
 		})
 		expect(res.status).toBe(201)
 		return ((await res.json()) as { integrationId: string }).integrationId
@@ -398,7 +408,7 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 			detectedProvider: 'manual',
 			displayName: 'Stripe',
 			rawSecret: `key_${'CANARY0123'.repeat(3)}`,
-			scopeGrants: [{ kind: 'actor', actorId: s.agent.id }],
+			agentIds: [s.agent.id],
 		})
 		expect(keyRes.status).toBe(201)
 

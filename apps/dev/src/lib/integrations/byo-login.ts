@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
-import { type ScopeGrant, integrations } from '@maskin/db/schema'
+import { integrations } from '@maskin/db/schema'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
+import { insertKeychainGrants } from './agent-grants'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 import { assertValidLoginFields } from './login-value'
@@ -42,17 +43,19 @@ export interface ByoLoginInput extends LoginFields {
 	/** The member adding the login. */
 	actorId: string
 	displayName: string
+	/** Agents that may use the login. Omitted: nobody until a person grants one. */
+	agentIds?: string[]
 }
 
 export interface ByoLoginResult {
 	integrationId: string
-	scopeGrants: ScopeGrant[]
+	agentIds: string[]
 }
 
 /**
  * Vaults a login added in the Keychain form. The twin of createByoApiKey: same
  * envelope, name rule, uniqueness and audit chain; the row is active straight away
- * and scoped to the member who added it until they widen it on the credential's page.
+ * and no agent can use it until a person grants one.
  */
 export async function createByoLogin(
 	db: Database,
@@ -63,7 +66,7 @@ export async function createByoLogin(
 	assertValidCredentialName(input.displayName)
 	assertValidLoginFields(input.username, input.password)
 	await assertSlugFree(db, workspaceId, input.displayName)
-	const grants: ScopeGrant[] = [{ kind: 'actor', actorId }]
+	const agentIds = input.agentIds ?? []
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, encodeLogin(input))
 	const integrationId = randomUUID()
 
@@ -79,8 +82,14 @@ export async function createByoLogin(
 			dekCiphertext,
 			providerMode: 'byo_login',
 			displayName: input.displayName,
-			scopeGrants: grants,
+			defaultAgentAccess: 'none',
 			source: 'admin_ui',
+			createdBy: actorId,
+		})
+		await insertKeychainGrants(tx, {
+			workspaceId,
+			integrationId,
+			actorIds: agentIds,
 			createdBy: actorId,
 		})
 		await insertCredentialAccessLog(tx, {
@@ -102,5 +111,5 @@ export async function createByoLogin(
 		})
 	})
 
-	return { integrationId, scopeGrants: grants }
+	return { integrationId, agentIds }
 }

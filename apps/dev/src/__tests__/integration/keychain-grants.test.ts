@@ -7,7 +7,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
-	type ScopeGrant,
+	agentGrants,
 	conversationParticipants,
 	credentialAccessLog,
 	integrations,
@@ -25,7 +25,7 @@ import { createByoApiKey } from '../../lib/integrations/byo-apikey'
 import { captureChatSecret } from '../../lib/integrations/chat-capture'
 import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
-import integrationsKeychainRoutes from '../../routes/integrations-keychain'
+import integrationsGrantsRoutes from '../../routes/integrations-grants'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
@@ -36,7 +36,7 @@ const CANARY = `fake-scope-${'0123456789'.repeat(3)}`
 let dir: string
 let kms: MasterKeyProvider
 beforeAll(() => {
-	dir = mkdtempSync(join(tmpdir(), 'keychain-scope-kek-'))
+	dir = mkdtempSync(join(tmpdir(), 'keychain-grants-kek-'))
 	kms = new MasterKeyProvider(randomBytes(32))
 	setKmsProviderForTests(kms)
 })
@@ -58,17 +58,17 @@ function appFor(actorId: string, actorType: 'human' | 'agent' = 'human') {
 	app.onError((_err, c) =>
 		c.json(createApiError('INTERNAL_ERROR', 'Internal server error'), { status: 500 }),
 	)
-	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsGrantsRoutes)
 	return app
 }
 
-function putScope(
+function putGrants(
 	app: ReturnType<typeof appFor>,
 	workspaceId: string,
 	integrationId: string,
 	body: unknown,
 ) {
-	return app.request(`/api/integrations/${integrationId}/scope`, {
+	return app.request(`/api/integrations/${integrationId}/grants`, {
 		method: 'PUT',
 		headers: { 'content-type': 'application/json', 'x-workspace-id': workspaceId },
 		body: JSON.stringify(body),
@@ -129,7 +129,14 @@ async function setup() {
 
 type Setup = Awaited<ReturnType<typeof setup>>
 
-const actorGrant = (actorId: string): ScopeGrant => ({ kind: 'actor', actorId })
+const on = (...ids: string[]) => ({
+	grants: ids.map((actorId) => ({ actorId, access: 'read_write' as const })),
+})
+
+const grantedIds = async (id: string) =>
+	(await db.select().from(agentGrants).where(eq(agentGrants.integrationId, id)))
+		.map((g) => g.actorId)
+		.sort()
 
 async function launchEnv(session: typeof sessions.$inferSelect) {
 	const manager = new SessionManager(db, stubStorage())
@@ -140,8 +147,8 @@ async function launchEnv(session: typeof sessions.$inferSelect) {
 	}
 }
 
-const grantsOf = async (id: string) =>
-	(await db.select().from(integrations).where(eq(integrations.id, id)))[0]?.scopeGrants
+const keychainKeys = (env: Record<string, string>) =>
+	Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_'))
 
 const scopeRows = (s: Setup) =>
 	db
@@ -154,16 +161,15 @@ const scopeRows = (s: Setup) =>
 			),
 		)
 
-describe('PUT /api/integrations/:id/scope (Integration)', () => {
-	it('replaces the grants, writes one scope_changed audit row and one event, and keeps the chain intact', async () => {
+describe('PUT /api/integrations/:id/grants on a saved key (Integration)', () => {
+	it('starts with no agent, replaces the grants, writes one scope_changed audit row and one event, and keeps the chain intact', async () => {
 		const s = await setup()
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, {
-			scopeGrants: [actorGrant(s.agentA.id)],
-		})
+		expect(await grantedIds(s.integrationId)).toEqual([])
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, on(s.agentA.id))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toEqual({ id: s.integrationId, scopeGrants: [actorGrant(s.agentA.id)] })
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.agentA.id)])
+		expect(body).toEqual(on(s.agentA.id))
+		expect(await grantedIds(s.integrationId)).toEqual([s.agentA.id])
 
 		const rows = await scopeRows(s)
 		expect(rows).toHaveLength(1)
@@ -181,12 +187,12 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 			.from(events)
 			.where(and(eq(events.entityId, s.integrationId), eq(events.entityType, 'integration')))
 		const change = evs.find(
-			(e) => (e.data as { change?: string } | null)?.change === 'scope_grants',
+			(e) => (e.data as { change?: string } | null)?.change === 'agent_grants',
 		)
 		expect(change).toMatchObject({ action: 'updated', actorId: s.human })
 		expect(change?.data).toMatchObject({
-			scope_grants_before: [actorGrant(s.human)],
-			scope_grants_after: [actorGrant(s.agentA.id)],
+			grants_before: [],
+			grants_after: [{ actorId: s.agentA.id, access: 'read_write' }],
 		})
 
 		const [row] = await db.select().from(integrations).where(eq(integrations.id, s.integrationId))
@@ -196,15 +202,13 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 		expect(everything).not.toContain(CANARY)
 		expect(everything).not.toContain(row?.credentials ?? 'no-credentials')
 		expect(everything).not.toContain(row?.dekCiphertext ?? 'no-dek')
-		expect(Object.keys(body as object).sort()).toEqual(['id', 'scopeGrants'])
 	})
 
 	it('writes one audit row per save, each with its own request id, and the chain still verifies', async () => {
 		const s = await setup()
 		const app = appFor(s.human)
-		for (const grants of [[actorGrant(s.agentA.id)], [], [{ kind: 'workspace' }]]) {
-			const res = await putScope(app, s.ws.id, s.integrationId, { scopeGrants: grants })
-			expect(res.status).toBe(200)
+		for (const ids of [[s.agentA.id], [], [s.agentA.id, s.agentB.id]]) {
+			expect((await putGrants(app, s.ws.id, s.integrationId, on(...ids))).status).toBe(200)
 		}
 		const rows = await scopeRows(s)
 		expect(rows).toHaveLength(3)
@@ -212,38 +216,16 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 4 })
 	})
 
-	it('accepts an empty list as unassigned, and a workspace grant as every agent', async () => {
+	it('stores each agent once', async () => {
 		const s = await setup()
-		const sessionA = await s.sessionFor(s.agentA.id)
-		const app = appFor(s.human)
-
-		expect((await putScope(app, s.ws.id, s.integrationId, { scopeGrants: [] })).status).toBe(200)
-		expect(await grantsOf(s.integrationId)).toEqual([])
-		expect(Object.keys(await launchEnv(sessionA)).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual(
-			[],
+		const res = await putGrants(
+			appFor(s.human),
+			s.ws.id,
+			s.integrationId,
+			on(s.agentA.id, s.agentA.id),
 		)
-
-		const all = [{ kind: 'workspace' }]
-		expect((await putScope(app, s.ws.id, s.integrationId, { scopeGrants: all })).status).toBe(200)
-		expect(await grantsOf(s.integrationId)).toEqual(all)
-		expect((await launchEnv(sessionA)).KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(CANARY)
-	})
-
-	it('stores each grant once', async () => {
-		const s = await setup()
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, {
-			scopeGrants: [
-				actorGrant(s.agentA.id),
-				actorGrant(s.agentA.id),
-				{ kind: 'workspace' },
-				{ kind: 'workspace' },
-			],
-		})
 		expect(res.status).toBe(200)
-		expect(await grantsOf(s.integrationId)).toEqual([
-			actorGrant(s.agentA.id),
-			{ kind: 'workspace' },
-		])
+		expect(await grantedIds(s.integrationId)).toEqual([s.agentA.id])
 	})
 
 	it('hands the key to the ticked agent for the next session, and takes it away when un-ticked', async () => {
@@ -252,24 +234,23 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 		const sessionA = await s.sessionFor(s.agentA.id)
 		const sessionB = await s.sessionFor(s.agentB.id)
 
-		await putScope(app, s.ws.id, s.integrationId, { scopeGrants: [actorGrant(s.agentA.id)] })
+		await putGrants(app, s.ws.id, s.integrationId, on(s.agentA.id))
 		expect((await launchEnv(sessionA)).KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(CANARY)
 		const envB = await launchEnv(sessionB)
-		expect(Object.keys(envB).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([])
+		expect(keychainKeys(envB)).toEqual([])
 		expect(JSON.stringify(envB)).not.toContain(CANARY)
 
-		await putScope(app, s.ws.id, s.integrationId, { scopeGrants: [] })
-		const after = await launchEnv(await s.sessionFor(s.agentA.id))
-		expect(Object.keys(after).filter((k) => k.startsWith('KEYCHAIN_'))).toEqual([])
+		await putGrants(app, s.ws.id, s.integrationId, on())
+		expect(keychainKeys(await launchEnv(await s.sessionFor(s.agentA.id)))).toEqual([])
 	})
 
 	it('leaves a session that is already running alone when its agent is un-ticked', async () => {
 		const s = await setup()
 		const app = appFor(s.human)
-		await putScope(app, s.ws.id, s.integrationId, { scopeGrants: [actorGrant(s.agentA.id)] })
+		await putGrants(app, s.ws.id, s.integrationId, on(s.agentA.id))
 		const running = await s.sessionFor(s.agentA.id, { status: 'running' })
 
-		await putScope(app, s.ws.id, s.integrationId, { scopeGrants: [] })
+		await putGrants(app, s.ws.id, s.integrationId, on())
 
 		const [after] = await db.select().from(sessions).where(eq(sessions.id, running.id))
 		expect(after).toMatchObject({ status: 'running', completedAt: null })
@@ -278,64 +259,70 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 
 	it('lets a workspace admin who did not paste the key change it', async () => {
 		const s = await setup()
-		const res = await putScope(appFor(s.admin.id), s.ws.id, s.integrationId, {
-			scopeGrants: [actorGrant(s.agentB.id)],
-		})
+		const res = await putGrants(appFor(s.admin.id), s.ws.id, s.integrationId, on(s.agentB.id))
 		expect(res.status).toBe(200)
-		const rows = await scopeRows(s)
-		expect(rows[0]?.actorId).toBe(s.admin.id)
+		expect((await scopeRows(s))[0]?.actorId).toBe(s.admin.id)
 	})
 
 	it('answers 403 to an agent caller, even one the key is granted to, and writes nothing', async () => {
 		const s = await setup()
-		await putScope(appFor(s.human), s.ws.id, s.integrationId, {
-			scopeGrants: [actorGrant(s.agentA.id)],
-		})
-		const res = await putScope(appFor(s.agentA.id, 'agent'), s.ws.id, s.integrationId, {
-			scopeGrants: [{ kind: 'workspace' }],
-		})
+		await putGrants(appFor(s.human), s.ws.id, s.integrationId, on(s.agentA.id))
+		const res = await putGrants(
+			appFor(s.agentA.id, 'agent'),
+			s.ws.id,
+			s.integrationId,
+			on(s.agentA.id, s.agentB.id),
+		)
 		expect(res.status).toBe(403)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.agentA.id)])
+		expect(await grantedIds(s.integrationId)).toEqual([s.agentA.id])
 		expect(await scopeRows(s)).toHaveLength(1)
 	})
 
 	it('answers 403 to a member who is neither the creator nor an admin or owner, and writes nothing', async () => {
 		const s = await setup()
-		const res = await putScope(appFor(s.member.id), s.ws.id, s.integrationId, {
-			scopeGrants: [actorGrant(s.member.id)],
-		})
+		const res = await putGrants(appFor(s.member.id), s.ws.id, s.integrationId, on(s.agentA.id))
 		expect(res.status).toBe(403)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.human)])
+		expect(await grantedIds(s.integrationId)).toEqual([])
 		expect(await scopeRows(s)).toEqual([])
 	})
 
-	it('answers 400 to a grant naming an actor outside the workspace, and changes nothing', async () => {
+	it('answers 400 to a grant naming an actor outside the workspace, or a person, and changes nothing', async () => {
 		const s = await setup()
 		const stranger = await insertActor(db, { type: 'agent' })
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, {
-			scopeGrants: [actorGrant(s.agentA.id), actorGrant(stranger.id)],
-		})
-		expect(res.status).toBe(400)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.human)])
+		for (const bad of [stranger.id, s.member.id]) {
+			const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, on(s.agentA.id, bad))
+			expect(res.status).toBe(400)
+		}
+		expect(await grantedIds(s.integrationId)).toEqual([])
 		expect(await scopeRows(s)).toEqual([])
+	})
+
+	it('answers 400 to read-only or write-only access on a saved key: it is on or off', async () => {
+		const s = await setup()
+		for (const access of ['read', 'none']) {
+			const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, {
+				grants: [{ actorId: s.agentA.id, access }],
+			})
+			expect(res.status).toBe(400)
+		}
+		expect(await grantedIds(s.integrationId)).toEqual([])
 	})
 
 	it.each([
-		['an unknown field', { scopeGrants: [], extra: true }],
-		['a loop grant', { scopeGrants: [{ kind: 'loop', loopId: crypto.randomUUID() }] }],
-		['an actor id that is not a uuid', { scopeGrants: [{ kind: 'actor', actorId: 'agent-a' }] }],
+		['an unknown field', { grants: [], extra: true }],
+		['an actor id that is not a uuid', { grants: [{ actorId: 'agent-a', access: 'read_write' }] }],
+		['an unknown access level', { grants: [{ actorId: crypto.randomUUID(), access: 'admin' }] }],
 		['a missing list', {}],
 	])('answers 400 to %s', async (_label, body) => {
 		const s = await setup()
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, body)
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, body)
 		expect(res.status).toBe(400)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.human)])
 	})
 
-	it('answers 400 to more than 25 grants', async () => {
+	it('answers 400 to more than 100 grants', async () => {
 		const s = await setup()
-		const grants = Array.from({ length: 26 }, () => actorGrant(crypto.randomUUID()))
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, { scopeGrants: grants })
+		const ids = Array.from({ length: 101 }, () => crypto.randomUUID())
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, on(...ids))
 		expect(res.status).toBe(400)
 	})
 
@@ -350,9 +337,10 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 			displayName: 'Cloudflare deploy',
 			rawSecret: CANARY,
 		})
-		const res = await putScope(appFor(s.human), s.ws.id, integrationId, { scopeGrants: [] })
+		const res = await putGrants(appFor(s.human), s.ws.id, integrationId, on())
 		expect(res.status).toBe(409)
-		expect((await grantsOf(integrationId))?.length).toBe(1)
+		// Captured in chat: the session's own agent holds it until a person changes that.
+		expect(await grantedIds(integrationId)).toEqual([session.actorId])
 	})
 
 	it('answers 409 for an undone key', async () => {
@@ -361,47 +349,23 @@ describe('PUT /api/integrations/:id/scope (Integration)', () => {
 			.update(integrations)
 			.set({ status: 'undone', credentials: null, dekCiphertext: null })
 			.where(eq(integrations.id, s.integrationId))
-		const res = await putScope(appFor(s.human), s.ws.id, s.integrationId, { scopeGrants: [] })
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, on(s.agentA.id))
 		expect(res.status).toBe(409)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.human)])
-	})
-
-	it('answers 409 for an OAuth connection and leaves its workspace grant alone', async () => {
-		const s = await setup()
-		const [oauth] = await db
-			.insert(integrations)
-			.values({
-				workspaceId: s.ws.id,
-				provider: 'google-meet',
-				status: 'active',
-				credentials: 'legacy-ciphertext',
-				scopeGrants: [{ kind: 'workspace' }],
-				createdBy: s.human,
-			})
-			.returning()
-		const res = await putScope(appFor(s.human), s.ws.id, oauth?.id ?? '', { scopeGrants: [] })
-		expect(res.status).toBe(409)
-		expect(await grantsOf(oauth?.id ?? '')).toEqual([{ kind: 'workspace' }])
+		expect(await grantedIds(s.integrationId)).toEqual([])
 	})
 
 	it('answers 404 for a key in another workspace and for an id that does not exist', async () => {
 		const s = await setup()
 		const other = await setup()
-		const wrongWorkspace = await putScope(appFor(s.human), other.ws.id, s.integrationId, {
-			scopeGrants: [],
-		})
+		const wrongWorkspace = await putGrants(appFor(s.human), other.ws.id, s.integrationId, on())
 		expect(wrongWorkspace.status).toBe(404)
-		expect(await grantsOf(s.integrationId)).toEqual([actorGrant(s.human)])
-
-		const missing = await putScope(appFor(s.human), s.ws.id, crypto.randomUUID(), {
-			scopeGrants: [],
-		})
+		const missing = await putGrants(appFor(s.human), s.ws.id, crypto.randomUUID(), on())
 		expect(missing.status).toBe(404)
 	})
 
 	it('lets the audit role write scope_changed while the CHECK still refuses other actions', async () => {
 		const s = await setup()
-		await putScope(appFor(s.human), s.ws.id, s.integrationId, { scopeGrants: [] })
+		await putGrants(appFor(s.human), s.ws.id, s.integrationId, on())
 		expect(await scopeRows(s)).toHaveLength(1)
 		// Drizzle wraps the driver error, so the constraint name sits on the cause.
 		let refused: { message?: string; cause?: { message?: string } } | null = null

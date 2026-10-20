@@ -72,7 +72,6 @@ async function insertLinkedInIntegration(
 			status: INTEGRATION_STATUS_ACTIVE,
 			credentials: credentialsBlob,
 			// The grant migration 0088 writes to a connected row.
-			scopeGrants: [{ kind: 'workspace' }],
 			actorId,
 			createdBy: actorId,
 		})

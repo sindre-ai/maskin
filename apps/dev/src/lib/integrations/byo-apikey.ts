@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
-import { type ScopeGrant, integrations } from '@maskin/db/schema'
+import { integrations } from '@maskin/db/schema'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
+import { insertKeychainGrants } from './agent-grants'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 import { assertValidCredentialValue } from './credential-value'
@@ -18,17 +19,19 @@ export interface ByoApiKeyInput {
 	displayName: string
 	/** Consumed here and never stored, logged or put on an event. */
 	rawSecret: string
+	/** Agents that may use the key. Omitted: nobody until a person grants it. */
+	agentIds?: string[]
 }
 
 export interface ByoApiKeyResult {
 	integrationId: string
-	scopeGrants: ScopeGrant[]
+	agentIds: string[]
 }
 
 /**
  * Vaults a key pasted in the Keychain paste form. Same envelope and audit chain
  * as a chat capture, minus the session and the undo window: the row is active
- * straight away. Scope defaults to one actor grant for the member who pasted it.
+ * straight away. No agent can use it until a person grants one.
  *
  * The DEK is generated, used, wrapped and zeroised inside encryptEnvelope before
  * the transaction opens, so no KMS call happens while the audit chain lock is held.
@@ -45,7 +48,7 @@ export async function createByoApiKey(
 	// Before anything is read or encrypted. The message never repeats the value.
 	assertValidCredentialValue(input.rawSecret)
 	await assertSlugFree(db, workspaceId, input.displayName)
-	const grants: ScopeGrant[] = [{ kind: 'actor', actorId }]
+	const agentIds = input.agentIds ?? []
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, input.rawSecret)
 	const integrationId = randomUUID()
 
@@ -61,8 +64,14 @@ export async function createByoApiKey(
 			dekCiphertext,
 			providerMode: 'byo_apikey',
 			displayName: input.displayName,
-			scopeGrants: grants,
+			defaultAgentAccess: 'none',
 			source: 'admin_ui',
+			createdBy: actorId,
+		})
+		await insertKeychainGrants(tx, {
+			workspaceId,
+			integrationId,
+			actorIds: agentIds,
 			createdBy: actorId,
 		})
 		await insertCredentialAccessLog(tx, {
@@ -84,5 +93,5 @@ export async function createByoApiKey(
 		})
 	})
 
-	return { integrationId, scopeGrants: grants }
+	return { integrationId, agentIds }
 }

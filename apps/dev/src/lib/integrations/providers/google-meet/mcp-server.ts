@@ -64,11 +64,16 @@ export interface MeetMcpContext {
  * workspace id + actor id — is bound at construction time and can't leak
  * across concurrent requests through a shared closure.
  */
-export function createGoogleMeetMcpServer(ctx: MeetMcpContext): McpServer {
+export function createGoogleMeetMcpServer(
+	ctx: MeetMcpContext,
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
+): McpServer {
 	const server = new McpServer(
 		{ name: 'maskin-google-meet', version: '0.1.0' },
 		{ capabilities: { tools: {} } },
 	)
+	onServer?.(server)
 	registerReadTools(server, ctx)
 	registerGoogleMeetWriteTools(server, {
 		db: ctx.db,

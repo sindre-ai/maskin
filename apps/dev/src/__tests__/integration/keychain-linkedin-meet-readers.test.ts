@@ -6,7 +6,6 @@ import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
 	events,
 	INTEGRATION_STATUS_ACTIVE,
-	type ScopeGrant,
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
@@ -70,12 +69,10 @@ beforeEach(() => {
 	__setLinkedInClientForTests(null)
 })
 
-const WORKSPACE_GRANT: ScopeGrant[] = [{ kind: 'workspace' }]
-
 async function setup() {
 	const owner = getTestActorId()
 	const ws = await insertWorkspace(db, owner)
-	const agent = await insertActor(db)
+	const agent = await insertActor(db, { type: 'agent' })
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
@@ -85,7 +82,7 @@ async function setup() {
 async function seedLinkedIn(
 	workspaceId: string,
 	actorId: string,
-	opts: { grants?: ScopeGrant[]; accountId?: string } = {},
+	opts: { defaultAccess?: 'read' | 'none'; accountId?: string } = {},
 ) {
 	const [row] = await db
 		.insert(integrations)
@@ -97,7 +94,7 @@ async function seedLinkedIn(
 			credentials: encrypt(
 				JSON.stringify({ account_id: opts.accountId ?? 'acc-fake', account_status: 'OK' }),
 			),
-			scopeGrants: opts.grants ?? WORKSPACE_GRANT,
+			defaultAgentAccess: opts.defaultAccess ?? 'read',
 			actorId,
 			createdBy: actorId,
 		})
@@ -108,7 +105,7 @@ async function seedLinkedIn(
 async function seedMeet(
 	workspaceId: string,
 	createdBy: string,
-	grants: ScopeGrant[] = WORKSPACE_GRANT,
+	defaultAccess: 'read' | 'none' = 'read',
 ) {
 	const [row] = await db
 		.insert(integrations)
@@ -117,7 +114,7 @@ async function seedMeet(
 			provider: 'google-meet',
 			status: INTEGRATION_STATUS_ACTIVE,
 			credentials: encrypt(JSON.stringify({ accessToken: 'fake-token-not-real' })),
-			scopeGrants: grants,
+			defaultAgentAccess: defaultAccess,
 			createdBy,
 		})
 		.returning()
@@ -226,12 +223,12 @@ describe('linkedin-unipile reads through getCredential', () => {
 
 	it('a read the scope check denies throws ScopeDeniedError, writes no log row and one denied event', async () => {
 		const s = await setup()
-		await seedLinkedIn(s.ws.id, s.owner, { grants: [] })
+		await seedLinkedIn(s.ws.id, s.owner, { defaultAccess: 'none' })
 		const client = recordingClient()
 		__setLinkedInClientForTests(() => client)
 
 		await expect(
-			send({ db, actorId: s.owner, workspaceId: s.ws.id }, 'k-denied'),
+			send({ db, actorId: s.agent.id, workspaceId: s.ws.id }, 'k-denied'),
 		).rejects.toBeInstanceOf(ScopeDeniedError)
 
 		expect(client.sendCalls).toHaveLength(0)
@@ -337,7 +334,7 @@ describe('google-meet reads through getCredential', () => {
 
 	it('a read the scope check denies throws ScopeDeniedError, writes no log row and one denied event', async () => {
 		const s = await setup()
-		await seedMeet(s.ws.id, s.owner, [])
+		await seedMeet(s.ws.id, s.owner, 'none')
 
 		await expect(
 			resolveHostToken({ db, workspaceId: s.ws.id, actorId: s.agent.id }),

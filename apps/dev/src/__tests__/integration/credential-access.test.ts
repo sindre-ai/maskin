@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KmsDecryptError, type KmsProvider, MasterKeyProvider } from '@maskin/auth/kms'
-import { events, type Integration, type ScopeGrant, integrations } from '@maskin/db/schema'
+import { events, type Integration, agentGrants, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,15 +52,16 @@ beforeEach(() => {
 async function setup() {
 	const createdBy = getTestActorId()
 	const ws = await insertWorkspace(db, createdBy)
-	const actorA = await insertActor(db)
-	const actorB = await insertActor(db)
+	const actorA = await insertActor(db, { type: 'agent' })
+	const actorB = await insertActor(db, { type: 'agent' })
 	return { ws, createdBy, actorA, actorB }
 }
 
 async function insertIntegration(
 	s: Awaited<ReturnType<typeof setup>>,
 	opts: {
-		grants?: unknown
+		/** Agents holding a grant. Default: actor A only. 'all': A and B. */
+		grantTo?: string[] | 'all'
 		status?: string
 		legacy?: boolean
 		source?: string
@@ -82,13 +83,27 @@ async function insertIntegration(
 			status: (opts.status ?? 'active') as 'active',
 			credentials: sealed.credentials,
 			dekCiphertext: sealed.dekCiphertext,
-			scopeGrants: (opts.grants ?? [{ kind: 'actor', actorId: s.actorA.id }]) as ScopeGrant[],
+			// Grants alone decide access in this file: nothing is readable by default.
+			defaultAgentAccess: 'none',
 			source: (opts.source ?? 'admin_ui') as 'admin_ui',
 			originSessionId: opts.originSessionId,
 			metadata: opts.metadata ?? null,
 			createdBy: s.createdBy,
 		})
 		.returning()
+	const grantTo =
+		opts.grantTo === 'all' ? [s.actorA.id, s.actorB.id] : (opts.grantTo ?? [s.actorA.id])
+	if (grantTo.length > 0) {
+		await db.insert(agentGrants).values(
+			grantTo.map((actorId) => ({
+				workspaceId: s.ws.id,
+				integrationId: row.id,
+				actorId,
+				access: 'read_write' as const,
+				createdBy: s.createdBy,
+			})),
+		)
+	}
 	return row
 }
 
@@ -167,48 +182,18 @@ describe('getCredential: scope', () => {
 		expect(captureMock).not.toHaveBeenCalled()
 	})
 
-	it('fails closed on an empty grant list and on grants it does not understand', async () => {
+	it('fails closed when nobody holds a grant', async () => {
 		const s = await setup()
-		for (const [i, grants] of [
-			[],
-			[{ kind: 'galaxy' }],
-			[{ kind: 'actor' }],
-			[null],
-			['workspace'],
-		].entries()) {
-			const row = await insertIntegration(s, { grants, provider: `fake-provider-${i}` })
-			await expect(
-				getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms }),
-			).rejects.toBeInstanceOf(ScopeDeniedError)
-		}
+		const row = await insertIntegration(s, { grantTo: [] })
+		await expect(
+			getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms }),
+		).rejects.toBeInstanceOf(ScopeDeniedError)
 		expect(await logRows(s.ws.id)).toHaveLength(0)
 	})
 
-	it('a loop grant admits an actor driving that loop and nobody else', async () => {
+	it('a grant admits each agent it names', async () => {
 		const s = await setup()
-		const loopId = randomUUID()
-		const row = await insertIntegration(s, { grants: [{ kind: 'loop', loopId }] })
-
-		const ok = await getCredential(
-			db,
-			s.ws.id,
-			row.id,
-			ctxFor(s.actorB.id, { requestingLoopId: loopId }),
-			{ kms },
-		)
-		expect(ok.value).toBe(SECRET)
-		expect((await logRows(s.ws.id))[0]).toMatchObject({ loop_id: loopId })
-
-		for (const requestingLoopId of [randomUUID(), null, undefined]) {
-			await expect(
-				getCredential(db, s.ws.id, row.id, ctxFor(s.actorB.id, { requestingLoopId }), { kms }),
-			).rejects.toBeInstanceOf(ScopeDeniedError)
-		}
-	})
-
-	it('a workspace grant admits any actor', async () => {
-		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		for (const actor of [s.actorA, s.actorB]) {
 			const cred = await getCredential(db, s.ws.id, row.id, ctxFor(actor.id), { kms })
 			expect(cred.value).toBe(SECRET)
@@ -219,7 +204,7 @@ describe('getCredential: scope', () => {
 	it('does not find a credential through another workspace', async () => {
 		const s = await setup()
 		const other = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		await expect(
 			getCredential(db, other.ws.id, row.id, ctxFor(other.actorA.id), { kms }),
 		).rejects.toBeInstanceOf(CredentialNotFoundError)
@@ -271,7 +256,7 @@ describe('getCredential: status', () => {
 describe('getCredential: audit chain', () => {
 	it('one row per read, in a valid chain', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		for (let i = 0; i < 3; i++)
 			await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
 		expect(await logRows(s.ws.id)).toHaveLength(3)
@@ -280,7 +265,7 @@ describe('getCredential: audit chain', () => {
 
 	it('a read with no session id stores NULL and the chain still verifies', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id, { sessionId: null }), { kms })
 		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id, { sessionId: undefined }), { kms })
 		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
@@ -305,7 +290,7 @@ describe('getCredential: audit chain', () => {
 		// sort before 8 and 9 and a sound chain reads as tampered.
 		await sql`SELECT setval(pg_get_serial_sequence('credential_access_log', 'id'), 5)`
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		for (let i = 0; i < 4; i++)
 			await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
 		const ids = (await logRows(s.ws.id)).map((l) => Number(l.id)).sort((a, b) => a - b)
@@ -317,7 +302,7 @@ describe('getCredential: audit chain', () => {
 
 	it('concurrent reads get distinct sequential ids and a consistent chain', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		await Promise.all(
 			Array.from({ length: 15 }, () =>
 				getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms }),
@@ -330,7 +315,7 @@ describe('getCredential: audit chain', () => {
 
 	it('a read whose audit insert fails returns no credential', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		// The log has no foreign key on actor_id any more (0094), so make the insert fail on the
 		// NOT NULL request_id instead.
 		const ctx = ctxFor(s.actorA.id, { requestId: null as unknown as string })
@@ -342,7 +327,7 @@ describe('getCredential: audit chain', () => {
 
 	it('leaves the session at the constrained role only for the insert', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
 		const [{ current_user }] = await sql<{ current_user: string }[]>`SELECT current_user`
 		expect(current_user).not.toBe('maskin_keychain_app')
@@ -352,7 +337,7 @@ describe('getCredential: audit chain', () => {
 describe('getCredential: encryption', () => {
 	it('decrypts a legacy row (NULL dek_ciphertext) without touching KMS', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { legacy: true, grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { legacy: true, grantTo: 'all' })
 		const neverCalled: KmsProvider = {
 			encrypt: vi.fn(async () => {
 				throw new Error('KMS must not be used')
@@ -368,7 +353,7 @@ describe('getCredential: encryption', () => {
 
 	it('a legacy row upgrades to envelope on its next write, then no longer needs the legacy key', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { legacy: true, grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { legacy: true, grantTo: 'all' })
 		expect(row.dekCiphertext).toBeNull()
 
 		await writeEnvelopeCredential(db, kms, {
@@ -392,7 +377,7 @@ describe('getCredential: encryption', () => {
 
 	it('a corrupted dek_ciphertext throws KmsDecryptError and logs nothing', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		const blob = Buffer.from(row.dekCiphertext as string, 'base64')
 		blob[blob.length - 1] ^= 0x01
 		await db
@@ -409,7 +394,7 @@ describe('getCredential: encryption', () => {
 describe('getCredential: analytics', () => {
 	it('fires keychain_credential_accessed once per successful read, without the secret', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		await getCredential(
 			db,
 			s.ws.id,
@@ -438,12 +423,12 @@ describe('DecryptedCredential', () => {
 	it('synthesises Bearer headers in vault mode and unwraps an accessToken blob', async () => {
 		const s = await setup()
 		const bare = await insertIntegration(s, {
-			grants: [{ kind: 'workspace' }],
+			grantTo: 'all',
 			provider: 'bare-secret',
 		})
 		const blob = await insertIntegration(s, {
 			provider: 'oauth-blob',
-			grants: [{ kind: 'workspace' }],
+			grantTo: 'all',
 			value: JSON.stringify({ accessToken: 'fake-oauth-token', refreshToken: 'fake-refresh' }),
 		})
 		const hctx = { outboundTarget: 'https://api.example.test', requestId: 'r' }
@@ -458,7 +443,7 @@ describe('DecryptedCredential', () => {
 		const mint = vi.fn(async () => ({ Authorization: 'Bearer minted-by-adapter' }))
 		registerHeaderMintAdapter({ kind: 'external:fake-vault', mint })
 		const row = await insertIntegration(s, {
-			grants: [{ kind: 'workspace' }],
+			grantTo: 'all',
 			metadata: { adapterKind: 'external:fake-vault' },
 		})
 		const cred = await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
@@ -470,7 +455,7 @@ describe('DecryptedCredential', () => {
 
 	it('does not put the secret into JSON.stringify output', async () => {
 		const s = await setup()
-		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		const row = await insertIntegration(s, { grantTo: 'all' })
 		const cred = await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
 		expect(JSON.stringify(cred)).not.toContain(SECRET)
 	})

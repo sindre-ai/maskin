@@ -125,7 +125,7 @@ function AddCredentialPage() {
 						id="keychain-name"
 						value={name}
 						onChange={(e) => setName(e.target.value)}
-						placeholder={isLogin ? 'e.g. "e-conomic"' : 'e.g. "Stripe · Sindre AI"'}
+						placeholder={isLogin ? 'e.g. "e-conomic"' : 'e.g. "Stripe"'}
 						maxLength={CREDENTIAL_NAME_MAX_LENGTH}
 						autoComplete="off"
 						aria-invalid={nameProblem ? true : undefined}

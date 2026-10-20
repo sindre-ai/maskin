@@ -1,23 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
-import {
-	type ScopeGrant,
-	conversationParticipants,
-	integrations,
-	sessions,
-} from '@maskin/db/schema'
+import { conversationParticipants, integrations, sessions } from '@maskin/db/schema'
 import { SECRET_PROVIDER_IDS, type SecretProviderId } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
+import { actorsAreWorkspaceAgents } from './agent-access'
+import { insertKeychainGrants } from './agent-grants'
 import { BYO_APIKEY_PROVIDER } from './byo-apikey'
 import { BYO_LOGIN_PROVIDER, type LoginFields, encodeLogin } from './byo-login'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 import { assertValidCredentialValue } from './credential-value'
 import { assertValidLoginFields } from './login-value'
-import { grantedActorsAreInWorkspace } from './scope-grants'
 
 /** How long a captured key stays undoable before the sweeper activates it. */
 export const UNDO_WINDOW_MS = 5 * 60 * 1000
@@ -60,7 +56,8 @@ interface ChatCaptureBase {
 	actorId: string
 	sessionId: string
 	displayName: string
-	scopeGrants?: ScopeGrant[]
+	/** Agents that may use the key. Omitted: the session driver. Empty: nobody (saved unassigned). */
+	agentIds?: string[]
 	/** The secret came from a card an agent asked for, not from the composer. */
 	viaCard?: boolean
 }
@@ -83,7 +80,8 @@ export interface ChatCaptureResult {
 	provider: string
 	/** Null for a card capture: it is active straight away and has no undo window. */
 	undoExpiresAt: Date | null
-	scopeGrants: ScopeGrant[]
+	/** Agents granted the key. */
+	agentIds: string[]
 	origin: { sessionId: string }
 }
 
@@ -142,19 +140,13 @@ export async function captureChatSecret(
 
 	// Only caller-supplied grants are checked against membership. The default is the
 	// session's own driver, which the session row already vouches for.
-	const requested = input.scopeGrants ?? []
-	if (!(await grantedActorsAreInWorkspace(db, workspaceId, requested))) {
-		throw new ChatCaptureError(
-			400,
-			'BAD_REQUEST',
-			'A scope grant names an actor outside this workspace',
-		)
+	const requested = input.agentIds ?? []
+	if (!(await actorsAreWorkspaceAgents(db, workspaceId, requested))) {
+		throw new ChatCaptureError(400, 'BAD_REQUEST', 'A grant names an agent outside this workspace')
 	}
 	// Omitted means the default (the session driver). An explicit empty list is the
 	// user's "Save unassigned": fail closed, nobody can read it.
-	const grants: ScopeGrant[] = input.scopeGrants
-		? requested
-		: [{ kind: 'actor', actorId: session.actorId }]
+	const agentIds: string[] = input.agentIds ? requested : [session.actorId]
 
 	// A taken name is refused before the KMS call. The check is repeated under the lock
 	// below, because two vaults of one name can both pass this one.
@@ -182,11 +174,17 @@ export async function captureChatSecret(
 			credentials,
 			dekCiphertext,
 			providerMode,
+			defaultAgentAccess: 'none',
 			displayName: input.displayName,
-			scopeGrants: grants,
 			source: 'chat_capture',
 			originSessionId: sessionId,
 			undoExpiresAt,
+			createdBy: actorId,
+		})
+		await insertKeychainGrants(tx, {
+			workspaceId,
+			integrationId,
+			actorIds: agentIds,
 			createdBy: actorId,
 		})
 		await insertCredentialAccessLog(tx, {
@@ -219,7 +217,7 @@ export async function captureChatSecret(
 		trigger: input.viaCard || input.login ? 'card' : captureTrigger(input.detectedProvider),
 		provider,
 		undoExpiresAt,
-		scopeGrants: grants,
+		agentIds,
 		origin: { sessionId },
 	}
 }

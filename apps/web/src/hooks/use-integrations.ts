@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type KeychainScopeGrant, api } from '../lib/api'
+import { type AgentGrantAccess, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -223,8 +223,12 @@ export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
 	return useMutation({
 		// The sheet shows the failure inline, so the global error toast would only cover Save.
 		meta: { handlesOwnErrors: true },
-		mutationFn: (scopeGrants: KeychainScopeGrant[]) =>
-			api.integrations.updateScope(integrationId, workspaceId, scopeGrants),
+		mutationFn: (agentIds: string[]) =>
+			api.integrations.replaceGrants(
+				integrationId,
+				workspaceId,
+				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
+			),
 		onSuccess: () => {
 			toast.success('Access updated')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
@@ -262,4 +266,58 @@ export function useCredentialAuditLog(workspaceId: string, integrationId: string
 		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
 		enabled: !!workspaceId && !!integrationId,
 	})
+}
+
+/**
+ * Agent access: the three changes the Integrations page makes to who may use an
+ * integration. Each refetches the list, which carries `defaultAgentAccess` and
+ * `agentGrants` per integration. The audit trail and SSE event are written server-side.
+ */
+function useGrantMutation<V>(
+	workspaceId: string,
+	mutationFn: (variables: V) => Promise<unknown>,
+	successMessage: string,
+) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn,
+		onSuccess: () => {
+			toast.success(successMessage)
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** What one agent can use. Refreshes with the integration list, so it never lags a change. */
+export function useAgentAccess(workspaceId: string, actorId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.agentAccess(workspaceId, actorId),
+		queryFn: () => api.actors.access(actorId, workspaceId),
+	})
+}
+
+export function useSetAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(v: { actorId: string; access: AgentGrantAccess }) =>
+			api.integrations.setGrant(integrationId, workspaceId, v.actorId, v.access),
+		'Agent access updated',
+	)
+}
+
+export function useRemoveAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(actorId: string) => api.integrations.removeGrant(integrationId, workspaceId, actorId),
+		'Agent access removed',
+	)
+}
+
+export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(defaultAgentAccess: 'read' | 'none') =>
+			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
+		'Default access updated',
+	)
 }
