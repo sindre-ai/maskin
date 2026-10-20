@@ -70,13 +70,15 @@ function entryTargetsProvider(entry: unknown, provider: string, scope?: DetachSc
 	// The bare endpoint is the deprecated aggregate: it exposes no tools for any
 	// identity, so it is dead as soon as any credential goes.
 	if (slug === '' || !scope) return true
-	if (!scope.ownSlugPrefix || !slug.startsWith(scope.ownSlugPrefix)) return false
+	const own = scope.ownSlugPrefix
+	if (!own || !slug.startsWith(own)) return false
 	// `linkedin-magnus-` is a prefix of `linkedin-magnus-noeddegaard-personal`
 	// too. When another live credential claims the slug with a longer prefix,
 	// it is theirs; leaving a dead entry is the safer miss than deleting a live one.
-	return !scope.otherSlugPrefixes.some(
-		(other) => other.length > scope.ownSlugPrefix!.length && slug.startsWith(other),
+	const claimedByOther = scope.otherSlugPrefixes.some(
+		(other) => other.length > own.length && slug.startsWith(other),
 	)
+	return !claimedByOther
 }
 
 /**

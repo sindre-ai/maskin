@@ -200,7 +200,10 @@ describe('detachProviderMcpServers', () => {
 			const createdBy = getTestActorId()
 			const ws = await insertWorkspace(db, createdBy)
 			const agent = await insertAgent(ws.id, {
-				mcpServers: { 'linkedin-magnus-personal': instance('linkedin-magnus-personal'), [MAGNUS]: instance(MAGNUS) },
+				mcpServers: {
+					'linkedin-magnus-personal': instance('linkedin-magnus-personal'),
+					[MAGNUS]: instance(MAGNUS),
+				},
 			})
 
 			await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, {
