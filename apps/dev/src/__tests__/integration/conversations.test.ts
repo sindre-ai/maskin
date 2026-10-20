@@ -233,6 +233,73 @@ describe('Conversations Integration', () => {
 			expect(strangerDetail.status).toBe(404)
 		})
 
+		it("posting a message advances the sender's read cursor, humans only, never backwards", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, other.id)
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id, agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const headers = { 'x-workspace-id': workspaceId }
+			const post = async (app: ReturnType<typeof createConversationsApp>['app'], content: string) =>
+				(await (
+					await app.request(
+						jsonRequest(
+							'POST',
+							`/api/conversations/${conversation.id}/messages`,
+							{ content },
+							headers,
+						),
+					)
+				).json()) as { id: number }
+			const detail = async (app: ReturnType<typeof createConversationsApp>['app']) =>
+				(await (
+					await app.request(jsonGet(`/api/conversations/${conversation.id}`, headers))
+				).json()) as { unread_count: number; last_read_message_id: number | null }
+
+			const m1 = await post(ownerApp, 'question')
+			const m2 = await post(ownerApp, 'follow-up')
+
+			// A reply reads everything before it, without any PATCH /me from the client.
+			const { app: otherApp } = createConversationsApp(other.id)
+			expect((await detail(otherApp)).unread_count).toBe(2)
+			const reply = await post(otherApp, 'answer')
+			const afterReply = await detail(otherApp)
+			expect(afterReply.last_read_message_id).toBe(reply.id)
+			expect(afterReply.unread_count).toBe(0)
+
+			// An older mark-read cannot pull it back.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: m1.id },
+					headers,
+				),
+			)
+			expect((await detail(otherApp)).last_read_message_id).toBe(reply.id)
+
+			// Messages that arrive after the reply are unread, and the cursor never skips ahead of them.
+			const m3 = await post(ownerApp, 'later')
+			expect(m3.id).toBeGreaterThan(m2.id)
+			const later = await detail(otherApp)
+			expect(later.unread_count).toBe(1)
+			expect(later.last_read_message_id).toBe(reply.id)
+
+			// An agent posting mid-turn does not move its own cursor.
+			const { app: agentApp } = createConversationsApp(agent.id, 'agent')
+			await post(agentApp, 'working on it')
+			expect((await detail(agentApp)).last_read_message_id).toBeNull()
+		})
+
 		it('marking read clears unread_count and never regresses on an older value', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)
