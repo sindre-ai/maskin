@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Slack setup UX — Maskin design prototype</title>
+<style>
+  /* Tokens mirrored from apps/web/src/app.css (light theme only for prototype). */
+  :root {
+    --background:#ffffff; --foreground:#18181b; --card:#ffffff;
+    --primary:#18181b; --primary-foreground:#ffffff;
+    --secondary:#f6f6f7; --muted:#f4f4f5; --muted-foreground:#71717a;
+    --accent:#f6f6f7; --accent-foreground:#18181b;
+    --destructive:#dc2626; --destructive-foreground:#ffffff;
+    --border:#e4e4e7; --border-strong:#c4c4cc; --ring:#a1a1aa;
+    --brand:#4f46e5; --brand-hover:#4338ca;
+    --brand-subtle:#eef2ff; --brand-subtle-foreground:#4338ca;
+    --surface-sunken:#fcfcfd;
+    --success:#16a34a; --warning:#b45309; --error:#dc2626;
+    --st-active-bg:#dcfce7; --st-active-text:#15803d;
+    --st-paused-bg:#f4f4f5; --st-paused-text:#71717a;
+    --st-failed-bg:#fee2e2; --st-failed-text:#b91c1c;
+    --radius-sm:6px; --radius-md:8px; --radius-lg:10px;
+    --radius-xl:14px; --radius-2xl:16px;
+    --shadow-sm:0 1px 3px rgba(24,24,27,.06), 0 1px 2px rgba(24,24,27,.04);
+    --shadow-md:0 4px 12px rgba(24,24,27,.06);
+    --shadow-lg:0 12px 34px rgba(0,0,0,.1);
+    --ease-standard:cubic-bezier(.4,0,.2,1);
+    --duration-180:180ms;
+    --font-sans:"Schibsted Grotesk", "Schibsted Grotesk Fallback", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--surface-sunken);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  a{color:var(--brand);text-decoration:none}
+  a:hover{color:var(--brand-hover)}
+
+  /* Prototype chrome — state picker + breakpoint switcher */
+  .chrome{position:sticky;top:0;z-index:50;background:#18181b;color:#fafafa;padding:10px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-bottom:1px solid #27272a}
+  .chrome h1{font-size:12px;margin:0;font-weight:600;letter-spacing:.02em;color:#fafafa;margin-right:12px}
+  .chrome .group{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .chrome .group-label{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:#a1a1aa;margin-right:4px}
+  .chip-btn{background:#27272a;color:#fafafa;border:1px solid #3f3f46;padding:4px 10px;border-radius:var(--radius-md);font-size:11px;font-family:var(--font-sans);cursor:pointer;transition:background 150ms}
+  .chip-btn:hover{background:#3f3f46}
+  .chip-btn[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
+  .chrome .note{margin-left:auto;font-size:10px;color:#a1a1aa;font-family:var(--font-mono);letter-spacing:.04em}
+
+  /* Frame — resizable per breakpoint */
+  .frame-wrap{padding:24px 12px;display:flex;justify-content:center;background:var(--surface-sunken)}
+  .frame{background:var(--background);border:1px solid var(--border);border-radius:var(--radius-2xl);overflow:hidden;box-shadow:var(--shadow-md);width:100%;transition:max-width var(--duration-180) var(--ease-standard)}
+  .frame[data-bp="mobile"]{max-width:390px}
+  .frame[data-bp="tablet"]{max-width:820px}
+  .frame[data-bp="desktop"]{max-width:1200px}
+
+  /* App shell — mimics Maskin sidebar + main pane */
+  .shell{display:grid;grid-template-columns:220px 1fr;min-height:640px}
+  .frame[data-bp="mobile"] .shell{grid-template-columns:1fr}
+  .frame[data-bp="mobile"] .sidebar{display:none}
+  .sidebar{background:#fafafa;border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+  .sidebar .brand-mark{display:flex;align-items:center;gap:8px;padding:6px 8px 12px;font-weight:600;color:var(--foreground)}
+  .sidebar .brand-mark .logo{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#4f46e5,#818cf8);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700}
+  .sidebar .nav-item{padding:6px 8px;border-radius:var(--radius-md);color:var(--muted-foreground);cursor:pointer;display:flex;align-items:center;gap:8px}
+  .sidebar .nav-item:hover{background:var(--accent);color:var(--foreground)}
+  .sidebar .nav-item.active{background:var(--secondary);color:var(--foreground);font-weight:500}
+  .sidebar .nav-item svg{opacity:.7}
+  .sidebar .eyebrow{font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--muted-foreground);padding:14px 8px 4px}
+
+  .main{display:flex;flex-direction:column;min-width:0}
+  .page-header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .frame[data-bp="mobile"] .page-header{padding:12px 16px}
+  .page-header .breadcrumb{font-size:12px;color:var(--muted-foreground);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .page-header .breadcrumb a{color:var(--muted-foreground)}
+  .page-header .breadcrumb .sep{opacity:.6}
+  .page-header .title-row{display:flex;align-items:center;gap:10px;width:100%;margin-top:2px}
+  .page-header h2{font-size:18px;margin:0;font-weight:600;letter-spacing:-.01em}
+  .page-header .header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+  .body{padding:24px;flex:1;overflow-y:auto}
+  .frame[data-bp="mobile"] .body{padding:16px}
+  .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);margin:0 0 8px}
+  .field-label{font-size:12px;font-weight:500;color:var(--muted-foreground);margin-bottom:6px;display:block}
+  .help{font-size:12px;color:var(--muted-foreground);margin-top:6px}
+  .row{display:flex;flex-direction:column;gap:6px;margin-bottom:20px}
+  .row .field-caption{font-size:11px;color:var(--muted-foreground);margin-top:4px}
+
+  /* Card */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:20px;margin-bottom:20px}
+  .frame[data-bp="mobile"] .card{padding:16px}
+
+  /* Buttons */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-family:inherit;font-size:13px;font-weight:500;line-height:1;padding:8px 12px;border-radius:var(--radius-lg);border:1px solid transparent;cursor:pointer;transition:background 150ms, border-color 150ms, color 150ms}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  .btn-primary{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+  .btn-primary:hover:not(:disabled){background:#27272a}
+  .btn-outline{background:var(--background);color:var(--foreground);border-color:var(--border)}
+  .btn-outline:hover:not(:disabled){background:var(--secondary);border-color:var(--border-strong)}
+  .btn-ghost{background:transparent;color:var(--foreground);border-color:transparent}
+  .btn-ghost:hover:not(:disabled){background:var(--secondary)}
+  .btn-sm{padding:6px 10px;font-size:12px;border-radius:var(--radius-md)}
+  .btn-danger{background:var(--destructive);color:#fff;border-color:var(--destructive)}
+
+  /* Input */
+  .input{width:100%;background:var(--background);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;font-family:inherit;font-size:13px;color:var(--foreground);transition:border-color 150ms, box-shadow 150ms}
+  .input::placeholder{color:var(--muted-foreground)}
+  .input:hover{border-color:var(--border-strong)}
+  .input:focus{outline:none;border-color:var(--ring);box-shadow:0 0 0 3px rgba(161,161,170,.2)}
+  .input:disabled{background:var(--muted);color:var(--muted-foreground);cursor:not-allowed}
+  .input-mono{font-family:var(--font-mono);font-size:12px}
+
+  /* Combobox trigger — matches SearchableMultiSelect + button trigger */
+  .combo{position:relative}
+  .combo-trigger{width:100%;display:flex;align-items:center;gap:8px;background:var(--background);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;font-family:inherit;font-size:13px;color:var(--foreground);cursor:pointer;text-align:left;transition:border-color 150ms}
+  .combo-trigger:hover{border-color:var(--border-strong)}
+  .combo-trigger:focus{outline:none;border-color:var(--ring);box-shadow:0 0 0 3px rgba(161,161,170,.2)}
+  .combo-trigger .placeholder{color:var(--muted-foreground)}
+  .combo-trigger .caret{margin-left:auto;color:var(--muted-foreground)}
+  .combo-trigger[aria-disabled="true"]{background:var(--muted);cursor:not-allowed;color:var(--muted-foreground)}
+  .combo-trigger .selected-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;background:var(--brand-subtle);color:var(--brand-subtle-foreground);border-radius:var(--radius-md);font-family:var(--font-mono);font-size:12px}
+
+  .combo-panel{position:absolute;top:calc(100% + 4px);left:0;width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);z-index:20;overflow:hidden}
+  .combo-search{padding:8px;border-bottom:1px solid var(--border)}
+  .combo-search .input{height:32px;padding:6px 10px}
+  .combo-list{max-height:260px;overflow-y:auto;padding:4px}
+  .combo-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-md);cursor:pointer;font-size:13px}
+  .combo-item:hover, .combo-item[aria-selected="true"]{background:var(--accent)}
+  .combo-item .channel-glyph{width:16px;text-align:center;color:var(--muted-foreground);font-family:var(--font-mono);font-weight:600}
+  .combo-item .lock{color:var(--muted-foreground);opacity:.7}
+  .combo-item .hint{margin-left:auto;font-size:11px;color:var(--muted-foreground);font-family:var(--font-mono)}
+  .combo-empty{padding:24px 12px;text-align:center;font-size:12px;color:var(--muted-foreground)}
+  .combo-loading{padding:12px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted-foreground)}
+  .spinner{width:12px;height:12px;border:1.5px solid var(--muted-foreground);border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .combo-fallback{padding:10px 12px;border-top:1px solid var(--border);background:var(--muted);font-size:12px;color:var(--muted-foreground);display:flex;flex-direction:column;gap:6px}
+  .combo-fallback strong{color:var(--foreground);font-weight:500}
+
+  /* Badge */
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;line-height:1;padding:3px 8px;border-radius:9999px;border:1px solid transparent}
+  .badge-active{background:var(--st-active-bg);color:var(--st-active-text);border-color:transparent}
+  .badge-paused{background:var(--st-paused-bg);color:var(--st-paused-text)}
+  .badge-failed{background:var(--st-failed-bg);color:var(--st-failed-text)}
+  .badge-outline{background:transparent;border-color:var(--border);color:var(--foreground)}
+  .badge-brand{background:var(--brand-subtle);color:var(--brand-subtle-foreground)}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+  /* Save flow status pill (shown next to Save button) */
+  .save-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted-foreground)}
+  .save-status .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .save-status.is-saving{color:var(--warning)}
+  .save-status.is-joining{color:var(--warning)}
+  .save-status.is-saved{color:var(--success)}
+  .save-status.is-error{color:var(--destructive)}
+
+  /* Inline banner — matches the existing muted-bg + border pattern in slack-filters.tsx */
+  .banner{display:flex;gap:12px;padding:12px 14px;border-radius:var(--radius-lg);border:1px solid var(--border);background:var(--muted);font-size:13px;color:var(--foreground);align-items:flex-start;margin-bottom:16px}
+  .banner-danger{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
+  .banner-danger .banner-title{color:#991b1b}
+  .banner-warning{background:#fffbeb;border-color:#fde68a;color:#78350f}
+  .banner-warning .banner-title{color:#92400e}
+  .banner-info{background:var(--brand-subtle);border-color:#c7d2fe;color:var(--brand-subtle-foreground)}
+  .banner .banner-icon{flex-shrink:0;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+  .banner .banner-body{flex:1;min-width:0}
+  .banner .banner-title{font-weight:600;font-size:13px;margin:0 0 2px;line-height:1.35}
+  .banner p{margin:0;line-height:1.45}
+  .banner .banner-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .banner code{font-family:var(--font-mono);font-size:12px;background:rgba(255,255,255,.65);padding:1px 6px;border-radius:var(--radius-sm);border:1px solid rgba(0,0,0,.06)}
+  .banner-warning code{background:rgba(255,255,255,.75)}
+
+  /* Trigger detail layout */
+  .detail-grid{display:grid;grid-template-columns:1fr 320px;gap:24px}
+  .frame[data-bp="mobile"] .detail-grid, .frame[data-bp="tablet"] .detail-grid{grid-template-columns:1fr}
+  .side-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:16px}
+  .side-card h4{margin:0 0 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground)}
+  .kv{display:flex;justify-content:space-between;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--muted-foreground)}
+  .kv .v{color:var(--foreground)}
+
+  /* Slack message preview */
+  .slack-preview{background:#ffffff;border:1px solid #e4e4e7;border-radius:var(--radius-xl);padding:16px 20px;font-family:"Slack-Lato","Helvetica Neue",Arial,sans-serif;max-width:540px}
+  .slack-chan-header{display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;margin-bottom:14px;font-weight:700;color:#1d1c1d;font-size:15px}
+  .slack-chan-header .hash{color:#616061;font-weight:400;font-size:20px;line-height:1}
+  .slack-msg{display:flex;gap:8px;align-items:flex-start;padding:6px 0}
+  .slack-avatar{width:36px;height:36px;border-radius:6px;background:linear-gradient(135deg,#4f46e5,#818cf8);flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;letter-spacing:-.02em}
+  .slack-body{flex:1;min-width:0}
+  .slack-name-row{display:flex;align-items:baseline;gap:6px;color:#1d1c1d}
+  .slack-name{font-weight:700;font-size:15px}
+  .slack-app-tag{background:#e8e8e8;color:#616061;font-size:10px;font-weight:700;padding:1px 4px;border-radius:2px;letter-spacing:.02em;position:relative;top:-2px}
+  .slack-time{color:#616061;font-size:12px;font-weight:400;margin-left:4px}
+  .slack-text{color:#1d1c1d;font-size:15px;line-height:1.46;margin-top:2px}
+  .slack-attachment{border-left:4px solid #4f46e5;padding:8px 0 8px 12px;margin-top:8px}
+  .slack-attachment .attachment-title{font-weight:700;color:#1d1c1d;font-size:14px}
+  .slack-attachment .attachment-meta{color:#616061;font-size:12px;margin-top:2px}
+  .slack-attachment .attachment-cta{margin-top:8px;display:flex;gap:8px}
+  .slack-attachment .attachment-cta button{background:#ffffff;border:1px solid #ddd;border-radius:4px;padding:5px 12px;font-size:13px;color:#1d1c1d;font-weight:700;cursor:pointer}
+
+  /* Mobile action sheet mock */
+  .sheet-mock{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;padding:16px;box-shadow:0 -8px 20px rgba(0,0,0,.1);display:none}
+  .frame[data-bp="mobile"] .sheet-mock{display:block;position:relative;box-shadow:none;border:1px solid var(--border);border-radius:var(--radius-xl);margin-top:12px}
+
+  /* Utility */
+  .hidden{display:none !important}
+  .flex{display:flex}
+  .gap-2{gap:8px}
+  .gap-3{gap:12px}
+  .mt-2{margin-top:8px}
+  .mt-3{margin-top:12px}
+  .mt-4{margin-top:16px}
+  .mb-2{margin-bottom:8px}
+  .mb-4{margin-bottom:16px}
+  .text-xs{font-size:12px}
+  .text-muted{color:var(--muted-foreground)}
+  .mono{font-family:var(--font-mono)}
+  .grow{flex:1}
+  hr.divider{border:0;border-top:1px solid var(--border);margin:16px 0}
+
+  /* Screen sections layout */
+  .screens{display:flex;flex-direction:column;gap:32px;padding:0 12px 40px}
+  .screen{display:flex;flex-direction:column;gap:12px}
+  .screen-label{display:flex;align-items:center;gap:12px;padding:0 4px}
+  .screen-label h3{margin:0;font-size:14px;font-weight:600;color:var(--foreground)}
+  .screen-label .kicker{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+
+  /* SVG icon sizing */
+  .icon{width:14px;height:14px;flex-shrink:0}
+  .icon-16{width:16px;height:16px}
+  .icon-18{width:18px;height:18px}
+</style>
+</head>
+<body>
+
+<!-- ─────────────────────────────── STATE + BREAKPOINT PICKER ────────────────────────────── -->
+<div class="chrome">
+  <h1>Slack setup UX · c31e6d74</h1>
+  <div class="group">
+    <span class="group-label">Save state</span>
+    <button class="chip-btn" data-state="idle" aria-pressed="true">idle</button>
+    <button class="chip-btn" data-state="loading">loading channels</button>
+    <button class="chip-btn" data-state="empty">picker empty</button>
+    <button class="chip-btn" data-state="over1000">1000+ fallback</button>
+    <button class="chip-btn" data-state="saving">saving</button>
+    <button class="chip-btn" data-state="joining">joining</button>
+    <button class="chip-btn" data-state="saved">saved</button>
+    <button class="chip-btn" data-state="private-fail">private-channel fail</button>
+  </div>
+  <div class="group">
+    <span class="group-label">Breakpoint</span>
+    <button class="chip-btn" data-bp="mobile">mobile 390</button>
+    <button class="chip-btn" data-bp="tablet">tablet 820</button>
+    <button class="chip-btn" data-bp="desktop" aria-pressed="true">desktop 1200</button>
+  </div>
+  <span class="note">All copy in SPEC.md — verbatim</span>
+</div>
+
+<!-- ─────────────────────────────── SCREENS ────────────────────────────── -->
+<div class="screens">
+
+  <!-- SCREEN 1: TRIGGER SETUP -->
+  <section class="screen">
+    <div class="screen-label">
+      <span class="kicker">Screen 1 / 4</span>
+      <h3>Trigger setup — Slack channel wiring</h3>
+    </div>
+    <div class="frame-wrap">
+      <div class="frame" data-bp="desktop" id="frame-setup">
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="brand-mark"><span class="logo">M</span><span>Maskin</span></div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 8h12M2 13h12"/></svg>For You</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>Loops</div>
+            <div class="nav-item active"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v3l3 3-3 3v3M2 8h12"/></svg>Triggers</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/></svg>Actors</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5l6 3 6-3M2 5l6-3 6 3M2 5v6l6 3 6-3V5"/></svg>Objects</div>
+            <div class="eyebrow">Settings</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="8" rx="1"/></svg>Integrations</div>
+          </aside>
+          <main class="main">
+            <div class="page-header">
+              <div class="breadcrumb">
+                <a href="#">Triggers</a>
+                <span class="sep">/</span>
+                <a href="#">New trigger</a>
+              </div>
+              <div class="title-row">
+                <h2>Notify me when @channel is mentioned</h2>
+                <span class="save-status" id="setup-save-status"><span class="dot"></span><span id="setup-save-label">Draft</span></span>
+                <div class="header-actions">
+                  <button class="btn btn-outline btn-sm">Cancel</button>
+                  <button class="btn btn-primary btn-sm" id="setup-save-btn">Save trigger</button>
+                </div>
+              </div>
+            </div>
+            <div class="body">
+              <!-- Basic trigger info -->
+              <div class="card">
+                <p class="section-title">Trigger</p>
+                <div class="row">
+                  <label class="field-label">Name</label>
+                  <input class="input" value="Notify me when @channel is mentioned" />
+                </div>
+                <div class="row">
+                  <label class="field-label">Fires on</label>
+                  <div class="flex gap-2" style="flex-wrap:wrap">
+                    <span class="badge badge-brand">Slack event</span>
+                    <span class="badge badge-outline mono">slack.app_mention</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Channel wiring — the star of the show -->
+              <div class="card">
+                <p class="section-title">Slack channel</p>
+
+                <div class="row" id="picker-row">
+                  <label class="field-label" for="channel-picker">Fire in this channel</label>
+
+                  <!-- STATE: idle / picker populated -->
+                  <div class="combo" id="picker-combo">
+                    <button class="combo-trigger" id="picker-trigger" aria-haspopup="listbox" aria-expanded="false">
+                      <svg class="icon-16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 2L3 14M13 2L11 14M2 5h12M2 11h12"/></svg>
+                      <span id="picker-value" class="placeholder">Search channels…</span>
+                      <svg class="icon caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+                    </button>
+
+                    <!-- Picker panel (shown by default in prototype so reviewers see it) -->
+                    <div class="combo-panel" id="picker-panel">
+                      <div class="combo-search">
+                        <input class="input" id="picker-search" placeholder="Search channels…" />
+                      </div>
+                      <div class="combo-list" id="picker-list">
+                        <!-- POPULATED (idle) -->
+                        <div class="combo-item" data-name="general" onclick="pickChannel('general', false)">
+                          <span class="channel-glyph">#</span>
+                          <span>general</span>
+                          <span class="hint mono">C0123ABCD</span>
+                        </div>
+                        <div class="combo-item" data-name="product-launches" onclick="pickChannel('product-launches', false)">
+                          <span class="channel-glyph">#</span>
+                          <span>product-launches</span>
+                          <span class="hint mono">C0456EFGH</span>
+                        </div>
+                        <div class="combo-item" data-name="oncall-alerts" onclick="pickChannel('oncall-alerts', true)">
+                          <svg class="icon lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V4a3 3 0 016 0v3"/></svg>
+                          <span>oncall-alerts</span>
+                          <span class="hint mono">private</span>
+                        </div>
+                        <div class="combo-item" data-name="growth" onclick="pickChannel('growth', false)">
+                          <span class="channel-glyph">#</span>
+                          <span>growth</span>
+                          <span class="hint mono">C0789IJKL</span>
+                        </div>
+                        <div class="combo-item" data-name="design-reviews" onclick="pickChannel('design-reviews', false)">
+                          <span class="channel-glyph">#</span>
+                          <span>design-reviews</span>
+                          <span class="hint mono">C0234MNOP</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- STATE: loading -->
+                    <div class="combo-panel hidden" id="picker-panel-loading">
+                      <div class="combo-search">
+                        <input class="input" placeholder="Search channels…" disabled />
+                      </div>
+                      <div class="combo-loading"><span class="spinner"></span>Loading channels from Slack…</div>
+                    </div>
+
+                    <!-- STATE: empty -->
+                    <div class="combo-panel hidden" id="picker-panel-empty">
+                      <div class="combo-search">
+                        <input class="input" placeholder="Search channels…" />
+                      </div>
+                      <div class="combo-empty">
+                        <div style="font-weight:500;color:var(--foreground);margin-bottom:4px">No channels found</div>
+                        <div>Nothing matched your search. Slack channels you can see in your account will appear here.</div>
+                      </div>
+                    </div>
+
+                    <!-- STATE: 1000+ fallback -->
+                    <div class="combo-panel hidden" id="picker-panel-over1000">
+                      <div class="combo-fallback">
+                        <strong>Too many channels to browse</strong>
+                        <span>This workspace has more than 1,000 channels. Paste a channel ID or #name below and press Enter.</span>
+                      </div>
+                      <div class="combo-search" style="border-bottom:none">
+                        <input class="input input-mono" placeholder="#product-launches or C0456EFGH" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p class="field-caption">Maskin will auto-join public channels on save. Private channels need <code class="mono" style="background:var(--muted);padding:1px 4px;border-radius:4px">/invite @Maskin</code> first.</p>
+                </div>
+
+                <!-- Failure banner (private channel) -->
+                <div class="banner banner-warning hidden" id="banner-private">
+                  <div class="banner-icon">
+                    <svg class="icon-18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l8 15H2L10 2z"/><path d="M10 8v4M10 15h.01" stroke-linecap="round"/></svg>
+                  </div>
+                  <div class="banner-body">
+                    <p class="banner-title">Invite @Maskin to #oncall-alerts first, then save again</p>
+                    <p>Slack doesn't let bots auto-join private channels. Run the invite command in the channel, then come back and press Save.</p>
+                    <div class="banner-actions">
+                      <button class="btn btn-outline btn-sm" onclick="copyInvite(this)">
+                        <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 011-1h8"/></svg>
+                        Copy <span class="mono">/invite @Maskin</span>
+                      </button>
+                      <button class="btn btn-ghost btn-sm">Open #oncall-alerts in Slack ↗</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Filters (existing pattern — carried through) -->
+                <hr class="divider" />
+                <p class="section-title">Optional filters</p>
+                <div class="row">
+                  <label class="field-label">Only fire if sent by these users (optional)</label>
+                  <button class="btn btn-outline btn-sm" style="width:fit-content">+ Add
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="card">
+                <p class="section-title">Agent</p>
+                <div class="row">
+                  <label class="field-label">Route to</label>
+                  <div class="flex gap-2" style="align-items:center">
+                    <span class="badge badge-outline">
+                      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="6" r="3"/><path d="M2 14a6 6 0 0112 0"/></svg>
+                      Slack Responder
+                    </span>
+                    <button class="btn btn-ghost btn-sm">Change</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 2: SAVE FLOW STATES -->
+  <section class="screen">
+    <div class="screen-label">
+      <span class="kicker">Screen 2 / 4</span>
+      <h3>Save flow — Saving → Joining → Saved (and failure branch)</h3>
+    </div>
+    <div class="frame-wrap">
+      <div class="frame" data-bp="desktop" style="max-width:900px">
+        <div class="body" style="padding:20px 24px">
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px">
+
+            <!-- state 1: Saving -->
+            <div class="card" style="margin:0">
+              <div class="flex gap-3" style="align-items:center;justify-content:space-between">
+                <span class="text-xs mono text-muted">01 · Saving trigger</span>
+                <span class="save-status is-saving"><span class="spinner"></span>Saving</span>
+              </div>
+              <p class="help mt-2">User pressed <strong>Save trigger</strong>. Trigger row is disabled while the request is in flight.</p>
+              <div style="margin-top:12px">
+                <button class="btn btn-primary btn-sm" disabled>Save trigger</button>
+              </div>
+            </div>
+
+            <!-- state 2: Joining -->
+            <div class="card" style="margin:0">
+              <div class="flex gap-3" style="align-items:center;justify-content:space-between">
+                <span class="text-xs mono text-muted">02 · Joining channel</span>
+                <span class="save-status is-joining"><span class="spinner"></span>Joining #product-launches</span>
+              </div>
+              <p class="help mt-2">Trigger saved. Maskin is calling <code class="mono">channels.join</code> so it can read messages in <span class="mono">#product-launches</span>.</p>
+              <div style="margin-top:12px">
+                <button class="btn btn-primary btn-sm" disabled>Saving…</button>
+              </div>
+            </div>
+
+            <!-- state 3: Saved -->
+            <div class="card" style="margin:0">
+              <div class="flex gap-3" style="align-items:center;justify-content:space-between">
+                <span class="text-xs mono text-muted">03 · Saved</span>
+                <span class="save-status is-saved">
+                  <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l4 4 6-8"/></svg>
+                  Saved · Maskin joined #product-launches
+                </span>
+              </div>
+              <p class="help mt-2">Trigger is live. A confirmation message has been posted to the channel — see Screen&nbsp;3.</p>
+              <div style="margin-top:12px">
+                <button class="btn btn-primary btn-sm">Save trigger</button>
+              </div>
+            </div>
+
+            <!-- state 4: Private-channel failure -->
+            <div class="card" style="margin:0">
+              <div class="flex gap-3" style="align-items:center;justify-content:space-between">
+                <span class="text-xs mono text-muted">04 · Failure — private channel</span>
+                <span class="save-status is-error">
+                  <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+                  Couldn't join
+                </span>
+              </div>
+              <div class="banner banner-warning" style="margin-top:12px;margin-bottom:0">
+                <div class="banner-icon">
+                  <svg class="icon-18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l8 15H2L10 2z"/><path d="M10 8v4M10 15h.01" stroke-linecap="round"/></svg>
+                </div>
+                <div class="banner-body">
+                  <p class="banner-title">Invite @Maskin to #oncall-alerts first, then save again</p>
+                  <p>Slack doesn't let bots auto-join private channels.</p>
+                  <div class="banner-actions">
+                    <button class="btn btn-outline btn-sm" onclick="copyInvite(this)">
+                      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 011-1h8"/></svg>
+                      Copy <span class="mono">/invite @Maskin</span>
+                    </button>
+                    <button class="btn btn-ghost btn-sm">Open #oncall-alerts ↗</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 3: SLACK CONFIRMATION MESSAGE -->
+  <section class="screen">
+    <div class="screen-label">
+      <span class="kicker">Screen 3 / 4</span>
+      <h3>Confirmation posted in Slack</h3>
+    </div>
+    <div class="frame-wrap">
+      <div class="frame" data-bp="desktop" style="max-width:720px">
+        <div class="body" style="padding:24px;background:#f8f8f8">
+          <div class="slack-preview">
+            <div class="slack-chan-header"><span class="hash">#</span>product-launches</div>
+            <div class="slack-msg">
+              <div class="slack-avatar">M</div>
+              <div class="slack-body">
+                <div class="slack-name-row">
+                  <span class="slack-name">Maskin</span>
+                  <span class="slack-app-tag">APP</span>
+                  <span class="slack-time">10:42 AM</span>
+                </div>
+                <div class="slack-text">Maskin is now listening here for <strong>Notify me when @channel is mentioned</strong>.</div>
+                <div class="slack-attachment">
+                  <div class="attachment-title">Notify me when @channel is mentioned</div>
+                  <div class="attachment-meta">Fires on <code style="background:#f4f4f5;padding:0 4px;border-radius:3px">slack.app_mention</code> in this channel · configured by Sebk</div>
+                  <div class="attachment-cta">
+                    <button>View trigger</button>
+                    <button>Pause</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="help mt-3" style="text-align:center">Message is posted once, immediately after successful setup. Serves as proof-of-life + consent notice to other channel members (GitHub / Vercel / PagerDuty pattern).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREEN 4: TRIGGER DETAIL PAGE WITH MEMBERSHIP + PAUSED STATE -->
+  <section class="screen">
+    <div class="screen-label">
+      <span class="kicker">Screen 4 / 4</span>
+      <h3>Trigger detail — workspace membership badge + auto-paused state</h3>
+    </div>
+    <div class="frame-wrap">
+      <div class="frame" data-bp="desktop" id="frame-detail">
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="brand-mark"><span class="logo">M</span><span>Maskin</span></div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 8h12M2 13h12"/></svg>For You</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>Loops</div>
+            <div class="nav-item active"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v3l3 3-3 3v3M2 8h12"/></svg>Triggers</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/></svg>Actors</div>
+            <div class="eyebrow">Settings</div>
+            <div class="nav-item"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="8" rx="1"/></svg>Integrations</div>
+          </aside>
+          <main class="main">
+            <div class="page-header">
+              <div class="breadcrumb">
+                <a href="#">Triggers</a>
+                <span class="sep">/</span>
+                <span>Notify me when @channel is mentioned</span>
+              </div>
+              <div class="title-row">
+                <h2>Notify me when @channel is mentioned</h2>
+                <span class="save-status is-saved"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l4 4 6-8"/></svg>Saved</span>
+                <div class="header-actions">
+                  <label class="flex gap-2" style="align-items:center;font-size:12px;color:var(--muted-foreground)">
+                    <span>On</span>
+                    <span style="display:inline-block;width:32px;height:18px;background:var(--success);border-radius:9px;position:relative">
+                      <span style="position:absolute;top:2px;right:2px;width:14px;height:14px;background:#fff;border-radius:50%"></span>
+                    </span>
+                  </label>
+                  <button class="btn btn-outline btn-sm">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="4" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12" cy="8" r="1"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="body">
+              <!-- Auto-paused warning (state-driven; hidden by default, shown when kicked) -->
+              <div class="banner banner-danger" id="banner-kicked">
+                <div class="banner-icon">
+                  <svg class="icon-18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 6v4M10 14h.01" stroke-linecap="round"/></svg>
+                </div>
+                <div class="banner-body">
+                  <p class="banner-title">@Maskin was removed from #product-launches — reinvite or reconnect the trigger</p>
+                  <p>This trigger was auto-paused when @Maskin was kicked from the channel on Aug&nbsp;24. No events have fired since.</p>
+                  <div class="banner-actions">
+                    <button class="btn btn-primary btn-sm">Reconnect trigger</button>
+                    <button class="btn btn-outline btn-sm" onclick="copyInvite(this)">
+                      <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 011-1h8"/></svg>
+                      Copy <span class="mono">/invite @Maskin</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="detail-grid">
+                <div>
+                  <div class="card">
+                    <p class="section-title">Trigger</p>
+                    <div class="row">
+                      <label class="field-label">Fires on</label>
+                      <div class="flex gap-2">
+                        <span class="badge badge-brand">Slack event</span>
+                        <span class="badge badge-outline mono">slack.app_mention</span>
+                        <span class="badge badge-outline"># product-launches</span>
+                      </div>
+                    </div>
+                    <div class="row">
+                      <label class="field-label">Route to</label>
+                      <span class="badge badge-outline">Slack Responder</span>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <p class="section-title">Recent history</p>
+                    <div class="text-xs text-muted" style="padding:12px 0">Last fired 3 hours ago · 47 fires this week</div>
+                  </div>
+                </div>
+
+                <div>
+                  <!-- The workspace-level membership badge — new pattern for this bet -->
+                  <div class="side-card">
+                    <h4>Slack workspace</h4>
+                    <div class="flex gap-2 mb-2" style="align-items:center">
+                      <span class="badge badge-active"><span class="dot"></span>Maskin is in this workspace</span>
+                    </div>
+                    <div class="kv"><span class="k">Workspace</span><span class="v">Acme HQ</span></div>
+                    <div class="kv"><span class="k">Connected by</span><span class="v">Sebk</span></div>
+                    <div class="kv"><span class="k">Connected on</span><span class="v">Jun 12, 2026</span></div>
+                    <div class="mt-3">
+                      <button class="btn btn-ghost btn-sm" style="padding-left:0">Manage integration ↗</button>
+                    </div>
+                  </div>
+
+                  <div class="side-card mt-3">
+                    <h4>Channel</h4>
+                    <div class="kv"><span class="k">Channel</span><span class="v mono">#product-launches</span></div>
+                    <div class="kv"><span class="k">Channel ID</span><span class="v mono">C0456EFGH</span></div>
+                    <div class="kv"><span class="k">Joined</span><span class="v">Aug 22, 2026</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <!-- Second detail frame: showing the kicked / disconnected state -->
+    <div class="screen-label" style="margin-top:12px">
+      <span class="kicker">Screen 4b</span>
+      <h3>Trigger detail — workspace disconnected (@Maskin removed from workspace)</h3>
+    </div>
+    <div class="frame-wrap">
+      <div class="frame" data-bp="desktop" style="max-width:1200px">
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="brand-mark"><span class="logo">M</span><span>Maskin</span></div>
+            <div class="nav-item active"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v3l3 3-3 3v3M2 8h12"/></svg>Triggers</div>
+          </aside>
+          <main class="main">
+            <div class="page-header">
+              <div class="breadcrumb">
+                <a href="#">Triggers</a><span class="sep">/</span><span>Notify me when @channel is mentioned</span>
+              </div>
+              <div class="title-row">
+                <h2>Notify me when @channel is mentioned</h2>
+                <span class="badge badge-paused"><span class="dot"></span>Paused</span>
+                <div class="header-actions">
+                  <label class="flex gap-2" style="align-items:center;font-size:12px;color:var(--muted-foreground)">
+                    <span>Off</span>
+                    <span style="display:inline-block;width:32px;height:18px;background:var(--border-strong);border-radius:9px;position:relative">
+                      <span style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%"></span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="banner banner-danger">
+                <div class="banner-icon">
+                  <svg class="icon-18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 6v4M10 14h.01" stroke-linecap="round"/></svg>
+                </div>
+                <div class="banner-body">
+                  <p class="banner-title">Maskin was removed from Acme HQ — reconnect the integration</p>
+                  <p>All Slack triggers on this workspace were auto-paused when the integration was revoked. Reconnect the workspace to resume.</p>
+                  <div class="banner-actions">
+                    <button class="btn btn-primary btn-sm">Reconnect Slack workspace</button>
+                    <button class="btn btn-ghost btn-sm">Delete trigger</button>
+                  </div>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div>
+                  <div class="card">
+                    <p class="section-title">Trigger</p>
+                    <div class="row">
+                      <label class="field-label">Fires on</label>
+                      <div class="flex gap-2">
+                        <span class="badge badge-brand">Slack event</span>
+                        <span class="badge badge-outline mono">slack.app_mention</span>
+                        <span class="badge badge-outline"># product-launches</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div class="side-card">
+                    <h4>Slack workspace</h4>
+                    <div class="flex gap-2 mb-2" style="align-items:center">
+                      <span class="badge badge-failed"><span class="dot"></span>Maskin was removed from Acme HQ</span>
+                    </div>
+                    <div class="kv"><span class="k">Workspace</span><span class="v">Acme HQ</span></div>
+                    <div class="kv"><span class="k">Removed on</span><span class="v">Aug 24, 2026</span></div>
+                    <div class="mt-3">
+                      <button class="btn btn-outline btn-sm" style="width:100%">Reconnect Slack workspace</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // ─── State picker: toggles the picker panel + save-flow states in Screen 1 ───
+  const stateButtons = document.querySelectorAll('.chrome [data-state]');
+  const bpButtons    = document.querySelectorAll('.chrome [data-bp]');
+
+  function setState(state) {
+    stateButtons.forEach(b => b.setAttribute('aria-pressed', b.dataset.state === state));
+
+    const panels = {
+      default:   document.getElementById('picker-panel'),
+      loading:   document.getElementById('picker-panel-loading'),
+      empty:     document.getElementById('picker-panel-empty'),
+      over1000:  document.getElementById('picker-panel-over1000'),
+    };
+    Object.values(panels).forEach(p => p.classList.add('hidden'));
+
+    const banner   = document.getElementById('banner-private');
+    const saveBtn  = document.getElementById('setup-save-btn');
+    const saveWrap = document.getElementById('setup-save-status');
+    const saveLbl  = document.getElementById('setup-save-label');
+    const value    = document.getElementById('picker-value');
+    saveWrap.className = 'save-status';
+    banner.classList.add('hidden');
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save trigger';
+
+    if (state === 'idle')       { panels.default.classList.remove('hidden'); saveLbl.textContent = 'Draft'; }
+    if (state === 'loading')    { panels.loading.classList.remove('hidden'); saveLbl.textContent = 'Draft'; }
+    if (state === 'empty')      { panels.empty.classList.remove('hidden');  saveLbl.textContent = 'Draft'; }
+    if (state === 'over1000')   { panels.over1000.classList.remove('hidden'); saveLbl.textContent = 'Draft'; }
+    if (state === 'saving')     {
+      panels.default.classList.add('hidden');
+      saveWrap.className = 'save-status is-saving';
+      saveLbl.innerHTML  = '<span class="spinner" style="margin-right:6px"></span>Saving';
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    }
+    if (state === 'joining')    {
+      panels.default.classList.add('hidden');
+      saveWrap.className = 'save-status is-joining';
+      saveLbl.innerHTML  = '<span class="spinner" style="margin-right:6px"></span>Joining #product-launches';
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+      value.textContent = '#product-launches';
+      value.classList.remove('placeholder');
+    }
+    if (state === 'saved')      {
+      panels.default.classList.add('hidden');
+      saveWrap.className = 'save-status is-saved';
+      saveLbl.innerHTML  = '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><path d="M3 8l4 4 6-8"/></svg>Saved · Maskin joined #product-launches';
+      value.textContent = '#product-launches';
+      value.classList.remove('placeholder');
+    }
+    if (state === 'private-fail') {
+      panels.default.classList.add('hidden');
+      banner.classList.remove('hidden');
+      saveWrap.className = 'save-status is-error';
+      saveLbl.innerHTML  = '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><path d="M4 4l8 8M12 4l-8 8"/></svg>Couldn\'t join #oncall-alerts';
+      value.textContent = '#oncall-alerts';
+      value.classList.remove('placeholder');
+    }
+  }
+  stateButtons.forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+
+  function setBreakpoint(bp) {
+    bpButtons.forEach(b => b.setAttribute('aria-pressed', b.dataset.bp === bp));
+    document.querySelectorAll('.frame').forEach(f => f.setAttribute('data-bp', bp));
+  }
+  bpButtons.forEach(b => b.addEventListener('click', () => setBreakpoint(b.dataset.bp)));
+
+  function pickChannel(name, isPrivate) {
+    const value = document.getElementById('picker-value');
+    value.textContent = '#' + name;
+    value.classList.remove('placeholder');
+    document.getElementById('picker-panel').classList.add('hidden');
+    if (isPrivate) setState('private-fail');
+  }
+
+  function copyInvite(btn) {
+    navigator.clipboard?.writeText('/invite @Maskin');
+    const label = btn.querySelector('span.mono');
+    if (label) {
+      const prev = label.textContent;
+      label.textContent = 'Copied ✓';
+      setTimeout(() => { label.textContent = prev; }, 1400);
+    }
+  }
+
+  // init
+  setState('idle');
+</script>
+</body>
+</html>
