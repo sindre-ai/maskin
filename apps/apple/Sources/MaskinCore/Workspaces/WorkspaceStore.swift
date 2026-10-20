@@ -168,6 +168,20 @@ public final class WorkspaceStore {
 		auth.selectWorkspace(id)
 	}
 
+	/// A workspace this person just created (they are its owner and only member): list it and
+	/// select it now, without waiting for a refresh that may fail, so the no-workspaces screen
+	/// goes away at once. A refresh afterwards reconciles with the server.
+	public func created(id: String, name: String) {
+		if !workspaces.contains(where: { $0.id == id }) {
+			workspaces.append(WorkspaceSummary(id: id, name: name, role: "owner", memberCount: 1))
+		}
+		phase = .loaded
+		freshness.refreshed(at: Date())
+		offersAccountDeletion = false
+		if let disk, let key = cacheKey { disk.write(workspaces, key: key, version: 1) }
+		auth.selectWorkspace(id)
+	}
+
 	/// A workspace was deleted: drop it now rather than waiting for a refresh that may fail, and
 	/// move the selection to the first one left, or to none.
 	public func removed(_ id: String) {
