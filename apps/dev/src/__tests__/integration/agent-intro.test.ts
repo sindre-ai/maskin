@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
 import {
 	conversationParticipants,
 	conversations,
@@ -8,9 +9,11 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import type { SessionManager } from '../../services/session-manager'
 import {
 	insertActor,
 	insertConversation,
@@ -58,8 +61,32 @@ function createApp() {
 	return outer
 }
 
-function createConversationsApp() {
-	return createIntegrationApp({ path: '/api/conversations', module: conversationsRoutes })
+// The shared harness always acts as its own fixed test actor, which is not a
+// participant of these chats, so the conversations route is mounted here as the
+// person the intro was written for.
+function createConversationsAppAs(actorId: string) {
+	const app = new OpenAPIHono<{
+		Variables: {
+			db: Database
+			actorId: string
+			actorType: string
+			notifyBridge: PgNotifyBridge
+			sessionManager: SessionManager
+		}
+	}>()
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', actorId)
+		c.set('actorType', 'human')
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', {
+			stopSession: async () => {},
+			createSession: async () => ({}),
+		} as unknown as SessionManager)
+		await next()
+	})
+	app.route('/api/conversations', conversationsRoutes as never)
+	return app
 }
 
 function setFlagFor(...actorIds: string[]) {
@@ -201,7 +228,7 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		)
 
 		// What the chat list shows the person.
-		const list = await createConversationsApp().request(
+		const list = await createConversationsAppAs(human.id).request(
 			jsonGet('/api/conversations', { 'x-workspace-id': ws.id }),
 		)
 		const listed = (await list.json()) as {
@@ -332,7 +359,7 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		expect(msg?.content).toContain('Chief of Staff set me up for you.')
 		expect(msg?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
 
-		const list = await createConversationsApp().request(
+		const list = await createConversationsAppAs(human.id).request(
 			jsonGet('/api/conversations', { 'x-workspace-id': ws.id }),
 		)
 		const listed = (await list.json()) as {
@@ -711,7 +738,7 @@ describe('Agent intro — hints from the creator', () => {
 	})
 
 	it('strips steps, tools and tail from a posted message but keeps the step marker', async () => {
-		const { ws, key } = await setup()
+		const { ws, human, key } = await setup()
 		await withKey(ws.id)
 		const res = await createAgent(
 			{ name: `Forge ${randomUUID()}`, workspace_id: ws.id },
@@ -721,7 +748,7 @@ describe('Agent intro — hints from the creator', () => {
 		const intro = await introMessageOf(created.id)
 		expect(intro).toBeDefined()
 
-		const post = await createConversationsApp().request(
+		const post = await createConversationsAppAs(human.id).request(
 			jsonRequest(
 				'POST',
 				`/api/conversations/${intro?.conversationId}/messages`,
@@ -734,7 +761,7 @@ describe('Agent intro — hints from the creator', () => {
 						from_suggested_step: { intro_message_id: intro?.id, index: 0 },
 					},
 				},
-				{ ...bearer(key), 'x-workspace-id': ws.id },
+				{ 'x-workspace-id': ws.id },
 			),
 		)
 		expect(post.status).toBe(201)

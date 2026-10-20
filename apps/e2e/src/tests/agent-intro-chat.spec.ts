@@ -232,8 +232,10 @@ test.describe('Agent intro steps and tools', () => {
 
 		// Send: two clicks in one tick make one POST, carrying the marker; the draft stays.
 		const send = page.getByRole('button', { name: /Summarise open bugs/ })
-		await send.dispatchEvent('click')
-		await send.dispatchEvent('click')
+		await send.evaluate((el) => {
+			;(el as HTMLButtonElement).click()
+			;(el as HTMLButtonElement).click()
+		})
 		await expect.poll(() => posted.length).toBe(1)
 		expect(posted[0]).toMatchObject({
 			content: 'Summarise open bugs',
