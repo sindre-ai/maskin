@@ -313,8 +313,11 @@ export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' 
 
 export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 
-/** What an agent may do with an integration. Keychain credentials only ever use 'read_write' (on/off). */
-export type AgentGrantAccess = 'read' | 'write' | 'read_write'
+/**
+ * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
+ * Keychain credentials only ever use 'read_write' (on/off): no row is off.
+ */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
 /** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
 export type IntegrationDefaultAccess = 'read' | 'none'
@@ -437,10 +440,40 @@ export const agentGrants = pgTable(
 	(t) => [
 		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
 		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
-		check('agent_grants_access_enum', sql`${t.access} IN ('read', 'write', 'read_write')`),
+		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only
+ * sessions of this agent in this conversation; removed with the chat or the credential.
+ */
+export const agentChatGrants = pgTable(
+	'agent_chat_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),
+		index('agent_chat_grants_actor_conv_idx').on(t.actorId, t.conversationId),
+	],
+)
+export type AgentChatGrant = typeof agentChatGrants.$inferSelect
 
 // ── Keychain ────────────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import type { Database } from '@maskin/db'
 import {
 	type AgentGrantAccess,
 	actors,
+	agentChatGrants,
 	agentGrants,
 	integrations,
 	webhookDeliveries,
@@ -170,6 +171,20 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		})
 		.from(agentGrants)
 		.where(eq(agentGrants.workspaceId, workspaceId))
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			actorId: agentChatGrants.actorId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(eq(agentChatGrants.workspaceId, workspaceId))
+	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+	for (const g of chatRows) {
+		const list = chatsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		chatsByIntegration.set(g.integrationId, list)
+	}
 	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
 	for (const g of grantRows) {
 		const list = grantsByIntegration.get(g.integrationId) ?? []
@@ -212,6 +227,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			missingScopes,
 			needsReconnect: missingScopes.length > 0,
 			agentGrants: grantsByIntegration.get(rest.id) ?? [],
+			chatGrants: chatsByIntegration.get(rest.id) ?? [],
 		}
 	})
 

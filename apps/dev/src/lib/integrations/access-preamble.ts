@@ -5,12 +5,11 @@ import { getProvider } from './registry'
 const LEVEL_TEXT: Record<AgentAccess, string> = {
 	read_write: `${AGENT_ACCESS_LABELS.read_write} (${AGENT_ACCESS_EFFECT.read_write})`,
 	read: `${AGENT_ACCESS_LABELS.read} (${AGENT_ACCESS_EFFECT.read})`,
-	write: `${AGENT_ACCESS_LABELS.write} (${AGENT_ACCESS_EFFECT.write})`,
 	none: AGENT_ACCESS_LABELS.none,
 }
 
 // Strongest first, so a mixed provider lists its best level first.
-const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'write', 'none']
+const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
 
 export function providerLabel(provider: string): string {
 	try {
@@ -50,7 +49,7 @@ export function buildAccessPreamble(rows: ActorIntegrationAccess[]): string {
 
 	return [
 		'## Integration access',
-		'A person sets what each connected integration lets you do. This is what you have:',
+		'A person sets what you may do with each connected integration. This is background for you: do not bring it up, and do not describe your access in an answer, unless it stops you doing something you were asked to do or someone asks about it. What you have:',
 		...lines,
 		'If a tool is refused because of access, do not retry or look for a workaround. Tell the person which integration and what level you need; a workspace admin can change it under Settings → Integrations.',
 	]

@@ -299,7 +299,7 @@ describe('PUT /api/integrations/:id/grants on a saved key (Integration)', () => 
 
 	it('answers 400 to read-only or write-only access on a saved key: it is on or off', async () => {
 		const s = await setup()
-		for (const access of ['read', 'write']) {
+		for (const access of ['read', 'none']) {
 			const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, {
 				grants: [{ actorId: s.agentA.id, access }],
 			})

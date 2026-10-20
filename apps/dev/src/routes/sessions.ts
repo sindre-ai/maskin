@@ -1,13 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	agentGrants,
-	integrations,
-	sessionLogs,
-	sessions,
-	triggers,
-} from '@maskin/db/schema'
+import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -36,6 +29,7 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -1415,6 +1409,7 @@ const keychainCredentialsRoute = createRoute({
 								name: z.string(),
 								kind: z.enum(['api_key', 'login']),
 								has_access: z.boolean(),
+								scope: z.enum(['always', 'this_chat']).nullable(),
 							}),
 						),
 					}),
@@ -1446,13 +1441,16 @@ app.openapi(keychainCredentialsRoute, (async (c) => {
 	}
 
 	// The same view the agent page and get_actor read, so the lists cannot disagree.
-	const { credentials } = await describeAgentAccess(db, session.workspaceId, session.actorId)
+	const { credentials } = await describeAgentAccess(db, session.workspaceId, session.actorId, {
+		conversationId: session.conversationId,
+	})
 	return c.json(
 		{
 			credentials: credentials.map((cr) => ({
 				name: cr.name,
 				kind: cr.kind,
 				has_access: cr.has_access,
+				scope: cr.scope,
 			})),
 		},
 		200,
@@ -1558,14 +1556,18 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 		)
 	}
 
-	const [already] = await db
-		.select({ id: agentGrants.id })
-		.from(agentGrants)
-		.where(
-			and(eq(agentGrants.integrationId, credential.id), eq(agentGrants.actorId, session.actorId)),
-		)
-		.limit(1)
-	if (already) return c.json({ posted: false, already_granted: true, message_id: null }, 200)
+	// A grant, or an Allow for this very chat, both mean the agent has it already.
+	const current = await resolveAgentAccess(
+		db,
+		session.workspaceId,
+		credential.id,
+		session.actorId,
+		{
+			conversationId: session.conversationId,
+		},
+	)
+	if (current && current !== 'none')
+		return c.json({ posted: false, already_granted: true, message_id: null }, 200)
 
 	const created = await insertConversationMessage(db, {
 		conversationId: session.conversationId,

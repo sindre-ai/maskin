@@ -84,8 +84,8 @@ describe('effectiveAccess (pure)', () => {
 			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read' }, 'read_write'),
 		).toBe('read_write')
 		expect(
-			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read' }, 'write'),
-		).toBe('write')
+			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read' }, 'none'),
+		).toBe('none')
 	})
 	it('treats a Keychain credential as explicit-grant on/off, ignoring the default', () => {
 		expect(effectiveAccess({ providerMode: 'byo_apikey', defaultAgentAccess: 'read' }, null)).toBe(
@@ -156,12 +156,12 @@ describe('agent_grants table semantics (Integration)', () => {
 				workspaceId: s.ws.id,
 				integrationId: slack.id,
 				actorId: s.agentA.id,
-				access: 'write',
+				access: 'read',
 			}),
 		).rejects.toThrow()
 	})
 
-	it('rejects an access value outside read/write/read_write', async () => {
+	it('rejects an access value outside none/read/read_write, including the retired write', async () => {
 		const s = await setup()
 		const slack = await insertIntegration(s)
 		const err = await db
@@ -202,7 +202,7 @@ describe('grants routes (Integration)', () => {
 			workspaceId: s.ws.id,
 			integrationId: slack.id,
 			actorId: s.agentA.id,
-			access: 'write',
+			access: 'read_write',
 		})
 		const res = await req(appFor(s.human), 'GET', `/${slack.id}/grants`, s.ws.id)
 		expect(res.status).toBe(200)
@@ -210,7 +210,7 @@ describe('grants routes (Integration)', () => {
 			integrationId: slack.id,
 			mode: 'standard',
 			defaultAgentAccess: 'read',
-			grants: [{ actorId: s.agentA.id, access: 'write' }],
+			grants: [{ actorId: s.agentA.id, access: 'read_write' }],
 		})
 	})
 
@@ -317,6 +317,32 @@ describe('grants routes (Integration)', () => {
 			).status,
 		).toBe(200)
 		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentB.id)).toBe('read')
+	})
+
+	it('lets one agent be set to No access while everyone else keeps the read default', async () => {
+		const s = await setup()
+		const slack = await insertIntegration(s)
+		const app = appFor(s.human)
+		expect(
+			(await req(app, 'PUT', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id, { access: 'none' }))
+				.status,
+		).toBe(200)
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentA.id)).toBe('none')
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentB.id)).toBe('read')
+		const listed = await listAgentAccess(db, s.ws.id, s.agentA.id)
+		expect(listed.map((r) => [r.access, r.source])).toEqual([['none', 'grant']])
+		// Removing the entry puts the agent back on the default.
+		await req(app, 'DELETE', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id)
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentA.id)).toBe('read')
+	})
+
+	it('rejects the retired write-only level', async () => {
+		const s = await setup()
+		const slack = await insertIntegration(s)
+		const res = await req(appFor(s.human), 'PUT', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id, {
+			access: 'write',
+		})
+		expect(res.status).toBe(400)
 	})
 
 	it('404s for an integration in another workspace', async () => {

@@ -21,7 +21,7 @@ import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { ChevronRight, X } from 'lucide-react'
 import { useState } from 'react'
 
-const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'write']
+const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
 
 /**
  * The one-line reading of who can do what, shown while the section is collapsed. The
@@ -32,14 +32,17 @@ export function summarizeAgentAccess(
 	defaultAccess: 'read' | 'none',
 	grants: Pick<AgentGrant, 'access'>[],
 ): string {
-	const writers = grants.filter((g) => g.access !== 'read').length
+	const writers = grants.filter((g) => g.access === 'read_write').length
+	const blocked = grants.filter((g) => g.access === 'none').length
 	if (defaultAccess === 'read') {
-		const base = 'All agents can read'
-		if (writers === 0) return base
-		return `${base} · ${writers} can also write`
+		const parts = ['All agents can read']
+		if (writers > 0) parts.push(`${writers} can also write`)
+		if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} no access`)
+		return parts.join(' · ')
 	}
-	if (grants.length === 0) return 'No agents have access'
-	return `${grants.length} ${grants.length === 1 ? 'agent has' : 'agents have'} access`
+	const withAccess = grants.length - blocked
+	if (withAccess === 0) return 'No agents have access'
+	return `${withAccess} ${withAccess === 1 ? 'agent has' : 'agents have'} access`
 }
 
 /** What a newly added agent starts with: the step up from the default. */

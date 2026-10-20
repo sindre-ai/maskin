@@ -16,7 +16,7 @@ import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 type IntegrationRowData = AgentAccessView['integrations'][number]
 type CredentialRowData = AgentAccessView['credentials'][number]
 
-const LEVELS: AgentGrantAccess[] = ['read', 'read_write', 'write']
+const LEVELS: AgentGrantAccess[] = ['read', 'read_write', 'none']
 
 /** Same rule as the Integrations and Keychain pages: whoever connected it, or an admin or owner. */
 function useCanChange(createdBy: string): boolean {
@@ -78,6 +78,17 @@ function IntegrationRow({
 	)
 }
 
+/** Always, not at all, or only in the chats a person allowed it in. */
+export function credentialStatus(
+	row: Pick<CredentialRowData, 'has_access' | 'chat_count'>,
+): string {
+	if (row.has_access) return 'Always'
+	if (row.chat_count > 0) {
+		return `Only in ${row.chat_count} ${row.chat_count === 1 ? 'chat' : 'chats'}`
+	}
+	return 'No access'
+}
+
 function CredentialRow({
 	row,
 	agentId,
@@ -97,8 +108,7 @@ function CredentialRow({
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
 				<p className="text-xs text-muted-foreground">
-					{row.kind === 'login' ? 'Login' : 'API key'} ·{' '}
-					{row.has_access ? 'Has access' : 'No access'}
+					{row.kind === 'login' ? 'Login' : 'API key'} · {credentialStatus(row)}
 				</p>
 			</div>
 			<Switch

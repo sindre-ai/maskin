@@ -1,7 +1,7 @@
 ---
 title: Agent access (grants)
 slug: agent-access
-description: Which agents may use an integration or a saved credential, and how — read, write, or read & write — how it is enforced, and how an agent is told.
+description: Which agents may use an integration or a saved credential, and how — read, read & write, or none — how it is enforced, and how an agent is told.
 last_updated: 2026-10-20
 ---
 
@@ -26,15 +26,15 @@ Access lives in `agent_grants` plus `integrations.default_agent_access`, resolve
 Rules that keep it that way:
 
 - Add a new place that shows or changes access by reading `describeAgentAccess` / the grants routes, not by recomputing it. "Is the MCP server attached" is `attachesServer()`, used by launch and by every report of it.
-- Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Write", "Read & write", "No access".
+- Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Read & write", "No access". There is no write-only level: an agent that may change something may also look at it.
 - Web: the per-agent access query is nested under `queryKeys.integrations.all(workspaceId)`, and the SSE handler invalidates that key on every `integration` event, so an open page refreshes when access changes elsewhere.
 - `apps/dev/src/__tests__/integration/access-alignment.test.ts` changes access through every entry point and asserts the list, the agent view, the session list and a real launch agree after each. Extend it when you add an entry point.
 
 ## The model
 
-- `agent_grants` holds one row per `(integration, agent)` with `access` = `read`, `write` or `read_write`. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
+- `agent_grants` holds one row per `(integration, agent)` with `access` = `none`, `read` or `read_write`. `none` is an explicit no that beats a `read` default, so one agent can be taken off an integration the others can read. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
 - `integrations.default_agent_access` is what an agent with **no row** gets: `read` (the default for every ordinary integration) or `none`.
-- A **Keychain credential** (a saved API key or login) has no default and no read/write split: an agent has it or it does not. A grant row means on (stored as `read_write`); no row means off. This holds for people too — only ordinary integrations let a person through.
+- A **Keychain credential** (a saved API key or login) has no default and no read/write split: an agent has it or it does not. A grant row means on (stored as `read_write`, never `none`); no row means off. This holds for people too — only ordinary integrations let a person through.
 - Resolution lives in one place: `apps/dev/src/lib/integrations/agent-access.ts`. Do not re-derive it.
 
 | Situation | Access |
@@ -75,7 +75,7 @@ Access is also what attaches an integration's MCP server to an agent: at launch,
 Two MCP tools, used inside a chat:
 
 - `list_keychain_credentials` — names, kind and whether the agent already has each. Never a value.
-- `request_keychain_access` — posts an Allow / Not now card (`metadata.keychain_access_request`). Allow calls `POST /api/integrations/:id/allow-from-chat`, which grants *the agent whose session asked* read & write (a person only: whoever saved it, or a workspace admin), audits it, and restarts that session so the credential is in its environment. Not now only sends the agent a message. `request_keychain_credential` remains for a credential that does not exist yet.
+- `request_keychain_access` — posts an Allow / Not now card (`metadata.keychain_access_request`). The person chooses how long: **Allow in this chat** (`scope: 'chat'`, a row in `agent_chat_grants`: this agent, this conversation only, gone with the chat) or **Always allow** (`scope: 'always'`, a normal `agent_grants` row until removed). Either calls `POST /api/integrations/:id/allow-from-chat`, which grants *the agent whose session asked* (a person only: whoever saved it, or a workspace admin), audits it, and restarts that session so the credential is in its environment. Turning the credential off for the agent removes both kinds. Not now only sends the agent a message. A chat-scoped Allow shows as `scope: 'this_chat'` in `list_keychain_credentials`, as `chatGrants` on the integration list, and as "Only in N chats" on the agent page. `request_keychain_credential` remains for a credential that does not exist yet.
 
 ## Classification
 

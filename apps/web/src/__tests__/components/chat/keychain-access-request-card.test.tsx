@@ -78,33 +78,52 @@ beforeEach(() => {
 })
 
 describe('KeychainAccessRequestCard', () => {
-	it('names the credential and the reason, with Allow and Not now', () => {
+	it('names the credential and the reason, and offers a duration: this chat, always, or not now', () => {
 		renderCard()
 		expect(screen.getByRole('heading', { name: 'Let this agent use Stripe?' })).toBeInTheDocument()
 		expect(screen.getByText(/To read invoices\./)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Allow in this chat' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
 		expect(screen.getByRole('button', { name: 'Not now' })).toBeEnabled()
+		// Each option says how long it lasts, before anything is clicked.
+		expect(screen.getByText(/only this agent, only in this conversation/)).toBeInTheDocument()
+		expect(screen.getByText(/until you remove it in Settings/)).toBeInTheDocument()
 	})
 
-	it('allows: grants through the session, then tells the agent where the credential is', async () => {
+	it('Always allow: grants for good through the session, then tells the agent where it is', async () => {
 		const user = userEvent.setup()
 		renderCard()
-		await user.click(screen.getByRole('button', { name: 'Allow' }))
+		await user.click(screen.getByRole('button', { name: 'Always allow' }))
 
-		await waitFor(() => expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID))
+		await waitFor(() =>
+			expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID, 'always'),
+		)
 		await waitFor(() => expect(sendMutate).toHaveBeenCalledTimes(1))
 		const { content } = sendMutate.mock.calls[0][0] as { content: string }
 		expect(content).toContain('allowed you to use Stripe')
 		expect(content).toContain('KEYCHAIN_BYO_APIKEY_STRIPE')
-		expect(await screen.findByText(/Allowed/)).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+		expect(await screen.findByText(/It stays until you remove it/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Always allow' })).not.toBeInTheDocument()
+	})
+
+	it('Allow in this chat: grants for this conversation only, and says so', async () => {
+		const user = userEvent.setup()
+		renderCard()
+		await user.click(screen.getByRole('button', { name: 'Allow in this chat' }))
+
+		await waitFor(() =>
+			expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID, 'chat'),
+		)
+		const { content } = sendMutate.mock.calls[0][0] as { content: string }
+		expect(content).toContain('in this chat only')
+		expect(await screen.findByText(/in this chat only./)).toBeInTheDocument()
 	})
 
 	it('says the agent is still running, and sends no message, when it could not be stopped', async () => {
 		mockAllow.mockResolvedValue({ actorId: AGENT, relaunch: 'failed' })
 		const user = userEvent.setup()
 		renderCard()
-		await user.click(screen.getByRole('button', { name: 'Allow' }))
+		await user.click(screen.getByRole('button', { name: 'Always allow' }))
 		expect(await screen.findByText(/still running without it/)).toBeInTheDocument()
 		expect(sendMutate).not.toHaveBeenCalled()
 	})
@@ -113,9 +132,9 @@ describe('KeychainAccessRequestCard', () => {
 		mockAllow.mockRejectedValue(new ApiError(403, 'Only the person who saved it can allow it'))
 		const user = userEvent.setup()
 		renderCard()
-		await user.click(screen.getByRole('button', { name: 'Allow' }))
+		await user.click(screen.getByRole('button', { name: 'Always allow' }))
 		expect(await screen.findByText(/Couldn't allow: Only the person/)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
 		expect(sendMutate).not.toHaveBeenCalled()
 	})
 
@@ -132,8 +151,28 @@ describe('KeychainAccessRequestCard', () => {
 	it('reads as allowed after a reload, from the credential grants', () => {
 		integrations = [credential({ agentGrants: [{ actorId: AGENT, access: 'read_write' }] })]
 		renderCard()
-		expect(screen.getByText(/Allowed/)).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+		expect(screen.getByText(/It stays until you remove it/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Always allow' })).not.toBeInTheDocument()
+	})
+
+	it('reads as allowed for this chat only when the grant is for this conversation', () => {
+		integrations = [credential({ chatGrants: [{ actorId: AGENT, conversationId: 'conv-1' }] })]
+		renderCard()
+		expect(screen.getByText(/in this chat only/)).toBeInTheDocument()
+	})
+
+	it('still asks in a different chat than the one an Allow was given in', () => {
+		integrations = [
+			credential({ chatGrants: [{ actorId: AGENT, conversationId: 'another-chat' }] }),
+		]
+		renderCard()
+		expect(screen.getByRole('button', { name: 'Allow in this chat' })).toBeEnabled()
+	})
+
+	it('does not read an explicit No access entry as allowed', () => {
+		integrations = [credential({ agentGrants: [{ actorId: AGENT, access: 'none' }] })]
+		renderCard()
+		expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
 	})
 
 	it('reads as gone when the credential was removed', () => {
@@ -145,7 +184,8 @@ describe('KeychainAccessRequestCard', () => {
 	it('only lets the person who saved it, or an admin, allow', () => {
 		integrations = [credential({ createdBy: 'someone-else' })]
 		const first = renderCard()
-		expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Always allow' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Allow in this chat' })).toBeDisabled()
 		expect(
 			screen.getByText(/Only the person who saved this or a workspace admin/),
 		).toBeInTheDocument()
@@ -153,6 +193,6 @@ describe('KeychainAccessRequestCard', () => {
 
 		role = 'admin'
 		renderCard()
-		expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
 	})
 })

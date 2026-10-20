@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
-import { agentGrants, integrations, sessions } from '@maskin/db/schema'
+import { agentChatGrants, agentGrants, integrations, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -407,7 +407,12 @@ app.openapi(deleteGrantRoute, (async (c) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
 		const previous = await removeAgentGrant(tx, { integrationId: id, actorId })
-		if (previous === null) return 'saved' as const
+		// Turning a saved credential off for an agent also ends every chat-scoped Allow.
+		const chatRemoved = await tx
+			.delete(agentChatGrants)
+			.where(and(eq(agentChatGrants.integrationId, id), eq(agentChatGrants.actorId, actorId)))
+			.returning({ id: agentChatGrants.id })
+		if (previous === null && chatRemoved.length === 0) return 'saved' as const
 		if (isKeychainMode(target.providerMode as never)) {
 			await insertCredentialAccessLog(tx, {
 				workspaceId,
@@ -430,6 +435,7 @@ app.openapi(deleteGrantRoute, (async (c) => {
 				agent_id: actorId,
 				access_before: previous,
 				access_after: null,
+				chats_removed: chatRemoved.length,
 			},
 		})
 		return 'saved' as const
@@ -538,7 +544,15 @@ const allowFromChatRoute = createRoute({
 		params: idParams,
 		body: {
 			content: {
-				'application/json': { schema: z.object({ sessionId: z.string().uuid() }).strict() },
+				'application/json': {
+					schema: z
+						.object({
+							sessionId: z.string().uuid(),
+							// 'chat': only this conversation. 'always': until a person removes it.
+							scope: z.enum(['chat', 'always']).default('always'),
+						})
+						.strict(),
+				},
 			},
 			required: true,
 		},
@@ -565,7 +579,7 @@ app.openapi(allowFromChatRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
-	const { sessionId } = c.req.valid('json')
+	const { sessionId, scope } = c.req.valid('json')
 
 	if (c.get('actorType') !== 'human') {
 		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
@@ -573,11 +587,20 @@ app.openapi(allowFromChatRoute, (async (c) => {
 
 	// The agent is the one whose session asked: the card cannot name anyone else.
 	const [session] = await db
-		.select({ actorId: sessions.actorId })
+		.select({ actorId: sessions.actorId, conversationId: sessions.conversationId })
 		.from(sessions)
 		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
 		.limit(1)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (scope === 'chat' && !session.conversationId) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'This session is not in a chat, so it cannot be allowed for one',
+			),
+			400,
+		)
+	}
 
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
@@ -586,13 +609,27 @@ app.openapi(allowFromChatRoute, (async (c) => {
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [session.actorId]))) {
 			return 'outside' as const
 		}
-		const previous = await upsertAgentGrant(tx, {
-			workspaceId,
-			integrationId: id,
-			actorId: session.actorId,
-			access: 'read_write',
-			createdBy: callerId,
-		})
+		let previous: string | null = null
+		if (scope === 'chat' && session.conversationId) {
+			await tx
+				.insert(agentChatGrants)
+				.values({
+					workspaceId,
+					integrationId: id,
+					actorId: session.actorId,
+					conversationId: session.conversationId,
+					createdBy: callerId,
+				})
+				.onConflictDoNothing()
+		} else {
+			previous = await upsertAgentGrant(tx, {
+				workspaceId,
+				integrationId: id,
+				actorId: session.actorId,
+				access: 'read_write',
+				createdBy: callerId,
+			})
+		}
 		await insertCredentialAccessLog(tx, {
 			workspaceId,
 			integrationId: id,
@@ -614,6 +651,8 @@ app.openapi(allowFromChatRoute, (async (c) => {
 				access_before: previous,
 				access_after: 'read_write',
 				via: 'chat_card',
+				scope,
+				...(scope === 'chat' ? { conversation_id: session.conversationId } : {}),
 			},
 		})
 		return 'saved' as const

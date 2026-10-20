@@ -140,8 +140,8 @@ describe('GET /sessions/:id/keychain-credentials (Integration)', () => {
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as { credentials: Array<Record<string, unknown>> }
 		expect(body.credentials).toEqual([
-			{ name: 'Stripe', kind: 'api_key', has_access: true },
-			{ name: 'e-conomic', kind: 'login', has_access: false },
+			{ name: 'Stripe', kind: 'api_key', has_access: true, scope: 'always' },
+			{ name: 'e-conomic', kind: 'login', has_access: false, scope: null },
 		])
 		expect(JSON.stringify(body)).not.toContain('"x"')
 	})
@@ -282,6 +282,46 @@ describe('POST /integrations/:id/allow-from-chat (Integration)', () => {
 			.from(events)
 			.where(and(eq(events.entityId, stripe.id), eq(events.action, 'updated')))
 		expect(ev.some((e) => (e.data as { via?: string }).via === 'chat_card')).toBe(true)
+	})
+
+	it('Allow in this chat grants for that one conversation only, never as a permanent grant', async () => {
+		const s = await setup()
+		const stripe = await s.key('Stripe')
+		const res = await allow(s, stripe.id, { sessionId: s.session.id, scope: 'chat' })
+		expect(res.status).toBe(200)
+
+		expect(await grantedActorIds(db, stripe.id)).toEqual([])
+		const { agentChatGrants } = await import('@maskin/db/schema')
+		const rows = await db
+			.select()
+			.from(agentChatGrants)
+			.where(eq(agentChatGrants.integrationId, stripe.id))
+		expect(rows.map((r) => [r.actorId, r.conversationId])).toEqual([
+			[s.agent.id, s.conversation.id],
+		])
+		// The agent has it in this chat (so a second card finds it already granted)...
+		const again = await appFor(s.agent.id, 'agent').request(
+			jsonRequest(
+				'POST',
+				`/api/sessions/${s.session.id}/keychain-access-card`,
+				{ credential_name: 'Stripe' },
+				H(s.ws.id),
+			),
+		)
+		expect(await again.json()).toMatchObject({ posted: false, already_granted: true })
+		const ev = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, stripe.id), eq(events.action, 'updated')))
+		expect(ev.some((e) => (e.data as { scope?: string }).scope === 'chat')).toBe(true)
+	})
+
+	it('Allow in this chat is refused for a session that is not in a chat', async () => {
+		const s = await setup()
+		const stripe = await s.key('Stripe')
+		const autonomous = await insertSession(db, s.ws.id, s.agent.id, s.human, { status: 'running' })
+		const res = await allow(s, stripe.id, { sessionId: autonomous.id, scope: 'chat' })
+		expect(res.status).toBe(400)
 	})
 
 	it('grants read & write, since a saved key is on or off', async () => {

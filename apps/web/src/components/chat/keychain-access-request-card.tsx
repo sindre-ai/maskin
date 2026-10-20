@@ -47,10 +47,22 @@ export function KeychainAccessRequestCard({
 	const [error, setError] = useState<string | null>(null)
 	const [declined, setDeclined] = useState(false)
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
-	const [allowedNow, setAllowedNow] = useState(false)
+	const [allowedNow, setAllowedNow] = useState<'chat' | 'always' | null>(null)
 
 	const credential = (integrations ?? []).find((i) => i.id === request.integration_id)
-	const allowed = allowedNow || !!credential?.agentGrants?.some((g) => g.actorId === askingAgentId)
+	const alwaysAllowed = !!credential?.agentGrants?.some(
+		(g) => g.actorId === askingAgentId && g.access !== 'none',
+	)
+	const chatAllowed = !!credential?.chatGrants?.some(
+		(g) => g.actorId === askingAgentId && g.conversationId === conversationId,
+	)
+	const allowed = allowedNow !== null || alwaysAllowed || chatAllowed
+	// Read from the grants once the card has been seen before, so a reload says the same.
+	const allowedScope: 'chat' | 'always' | null = alwaysAllowed
+		? 'always'
+		: chatAllowed
+			? 'chat'
+			: allowedNow
 	const gone = integrations !== undefined && !credential
 
 	const me = getStoredActor()
@@ -59,7 +71,7 @@ export function KeychainAccessRequestCard({
 		me?.type === 'human' &&
 		(credential?.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 
-	const allow = async () => {
+	const allow = async (scope: 'chat' | 'always') => {
 		setBusy(true)
 		setError(null)
 		try {
@@ -67,8 +79,9 @@ export function KeychainAccessRequestCard({
 				request.integration_id,
 				workspaceId,
 				request.session_id,
+				scope,
 			)
-			setAllowedNow(true)
+			setAllowedNow(scope)
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			if (res.relaunch === 'failed') {
 				// The idle session could not be stopped, so it still lacks the credential.
@@ -79,7 +92,7 @@ export function KeychainAccessRequestCard({
 			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've allowed you to use ${request.credential_name} from the Keychain${where}. Please carry on.`,
+				content: `I've allowed you to use ${request.credential_name} from the Keychain${scope === 'chat' ? ' in this chat only' : ''}${where}. Please carry on.`,
 			})
 		} catch (err) {
 			setError(
@@ -104,7 +117,10 @@ export function KeychainAccessRequestCard({
 				<span>
 					{allowed ? (
 						<>
-							Allowed <strong>{request.credential_name}</strong> for this agent.
+							Allowed <strong>{request.credential_name}</strong>{' '}
+							{allowedScope === 'chat'
+								? 'for this agent in this chat only.'
+								: 'for this agent. It stays until you remove it.'}
 						</>
 					) : declined ? (
 						<>
@@ -147,7 +163,7 @@ export function KeychainAccessRequestCard({
 					<h3 className="text-sm font-semibold">Let this agent use {request.credential_name}?</h3>
 					<p className="mt-0.5 text-xs text-muted-foreground">
 						{request.hint ? `${request.hint} ` : ''}It stays in your encrypted vault and the agent
-						never sees the value in the chat. You can take access away in Settings → Keychain.
+						never sees the value in the chat. Choose how long it can use it:
 					</p>
 				</div>
 			</div>
@@ -157,9 +173,33 @@ export function KeychainAccessRequestCard({
 				</p>
 			) : null}
 			<FormError error={error ?? undefined} />
+			<ul className="list-disc space-y-0.5 pl-8 text-xs text-muted-foreground">
+				<li>
+					<strong className="font-medium text-foreground">Allow in this chat</strong>: only this
+					agent, only in this conversation.
+				</li>
+				<li>
+					<strong className="font-medium text-foreground">Always allow</strong>: this agent, in any
+					chat or run, until you remove it in Settings → Keychain.
+				</li>
+			</ul>
 			<div className="flex flex-wrap items-center gap-2">
-				<Button type="button" size="sm" disabled={busy || !canAllow} onClick={() => void allow()}>
-					Allow
+				<Button
+					type="button"
+					size="sm"
+					disabled={busy || !canAllow}
+					onClick={() => void allow('chat')}
+				>
+					Allow in this chat
+				</Button>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					disabled={busy || !canAllow}
+					onClick={() => void allow('always')}
+				>
+					Always allow
 				</Button>
 				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
 					Not now

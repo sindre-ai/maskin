@@ -547,10 +547,15 @@ export const api = {
 				workspaceId,
 			}),
 		/** Allow the agent whose session asked in a chat to use a saved credential, and restart it. */
-		allowFromChat: (id: string, workspaceId: string, sessionId: string) =>
+		allowFromChat: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			scope: 'chat' | 'always' = 'always',
+		) =>
 			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
 				`/integrations/${id}/allow-from-chat`,
-				{ method: 'POST', body: { sessionId }, workspaceId },
+				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
@@ -1787,9 +1792,12 @@ export interface IntegrationResponse {
 	defaultAgentAccess?: 'read' | 'none'
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
+	/** Saved credentials shared with an agent for one chat only. */
+	chatGrants?: Array<{ actorId: string; conversationId: string }>
 }
 
-export type AgentGrantAccess = 'read' | 'write' | 'read_write'
+/** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
 export interface AgentGrant {
 	actorId: string
@@ -2199,7 +2207,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'write' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'
 		server_attached: boolean
@@ -2210,6 +2218,10 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
+		scope: 'always' | 'this_chat' | null
+		/** In how many chats it is shared with this agent, apart from any grant. */
+		chat_count: number
 		created_by: string
 	}>
 }

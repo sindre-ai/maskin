@@ -109,7 +109,7 @@ async function setup() {
 		displayName: 'Stripe',
 		rawSecret: 'fake-stripe-secret-0123456789abcdef',
 	})
-	return { human, ws, agent, chat, linear, stripeId }
+	return { human, ws, agent, chat, conversation, linear, stripeId }
 }
 type Setup = Awaited<ReturnType<typeof setup>>
 
@@ -121,11 +121,14 @@ async function json(res: Response) {
 }
 
 /** What a freshly launched session of the agent actually gets. */
-async function launch(s: Setup) {
-	const created = await insertSession(db, s.ws.id, s.agent.id, s.human, {
-		status: 'pending',
-		containerId: null,
-	})
+async function launch(s: Setup, inChat = false) {
+	// Inside the chat: the chat's own session (a chat allows one active session per agent).
+	const created = inChat
+		? s.chat
+		: await insertSession(db, s.ws.id, s.agent.id, s.human, {
+				status: 'pending',
+				containerId: null,
+			})
 	const [row] = await db.select().from(sessions).where(eq(sessions.id, created.id))
 	const manager = new SessionManager(db, stubStorage())
 	try {
@@ -145,16 +148,16 @@ async function launch(s: Setup) {
 
 interface Expected {
 	/** The agent's level on Linear. */
-	linear: 'none' | 'read' | 'write' | 'read_write'
+	linear: 'none' | 'read' | 'read_write'
 	linearSource: 'grant' | 'default'
 	linearDefault: 'read' | 'none'
-	stripe: boolean
+	/** true: a grant. 'chat': an Allow for the one chat only. false: none. */
+	stripe: boolean | 'chat'
 }
 
 const PROMPT_LABEL = {
 	none: /- Linear: No access/,
 	read: /- Linear: Read \(read tools only/,
-	write: /- Linear: Write \(write tools only/,
 	read_write: /- Linear: Read & write/,
 }
 
@@ -171,7 +174,10 @@ async function expectAligned(s: Setup, want: Expected, step: string) {
 	const grantOf = (row: any) => row.agentGrants.find((g: any) => g.actorId === s.agent.id)
 	expect(linearRow.defaultAgentAccess, why('list default')).toBe(want.linearDefault)
 	expect(Boolean(grantOf(linearRow)), why('list linear grant')).toBe(want.linearSource === 'grant')
-	expect(Boolean(grantOf(stripeRow)), why('list stripe grant')).toBe(want.stripe)
+	expect(Boolean(grantOf(stripeRow)), why('list stripe grant')).toBe(want.stripe === true)
+	expect(stripeRow.chatGrants.length, why('list stripe chat grants')).toBe(
+		want.stripe === 'chat' ? 1 : 0,
+	)
 
 	// 2. The agent's access view: agent page and get_actor.
 	const view = await json(
@@ -183,7 +189,9 @@ async function expectAligned(s: Setup, want: Expected, step: string) {
 	expect(vLinear.source, why('view linear source')).toBe(want.linearSource)
 	expect(vLinear.default_access, why('view linear default')).toBe(want.linearDefault)
 	expect(vLinear.server_attached, why('view attached')).toBe(want.linear !== 'none')
-	expect(vStripe.has_access, why('view stripe')).toBe(want.stripe)
+	// The agent page asks from no chat, so it sees grants only, and says how many chats.
+	expect(vStripe.has_access, why('view stripe')).toBe(want.stripe === true)
+	expect(vStripe.chat_count, why('view stripe chats')).toBe(want.stripe === 'chat' ? 1 : 0)
 
 	// 3. The session's own credential list (list_keychain_credentials).
 	const own = await json(
@@ -192,13 +200,21 @@ async function expectAligned(s: Setup, want: Expected, step: string) {
 		),
 	)
 	expect(own.credentials, why('session list')).toEqual([
-		{ name: 'Stripe', kind: 'api_key', has_access: want.stripe },
+		{
+			name: 'Stripe',
+			kind: 'api_key',
+			has_access: want.stripe !== false,
+			scope: want.stripe === 'chat' ? 'this_chat' : want.stripe ? 'always' : null,
+		},
 	])
 
 	// 4. What a launched session actually gets.
 	const got = await launch(s)
 	expect(got.linearAttached, why('launch attaches Linear')).toBe(want.linear !== 'none')
-	expect(got.stripeInEnv, why('launch injects Stripe')).toBe(want.stripe)
+	// A launch outside the chat gets only a grant; one inside it also gets the chat's Allow.
+	expect(got.stripeInEnv, why('launch injects Stripe')).toBe(want.stripe === true)
+	const inChat = await launch(s, true)
+	expect(inChat.stripeInEnv, why('launch in the chat injects Stripe')).toBe(want.stripe !== false)
 	expect(got.prompt, why('launch prompt')).toMatch(PROMPT_LABEL[want.linear])
 }
 
@@ -226,13 +242,11 @@ describe('Access reads the same on every surface (Integration)', () => {
 			'default switched to none',
 		)
 
-		expect((await put(`/${s.linear.id}/grants/${s.agent.id}`, { access: 'write' })).status).toBe(
-			200,
-		)
+		expect((await put(`/${s.linear.id}/grants/${s.agent.id}`, { access: 'read' })).status).toBe(200)
 		await expectAligned(
 			s,
-			{ ...base, linear: 'write', linearSource: 'grant', linearDefault: 'none' },
-			'a write grant over a none default',
+			{ ...base, linear: 'read', linearSource: 'grant', linearDefault: 'none' },
+			'a read grant over a none default',
 		)
 
 		expect(
@@ -270,6 +284,36 @@ describe('Access reads the same on every surface (Integration)', () => {
 			'stripe grant removed',
 		)
 
+		// Allow in this chat only: the chat's own surfaces have it, nobody else's do.
+		const allowChat = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/integrations/${s.stripeId}/allow-from-chat`,
+				{ sessionId: s.chat.id, scope: 'chat' },
+				H(s),
+			),
+		)
+		expect(allowChat.status).toBe(200)
+		await expectAligned(
+			s,
+			{ linear: 'read_write', linearSource: 'grant', linearDefault: 'none', stripe: 'chat' },
+			'Allow in this chat only',
+		)
+		// Turning it off for the agent ends the chat's Allow too.
+		await app.request(
+			jsonRequest(
+				'DELETE',
+				`/api/integrations/${s.stripeId}/grants/${s.agent.id}`,
+				undefined,
+				H(s),
+			),
+		)
+		await expectAligned(
+			s,
+			{ linear: 'read_write', linearSource: 'grant', linearDefault: 'none', stripe: false },
+			'removal also ends the chat Allow',
+		)
+
 		const allow = await app.request(
 			jsonRequest(
 				'POST',
@@ -298,6 +342,14 @@ describe('Access reads the same on every surface (Integration)', () => {
 		)
 		expect(rm.status).toBe(200)
 		await expectAligned(s, { ...base, stripe: true }, 'back to the default')
+
+		// One agent taken off an integration everyone else can read.
+		expect((await put(`/${s.linear.id}/grants/${s.agent.id}`, { access: 'none' })).status).toBe(200)
+		await expectAligned(
+			s,
+			{ ...base, linear: 'none', linearSource: 'grant', stripe: true },
+			'an explicit No access over a read default',
+		)
 	})
 
 	it('drops the server everywhere when the integration is switched off for agent sessions', async () => {

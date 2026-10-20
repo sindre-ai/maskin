@@ -65,7 +65,7 @@ describe('summarizeAgentAccess', () => {
 		expect(summarizeAgentAccess('read', [{ access: 'read_write' }])).toBe(
 			'All agents can read · 1 can also write',
 		)
-		expect(summarizeAgentAccess('read', [{ access: 'write' }, { access: 'read_write' }])).toBe(
+		expect(summarizeAgentAccess('read', [{ access: 'read_write' }, { access: 'read_write' }])).toBe(
 			'All agents can read · 2 can also write',
 		)
 	})
@@ -77,9 +77,26 @@ describe('summarizeAgentAccess', () => {
 	it('describes a restricted integration by how many agents have access', () => {
 		expect(summarizeAgentAccess('none', [])).toBe('No agents have access')
 		expect(summarizeAgentAccess('none', [{ access: 'read' }])).toBe('1 agent has access')
-		expect(summarizeAgentAccess('none', [{ access: 'read' }, { access: 'write' }])).toBe(
+		expect(summarizeAgentAccess('none', [{ access: 'read' }, { access: 'read_write' }])).toBe(
 			'2 agents have access',
 		)
+	})
+
+	it('says how many agents were taken off an integration the rest can read', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'none' }])).toBe(
+			'All agents can read · 1 has no access',
+		)
+		expect(
+			summarizeAgentAccess('read', [
+				{ access: 'none' },
+				{ access: 'none' },
+				{ access: 'read_write' },
+			]),
+		).toBe('All agents can read · 1 can also write · 2 have no access')
+	})
+
+	it('does not count a No access entry as having access when the default is none', () => {
+		expect(summarizeAgentAccess('none', [{ access: 'none' }])).toBe('No agents have access')
 	})
 })
 

@@ -174,6 +174,14 @@ function CredentialDetailPage() {
 	const grantedIds = grants.map((g) => g.actorId)
 	const grantedAgents = agents.filter((a) => grantedIds.includes(a.id))
 	const agentCount = countAgents(grantedIds, agents)
+	// Agents that were allowed in single chats, and not by a grant: they can use it there too.
+	const chatShared = agents
+		.filter((a) => !grantedIds.includes(a.id))
+		.map((a) => ({
+			agent: a,
+			chats: (credential.chatGrants ?? []).filter((g) => g.actorId === a.id).length,
+		}))
+		.filter((x) => x.chats > 0)
 
 	return (
 		<div className="max-w-[880px]">
@@ -295,6 +303,18 @@ function CredentialDetailPage() {
 									</Button>
 								)}
 							</div>
+							{chatShared.length > 0 && (
+								<div className="mt-1.5">
+									<p className="text-xs text-muted-foreground">Also allowed in single chats</p>
+									<ul className="mt-1 space-y-1 text-sm">
+										{chatShared.map(({ agent, chats }) => (
+											<li key={agent.id} className="truncate">
+												{agent.name} · {chats} {chats === 1 ? 'chat' : 'chats'}
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
 							{agentCount === 0 ? (
 								<p className="mt-1.5 text-xs text-muted-foreground">{NO_AGENT_LINE}</p>
 							) : (

@@ -17,7 +17,7 @@ const INTEGRATION_ID = '55555555-5555-4555-8555-555555555555'
 
 interface State {
 	defaultAgentAccess: 'read' | 'none'
-	agentGrants: Array<{ actorId: string; access: 'read' | 'write' | 'read_write' }>
+	agentGrants: Array<{ actorId: string; access: 'none' | 'read' | 'read_write' }>
 }
 
 async function stubIntegrations(page: Page, workspaceId: string, actorId: string, state: State) {

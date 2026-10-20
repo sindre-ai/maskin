@@ -68,7 +68,6 @@ describe('access levels', () => {
 	it.each<[AgentAccess, boolean, boolean]>([
 		['none', false, false],
 		['read', true, false],
-		['write', false, true],
 		['read_write', true, true],
 	])('%s: can read %s, can write %s', (access, read, write) => {
 		expect(canRead(access)).toBe(read)

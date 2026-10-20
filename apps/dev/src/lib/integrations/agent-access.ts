@@ -4,6 +4,7 @@ import {
 	type IntegrationDefaultAccess,
 	type IntegrationProviderMode,
 	actors,
+	agentChatGrants,
 	agentGrants,
 	integrations,
 	workspaceMembers,
@@ -24,7 +25,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 export type AgentAccess = 'none' | AgentGrantAccess
 
 export const canRead = (a: AgentAccess): boolean => a === 'read' || a === 'read_write'
-export const canWrite = (a: AgentAccess): boolean => a === 'write' || a === 'read_write'
+export const canWrite = (a: AgentAccess): boolean => a === 'read_write'
 export const hasAnyAccess = (a: AgentAccess): boolean => a !== 'none'
 
 export function isKeychainMode(mode: IntegrationProviderMode): boolean {
@@ -39,7 +40,10 @@ export function effectiveAccess(
 	},
 	grant: AgentGrantAccess | null,
 ): AgentAccess {
-	if (isKeychainMode(integration.providerMode)) return grant ? 'read_write' : 'none'
+	// A saved key or login is on or off: a row (never 'none') is on, no row is off.
+	if (isKeychainMode(integration.providerMode)) {
+		return grant && grant !== 'none' ? 'read_write' : 'none'
+	}
 	return grant ?? integration.defaultAgentAccess
 }
 
@@ -52,6 +56,8 @@ export async function resolveAgentAccess(
 	workspaceId: string,
 	integrationId: string,
 	actorId: string,
+	/** Where the access is used, so a chat-scoped Allow for this conversation counts. */
+	opts: { conversationId?: string | null } = {},
 ): Promise<AgentAccess | null> {
 	const [row] = await db
 		.select({
@@ -73,7 +79,22 @@ export async function resolveAgentAccess(
 	if (row.actorType === null) return 'none'
 	// A saved key or login needs an explicit grant for anyone. Other integrations let people through.
 	if (row.actorType !== 'agent' && !isKeychainMode(row.providerMode)) return 'read_write'
-	return effectiveAccess(row, row.grant)
+	const access = effectiveAccess(row, row.grant)
+	if (access === 'none' && isKeychainMode(row.providerMode) && opts.conversationId) {
+		const [chat] = await db
+			.select({ id: agentChatGrants.id })
+			.from(agentChatGrants)
+			.where(
+				and(
+					eq(agentChatGrants.integrationId, integrationId),
+					eq(agentChatGrants.actorId, actorId),
+					eq(agentChatGrants.conversationId, opts.conversationId),
+				),
+			)
+			.limit(1)
+		if (chat) return 'read_write'
+	}
+	return access
 }
 
 export interface ActorIntegrationAccess {
@@ -82,8 +103,10 @@ export interface ActorIntegrationAccess {
 	providerMode: IntegrationProviderMode
 	displayName: string | null
 	access: AgentAccess
-	/** Where the access comes from: the agent's own grant, or the integration's default. */
-	source: 'grant' | 'default'
+	/** Where it comes from: the agent's own entry, the integration's default, or an Allow for one chat. */
+	source: 'grant' | 'default' | 'chat'
+	/** Saved credentials: in how many chats it is shared with this agent, apart from any grant. */
+	chatCount: number
 	defaultAgentAccess: IntegrationDefaultAccess
 	status: string
 	/** Who connected or saved it: with workspace admins, the people who may change access. */
@@ -124,7 +147,19 @@ export async function listAgentAccess(
 	db: Database | Transaction,
 	workspaceId: string,
 	actorId: string,
+	opts: { conversationId?: string | null } = {},
 ): Promise<ActorIntegrationAccess[]> {
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(and(eq(agentChatGrants.workspaceId, workspaceId), eq(agentChatGrants.actorId, actorId)))
+	const chatsBy = new Map<string, string[]>()
+	for (const g of chatRows) {
+		chatsBy.set(g.integrationId, [...(chatsBy.get(g.integrationId) ?? []), g.conversationId])
+	}
 	const rows = await db
 		.select({
 			integrationId: integrations.id,
@@ -149,20 +184,31 @@ export async function listAgentAccess(
 			),
 		)
 		.orderBy(asc(integrations.createdAt))
-	return rows.map((r) => ({
-		integrationId: r.integrationId,
-		provider: r.provider,
-		providerMode: r.providerMode,
-		displayName: r.displayName,
-		access: effectiveAccess(r, r.grant),
-		source: r.grant || isKeychainMode(r.providerMode) ? ('grant' as const) : ('default' as const),
-		defaultAgentAccess: r.defaultAgentAccess,
-		status: r.status,
-		createdBy: r.createdBy,
-		exposed:
-			(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
-			false,
-	}))
+	return rows.map((r) => {
+		const chats = chatsBy.get(r.integrationId) ?? []
+		const keychain = isKeychainMode(r.providerMode)
+		const viaChat =
+			keychain && !r.grant && !!opts.conversationId && chats.includes(opts.conversationId)
+		return {
+			integrationId: r.integrationId,
+			provider: r.provider,
+			providerMode: r.providerMode,
+			displayName: r.displayName,
+			access: viaChat ? ('read_write' as const) : effectiveAccess(r, r.grant),
+			source: viaChat
+				? ('chat' as const)
+				: r.grant || keychain
+					? ('grant' as const)
+					: ('default' as const),
+			chatCount: keychain ? chats.length : 0,
+			defaultAgentAccess: r.defaultAgentAccess,
+			status: r.status,
+			createdBy: r.createdBy,
+			exposed:
+				(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
+				false,
+		}
+	})
 }
 
 /** Whether every actor id is an agent in the workspace. Grants name agents only. */

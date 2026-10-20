@@ -15,7 +15,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const LINEAR_ID = '55555555-5555-4555-8555-555555555555'
 
-type Level = 'read' | 'write' | 'read_write'
+type Level = 'none' | 'read' | 'read_write'
 interface State {
 	defaultAgentAccess: 'read' | 'none'
 	grants: Array<{ actorId: string; access: Level }>
@@ -133,6 +133,21 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.getByRole('combobox', { name: 'Access to Linear' }).click()
 		await page.getByRole('option', { name: 'Default (Read)' }).click()
 		await expect.poll(() => state.grants.length).toBe(0)
+
+		// Take just this agent off the integration while everyone else keeps reading it.
+		await page.getByRole('combobox', { name: 'Access to Linear' }).click()
+		await page.getByRole('option', { name: 'No access' }).click()
+		await expect(page.getByRole('combobox', { name: 'Access to Linear' })).toContainText(
+			'No access',
+		)
+		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'none' }])
+		await expect(page.getByText('No tools attached')).toBeVisible()
+
+		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
+			'All agents can read · 1 has no access',
+			{ timeout: 15_000 },
+		)
 
 		const overflow = await page.evaluate(
 			() => document.documentElement.scrollWidth > window.innerWidth,

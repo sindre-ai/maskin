@@ -35,6 +35,11 @@ test.describe('Keychain settings', () => {
 				page.getByRole('heading', { name: 'One place for every credential your agents need' }),
 			).toBeVisible({ timeout: 15_000 })
 
+			// Keychain sits right under Integrations in the settings menu.
+			const nav = page.getByRole('navigation', { name: 'Settings sections' })
+			const labels = await nav.getByRole('link').allInnerTexts()
+			expect(labels.indexOf('Keychain')).toBe(labels.indexOf('Integrations') + 1)
+
 			await page.getByRole('link', { name: 'Add your first credential' }).click()
 			await expect(page.getByRole('heading', { name: 'Add a credential' })).toBeVisible()
 			// Chat capture is a link to chats.

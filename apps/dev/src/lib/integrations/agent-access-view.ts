@@ -15,7 +15,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'write' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		/** 'grant': this agent's own entry. 'default': the integration's default for agents. */
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'
@@ -28,6 +28,10 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** 'always': a grant. 'this_chat': an Allow for the chat this is asked from. Else null. */
+		scope: 'always' | 'this_chat' | null
+		/** In how many chats it is shared with this agent, apart from any grant. */
+		chat_count: number
 		created_by: string
 	}>
 }
@@ -46,8 +50,10 @@ export async function describeAgentAccess(
 	db: Database,
 	workspaceId: string,
 	actorId: string,
+	/** The chat this is asked from, so an Allow for it counts. The agent page asks without one. */
+	opts: { conversationId?: string | null } = {},
 ): Promise<AgentAccessView> {
-	const rows = await listAgentAccess(db, workspaceId, actorId)
+	const rows = await listAgentAccess(db, workspaceId, actorId, opts)
 	const view: AgentAccessView = { integrations: [], credentials: [] }
 	for (const r of rows) {
 		if (r.providerMode === 'registered') {
@@ -56,7 +62,7 @@ export async function describeAgentAccess(
 				provider: r.provider,
 				name: providerLabel(r.provider),
 				access: r.access,
-				source: r.source,
+				source: r.source === 'chat' ? 'grant' : r.source,
 				default_access: r.defaultAgentAccess,
 				server_attached: attachesServer(r, hasServer(r.provider)),
 				created_by: r.createdBy,
@@ -68,6 +74,13 @@ export async function describeAgentAccess(
 				name: r.displayName,
 				kind: r.providerMode === 'byo_login' ? 'login' : 'api_key',
 				has_access: r.access !== 'none',
+				scope:
+					r.access === 'none'
+						? null
+						: r.source === 'chat'
+							? ('this_chat' as const)
+							: ('always' as const),
+				chat_count: r.chatCount,
 				created_by: r.createdBy,
 			})
 		}

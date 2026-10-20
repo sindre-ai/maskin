@@ -99,7 +99,7 @@ async function stubIntegrations(
 }
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
-	test(`Allow grants the agent and tells it where the credential is @ ${vp.label}`, async ({
+	test(`Always allow grants the agent and tells it where the credential is @ ${vp.label}`, async ({
 		page,
 		account,
 	}) => {
@@ -131,10 +131,14 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await expect(card).toContainText('Let this agent use Stripe?')
 		await expect(card).toContainText('To read the latest invoices.')
 
-		await card.getByRole('button', { name: 'Allow' }).click()
+		// The choices say how long they last before anything is clicked.
+		await expect(card).toContainText('only this agent, only in this conversation')
+		await expect(card).toContainText('until you remove it in Settings')
 
-		await expect(page.getByText(/Allowed/)).toBeVisible()
-		expect(allows).toEqual([{ sessionId: SESSION_ID }])
+		await card.getByRole('button', { name: 'Always allow' }).click()
+
+		await expect(page.getByText(/It stays until you remove it/)).toBeVisible()
+		expect(allows).toEqual([{ sessionId: SESSION_ID, scope: 'always' }])
 		await expect.poll(() => followUps.length).toBe(1)
 		expect(String(followUps[0]?.content)).toContain('KEYCHAIN_BYO_APIKEY_STRIPE')
 
@@ -144,6 +148,27 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		expect(overflow).toBe(false)
 	})
 }
+
+test('Allow in this chat grants for this conversation only', async ({ page, account }) => {
+	const conversation = await account.api.createConversation(account.workspaceId, {
+		title: `Keychain chat allow ${Date.now()}`,
+		participant_actor_ids: [],
+		initial_message: 'Read my latest invoices',
+	})
+	await stubThread(page, conversation.id)
+	await stubIntegrations(page, account.workspaceId, account.actorId)
+	const allows: Array<Record<string, unknown> | null> = []
+	await page.route('**/api/integrations/*/allow-from-chat', async (route) => {
+		allows.push(route.request().postDataJSON())
+		await route.fulfill({ json: { actorId: 'agent-1', relaunch: 'stopped' } })
+	})
+
+	await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+	await page.getByRole('button', { name: 'Allow in this chat' }).click()
+
+	await expect(page.getByText(/in this chat only./)).toBeVisible()
+	expect(allows).toEqual([{ sessionId: SESSION_ID, scope: 'chat' }])
+})
 
 test('Not now tells the agent and never grants', async ({ page, account }) => {
 	const conversation = await account.api.createConversation(account.workspaceId, {

@@ -175,6 +175,8 @@ export async function findIntegrationRow(
 export type CredentialReadContext = {
 	requestingActorId: string
 	requestingLoopId?: string | null
+	/** The chat the read happens in: an Allow for this one chat counts. */
+	conversationId?: string | null
 	/**
 	 * For audit. Null when the caller has no session (a human REST call, a route
 	 * that never receives the session header). Never invent one: the audit column
@@ -223,7 +225,9 @@ export async function getCredential(
 		throw new CredentialUnavailableError(integrationId, row.status)
 	}
 
-	const access = await resolveAgentAccess(db, workspaceId, row.id, ctx.requestingActorId)
+	const access = await resolveAgentAccess(db, workspaceId, row.id, ctx.requestingActorId, {
+		conversationId: ctx.conversationId,
+	})
 	if (access === null || !hasAnyAccess(access)) {
 		await recordEvent(db, {
 			workspaceId,

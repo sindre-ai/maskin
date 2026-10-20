@@ -1,4 +1,4 @@
-import { AgentAccessSection } from '@/components/agents/agent-access-section'
+import { AgentAccessSection, credentialStatus } from '@/components/agents/agent-access-section'
 import type { ActorResponse, AgentAccessView } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -41,6 +41,8 @@ function data(over: Partial<AgentAccessView> = {}): AgentAccessView {
 				name: 'Stripe',
 				kind: 'api_key',
 				has_access: false,
+				scope: null,
+				chat_count: 0,
 				created_by: 'human-1',
 			},
 		],
@@ -95,7 +97,7 @@ describe('AgentAccessSection', () => {
 		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read_write' })
 
 		view = data({
-			integrations: [{ ...data().integrations[0], source: 'grant', access: 'write' }],
+			integrations: [{ ...data().integrations[0], source: 'grant', access: 'read_write' }],
 		})
 		const second = render(<AgentAccessSection agent={agent} />)
 		await user.click(second.getAllByRole('combobox', { name: 'Access to Linear' })[1])
@@ -108,6 +110,29 @@ describe('AgentAccessSection', () => {
 		render(<AgentAccessSection agent={agent} />)
 		await user.click(screen.getByRole('switch', { name: 'Stripe for this agent' }))
 		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read_write' })
+	})
+
+	it('takes an agent off an integration with No access, without touching the others', async () => {
+		const user = userEvent.setup()
+		render(<AgentAccessSection agent={agent} />)
+		await user.click(screen.getByRole('combobox', { name: 'Access to Linear' }))
+		await user.click(await screen.findByRole('option', { name: 'No access' }))
+		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'none' })
+	})
+
+	it('offers Read, Read & write and No access, and no Write-only level', async () => {
+		const user = userEvent.setup()
+		render(<AgentAccessSection agent={agent} />)
+		await user.click(screen.getByRole('combobox', { name: 'Access to Linear' }))
+		const options = (await screen.findAllByRole('option')).map((o) => o.textContent)
+		expect(options).toEqual(['Default (Read)', 'Read', 'Read & write', 'No access'])
+	})
+
+	it('says always, only in some chats, or no access for a saved credential', () => {
+		expect(credentialStatus({ has_access: true, chat_count: 0 })).toBe('Always')
+		expect(credentialStatus({ has_access: false, chat_count: 1 })).toBe('Only in 1 chat')
+		expect(credentialStatus({ has_access: false, chat_count: 3 })).toBe('Only in 3 chats')
+		expect(credentialStatus({ has_access: false, chat_count: 0 })).toBe('No access')
 	})
 
 	it('is read-only for someone who did not connect it and is not an admin', () => {

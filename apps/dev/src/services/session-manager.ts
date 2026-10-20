@@ -3185,7 +3185,8 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					// Explicit grant only: a Keychain credential has no default access. Written as
 					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
 					// from those renders unqualified (known-pitfalls.md).
-					sql`EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId})`,
+					// An Allow for this one chat counts too, but only for sessions in that conversation.
+					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId}) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))
@@ -3216,6 +3217,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			try {
 				const credential = await getCredential(this.db, session.workspaceId, row.id, {
 					requestingActorId: session.actorId,
+					conversationId: session.conversationId,
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
