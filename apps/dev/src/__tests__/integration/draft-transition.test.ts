@@ -20,7 +20,7 @@ type Env = {
 
 const { default: objectsRoutes } = await import('../../routes/objects')
 
-function appAs(actorId: string) {
+function appAs(actorId: string, actorType = 'human') {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -39,7 +39,7 @@ function appAs(actorId: string) {
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
-		c.set('actorType', 'human')
+		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		await next()
 	})
@@ -115,6 +115,38 @@ describe('POST /objects/:id/draft', () => {
 		expect(row.content).toBe('Final text.')
 		expect(row.metadata).toMatchObject({ draft_state: 'approved' })
 		expect((row.metadata as Record<string, unknown>).draft_approved_at).toEqual(expect.any(String))
+	})
+
+	it('refuses an agent that tries to approve, and changes and logs nothing', async () => {
+		const task = await draftTask()
+		const agent = await insertActor(db, { type: 'agent' })
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: agent.id, role: 'member' })
+
+		const res = await appAs(agent.id, 'agent').request(
+			transition(task.id, { action: 'approve', expected_state: 'draft', body: 'Self-approved.' }),
+		)
+
+		expect(res.status).toBe(403)
+		const row = await reload(task.id)
+		expect(row.content).toBe('Hi Mette')
+		expect(row.metadata).toMatchObject({ draft_state: 'draft' })
+		const logged = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, task.id), eq(events.workspaceId, workspaceId)))
+		expect(logged).toHaveLength(0)
+	})
+
+	it('still lets an agent edit a draft it wrote', async () => {
+		const task = await draftTask()
+		const agent = await insertActor(db, { type: 'agent' })
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: agent.id, role: 'member' })
+
+		const res = await appAs(agent.id, 'agent').request(
+			transition(task.id, { action: 'edit', expected_state: 'draft', body: 'Revised.' }),
+		)
+
+		expect(res.status).toBe(200)
 	})
 
 	it('answers 409 and leaves the text alone when a stale tab edits an approved draft', async () => {
