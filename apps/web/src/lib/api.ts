@@ -1,4 +1,5 @@
 import type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -14,9 +15,11 @@ import type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 } from '@maskin/shared'
 
 export type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
@@ -31,30 +34,7 @@ export type {
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
-}
-// INTERIM: these mirror packages/shared/src/schemas/account.ts, which lands with the backend PR for
-// account/workspace deletion. Once that is merged, delete this block and import the two types from
-// '@maskin/shared' (add them to the import/export lists above).
-export type AccountDeletionPreview = {
-	can_delete: boolean
-	blockers: {
-		code: 'transfer_ownership' | 'cancel_plan'
-		workspace_id: string
-		workspace_name: string
-	}[]
-	leaving: {
-		workspace_id: string
-		workspace_name: string
-		other_members: number
-		will_delete: boolean
-	}[]
-}
-export type WorkspaceDeletionPreview = {
-	workspace_id: string
-	workspace_name: string
-	can_delete: boolean
-	blockers: { code: 'not_billing_owner' | 'cancel_plan'; message: string }[]
-	other_members: number
+	WorkspaceDeletionPreview,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
