@@ -7,9 +7,9 @@ import {
 } from '@/components/integrations/provider-dialogs'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAuth } from '@/hooks/use-auth'
-import { Spinner } from '@/components/ui/spinner'
 import { useIdentityAddonPricing } from '@/hooks/use-identity-addon-pricing'
 import {
 	useConnectIntegration,

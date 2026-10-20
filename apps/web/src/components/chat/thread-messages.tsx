@@ -4,12 +4,12 @@ import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useActors } from '@/hooks/use-actors'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
@@ -416,7 +416,7 @@ export function ThreadMessages({
 								/>
 								{intro && (showSteps || intro.tools) ? (
 									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
-										{showSteps && intro.steps && onPickStep && onSendStep ? (
+										{showSteps && intro.steps ? (
 											<SuggestedSteps
 												steps={intro.steps}
 												onPickStep={onPickStep}
