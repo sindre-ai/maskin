@@ -60,7 +60,9 @@ function server(over: Partial<IntegrationResponse> = {}) {
 		createdBy: 'human-1',
 		defaultAgentAccess: 'none',
 		agentGrants: [],
-		config: { custom_mcp: { transport: 'http', target: 'https://tools.example.com/mcp' } },
+		config: {
+			custom_mcp: { transport: 'http', target: 'https://tools.example.com/mcp', gated: false },
+		},
 		...over,
 	})
 }
@@ -96,10 +98,12 @@ describe('toolServerEnabled / summarizeToolServerAccess', () => {
 describe('ToolsSection', () => {
 	it('always shows Maskin as read & write and always on, with nothing to change', () => {
 		render(<ToolsSection workspaceId="ws-1" />)
-		const region = screen.getByRole('region', { name: 'Tools' })
+		const region = screen.getByRole('region', { name: 'Custom tools' })
 		expect(within(region).getByText('Maskin')).toBeInTheDocument()
 		expect(within(region).getByText(/Read & write · always on/)).toBeInTheDocument()
 		expect(within(region).queryByRole('switch')).not.toBeInTheDocument()
+		expect(within(region).queryByText(/Every agent has it/)).toBeNull()
+		expect(within(region).queryByText(/instead of setting it up on each agent/)).toBeNull()
 	})
 
 	it('lists each custom server with where it points, and none of the other integrations', () => {
@@ -221,6 +225,26 @@ describe('ToolServerAccess', () => {
 		await renderOpen({ createdBy: 'someone-else' })
 		expect(screen.getByRole('switch', { name: 'Docs search for all agents' })).toBeDisabled()
 		expect(screen.getByRole('switch', { name: 'Docs search for Code Reviewer' })).toBeDisabled()
+	})
+})
+
+describe('ToolServerAccess for a server Maskin sits in front of', () => {
+	it('has the Read / Read & write / No access controls of a built-in integration', async () => {
+		const user = userEvent.setup()
+		render(
+			<ToolServerAccess
+				integration={server({
+					defaultAgentAccess: 'none',
+					config: { custom_mcp: { transport: 'http', target: 'x', gated: true } },
+				})}
+				workspaceId="ws-1"
+			/>,
+		)
+		await user.click(screen.getByRole('button', { name: /Agent access/ }))
+		expect(
+			screen.getByRole('combobox', { name: 'Access for all other agents' }),
+		).toBeInTheDocument()
+		expect(screen.queryByRole('switch')).toBeNull()
 	})
 })
 

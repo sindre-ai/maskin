@@ -152,6 +152,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP gateway, forwards tool calls with the provider token',
 	],
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
+	[
+		'POST',
+		'/api/custom-mcp-servers/:id/gateway',
+		'MCP gateway, forwards tool calls to a custom server with its stored headers',
+	],
+	[
+		'DELETE',
+		'/api/custom-mcp-servers/:id/gateway',
+		'MCP gateway, ends the custom server MCP session',
+	],
 	['POST', '/api/integrations/linkedin-unipile/mcp', 'MCP endpoint, tools act as the identity'],
 	[
 		'POST',

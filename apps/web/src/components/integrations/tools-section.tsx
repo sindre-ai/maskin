@@ -39,7 +39,7 @@ function describeServer(row: IntegrationResponse): string {
 }
 
 /**
- * Tools: every MCP server the workspace's agents can use that is not a connected integration.
+ * Custom tools: every MCP server the workspace's agents can use that is not a connected integration.
  * Maskin itself is always on, for every agent, and cannot be changed. The rest are added here
  * once and shared with chosen agents (or all of them), instead of being set up agent by agent.
  */
@@ -78,19 +78,12 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<section aria-labelledby="tools-heading" className="mt-8 space-y-2">
-			<div>
-				<h2 id="tools-heading" className="settings-label">
-					Tools
-				</h2>
-				<p className="mt-1 text-xs text-muted-foreground">
-					MCP servers your agents can use. Add one here once and choose which agents get it, instead
-					of setting it up on each agent.
-				</p>
-			</div>
+			<h2 id="tools-heading" className="settings-label">
+				Custom tools
+			</h2>
 
 			<ProviderCard
 				name="Maskin"
-				subtitle="Every agent has it"
 				tone="connected"
 				actions={
 					<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">

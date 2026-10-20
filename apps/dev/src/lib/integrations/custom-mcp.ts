@@ -58,12 +58,15 @@ export type CustomMcpServer = z.infer<typeof customMcpServerSchema>
 export function summarizeServer(server: CustomMcpServer): {
 	transport: 'stdio' | 'http'
 	target: string
+	/** Served through the gateway, so it has Read / Read & write / No access. */
+	gated: boolean
 } {
+	const gated = isGatewayable(server)
 	const http = server.type === 'http' || (server.type === undefined && !!server.url)
-	if (http) return { transport: 'http', target: server.url ?? '' }
+	if (http) return { transport: 'http', target: server.url ?? '', gated }
 	// Args can carry a credential; the summary is visible to every member.
 	const masked = maskServer(server)
-	return { transport: 'stdio', target: [masked.command, ...(masked.args ?? [])].join(' ') }
+	return { transport: 'stdio', target: [masked.command, ...(masked.args ?? [])].join(' '), gated }
 }
 
 function asRecord(server: CustomMcpServer): Record<string, unknown> {
@@ -100,4 +103,68 @@ export function readCustomServer(row: { credentials: string | null }): CustomMcp
 	} catch {
 		return null
 	}
+}
+
+// ── Gateway ────────────────────────────────────────────────────────────────
+//
+// An HTTP server at a public address is reached through Maskin, like Linear or Gmail: Maskin
+// keeps its headers, the agent signs in with its own key, and Maskin refuses writes for a
+// read-only agent. A stdio server runs inside the agent's container and cannot be watched
+// from outside, and a URL that only resolves from inside the container (a ${PLACEHOLDER} or
+// a private address) is not reachable from here, so those stay on or off.
+
+const PRIVATE_V4 = [
+	/^0\./,
+	/^10\./,
+	/^127\./,
+	/^169\.254\./,
+	/^172\.(1[6-9]|2\d|3[01])\./,
+	/^192\.168\./,
+	/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+	/^192\.0\.0\./,
+	/^(22[4-9]|2[3-5]\d)\./,
+]
+
+/** False for a loopback, private, link-local or otherwise internal address or name. */
+export function isPublicHost(host: string): boolean {
+	const h = host.toLowerCase().replace(/^\[|\]$/g, '')
+	if (!h || h === 'localhost' || /\.(localhost|local|internal|lan|home|corp)$/.test(h)) return false
+	if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return !PRIVATE_V4.some((re) => re.test(h))
+	if (h.includes(':')) {
+		if (h === '::' || h === '::1') return false
+		if (/^(fc|fd|fe[89ab])/.test(h)) return false
+		const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+		return mapped ? isPublicHost(mapped[1] as string) : true
+	}
+	// A bare name ("redis", "api") only resolves on an internal network.
+	return h.includes('.')
+}
+
+/** True when Maskin can sit in front of this server: HTTP, absolute URL, public host. */
+export function isGatewayable(server: CustomMcpServer): boolean {
+	const http = server.type === 'http' || (server.type === undefined && !!server.url)
+	if (!http || !server.url || server.url.startsWith('$')) return false
+	try {
+		const u = new URL(server.url)
+		return (u.protocol === 'https:' || u.protocol === 'http:') && isPublicHost(u.hostname)
+	} catch {
+		return false
+	}
+}
+
+/** The entry an agent uses to reach a gated custom server through Maskin. */
+export function customGatewayServerSpec(id: string): Record<string, unknown> {
+	return {
+		type: 'http',
+		url: `\${MASKIN_API_URL}/api/custom-mcp-servers/${id}/gateway`,
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
+	}
+}
+
+/** Whether a stored row's server is served through the gateway (from its non-secret summary). */
+export function isGatedRow(config: unknown): boolean {
+	return (config as { custom_mcp?: { gated?: boolean } } | null)?.custom_mcp?.gated === true
 }

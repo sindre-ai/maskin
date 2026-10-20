@@ -9,16 +9,21 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('node:dns/promises', async (orig) => ({
+	...(await orig<typeof import('node:dns/promises')>()),
+	lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn(async () => {}) }))
 
 import { decrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import { describeAgentAccess } from '../../lib/integrations/agent-access-view'
-import { MASKED_VALUE, readCustomServer } from '../../lib/integrations/custom-mcp'
+import { MASKED_VALUE, isPublicHost, readCustomServer } from '../../lib/integrations/custom-mcp'
 import { migrateAgentToolServers } from '../../lib/integrations/migrate-agent-tool-servers'
 import customMcpServersRoutes from '../../routes/custom-mcp-servers'
+import { clearGatewayAnnotationCache } from '../../routes/integrations-gateway'
 import integrationsGrantsRoutes from '../../routes/integrations-grants'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
@@ -167,14 +172,37 @@ describe('Custom MCP servers (Integration)', () => {
 		expect(readCustomServer(after)?.url).toBe('https://tools.example.com/mcp')
 	})
 
-	it('is on or off for an agent: read_write or none, never read', async () => {
+	it('is on or off for a server that runs in the container: read_write or none, never read', async () => {
 		const s = await setup()
-		const { body } = await addServer(s)
+		const { body } = await addServer(s, 'Local files', {
+			type: 'stdio',
+			command: 'npx',
+			args: ['-y', 'x'],
+		})
 		const put = (actorId: string, access: string) =>
 			call(s, 'PUT', `/api/integrations/${body.id}/grants/${actorId}`, { access })
 		expect((await put(s.agentA.id, 'read')).status).toBe(400)
 		expect((await put(s.agentA.id, 'read_write')).status).toBe(200)
 		expect((await put(s.agentB.id, 'none')).status).toBe(200)
+	})
+
+	it('has Read, Read & write and No access when Maskin can sit in front of it', async () => {
+		const s = await setup()
+		const { body } = await addServer(s)
+		const put = (actorId: string, access: string) =>
+			call(s, 'PUT', `/api/integrations/${body.id}/grants/${actorId}`, { access })
+		for (const access of ['read', 'read_write', 'none']) {
+			expect((await put(s.agentA.id, access)).status).toBe(200)
+		}
+		// A private address cannot be reached from here, so it is on or off like a stdio server.
+		const local = await addServer(s, 'Local', { type: 'http', url: 'http://localhost:3000/mcp' })
+		expect(
+			(
+				await call(s, 'PUT', `/api/integrations/${local.body.id}/grants/${s.agentA.id}`, {
+					access: 'read',
+				})
+			).status,
+		).toBe(400)
 	})
 
 	it('attaches a server only to agents with access, and the Maskin MCP to every agent', async () => {
@@ -190,7 +218,10 @@ describe('Custom MCP servers (Integration)', () => {
 			Object.keys(m).filter((k) => k.startsWith('custom-'))
 
 		expect(customKeys(a)).toHaveLength(1)
-		expect((a[customKeys(a)[0] as string] as { url: string }).url).toBe(LINEAR_LIKE.url)
+		// Reached through Maskin, which keeps the server's headers: the agent never holds them.
+		const spec = a[customKeys(a)[0] as string] as { url: string }
+		expect(spec.url).toBe(`\${MASKIN_API_URL}/api/custom-mcp-servers/${body.id}/gateway`)
+		expect(JSON.stringify(a)).not.toContain('sk-live-secret-value')
 		expect(customKeys(b)).toEqual([])
 		expect(a.maskin).toBeDefined()
 		expect(b.maskin).toBeDefined()
@@ -250,6 +281,123 @@ describe('Custom MCP servers (Integration)', () => {
 			access: 'read_write',
 			server_attached: true,
 		})
+	})
+})
+
+describe('Custom server gateway (Integration)', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+	beforeEach(() => {
+		clearGatewayAnnotationCache()
+		fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						jsonrpc: '2.0',
+						id: 1,
+						result: { content: [{ type: 'text', text: 'ok' }] },
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+	})
+	afterEach(() => vi.unstubAllGlobals())
+
+	async function gatewayCall(s: Setup, id: string, as: string, name: string) {
+		const res = await appFor(as, 'agent').request(`/api/custom-mcp-servers/${id}/gateway`, {
+			method: 'POST',
+			headers: {
+				'X-Workspace-Id': s.ws.id,
+				'content-type': 'application/json',
+				authorization: 'Bearer ank_agent_key',
+			},
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name, arguments: {} },
+			}),
+		})
+		return res
+	}
+
+	it('lets a Read agent read and refuses its writes, sending the stored headers and never the agent key', async () => {
+		const s = await setup()
+		const { body } = await addServer(s)
+		await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, { access: 'read' })
+
+		const read = await gatewayCall(s, body.id, s.agentA.id, 'list_docs')
+		expect(read.status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toBe(LINEAR_LIKE.url)
+		const sent = new Headers(init.headers)
+		expect(sent.get('authorization')).toBe('Bearer sk-live-secret-value')
+		expect(JSON.stringify([...sent.entries()])).not.toContain('ank_agent_key')
+
+		fetchMock.mockClear()
+		const write = await gatewayCall(s, body.id, s.agentA.id, 'delete_doc')
+		const json = (await write.json()) as {
+			result: { isError: boolean; content: Array<{ text: string }> }
+		}
+		expect(json.result.isError).toBe(true)
+		expect(json.result.content[0]?.text).toMatch(/Read/)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('lets a Read & write agent write, and answers No access with a refusal', async () => {
+		const s = await setup()
+		const { body } = await addServer(s)
+		await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, {
+			access: 'read_write',
+		})
+		expect((await gatewayCall(s, body.id, s.agentA.id, 'delete_doc')).status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		fetchMock.mockClear()
+		const none = await gatewayCall(s, body.id, s.agentB.id, 'list_docs')
+		expect(((await none.json()) as { result: { isError: boolean } }).result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('has no gateway for a server it cannot sit in front of', async () => {
+		const s = await setup()
+		const { body } = await addServer(s, 'Local files', { type: 'stdio', command: 'npx' })
+		expect((await gatewayCall(s, body.id, s.agentA.id, 'list_docs')).status).toBe(404)
+	})
+
+	it('turns Read into No access when an edit points the server somewhere it cannot gate', async () => {
+		const s = await setup()
+		const { body } = await addServer(s)
+		await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, { access: 'read' })
+		await call(s, 'PUT', `/api/custom-mcp-servers/${body.id}`, {
+			name: 'Docs search',
+			server: { type: 'http', url: 'http://localhost:3000/mcp', headers: {} },
+		})
+		const [grant] = await db
+			.select()
+			.from(agentGrants)
+			.where(eq(agentGrants.integrationId, body.id))
+		expect(grant?.access).toBe('none')
+	})
+
+	it('treats loopback, private and bare names as internal', () => {
+		for (const h of [
+			'localhost',
+			'127.0.0.1',
+			'10.1.2.3',
+			'192.168.0.5',
+			'169.254.169.254',
+			'172.20.0.1',
+			'::1',
+			'fd00::1',
+			'redis',
+			'db.internal',
+		]) {
+			expect(isPublicHost(h), h).toBe(false)
+		}
+		for (const h of ['tools.example.com', '93.184.216.34', '2606:4700::1111']) {
+			expect(isPublicHost(h), h).toBe(true)
+		}
 	})
 })
 

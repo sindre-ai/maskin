@@ -35,6 +35,7 @@ function data(over: Partial<AgentAccessView> = {}): AgentAccessView {
 				server_attached: true,
 				created_by: 'human-1',
 				kind: 'integration',
+				gated: false,
 			},
 		],
 		credentials: [
@@ -82,6 +83,7 @@ describe('AgentAccessSection', () => {
 					server_attached: false,
 					created_by: 'human-1',
 					kind: 'integration',
+					gated: false,
 				},
 			],
 		})
@@ -148,11 +150,14 @@ describe('AgentAccessSection', () => {
 		expect(screen.getByRole('switch', { name: 'Stripe for this agent' })).toBeDisabled()
 	})
 
-	it('always lists the Maskin MCP as read & write with nothing to switch', () => {
+	it('labels the list Tools, with no separate Integrations label, and lists Maskin with nothing to switch', () => {
 		view = data({ integrations: [], credentials: [] })
 		render(<AgentAccessSection agent={agent} />)
+		expect(screen.getByText('Tools', { selector: '.settings-label' })).toBeInTheDocument()
+		expect(screen.queryByText('Integrations', { selector: '.settings-label' })).toBeNull()
 		const tools = screen.getByRole('list', { name: 'Tools' })
 		expect(within(tools).getByText('Maskin')).toBeInTheDocument()
+		expect(within(tools).queryByText(/Every agent has it/)).toBeNull()
 		expect(within(tools).getByText('Read & write')).toBeInTheDocument()
 		expect(within(tools).queryByRole('switch')).not.toBeInTheDocument()
 		expect(within(tools).queryByRole('combobox')).not.toBeInTheDocument()
@@ -168,17 +173,28 @@ describe('AgentAccessSection', () => {
 			source: 'default' as const,
 			default_access: 'none' as const,
 			kind: 'tool_server' as const,
+			gated: false,
 			...over,
 		})
 
-		it('is on or off, not a level, and sits with the tools rather than the integrations', () => {
+		it('is on or off, not a level, when it runs inside the agent', () => {
 			view = data({ integrations: [server()] })
 			render(<AgentAccessSection agent={agent} />)
 			const tools = screen.getByRole('list', { name: 'Tools' })
 			expect(within(tools).getByText('Docs search')).toBeInTheDocument()
 			expect(within(tools).getByText('Off')).toBeInTheDocument()
 			expect(screen.queryByRole('combobox', { name: 'Access to Docs search' })).toBeNull()
-			expect(screen.queryByRole('list', { name: 'Integrations' })).toBeNull()
+		})
+
+		it('has the same levels as an integration when Maskin sits in front of it', async () => {
+			view = data({ integrations: [server({ gated: true, access: 'read', source: 'grant' })] })
+			render(<AgentAccessSection agent={agent} />)
+			const select = screen.getByRole('combobox', { name: 'Access to Docs search' })
+			expect(select).toHaveTextContent('Read')
+			expect(screen.queryByRole('switch', { name: 'Docs search for this agent' })).toBeNull()
+			await userEvent.setup().click(select)
+			await userEvent.setup().click(await screen.findByRole('option', { name: 'Read & write' }))
+			expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read_write' })
 		})
 
 		it('turns on with its own grant when the default is off', async () => {

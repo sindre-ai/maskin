@@ -178,26 +178,28 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data } = useAgentAccess(workspaceId, agent.id)
 	if (!data) return null
-	const integrations = data.integrations.filter((r) => r.kind !== 'tool_server')
-	const toolServers = data.integrations.filter((r) => r.kind === 'tool_server')
+	// A tool server Maskin cannot sit in front of (one that runs in the container) is on or off;
+	// everything else, custom servers included, has Read / Read & write / No access.
+	const switchRows = data.integrations.filter((r) => r.kind === 'tool_server' && !r.gated)
+	const levelRows = data.integrations.filter((r) => !(r.kind === 'tool_server' && !r.gated))
 
 	return (
 		<section aria-labelledby="agent-access-heading" className="flex flex-col gap-2.5">
-			<AgentSectionHeading id="agent-access-heading" title="Tools and access" />
+			<AgentSectionHeading id="agent-access-heading" title="Access" />
 			<div className="rounded-xl border border-border bg-card px-4 py-2">
+				<p className="settings-label pb-1 pt-1">Tools</p>
 				<ul className="divide-y divide-border" aria-label="Tools">
 					{/* On every agent and not changeable: without it an agent cannot do anything in Maskin. */}
 					<li className="flex items-center gap-2 py-2">
-						<div className="min-w-0 flex-1">
-							<p className="truncate text-sm font-medium text-foreground">{data.maskin_mcp.name}</p>
-							<p className="text-xs text-muted-foreground">Every agent has it</p>
-						</div>
+						<p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+							{data.maskin_mcp.name}
+						</p>
 						<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
 							<Lock className="h-3.5 w-3.5" aria-hidden="true" />
 							{AGENT_ACCESS_LABELS[data.maskin_mcp.access]}
 						</span>
 					</li>
-					{toolServers.map((row) => (
+					{switchRows.map((row) => (
 						<ToolServerRow
 							key={row.integration_id}
 							row={row}
@@ -205,22 +207,15 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 							workspaceId={workspaceId}
 						/>
 					))}
+					{levelRows.map((row) => (
+						<IntegrationRow
+							key={row.integration_id}
+							row={row}
+							agentId={agent.id}
+							workspaceId={workspaceId}
+						/>
+					))}
 				</ul>
-				{integrations.length > 0 && (
-					<>
-						<p className="settings-label pb-1 pt-3">Integrations</p>
-						<ul className="divide-y divide-border" aria-label="Integrations">
-							{integrations.map((row) => (
-								<IntegrationRow
-									key={row.integration_id}
-									row={row}
-									agentId={agent.id}
-									workspaceId={workspaceId}
-								/>
-							))}
-						</ul>
-					</>
-				)}
 				{data.credentials.length > 0 && (
 					<>
 						<p className="settings-label pb-1 pt-3">Keychain</p>
@@ -237,7 +232,7 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 					</>
 				)}
 				<p className="pb-2 pt-2 text-xs text-muted-foreground">
-					Applies to new sessions. Add or edit tool servers under Settings → Integrations; the same
+					Applies to new sessions. Add or edit custom tools under Settings → Integrations; the same
 					access is shown there and under Keychain.
 				</p>
 			</div>

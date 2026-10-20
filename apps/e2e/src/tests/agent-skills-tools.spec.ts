@@ -1,7 +1,7 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-test.describe('Agent detail — Skills and Tools-and-access sections', () => {
+test.describe('Agent detail — Skills and Access sections', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`renders both sections, with Maskin locked on @ ${vp.label}`, async ({
 			page,
@@ -53,8 +53,8 @@ test.describe('Agent detail — Skills and Tools-and-access sections', () => {
 			// below depend on.
 			await expect(skills.getByRole('button', { name: 'Manage' })).toHaveCount(0)
 
-			// Tools and access — the Maskin MCP is on every agent and cannot be switched.
-			const tools = page.getByRole('region', { name: 'Tools and access' })
+			// Access — the Maskin MCP is on every agent and cannot be switched.
+			const tools = page.getByRole('region', { name: 'Access' })
 			await expect(tools).toBeVisible()
 			const maskin = tools.getByRole('list', { name: 'Tools' })
 			await expect(maskin.getByText('Maskin', { exact: true })).toBeVisible()
@@ -66,13 +66,13 @@ test.describe('Agent detail — Skills and Tools-and-access sections', () => {
 			// Reload preserves the surface — proves this isn't a mount-only render.
 			await page.reload()
 			await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
-			await expect(page.getByRole('region', { name: 'Tools and access' })).toBeVisible()
+			await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 
 			// Both light and dark schemes render both sections.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
-				await expect(page.getByRole('region', { name: 'Tools and access' })).toBeVisible()
+				await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 		})

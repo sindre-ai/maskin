@@ -1,3 +1,4 @@
+import { AgentAccess } from '@/components/integrations/agent-access'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Switch } from '@/components/ui/switch'
 import { useActors } from '@/hooks/use-actors'
@@ -36,11 +37,25 @@ export function summarizeToolServerAccess(
 }
 
 /**
- * Which agents get a custom tool server. Each agent is on or off; a custom server has no
- * read-only level, because Maskin cannot tell which of an arbitrary server's tools only read.
+ * Which agents get a custom tool server. One Maskin can sit in front of (an HTTP server at a
+ * public address) has the same Read / Read & write / No access as a built-in integration. One that
+ * runs inside the agent's container is on or off, because Maskin cannot see its tool calls.
  * "All agents" is the default for agents without their own entry, so a new agent gets it too.
  */
 export function ToolServerAccess({
+	integration,
+	workspaceId,
+}: {
+	integration: IntegrationResponse
+	workspaceId: string
+}) {
+	// Maskin sits in front of it: the same Read / Read & write / No access as a built-in integration.
+	const gated = (integration.config as { custom_mcp?: { gated?: boolean } }).custom_mcp?.gated
+	if (gated) return <AgentAccess integration={integration} workspaceId={workspaceId} />
+	return <ToolServerSwitches integration={integration} workspaceId={workspaceId} />
+}
+
+function ToolServerSwitches({
 	integration,
 	workspaceId,
 }: {

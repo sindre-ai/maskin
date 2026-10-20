@@ -1,22 +1,31 @@
 import { randomUUID } from 'node:crypto'
+import { lookup } from 'node:dns/promises'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { integrations } from '@maskin/db/schema'
+import { agentGrants, integrations } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { resolveAgentAccess } from '../lib/integrations/agent-access'
 import {
 	CUSTOM_MCP_PROVIDER,
 	type CustomMcpServer,
 	customMcpServerSchema,
+	isGatewayable,
+	isPublicHost,
 	maskServer,
 	readCustomServer,
 	summarizeServer,
 } from '../lib/integrations/custom-mcp'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
+import { GatewayUpstreamError, proxyMcp } from './integrations-gateway'
 
 type Env = {
 	Variables: {
@@ -267,6 +276,14 @@ app.openapi(updateServerRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, id))
+		// Pointing a gated server somewhere it cannot be gated leaves no way to enforce Read, so
+		// that level becomes No access rather than quietly turning into Read & write.
+		if (!isGatewayable(server)) {
+			await tx
+				.update(agentGrants)
+				.set({ access: 'none' })
+				.where(and(eq(agentGrants.integrationId, id), eq(agentGrants.access, 'read')))
+		}
 		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
@@ -279,5 +296,66 @@ app.openapi(updateServerRoute, (async (c) => {
 
 	return c.json({ id, name, server: maskServer(server) }, 200)
 }) as RouteHandler<typeof updateServerRoute, Env>)
+
+// ── /api/custom-mcp-servers/:id/gateway ──────────────────────────────────
+//
+// The agent's way to a gated custom server (see isGatewayable): it signs in with its own key,
+// Maskin holds the server's headers, and a write is refused for an agent without Read & write.
+// The upstream URL comes only from the stored row, never from the request.
+
+async function resolvesPublicly(host: string): Promise<boolean> {
+	try {
+		const addrs = await lookup(host, { all: true })
+		return addrs.length > 0 && addrs.every((a) => isPublicHost(a.address))
+	} catch {
+		return false
+	}
+}
+
+async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }>) {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const id = c.req.param('id') ?? ''
+	const workspaceId = c.req.header('x-workspace-id')
+	if (!workspaceId)
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	if (!z.string().uuid().safeParse(id).success) {
+		return c.json(createApiError('NOT_FOUND', 'Tool server not found'), 404)
+	}
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
+	}
+	const row = await loadRow(db, workspaceId, id)
+	const server = row ? readCustomServer(row) : null
+	if (!row || !server || !isGatewayable(server) || !server.url) {
+		return c.json(createApiError('NOT_FOUND', 'Tool server not found'), 404)
+	}
+	const url = server.url
+	const access = (await resolveAgentAccess(db, workspaceId, id, actorId)) ?? 'none'
+	return proxyMcp(c as never, {
+		workspaceId,
+		actorId,
+		provider: CUSTOM_MCP_PROVIDER,
+		label: row.displayName ?? 'This tool server',
+		integrationId: id,
+		access,
+		cacheKey: `${workspaceId}:${id}`,
+		upstreamUrl: url,
+		upstreamHeaders: async () => {
+			// The name may point somewhere private by now; check what it resolves to.
+			if (!(await resolvesPublicly(new URL(url).hostname))) {
+				throw new GatewayUpstreamError(
+					`${row.displayName ?? 'This tool server'} points at an address Maskin will not call.`,
+				)
+			}
+			// A header still holding a ${PLACEHOLDER} only the container could fill is dropped.
+			return Object.fromEntries(
+				Object.entries(server.headers ?? {}).filter(([, v]) => !/${[^}]*}/.test(v)),
+			)
+		},
+	})
+}
+
+app.on(['GET', 'POST', 'DELETE'], '/:id/gateway', gateway as never)
 
 export default app

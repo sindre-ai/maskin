@@ -106,7 +106,9 @@ import {
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
+	customGatewayServerSpec,
 	customServerKey,
+	isGatedRow,
 	readCustomServer,
 } from '../lib/integrations/custom-mcp'
 import {
@@ -2639,7 +2641,11 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				const server = access !== 'none' ? readCustomServer(integration) : null
 				if (server) {
 					const key = customServerKey(integration)
-					autoInjectedMcpServers[key] = server
+					// Gated: the agent reaches it through Maskin, which keeps the headers and
+					// enforces Read / Read & write. Otherwise it runs as configured.
+					autoInjectedMcpServers[key] = isGatedRow(integration.config)
+						? customGatewayServerSpec(integration.id)
+						: server
 					attachedKeys.add(key)
 				}
 				continue

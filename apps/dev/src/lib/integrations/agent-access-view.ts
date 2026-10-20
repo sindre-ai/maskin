@@ -30,6 +30,8 @@ export interface AgentAccessView {
 		created_by: string
 		/** 'tool_server': a custom MCP server, on or off for the agent (no read-only level). */
 		kind: 'integration' | 'tool_server'
+		/** Tool server only: Maskin sits in front of it, so it has Read / Read & write / No access. */
+		gated: boolean
 	}>
 	credentials: Array<{
 		integration_id: string
@@ -83,6 +85,7 @@ export async function describeAgentAccess(
 				server_attached: attachesServer(r, hasServer(r.provider)),
 				created_by: r.createdBy,
 				kind: r.provider === CUSTOM_MCP_PROVIDER ? 'tool_server' : 'integration',
+				gated: r.provider === CUSTOM_MCP_PROVIDER && r.gated,
 			})
 		} else if (r.providerMode === 'byo_apikey' || r.providerMode === 'byo_login') {
 			if (!r.displayName) continue

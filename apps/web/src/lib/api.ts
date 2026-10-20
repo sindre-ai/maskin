@@ -2253,6 +2253,8 @@ export interface AgentAccessView {
 		created_by: string
 		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
 		kind: 'integration' | 'tool_server'
+		/** Tool server Maskin sits in front of: Read / Read & write / No access, not just on or off. */
+		gated: boolean
 	}>
 	credentials: Array<{
 		integration_id: string
