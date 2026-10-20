@@ -15,6 +15,8 @@ ALTER TABLE "live_activity_tokens" DROP COLUMN IF EXISTS "session_id";
 --> statement-breakpoint
 ALTER TABLE "live_activity_tokens" ADD COLUMN IF NOT EXISTS "workspace_id" uuid REFERENCES "workspaces"("id") ON DELETE CASCADE;
 --> statement-breakpoint
+ALTER TABLE "live_activity_tokens" DROP CONSTRAINT IF EXISTS "live_activity_tokens_kind_workspace_chk";
+--> statement-breakpoint
 ALTER TABLE "live_activity_tokens" ADD CONSTRAINT "live_activity_tokens_kind_workspace_chk" CHECK (
 	("kind" = 'push_to_start' AND "workspace_id" IS NULL)
 	OR ("kind" = 'update' AND "workspace_id" IS NOT NULL)

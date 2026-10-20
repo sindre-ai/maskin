@@ -1,4 +1,4 @@
--- Rollback for 0094_live_activity_tokens_aggregate.sql. Update tokens are deleted (their
+-- Rollback for 0099_live_activity_tokens_aggregate.sql. Update tokens are deleted (their
 -- shape changes); the app re-registers them on its next launch.
 DELETE FROM "live_activity_tokens" WHERE "kind" = 'update';
 --> statement-breakpoint
