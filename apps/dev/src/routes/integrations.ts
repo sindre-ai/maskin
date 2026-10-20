@@ -3,7 +3,11 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
-import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
+import {
+	deregisterLinkedInMcpInstancesForIntegration,
+	getLinkedInMcpInstancesForIntegration,
+	instanceSlug,
+} from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
 	skjaldOutcomePayloadSchema,
@@ -1926,6 +1930,14 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// revoked and leave the customer billed for it. Quantity changes carry
 	// `proration_behavior: 'none'`, so the identity stays paid for through the
 	// end of the period it was connected in.
+	//
+	// The instance slugs are read before the deregister below empties the
+	// registry: they are the only record of which per-identity MCP entries
+	// belong to this credential, and agent detach must remove only those.
+	const linkedInInstanceSlugs =
+		existing.provider === LINKEDIN_IDENTITY_PROVIDER
+			? getLinkedInMcpInstancesForIntegration(existing.id).map((cfg) => instanceSlug(cfg))
+			: undefined
 	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
 		await syncLinkedInAddonQuantity(db, existing.workspaceId)
 		// P3-C · Drop every fan-out MCP instance owned by this credential row
@@ -1950,7 +1962,13 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// outlives the credential behind it. Left in place, the agent boots with
 	// the server attached, advertises its tools, and fails every call — so it
 	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	await detachProviderMcpServers(
+		db,
+		existing.workspaceId,
+		existing.provider,
+		actorId,
+		linkedInInstanceSlugs,
+	)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)

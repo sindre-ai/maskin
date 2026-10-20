@@ -173,3 +173,82 @@ describe('detachProviderMcpServers', () => {
 		expect(rows[0].status).toBe('revoked')
 	})
 })
+
+// Per-identity providers serve one endpoint per connected identity, and the
+// provider path is a prefix of every one of those URLs. Disconnecting one
+// identity must leave the others attached.
+describe('detachProviderMcpServers with instance slugs', () => {
+	const identityEntry = (slug: string) => ({
+		type: 'http',
+		url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${slug}`,
+		headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
+	})
+
+	it('removes only the disconnected identity and keeps the other identities', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const agent = await insertAgent(ws.id, {
+			mcpServers: {
+				maskin: MASKIN_MCP,
+				'linkedin-magnus-personal': identityEntry('linkedin-magnus-personal'),
+				'linkedin-krumhausen-personal': identityEntry('linkedin-krumhausen-personal'),
+			},
+		})
+
+		const changed = await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [
+			'linkedin-magnus-personal',
+		])
+
+		expect(changed).toBe(1)
+		expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {}).sort()).toEqual([
+			'linkedin-krumhausen-personal',
+			'maskin',
+		])
+	})
+
+	it('does not match an identity whose slug merely contains the disconnected one', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const agent = await insertAgent(ws.id, {
+			mcpServers: { other: identityEntry('linkedin-x-linkedin-magnus-personal') },
+		})
+
+		const changed = await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [
+			'linkedin-magnus-personal',
+		])
+
+		expect(changed).toBe(0)
+		expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual(['other'])
+	})
+
+	it('removes a renamed key and tolerates a trailing slash or query string', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const slug = 'linkedin-magnus-personal'
+		const agent = await insertAgent(ws.id, {
+			mcpServers: {
+				renamed: identityEntry(slug),
+				slashed: { type: 'http', url: `${identityEntry(slug).url}/` },
+				queried: { type: 'http', url: `${identityEntry(slug).url}?v=1` },
+			},
+		})
+
+		expect(await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [slug])).toBe(1)
+		expect((await toolsOf(agent.id)).mcpServers).toEqual({})
+	})
+
+	// No known identity means nothing to match on. Stripping every identity's
+	// entry is the bug this guards against, so an empty list is a no-op.
+	it('removes nothing when the disconnected row has no known instance slugs', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const agent = await insertAgent(ws.id, {
+			mcpServers: { 'linkedin-krumhausen-personal': identityEntry('linkedin-krumhausen-personal') },
+		})
+
+		expect(await detachProviderMcpServers(db, ws.id, 'linkedin-unipile', createdBy, [])).toBe(0)
+		expect(Object.keys((await toolsOf(agent.id)).mcpServers ?? {})).toEqual([
+			'linkedin-krumhausen-personal',
+		])
+	})
+})
