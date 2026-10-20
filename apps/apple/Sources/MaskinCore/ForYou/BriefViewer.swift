@@ -85,6 +85,10 @@ public struct BriefPlayback: Equatable, Sendable {
 	public private(set) var isFinished = false
 	/// Off with Reduce Motion or VoiceOver: slides then change only when the reader asks.
 	public var autoAdvances: Bool
+	/// How many cards the current slide holds when it is a deck. A tap forward steps through them
+	/// before moving to the next slide, like tapping through one story in Instagram.
+	public private(set) var steps = 1
+	public static let secondsPerStep: TimeInterval = 7
 
 	public init(durations: [TimeInterval], startIndex: Int = 0, autoAdvances: Bool = true) {
 		self.durations = durations.map { max($0, 1) }
@@ -93,6 +97,18 @@ public struct BriefPlayback: Equatable, Sendable {
 	}
 
 	public var count: Int { durations.count }
+
+	/// The card within the current slide, 0-based; always 0 for a slide that is not a deck.
+	public var step: Int { min(Int(progress * Double(steps) + 1e-9), steps - 1) }
+
+	/// How long the current slide stays: a deck by its cards, anything else by its fixed time.
+	public var currentDuration: TimeInterval {
+		guard durations.indices.contains(index) else { return 1 }
+		return steps > 1 ? Double(steps) * Self.secondsPerStep : durations[index]
+	}
+
+	/// The current slide turned out to be a deck of `count` cards. Called once its page has loaded.
+	public mutating func setSteps(_ count: Int) { steps = max(count, 1) }
 	public var isPlaying: Bool { autoAdvances && !isHeld && !isWaiting && !isFinished && count > 0 }
 
 	/// 0...1 for segment `segment`: full before the current slide, empty after it. With no
@@ -105,26 +121,36 @@ public struct BriefPlayback: Equatable, Sendable {
 
 	public mutating func tick(_ seconds: TimeInterval) {
 		guard isPlaying, seconds > 0 else { return }
-		progress += seconds / durations[index]
+		progress += seconds / currentDuration
 		if progress >= 1 { next() }
 	}
 
-	/// Next slide; past the last one the viewer is finished.
+	/// Next card of a deck, then the next slide; past the last one the viewer is finished.
 	public mutating func next() {
 		guard count > 0 else { return }
+		if step < steps - 1 {
+			progress = Double(step + 1) / Double(steps)
+			return
+		}
 		if index >= count - 1 {
 			progress = 1
 			isFinished = true
 		} else {
 			index += 1
 			progress = 0
+			steps = 1
 		}
 	}
 
-	/// Previous slide; on the first one it restarts that slide.
+	/// Previous card of a deck, then the previous slide; on the first one it restarts that slide.
 	public mutating func previous() {
 		guard count > 0 else { return }
 		isFinished = false
+		if step > 0 {
+			progress = Double(step - 1) / Double(steps)
+			return
+		}
+		if index > 0 { steps = 1 }
 		index = max(index - 1, 0)
 		progress = 0
 	}

@@ -592,4 +592,38 @@ describe('workspace deletion (integration)', () => {
 		const again = await insertWorkspace(db, me.id, { name: 'Once' })
 		expect(again.name).toBe('Once')
 	})
+
+	it('erases the Keychain audit trail with the workspace, but only through the cascade', async () => {
+		const other = await insertActor(db, { type: 'human' })
+		const target = await seedWorkspace(me, { name: 'Audited' })
+		const bystander = await seedWorkspace(other, { name: 'Audited bystander' })
+
+		for (const ws of [target.ws, bystander.ws]) {
+			// The insert trigger assigns id/hashes/read_at; the log has no FK on actor or integration.
+			await sql`
+				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+				VALUES (${ws.id}, ${randomUUID()}, ${me.id}, 'req-1')`
+			await sql`
+				INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+				VALUES (${ws.id}, '2026-01-01', 1, 'hash')`
+		}
+
+		// The snapshot table is still append-only for anything that is not the workspace cascade.
+		await expect(
+			sql`DELETE FROM credential_chain_snapshots WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
+		await expect(
+			sql`UPDATE credential_chain_snapshots SET row_hash = 'x' WHERE workspace_id = ${target.ws.id}`,
+		).rejects.toThrow(/append-only/)
+
+		expect((await del(target.ws.id, 'Audited')).status).toBe(200)
+
+		for (const table of ['credential_access_log', 'credential_chain_snapshots']) {
+			const rows = await sql.unsafe(`SELECT workspace_id FROM ${table}`)
+			expect(
+				rows.map((r) => r.workspace_id),
+				table,
+			).toEqual([bystander.ws.id])
+		}
+	})
 })
