@@ -19,7 +19,13 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
+import {
+	ViewerReadOnlyError,
+	assertWorkspaceWriterRole,
+	getWorkspaceRole,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
@@ -27,6 +33,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		sessionManager: SessionManager
 	}
@@ -34,10 +42,28 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
+/**
+ * Edit and delete check for a notification loaded by ID. Returns false for a
+ * non-member (the caller answers 404). A viewer may change only a notification
+ * addressed to them, so they can still mark their own read; changing anyone
+ * else's is a 403, as for every other write.
+ */
+async function mayChangeNotification(
+	db: Database,
+	actorId: string,
+	notification: { workspaceId: string; targetActorId: string | null },
+): Promise<boolean> {
+	const role = await getWorkspaceRole(db, actorId, notification.workspaceId)
+	if (role === null) return false
+	if (role === 'viewer' && notification.targetActorId !== actorId) throw new ViewerReadOnlyError()
+	return true
+}
+
 // POST /api/notifications
 const createNotificationRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Notifications'],
 	summary: 'Create a notification',
 	request: {
@@ -71,6 +97,7 @@ app.openapi(createNotificationRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const actorType = c.get('actorType')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	const [created] = await db
@@ -239,10 +266,10 @@ app.openapi(updateNotificationRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
-	// Verify notification exists and actor is a workspace member
+	// Verify notification exists and actor may change it
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await mayChangeNotification(db, actorId, existing))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 
@@ -527,7 +554,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await mayChangeNotification(db, actorId, existing))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 	}
 
