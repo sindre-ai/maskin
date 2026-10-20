@@ -46,6 +46,9 @@ struct ChatThreadView: View {
 	/// True from opening the chat until the reader first scrolls it. While true the thread pins to
 	/// its opening position (the newest message, or the NEW divider).
 	@State private var followingOpen = true
+	/// True once the reader has scrolled the thread themselves; until then a late read cursor may
+	/// still move the opening position to the NEW divider.
+	@State private var userScrolled = false
 	@State private var renaming = false
 	@State private var newTitle = ""
 	@State private var searching = false
@@ -93,9 +96,22 @@ struct ChatThreadView: View {
 		return others.first { $0.kind == .agent }?.name ?? others.first?.name ?? store.title
 	}
 
+	/// A one-to-one chat with its own topic is titled by the topic, with the person under it.
+	private var topic: String? {
+		ThreadNav.topic(
+			chatTitle: store.title, participants: store.participants, currentActorID: store.currentActorID, flow: flow)
+	}
+
 	private var navTitle: String {
-		ThreadNav.title(
+		topic ?? ThreadNav.title(
 			participants: store.participants, currentActorID: store.currentActorID, fallback: store.title, flow: flow)
+	}
+
+	/// The live state if any; otherwise the person's name under a topic title.
+	private var navStatus: ThreadNavStatus? {
+		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
+		guard topic != nil, let name = counterpart?.name else { return nil }
+		return .quiet(name)
 	}
 
 	/// "Type your answer…" while a flow ask waits on the user; "Message {name}" otherwise.
@@ -184,7 +200,7 @@ struct ChatThreadView: View {
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
 			ThreadNavTitle(
-				title: navTitle, status: ThreadNav.status(presences: presences, flow: flow), onTap: titleAction)
+				title: navTitle, status: navStatus, onTap: titleAction)
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
@@ -404,12 +420,33 @@ struct ChatThreadView: View {
 			}
 			.onChange(of: geometry.size.height) { _, height in viewportHeight = height }
 			.onUserScroll {
+				userScrolled = true
 				if followingOpen { followingOpen = false }
 				if !revealed { revealed = true }
 			}
+			// A cold open has no read cursor yet, so it first settles at the bottom. When the cursor
+			// arrives, move to the first unread message instead, unless the reader already scrolled.
+			.onChange(of: store.openedReadCursor) { _, _ in
+				guard !userScrolled, opensOnUnread else { return }
+				followingOpen = false
+				store.isAtBottom = false
+				Task { @MainActor in
+					await Task.yield()
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+					try? await Task.sleep(for: .milliseconds(Self.revealDelay))
+					if !userScrolled { proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset)) }
+					revealed = true
+				}
+			}
 			.trackingDistanceFromBottom { distance in
 				distanceFromBottom = distance
-				if distance < MaskinSpace.touchMin {
+				let atBottom = distance < MaskinSpace.touchMin
+				if atBottom != store.isAtBottom {
+					store.isAtBottom = atBottom
+					// Reaching the end of the unread messages is what reads them.
+					if atBottom { Task { await store.markReadIfNeeded() } }
+				}
+				if atBottom {
 					unseenCount = 0
 					quickRepliesHidden = false
 				}
@@ -690,6 +727,7 @@ struct ChatThreadView: View {
 	private func settleOpen(_ proxy: ScrollViewProxy) {
 		if opensOnUnread {
 			followingOpen = false
+			store.isAtBottom = false
 			proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 			Task {
 				try? await Task.sleep(for: .milliseconds(Self.revealDelay))

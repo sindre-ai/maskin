@@ -62,6 +62,10 @@ public final class ChatStore {
 			}
 		}
 	}
+	/// False while the reader is parked above the newest message (a thread opened on its NEW
+	/// divider, or scrolled up). Read state only advances at the bottom, so a chat left half-read
+	/// keeps its unread badge in the list.
+	public var isAtBottom = true
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
@@ -983,9 +987,9 @@ public final class ChatStore {
 	// MARK: - Read state
 
 	/// Advance the read cursor to the newest confirmed message. Never regresses, never repeats.
-	/// Only while the thread is visible and the app is active.
+	/// Only while the thread is visible, the app is active and the reader is at the bottom.
 	public func markReadIfNeeded() async {
-		guard isActive, let last = lastServerID, last > readSent else { return }
+		guard isActive, isAtBottom, let last = lastServerID, last > readSent else { return }
 		let previous = readSent
 		readSent = last
 		do {
