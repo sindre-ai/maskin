@@ -1,0 +1,107 @@
+name: Apple regenerate API client
+
+# Manually triggered. Runs apps/apple/scripts/gen-api.sh on the same macOS runner as apple.yml
+# and commits the regenerated apps/apple/Sources/MaskinAPI/Generated back to the branch you pass in.
+# Exists because the generator needs Swift, which the agent sandboxes do not have, and apple.yml's
+# "Generated API client is up to date" step fails on any diff.
+#
+# Run it after any change to apps/apple/openapi.json (refresh that first, see the error text in
+# apple.yml). Run it from Actions > "Apple regenerate API client" > Run workflow, pick any ref to
+# take the workflow file from (main), and put the target branch in the `branch` input.
+#
+# Consequences worth knowing:
+#   - The push is made with GITHUB_TOKEN, and GitHub does not start workflow runs for pushes made
+#     with it. If a PR is already open on the branch, the Apple check will NOT re-run on the new
+#     commit. Re-run it by hand, or open the PR after this workflow has pushed.
+#   - It refuses to push to the default branch. Regenerate on a feature or bet branch, then merge.
+#   - A plain (non-force) push: if the branch moved while this ran, the push fails and you re-run.
+#   - macOS minutes cost about 10x Linux. One run is a few minutes, mostly building the generator
+#     the first time; the SwiftPM cache below keeps repeat runs short.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to regenerate on and push the result to (not the default branch)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apple-regen-api-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      # The branch name only ever reaches the shell through env, never interpolated into a script.
+      - name: Refuse the default branch
+        env:
+          BRANCH: ${{ inputs.branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+            echo "::error::Refusing to push to the default branch ($DEFAULT_BRANCH). Pass a feature or bet branch."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM and the generator build
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/apple/.build
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+          key: swiftpm-gen-${{ runner.os }}-${{ hashFiles('apps/apple/Package.resolved', 'apps/apple/Package.swift') }}
+          restore-keys: |
+            swiftpm-gen-${{ runner.os }}-
+            swiftpm-${{ runner.os }}-
+
+      - name: Regenerate the API client
+        working-directory: apps/apple
+        run: ./scripts/gen-api.sh
+
+      - name: Commit and push if changed
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          git add -A -- apps/apple/Sources/MaskinAPI/Generated
+          if git diff --cached --quiet; then
+            echo "Generated client already matches openapi.json. Nothing to commit."
+            echo "### No changes" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$BRANCH\`: Generated client already up to date." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(apple): regenerate API client from openapi.json"
+          git push origin "HEAD:refs/heads/$BRANCH"
+          {
+            echo "### Regenerated"
+            echo "Pushed \`$(git rev-parse --short HEAD)\` to \`$BRANCH\`."
+            echo
+            echo "Pushes made with GITHUB_TOKEN do not start other workflows. Re-run the Apple check by hand if a PR is already open."
+          } >> "$GITHUB_STEP_SUMMARY"
