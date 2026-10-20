@@ -10,6 +10,9 @@ import { useCallback, useMemo, useReducer, useState } from 'react'
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
+	/** When set the composer is disabled, names the agent in the placeholder
+	 *  and points at the notice that explains why. */
+	blockedReason?: { agentName: string; noticeId: string }
 }
 
 /**
@@ -23,7 +26,11 @@ interface ThreadComposerProps {
  * responder pipeline's mention fast-path auto-joins them as participants if
  * they weren't one already.
  */
-export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerProps) {
+export function ThreadComposer({
+	workspaceId,
+	conversationId,
+	blockedReason,
+}: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
@@ -96,17 +103,20 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 	// flag is ON and there is no named counterpart, promote `/` and `@` in the
 	// placeholder rather than falling back to the generic phrase.
 	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
-	const placeholder = counterpart
-		? `Reply to ${counterpart}…`
-		: plusMenuAttachOnly
-			? 'Message… / reference or create · @ mention'
-			: 'Message this conversation'
+	const placeholder = blockedReason
+		? `${blockedReason.agentName} can't reply yet`
+		: counterpart
+			? `Reply to ${counterpart}…`
+			: plusMenuAttachOnly
+				? 'Message… / reference or create · @ mention'
+				: 'Message this conversation'
 
 	return (
 		<Composer
 			workspaceId={workspaceId}
 			onSend={handleSend}
-			disabled={false}
+			disabled={!!blockedReason}
+			describedBy={blockedReason?.noticeId}
 			pending={sendMessage.isPending}
 			surface="sheet"
 			placeholder={placeholder}

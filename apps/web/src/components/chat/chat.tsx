@@ -190,6 +190,8 @@ export interface ComposerProps {
 	conversationParticipantIds?: string[]
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Forwarded as `aria-describedby` on the textarea (e.g. the blocked-composer notice). */
+	describedBy?: string
 	/** Optional controlled draft. Supply both to let a caller prefill the
 	 *  composer (the chats zero-state suggestion rows); omit both to keep the
 	 *  composer's own internal state. */
@@ -259,6 +261,7 @@ export function Composer({
 	onDismissExternalError,
 	conversationParticipantIds,
 	textareaLabel,
+	describedBy,
 	value: controlledValue,
 	onValueChange,
 	draftKey,
@@ -1107,6 +1110,7 @@ export function Composer({
 					disabled={disabled}
 					rows={1}
 					aria-label={textareaLabel}
+					aria-describedby={describedBy}
 					// Screen readers announce the picker's active row while focus
 					// stays on the textarea (spec §Accessibility). The picker
 					// keeps this in sync via `onActiveDescendantChange`.

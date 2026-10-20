@@ -1,3 +1,4 @@
+import { ComposerNotice } from '@/components/chat/composer-notice'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
@@ -20,6 +21,7 @@ import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useDirectAgentStatus } from '@/hooks/use-direct-agent-status'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
@@ -38,7 +40,9 @@ const chatSearchSchema = z.object({
 	msg: z.coerce.number().int().positive().optional(),
 })
 
-const SEEN_KEY = (conversationId: string) => `maskin-overview-seen:${conversationId}`
+const COMPOSER_NOTICE_ID = 'composer-notice'
+
+const SEEN_KEY =(conversationId: string) => `maskin-overview-seen:${conversationId}`
 
 function readSeenOverview(conversationId: string): string | null {
 	try {
@@ -85,6 +89,10 @@ function ConversationThreadPage() {
 	// bet's writer flag (`graph-provenance-writes`) so a tester actor gets
 	// writes AND read UI in one flip, per bet spec §Slice 2 §Feature flag.
 	const producedEnabled = useFeatureFlag('graph-provenance-writes')
+	const agentIntroEnabled = useFeatureFlag('agent-intro-1-1')
+	const directAgent = useDirectAgentStatus(conversationId, workspaceId, {
+		enabled: agentIntroEnabled,
+	})
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const producedRequested = producedEnabled && !!producedSearch
 	const navigate = useNavigate()
@@ -237,7 +245,22 @@ function ConversationThreadPage() {
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
 					<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
-						<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
+						{directAgent?.state ? (
+							<ComposerNotice
+								workspaceId={workspaceId}
+								status={directAgent}
+								id={COMPOSER_NOTICE_ID}
+							/>
+						) : null}
+						<ThreadComposer
+							workspaceId={workspaceId}
+							conversationId={conversationId}
+							blockedReason={
+								directAgent?.state === 'not_in_workspace'
+									? { agentName: directAgent.name, noticeId: COMPOSER_NOTICE_ID }
+									: undefined
+							}
+						/>
 					</div>
 				</div>
 				{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
