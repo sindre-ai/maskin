@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+	applyDraftTransition,
 	draftTaskStateToMetadata,
 	formatDraftAsMarkdown,
 	messageMetadataSchema,
@@ -108,5 +109,117 @@ describe('draftTaskStateToMetadata', () => {
 		const metadata = draftTaskStateToMetadata({ state: 'draft', original_body: 'Hi' })
 
 		expect(metadata.draft_approved_at).toBeNull()
+	})
+})
+
+describe('applyDraftTransition', () => {
+	const NOW = new Date('2026-10-20T08:00:00.000Z')
+	const task = (state: 'draft' | 'approved', content = 'Hi Mette') => ({
+		content,
+		metadata: draftTaskStateToMetadata({
+			state,
+			subject: 'Following up',
+			original_subject: 'Following up',
+			original_body: 'Hi',
+		}),
+	})
+
+	it('saves an edit to an unapproved draft and keeps the subject unless it is sent', () => {
+		const result = applyDraftTransition(
+			task('draft'),
+			{ action: 'edit', expected_state: 'draft', body: 'Shorter.' },
+			NOW,
+		)
+
+		expect(result).toMatchObject({
+			ok: true,
+			content: 'Shorter.',
+			state: { state: 'draft', subject: 'Following up' },
+		})
+	})
+
+	it('approves with the text it is given and stamps the time', () => {
+		const result = applyDraftTransition(
+			task('draft'),
+			{ action: 'approve', expected_state: 'draft', body: 'Final.', subject: 'Final subject' },
+			NOW,
+		)
+
+		expect(result).toMatchObject({
+			ok: true,
+			content: 'Final.',
+			state: { state: 'approved', subject: 'Final subject', approved_at: NOW.toISOString() },
+		})
+	})
+
+	it('refuses to approve an empty draft', () => {
+		const result = applyDraftTransition(
+			task('draft'),
+			{ action: 'approve', expected_state: 'draft', body: '   ' },
+			NOW,
+		)
+
+		expect(result).toEqual({ ok: false, reason: 'empty_body' })
+	})
+
+	it.each(['edit', 'approve', 'restore'] as const)(
+		'refuses to %s a draft that is already approved',
+		(action) => {
+			const result = applyDraftTransition(
+				task('approved'),
+				{ action, expected_state: 'draft', body: 'Changed after approval.' },
+				NOW,
+			)
+
+			expect(result).toEqual({ ok: false, reason: 'state_changed' })
+		},
+	)
+
+	it('refuses a change when the card saw a different state than the task is in', () => {
+		const result = applyDraftTransition(
+			task('draft'),
+			{ action: 'undo', expected_state: 'approved' },
+			NOW,
+		)
+
+		expect(result).toEqual({ ok: false, reason: 'state_changed' })
+	})
+
+	it('undoes an approval, keeping the text and clearing the approval time', () => {
+		const result = applyDraftTransition(
+			task('approved', 'Approved text'),
+			{ action: 'undo', expected_state: 'approved' },
+			NOW,
+		)
+
+		expect(result).toMatchObject({
+			ok: true,
+			content: 'Approved text',
+			state: { state: 'draft', approved_at: undefined },
+		})
+	})
+
+	it('restores the original text and subject', () => {
+		const result = applyDraftTransition(
+			task('draft', 'Edited'),
+			{ action: 'restore', expected_state: 'draft' },
+			NOW,
+		)
+
+		expect(result).toMatchObject({
+			ok: true,
+			content: 'Hi',
+			state: { subject: 'Following up' },
+		})
+	})
+
+	it('says so when the task is not a draft', () => {
+		const result = applyDraftTransition(
+			{ content: 'x', metadata: {} },
+			{ action: 'edit', expected_state: 'draft', body: 'y' },
+			NOW,
+		)
+
+		expect(result).toEqual({ ok: false, reason: 'not_a_draft' })
 	})
 })

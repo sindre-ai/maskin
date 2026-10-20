@@ -534,3 +534,71 @@ export function draftTaskStateToMetadata(state: DraftTaskState): Record<string, 
 		[DRAFT_METADATA_KEYS.approved_at]: state.approved_at ?? null,
 	}
 }
+
+/**
+ * A change to a draft's state, sent by the draft card. The server applies it to the
+ * row it has locked, so the card never writes a state it merely remembers: each
+ * action says which state it saw (`expected_state`) and is refused if the draft has
+ * moved since. That is what stops a stale tab editing text that was already approved,
+ * and a second tab approving (and so messaging the agent) a second time.
+ */
+export const draftTransitionSchema = z.object({
+	action: z.enum(['edit', 'approve', 'undo', 'restore']),
+	expected_state: z.enum(['draft', 'approved']),
+	/** The text to save with `edit` / `approve`; omitted keeps what the task holds. */
+	body: z.string().max(100_000).optional(),
+	/** The subject to save with `edit` / `approve`; omitted keeps what the task holds. */
+	subject: z.string().max(998).optional(),
+})
+
+export type DraftTransition = z.infer<typeof draftTransitionSchema>
+
+export type DraftTransitionResult =
+	| { ok: true; content: string; state: DraftTaskState }
+	| { ok: false; reason: 'not_a_draft' | 'state_changed' | 'empty_body' }
+
+/**
+ * Applies a draft transition to a task's current content and metadata. Pure, so the
+ * route and the tests share one definition of which actions are legal in which state:
+ * only an unapproved draft can be edited, approved or restored, and only an approved
+ * one can be undone.
+ */
+export function applyDraftTransition(
+	task: { content: string | null; metadata: Record<string, unknown> | null },
+	transition: DraftTransition,
+	now: Date = new Date(),
+): DraftTransitionResult {
+	const current = readDraftTaskState(task.metadata)
+	if (!current) return { ok: false, reason: 'not_a_draft' }
+
+	const requiredState = transition.action === 'undo' ? 'approved' : 'draft'
+	if (current.state !== transition.expected_state || current.state !== requiredState) {
+		return { ok: false, reason: 'state_changed' }
+	}
+
+	let content = task.content ?? ''
+	let subject = current.subject
+	if (transition.action === 'edit' || transition.action === 'approve') {
+		content = transition.body ?? content
+		subject = transition.subject ?? subject
+	} else if (transition.action === 'restore') {
+		content = current.original_body
+		subject = current.original_subject
+	}
+
+	if (transition.action === 'approve' && content.trim() === '') {
+		return { ok: false, reason: 'empty_body' }
+	}
+
+	const approving = transition.action === 'approve'
+	return {
+		ok: true,
+		content,
+		state: {
+			...current,
+			state: approving ? 'approved' : 'draft',
+			subject,
+			approved_at: approving ? now.toISOString() : undefined,
+		},
+	}
+}

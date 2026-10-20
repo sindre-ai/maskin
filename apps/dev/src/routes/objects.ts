@@ -23,12 +23,15 @@ import {
 	SAFE_METADATA_FIELD_NAME_RE,
 	SIGNUP_CAPTURE_SOURCE,
 	TERMINAL_BET_STATUSES,
+	applyDraftTransition,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
 	computeChanges,
 	createObjectSchema,
+	draftTaskStateToMetadata,
+	draftTransitionSchema,
 	findChange,
 	formatEventDescription,
 	getChangesFromEventData,
@@ -1957,6 +1960,132 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// POST /{id}/draft - Move a draft card's task between draft states
+//
+// The draft card edits, approves, undoes and restores through here rather than
+// PATCH: the transition is checked against the row under FOR UPDATE, so a stale
+// tab cannot edit approved text and only one of two concurrent approvals wins (the
+// card messages the agent only on a 200). Only the `draft_*` keys are written, so a
+// card holding an old copy of the metadata cannot revert fields changed elsewhere.
+const draftTransitionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/draft',
+	'x-viewer-policy': 'writer',
+	tags: ['Objects'],
+	summary: 'Edit, approve, undo or restore a draft',
+	request: {
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: draftTransitionSchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectResponseSchema } },
+			description: 'Draft updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a draft, or nothing to approve',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The draft is no longer in the state the card saw',
+		},
+	},
+})
+
+app.openapi(draftTransitionRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const transition = c.req.valid('json')
+
+	const [existing] = await db
+		.select({ workspaceId: objects.workspaceId })
+		.from(objects)
+		.where(eq(objects.id, id))
+		.limit(1)
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	type Outcome =
+		| { kind: 'updated'; row: typeof objects.$inferSelect }
+		| { kind: 'missing' }
+		| { kind: 'refused'; reason: 'not_a_draft' | 'state_changed' | 'empty_body' }
+
+	const outcome = await db.transaction(async (tx): Promise<Outcome> => {
+		const [current] = await tx
+			.select()
+			.from(objects)
+			.where(eq(objects.id, id))
+			.for('update')
+			.limit(1)
+		if (!current) return { kind: 'missing' }
+
+		const result = applyDraftTransition(
+			{ content: current.content, metadata: current.metadata as Record<string, unknown> | null },
+			transition,
+		)
+		if (!result.ok) return { kind: 'refused', reason: result.reason }
+
+		const [row] = await tx
+			.update(objects)
+			.set({
+				content: result.content,
+				metadata: { ...(current.metadata ?? {}), ...draftTaskStateToMetadata(result.state) },
+				updatedAt: new Date(),
+			})
+			.where(eq(objects.id, id))
+			.returning()
+		if (!row) return { kind: 'missing' }
+
+		await recordEvent(tx, {
+			workspaceId: current.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: current.type,
+			entityId: id,
+			data: {
+				changes: computeChanges(
+					current as unknown as Record<string, unknown>,
+					row as unknown as Record<string, unknown>,
+					OBJECT_DIFF_FIELDS,
+				),
+				draft_action: transition.action,
+			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
+		})
+		return { kind: 'updated', row }
+	})
+
+	if (outcome.kind === 'missing') {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+	if (outcome.kind === 'refused') {
+		if (outcome.reason === 'state_changed') {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`The draft has changed since you opened it (expected '${transition.expected_state}'); reload and try again`,
+				),
+				409,
+			)
+		}
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				outcome.reason === 'empty_body' ? 'There is no text to approve' : 'Object is not a draft',
+			),
+			400,
+		)
+	}
+	return c.json(serialize(outcome.row) as z.infer<typeof objectResponseSchema>, 200)
 })
 
 // POST /{id}/verification — human-only stamp/unstamp on a Knowledge Author write.

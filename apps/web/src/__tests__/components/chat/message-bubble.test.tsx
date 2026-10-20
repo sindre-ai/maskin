@@ -21,7 +21,12 @@ let mockObject: Record<string, unknown> = DEFAULT_OBJECT
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: mockObject, isLoading: false }),
-	useUpdateObject: () => ({ mutate: vi.fn(), isPending: false }),
+	useDraftTransition: () => ({
+		mutate: vi.fn(),
+		isPending: false,
+		variables: undefined,
+		error: null,
+	}),
 }))
 
 const retryMutate = vi.fn()

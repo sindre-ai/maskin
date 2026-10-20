@@ -4,6 +4,7 @@ import type {
 	AgentState,
 	CreateFileCommentInput,
 	DisplaySettingsBody,
+	DraftTransition,
 	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
@@ -288,6 +289,8 @@ export const api = {
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		draft: (id: string, data: DraftTransition) =>
+			request<ObjectResponse>(`/objects/${id}/draft`, { method: 'POST', body: data }),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
 				method: 'POST',

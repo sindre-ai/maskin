@@ -16,6 +16,19 @@ import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
+const failMessageInsert = vi.hoisted(() => ({ on: false }))
+
+// Lets one test make the message insert report failure, the way it does when
+// the conversation row is gone, to prove the task is rolled back with it.
+vi.mock('../../services/conversation-messages', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/conversation-messages')>()
+	return {
+		...actual,
+		insertConversationMessage: (...args: Parameters<typeof actual.insertConversationMessage>) =>
+			failMessageInsert.on ? Promise.resolve(null) : actual.insertConversationMessage(...args),
+	}
+})
+
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
 /**
@@ -89,6 +102,7 @@ describe('POST /sessions/:id/draft', () => {
 	let conversationId: string
 
 	beforeEach(async () => {
+		failMessageInsert.on = false
 		humanId = getTestActorId()
 		const ws = await insertWorkspace(db, humanId)
 		if (!ws) throw new Error('failed to seed workspace')
@@ -393,6 +407,21 @@ describe('POST /sessions/:id/draft', () => {
 
 		expect(res.status).toBe(400)
 		expect(await tasksIn(workspaceId)).toHaveLength(0)
+	})
+
+	it('rolls the task and its event back when the card cannot be posted', async () => {
+		const session = await chatSession()
+		const app = createSessionsApp(agentId)
+		failMessageInsert.on = true
+
+		const res = await app.request(postDraft(session.id, workspaceId, EMAIL))
+
+		expect(res.status).toBe(500)
+		// No card means no task to approve: neither row may outlive the failed message.
+		expect(await tasksIn(workspaceId)).toHaveLength(0)
+		expect(await messagesFor(conversationId)).toHaveLength(0)
+		const created = await db.select().from(events).where(eq(events.workspaceId, workspaceId))
+		expect(created.filter((event) => event.action === 'created')).toHaveLength(0)
 	})
 
 	it('answers 409 for a session with no chat, and creates nothing', async () => {

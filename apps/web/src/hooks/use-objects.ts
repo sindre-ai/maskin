@@ -1,4 +1,4 @@
-import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
+import type { DraftTransition, createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { RowSelectionState } from '@tanstack/react-table'
 import { type Dispatch, type SetStateAction, useCallback } from 'react'
@@ -183,6 +183,25 @@ export function useUpdateObject(workspaceId: string) {
 			// list response — without this a rename or an edit to the loop's
 			// promise wouldn't reach the loop pages until the list refetched.
 			queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
+		},
+	})
+}
+
+/**
+ * Edit, approve, undo or restore a draft card's task. Refetches on settle even
+ * when the server refused (409), so a card that was stale shows the real state.
+ */
+export function useDraftTransition(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, data }: { id: string; data: DraftTransition }) =>
+			api.objects.draft(id, data),
+		onSuccess: (row, { id }) => {
+			queryClient.setQueryData(queryKeys.objects.detail(id), row)
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		},
 	})
 }

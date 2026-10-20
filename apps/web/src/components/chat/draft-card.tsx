@@ -1,17 +1,13 @@
+import { FormError } from '@/components/shared/form-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useSendMessage } from '@/hooks/use-conversation'
-import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useDraftTransition, useObject } from '@/hooks/use-objects'
 import type { MessageDraft } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import {
-	type DraftTaskState,
-	draftKindName,
-	draftTaskStateToMetadata,
-	readDraftTaskState,
-} from '@maskin/shared'
+import { type DraftTransition, draftKindName, readDraftTaskState } from '@maskin/shared'
 import { Check, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
@@ -52,14 +48,21 @@ interface DraftCardProps {
  * is gone or carries no draft state the card renders nothing: the message's own
  * markdown already contains the text, so the thread still reads fine.
  *
+ * Every change goes through the server's draft transition, which checks the state
+ * this card last saw against the locked row. A stale tab therefore cannot edit text
+ * that was already approved, and when two tabs approve only one gets a yes back, so
+ * only one tells the agent.
+ *
  * Approving records the person's yes on the task and then says so in the chat,
  * addressed to the agent that wrote the draft. The agent receives that as its next
- * turn, reads the task and sends what is saved there. Undo only flips the task
- * back; the agent is told to check the state before it sends.
+ * turn, reads the task and sends what is saved there. If that message fails the card
+ * says so and offers to send it again, rather than showing "Approved" for a draft the
+ * agent was never told about. Undo only flips the task back; the agent is told to
+ * check the state before it sends.
  */
 export function DraftCard({ workspaceId, conversationId, agentId, draft }: DraftCardProps) {
 	const { data: task } = useObject(draft.object_id)
-	const update = useUpdateObject(workspaceId)
+	const transition = useDraftTransition(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// Unsaved typing. `null` means "show what the task says", so a change made
 	// elsewhere (another tab, the agent revising) shows through until the person
@@ -84,48 +87,56 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 	const folded = !expanded && !approved && shownBody.length > FOLD_AFTER
 	const status = approved ? 'Approved' : edited ? 'Edited' : 'Draft'
 
-	const save = (
-		next: { body: string; subject: string; state?: DraftTaskState['state'] },
-		onSaved?: () => void,
-	) => {
-		const nextState: DraftTaskState = {
-			...state,
-			state: next.state ?? state.state,
-			...(draft.kind === 'email' ? { subject: next.subject } : {}),
-			approved_at: undefined,
-		}
-		if (nextState.state === 'approved') nextState.approved_at = new Date().toISOString()
-		update.mutate(
+	// Typing is only dropped once the server has accepted the change, so a failed
+	// save leaves the person's text on screen next to the error.
+	const run = (data: DraftTransition, onDone?: () => void) => {
+		transition.mutate(
+			{ id: task.id, data },
 			{
-				id: task.id,
-				data: {
-					content: next.body,
-					metadata: { ...task.metadata, ...draftTaskStateToMetadata(nextState) },
+				onSuccess: () => {
+					setBody(null)
+					setSubject(null)
+					onDone?.()
 				},
 			},
-			{ onSuccess: onSaved },
 		)
-		setBody(null)
-		setSubject(null)
+	}
+
+	const textFields = () => ({
+		body: shownBody,
+		...(draft.kind === 'email' ? { subject: shownSubject } : {}),
+	})
+
+	const notifyAgent = () => {
+		const what = `${draft.label ?? draftKindName(draft.kind)}${draft.to ? ` to ${draft.to}` : ''}`
+		sendMessage.mutate({
+			content: `Approved the ${what}. Send it exactly as saved in task ${task.id}.`,
+			metadata: { mentions: [agentId] },
+		})
 	}
 
 	// Tell the agent in the chat, after the task holds the approved text, so the
 	// agent never reads a task that has not caught up with the card.
-	const approve = () => {
-		const what = `${draft.label ?? draftKindName(draft.kind)}${draft.to ? ` to ${draft.to}` : ''}`
-		save({ body: shownBody, subject: shownSubject, state: 'approved' }, () =>
-			sendMessage.mutate({
-				content: `Approved the ${what}. Send it exactly as saved in task ${task.id}.`,
-				metadata: { mentions: [agentId] },
-			}),
-		)
+	const approve = () =>
+		run({ action: 'approve', expected_state: 'draft', ...textFields() }, notifyAgent)
+
+	const undo = () => {
+		sendMessage.reset()
+		run({ action: 'undo', expected_state: 'approved' })
 	}
+
+	const restore = () => run({ action: 'restore', expected_state: 'draft' })
 
 	const commit = () => {
 		if (shownBody !== savedBody || shownSubject !== savedSubject) {
-			save({ body: shownBody, subject: shownSubject })
+			run({ action: 'edit', expected_state: 'draft', ...textFields() })
 		}
 	}
+
+	// Blurring the text to press Approve starts a save before the click lands, so only
+	// an approval in flight may disable the button; disabling it for the save would
+	// swallow the click.
+	const approving = transition.isPending && transition.variables?.data.action === 'approve'
 
 	return (
 		<div className="mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card">
@@ -198,17 +209,32 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 			</div>
 
 			{approved ? (
-				<div className="flex items-center gap-2 px-3 pb-3 pt-1 text-sm font-medium">
+				<div className="flex flex-wrap items-center gap-2 px-3 pb-3 pt-1 text-sm font-medium">
 					<Check size={16} aria-hidden className="shrink-0" />
 					<span className="flex-1">{kind.done}</span>
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
-						onClick={() => save({ body: savedBody, subject: savedSubject, state: 'draft' })}
+						disabled={transition.isPending}
+						onClick={undo}
 					>
 						Undo
 					</Button>
+					{sendMessage.isError ? (
+						<div className="flex w-full items-center gap-2 text-xs font-normal text-error">
+							<span className="flex-1">Approved, but the agent was not told.</span>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={sendMessage.isPending}
+								onClick={notifyAgent}
+							>
+								Tell the agent
+							</Button>
+						</div>
+					) : null}
 				</div>
 			) : (
 				<div className="flex flex-col gap-2 px-3 pb-3 pt-1 sm:flex-row">
@@ -216,9 +242,8 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 						<Button
 							type="button"
 							variant="outline"
-							onClick={() =>
-								save({ body: state.original_body, subject: state.original_subject ?? '' })
-							}
+							disabled={transition.isPending}
+							onClick={restore}
 						>
 							<RotateCcw size={15} aria-hidden />
 							Restore original
@@ -227,13 +252,14 @@ export function DraftCard({ workspaceId, conversationId, agentId, draft }: Draft
 					<Button
 						type="button"
 						className="flex-1"
-						disabled={overLimit || shownBody.trim() === '' || update.isPending}
+						disabled={overLimit || shownBody.trim() === '' || approving}
 						onClick={approve}
 					>
 						{kind.approve}
 					</Button>
 				</div>
 			)}
+			<FormError error={transition.error?.message} className="px-3 pb-3 pt-0" />
 		</div>
 	)
 }
