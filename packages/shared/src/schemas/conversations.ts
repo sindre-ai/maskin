@@ -390,6 +390,44 @@ export const sessionConnectCardSchema = z.object({
 })
 
 /**
+ * The `draft` request body: what `post_draft` was called with. Email needs a
+ * recipient and a subject, because a card without them cannot be sent as shown.
+ */
+export const sessionDraftSchema = z
+	.object({
+		kind: draftKindSchema,
+		/** The task's title; derived from the kind and recipient when absent. */
+		title: z.string().min(1).max(200).optional(),
+		body: z.string().min(1).max(100_000),
+		to: z.string().min(1).max(300).optional(),
+		subject: z.string().min(1).max(998).optional(),
+		char_limit: z.number().int().positive().max(100_000).optional(),
+	})
+	.superRefine((draft, ctx) => {
+		if (draft.kind === 'email') {
+			if (!draft.to)
+				ctx.addIssue({ code: 'custom', path: ['to'], message: 'An email needs a recipient' })
+			if (!draft.subject) {
+				ctx.addIssue({ code: 'custom', path: ['subject'], message: 'An email needs a subject' })
+			}
+		}
+		if (draft.char_limit !== undefined && draft.body.length > draft.char_limit) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['body'],
+				message: `The draft is ${draft.body.length} characters; the limit is ${draft.char_limit}`,
+			})
+		}
+	})
+
+/** Label for a draft kind in task titles and agent-facing text. */
+export const DRAFT_KIND_LABELS: Record<DraftKind, string> = {
+	email: 'email',
+	linkedin_post: 'LinkedIn post',
+	linkedin_message: 'LinkedIn message',
+}
+
+/**
  * The plain-markdown rendering of a connect card, used as the message's
  * `content` so every reader that isn't the chat UI still says what is needed.
  */

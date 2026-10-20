@@ -1,10 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import { events, integrations, objects, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
+	DRAFT_KIND_LABELS,
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
+	draftTaskStateToMetadata,
+	formatDraftAsMarkdown,
 	formatIntegrationConnectAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
@@ -12,6 +15,7 @@ import {
 	sessionActivityResponseSchema,
 	sessionAskSchema,
 	sessionConnectCardSchema,
+	sessionDraftSchema,
 	sessionInputSchema,
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
@@ -1268,6 +1272,164 @@ app.openapi(connectCardRoute, (async (c) => {
 
 	return c.json({ posted: true, message_id: created.id })
 }) as RouteHandler<typeof connectCardRoute, Env>)
+
+// POST /:id/draft - Post an editable draft card into the session chat
+//
+// The draft is a task, not a message: this creates the task (body in `content`,
+// state in the flat `draft_*` metadata keys) and posts the message that points at
+// it, in one transaction, so a chat never shows a card for a task that does not
+// exist. The message `content` quotes the draft, so every reader that is not the
+// chat UI still sees the text. Same gate as /connect-card: only the agent that
+// owns an interactive chat session may post.
+const draftRoute = createRoute({
+	method: 'post',
+	path: '/{id}/draft',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post an editable draft card into the session chat',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionDraftSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ message_id: z.number(), object_id: z.string().uuid() }),
+				},
+			},
+			description: 'Draft task created and card posted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Draft could not be persisted',
+		},
+	},
+})
+
+app.openapi(draftRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const draft = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is no card to show',
+			),
+			409,
+		)
+	}
+	const conversationId = session.conversationId
+
+	const label = DRAFT_KIND_LABELS[draft.kind]
+	const title = draft.title ?? `Approve ${label}${draft.to ? ` to ${draft.to}` : ''}`
+
+	const posted = await db
+		.transaction(async (tx) => {
+			const [task] = await tx
+				.insert(objects)
+				.values({
+					workspaceId: session.workspaceId,
+					type: 'task',
+					title,
+					content: draft.body,
+					// Waiting on the person's review. The agent drives it: once approved,
+					// sending is its job.
+					status: 'in_review',
+					metadata: draftTaskStateToMetadata({
+						state: 'draft',
+						subject: draft.subject,
+						original_subject: draft.subject,
+						original_body: draft.body,
+					}),
+					driver: session.actorId,
+					createdBy: session.actorId,
+				})
+				.returning()
+			if (!task) return null
+
+			await recordEvent(tx, {
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'created',
+				entityType: 'task',
+				entityId: task.id,
+				data: task,
+				provenance: { sessionId: session.id, entityKind: 'object' },
+			})
+
+			const message = await insertConversationMessage(tx, {
+				conversationId,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				content: formatDraftAsMarkdown({ to: draft.to, subject: draft.subject, body: draft.body }),
+				metadata: {
+					draft: {
+						object_id: task.id,
+						kind: draft.kind,
+						...(draft.to ? { to: draft.to } : {}),
+						...(draft.char_limit ? { char_limit: draft.char_limit } : {}),
+					},
+				},
+				sessionId: session.id,
+			})
+			// Roll the task back with the message: no card means no task to approve.
+			if (!message) throw new DraftMessageNotInserted()
+
+			return { messageId: message.id, objectId: task.id }
+		})
+		.catch((err) => {
+			if (err instanceof DraftMessageNotInserted) return null
+			throw err
+		})
+
+	if (!posted) {
+		logger.error('Draft card insert returned no row', {
+			sessionId: session.id,
+			conversationId,
+			kind: draft.kind,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Draft could not be posted'), 500)
+	}
+
+	logger.info('Posted draft card into conversation', {
+		sessionId: session.id,
+		conversationId,
+		messageId: posted.messageId,
+		objectId: posted.objectId,
+		kind: draft.kind,
+	})
+
+	return c.json({ message_id: posted.messageId, object_id: posted.objectId })
+}) as RouteHandler<typeof draftRoute, Env>)
+
+class DraftMessageNotInserted extends Error {}
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

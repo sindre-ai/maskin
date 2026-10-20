@@ -6117,6 +6117,59 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'post_draft',
+		{
+			description: tools.post_draft.description,
+			inputSchema: tools.post_draft.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('post_draft', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return reply(
+					'There is no chat to show a draft card in: this is not running inside an agent session. Create the draft as a task yourself and link it in your report.',
+					true,
+				)
+			}
+			try {
+				const posted = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/draft`,
+					{
+						kind: args.kind,
+						body: args.body,
+						to: args.to,
+						subject: args.subject,
+						title: args.title,
+						char_limit: args.char_limit,
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { message_id: number; object_id: string }
+				return reply(
+					`The draft is now in the chat as an editable card, saved as task ${posted.object_id}. Nothing has been sent. Do not repeat the draft in your own words. End your turn now, without a closing message; when the person approves, read task ${posted.object_id} and send its content, which may differ from what you wrote.`,
+				)
+			} catch (err) {
+				if (parseApiErrorStatus(err) === 409) {
+					return reply(
+						'This session has no chat with a person in it, so there is nowhere to show a draft card. Create the draft as a task yourself and link it in your report.',
+						true,
+					)
+				}
+				// Anything else is something the agent can act on (a missing subject,
+				// a draft over its character limit), so say what the server said.
+				throw err
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_sessions',
 		{
 			description: tools.list_sessions.description,

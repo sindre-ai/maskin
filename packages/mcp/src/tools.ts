@@ -1745,6 +1745,34 @@ export const tools = {
 				),
 		}),
 	},
+	post_draft: {
+		description:
+			'Show the user a draft of an email, LinkedIn post or LinkedIn message as an editable card in the chat, so they can edit it and approve it without leaving the conversation. Use this for every text you want approved before it is sent: never paste the draft into your reply as plain text or save it in a knowledge object. The draft is saved as a task assigned to you, in review; the user edits the text on the card and presses Approve. Nothing is sent by this tool. When the user approves, the task\'s metadata `draft_state` becomes "approved" and its `content` holds the final text they approved, which may differ from what you wrote: read the task before sending, and send that text. Needs a chat with a person on the other end; an autonomous session has no chat, so it fails with a conflict. Email needs `to` and `subject`. Set `char_limit` when the channel has a hard limit (a LinkedIn connection note is 300 characters). Post one card per draft and end your turn once they are posted.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			kind: z
+				.enum(['email', 'linkedin_post', 'linkedin_message'])
+				.describe('What is being drafted. Picks the card layout and the approve button.'),
+			body: z.string().min(1).describe('The text to send, in plain text or light markdown.'),
+			to: z
+				.string()
+				.optional()
+				.describe(
+					'Who it goes to, shown read-only (e.g. "Mette Holm, Northwind"). Required for email.',
+				),
+			subject: z.string().optional().describe('Subject line. Required for email.'),
+			title: z
+				.string()
+				.optional()
+				.describe('Title of the task that holds the draft. Defaults to "Approve <kind> to <to>".'),
+			char_limit: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Hard character limit of the channel. The card blocks approval above it.'),
+		}),
+	},
 	disconnect_integration: {
 		description: 'Disconnect (revoke) an integration by ID',
 		inputSchema: z.object({

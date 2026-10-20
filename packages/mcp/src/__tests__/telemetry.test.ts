@@ -170,6 +170,7 @@ describe('MCP telemetry wrapper', () => {
 		const NON_CRUD_WRITE_TOOLS = new Set([
 			'connect_integration',
 			'disconnect_integration',
+			'post_draft',
 			'stop_session',
 			'pause_session',
 			'resume_session',

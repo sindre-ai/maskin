@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
@@ -35,7 +35,7 @@ export type InsertedConversationMessage = typeof messages.$inferSelect
  * error.
  */
 export async function insertConversationMessage(
-	db: Database,
+	db: Database | Transaction,
 	args: InsertConversationMessageArgs,
 ): Promise<InsertedConversationMessage | null> {
 	const [created] = await db

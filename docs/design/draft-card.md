@@ -56,28 +56,39 @@ States: **Draft** → **Edited** (text differs from what the agent wrote) →
 7. **A revision supersedes.** When the agent redrafts, it posts a new card; the old
    card should read Superseded and lock. (Not built yet.)
 
-## Built (slice 1)
+## Built
 
-- `packages/shared` — `messageDraftSchema`, `draftTaskStateSchema`,
+**Slice 1 (PR #2224)**
+- `packages/shared`: `messageDraftSchema`, `draftTaskStateSchema`,
   `readDraftTaskState`, `draftTaskStateToMetadata`, `formatDraftAsMarkdown`;
   `draft` is stripped from client metadata.
-- `apps/web/src/components/chat/draft-card.tsx` — the compact card, wired into
+- `apps/web/src/components/chat/draft-card.tsx`: the compact card, wired into
   `message-bubble.tsx`. Plain `Textarea`; swap in the rich-markdown-editor's
   notification variant once that bet lands.
 
+**Slice 2: the writer**
+- `POST /api/sessions/:id/draft` (`apps/dev/src/routes/sessions.ts`) creates the task
+  and posts the card message in one transaction, so a chat never shows a card for
+  a task that does not exist. The task is `in_review`, driven by the agent that
+  posted it; a `created` event is logged. Same gate as `/connect-card`: only the
+  agent that owns an interactive chat session may post (403 / 404 / 409 otherwise).
+  Email needs `to` and `subject`, and a body over `char_limit` is a 400.
+- MCP tool `post_draft` (`packages/mcp`). In a session with no chat it returns an
+  error telling the agent to make the task itself; a validation failure reaches the
+  agent as the server's message so it can fix the draft.
+- Integration test against real Postgres:
+  `apps/dev/src/__tests__/integration/session-draft.test.ts`. It also asserts the
+  stored metadata passes `updateObjectSchema`, so edits and approval can save.
+
 ## Not built yet
 
-- **Nothing writes `metadata.draft` yet.** Needs a backend route and an MCP tool
-  (working name `post_draft`) that, in one transaction, creates the task with the
-  draft state, posts the message with `metadata.draft` and the markdown content,
-  logs the events, and accepts `Idempotency-Key`. Follow `connect-card` in
-  `apps/dev/src/routes/sessions.ts`. Needs an integration test against real
-  Postgres.
-- **Approval trigger.** The update to `draft_state: approved` must wake the owning
-  agent to send; decide between an event trigger and a task status move.
+- **Approval trigger.** Approving only sets `draft_state: approved` on the task. How
+  that wakes the owning agent to send is undecided: an event trigger on the update,
+  or a task status move (the task is `in_review` until then).
 - For you "Drafts to review" section and the full-density variant.
 - Superseded state, Apple (`apps/apple` has its own `MarkdownEditor.swift`), and the
-  Playwright spec at 375/768/1024px (blocked on the writer, since no draft card can
-  appear in a real chat yet).
-- Agent guidance: the `outreach-drafts-in-chat-and-tasks` workspace skill should
-  switch to `post_draft` once it exists.
+  Playwright spec at 375/768/1024px (needs a seeded draft message).
+- Agent guidance: switch the `outreach-drafts-in-chat-and-tasks` workspace skill to
+  `post_draft`.
+- `apps/apple/openapi.json` is not refreshed here; the Apple workflow only runs on
+  `apps/apple` changes and the snapshot was already stale.
