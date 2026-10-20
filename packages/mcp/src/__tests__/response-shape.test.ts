@@ -146,3 +146,57 @@ describe('measureResponseShape', () => {
 		expect(measureResponseShape(undefined, { objects: rows }).maxRowBytes).toBeLessThan(1_000)
 	})
 })
+
+describe('measureResponseShape heroCard fallback', () => {
+	it('counts the rows of a list heroCard when no top-level array exists', () => {
+		const shape = measureResponseShape(undefined, {
+			heroCard: {
+				kind: 'list',
+				tool: 'list_actors',
+				objects: [
+					{ id: 'a', title: 'A' },
+					{ id: 'b', title: 'B' },
+					{ id: 'c', title: 'C' },
+				],
+			},
+		})
+		expect(shape.rowCount).toBe(3)
+		expect(shape.topFields).toContain('title')
+	})
+
+	it('counts a single heroCard of a list tool as one row', () => {
+		const shape = measureResponseShape(undefined, {
+			heroCard: { kind: 'single', tool: 'list_actors', object: { id: 'a', title: 'A' } },
+		})
+		expect(shape.rowCount).toBe(1)
+	})
+
+	it('counts an empty heroCard of a list tool as zero rows, not null', () => {
+		const shape = measureResponseShape(undefined, {
+			heroCard: { kind: 'empty', tool: 'list_actors' },
+		})
+		expect(shape.rowCount).toBe(0)
+	})
+
+	it('reads search_ tools through the heroCard too', () => {
+		const shape = measureResponseShape(undefined, {
+			heroCard: { kind: 'list', tool: 'search_objects', objects: [{ id: 'a' }, { id: 'b' }] },
+		})
+		expect(shape.rowCount).toBe(2)
+	})
+
+	it('keeps a get_ tool heroCard at rowCount null', () => {
+		const shape = measureResponseShape(undefined, {
+			heroCard: { kind: 'single', tool: 'get_actor', object: { id: 'a', title: 'A' } },
+		})
+		expect(shape.rowCount).toBeNull()
+	})
+
+	it('prefers the top-level array over the heroCard so list_objects numbers do not move', () => {
+		const shape = measureResponseShape(undefined, {
+			objects: [{ id: 'a' }, { id: 'b' }],
+			heroCard: { kind: 'list', tool: 'list_objects', objects: [{ id: 'a' }] },
+		})
+		expect(shape.rowCount).toBe(2)
+	})
+})

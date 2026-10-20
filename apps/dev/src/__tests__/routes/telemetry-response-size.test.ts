@@ -144,4 +144,22 @@ describe('response-size fan-out', () => {
 			top_field_bytes: [900, 40],
 		})
 	})
+
+	it.each(['slim', 'full'])('forwards view=%s to PostHog', async (view) => {
+		const res = await post(baseBody({ tool_name: 'list_actors', view }))
+		expect(res.status).toBe(202)
+		expect(lastProps().view).toBe(view)
+	})
+
+	it('sends view null when the tool sets none', async () => {
+		await post(baseBody())
+		expect(lastProps().view).toBeNull()
+	})
+
+	it('accepts an event with a free-text view and drops the view, not the event', async () => {
+		const res = await post(baseBody({ view: 'Acquire the Nakatomi account' }))
+		expect(res.status).toBe(202)
+		expect(lastProps().view).toBeNull()
+		expect(lastProps().total_bytes).toBe(1000)
+	})
 })
