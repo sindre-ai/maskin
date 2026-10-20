@@ -2572,6 +2572,7 @@ export class CommentDispatcher {
 		// so its outcome can be sent back. A return never links: the session it wakes
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
+		let originConversationId: string | null = null
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2582,6 +2583,7 @@ export class CommentDispatcher {
 			if (link.linked) {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
+				originConversationId = link.originConversationId
 			}
 		}
 
@@ -2608,6 +2610,7 @@ export class CommentDispatcher {
 					...(isHelperReturn ? { helper_return: true } : {}),
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
+				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
