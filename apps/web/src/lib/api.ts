@@ -370,6 +370,9 @@ export const api = {
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
+		/** What the actor can use: integrations (level, server attached) and saved credentials. */
+		access: (id: string, workspaceId: string) =>
+			request<AgentAccessView>(`/actors/${id}/access`, { workspaceId }),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
@@ -2190,6 +2193,27 @@ export interface MessageKeychainRequest {
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
+/** What an agent can use: the one description every screen and the launch prompt share. */
+export interface AgentAccessView {
+	integrations: Array<{
+		integration_id: string
+		provider: string
+		name: string
+		access: 'none' | 'read' | 'write' | 'read_write'
+		source: 'grant' | 'default'
+		default_access: 'read' | 'none'
+		server_attached: boolean
+		created_by: string
+	}>
+	credentials: Array<{
+		integration_id: string
+		name: string
+		kind: 'api_key' | 'login'
+		has_access: boolean
+		created_by: string
+	}>
+}
+
 export interface MessageKeychainAccessRequest {
 	session_id: string
 	integration_id: string

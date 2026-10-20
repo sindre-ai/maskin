@@ -36,6 +36,7 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -1444,47 +1445,15 @@ app.openapi(keychainCredentialsRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
 	}
 
-	const rows = await db
-		.select({
-			id: integrations.id,
-			name: integrations.displayName,
-			mode: integrations.providerMode,
-		})
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.workspaceId, session.workspaceId),
-				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
-				eq(integrations.status, 'active'),
-			),
-		)
-		.orderBy(asc(integrations.createdAt))
-	const granted = new Set(
-		(
-			await db
-				.select({ integrationId: agentGrants.integrationId })
-				.from(agentGrants)
-				.where(
-					and(
-						eq(agentGrants.workspaceId, session.workspaceId),
-						eq(agentGrants.actorId, session.actorId),
-					),
-				)
-		).map((g) => g.integrationId),
-	)
+	// The same view the agent page and get_actor read, so the lists cannot disagree.
+	const { credentials } = await describeAgentAccess(db, session.workspaceId, session.actorId)
 	return c.json(
 		{
-			credentials: rows.flatMap((r) =>
-				r.name
-					? [
-							{
-								name: r.name,
-								kind: r.mode === 'byo_login' ? ('login' as const) : ('api_key' as const),
-								has_access: granted.has(r.id),
-							},
-						]
-					: [],
-			),
+			credentials: credentials.map((cr) => ({
+				name: cr.name,
+				kind: cr.kind,
+				has_access: cr.has_access,
+			})),
 		},
 		200,
 	)

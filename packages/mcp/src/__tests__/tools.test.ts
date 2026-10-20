@@ -91,6 +91,7 @@ const ALL_TOOL_NAMES = [
 	'request_keychain_credential',
 	'list_keychain_credentials',
 	'request_keychain_access',
+	'update_integration_access',
 	'disconnect_integration',
 	'list_extensions',
 	'create_extension',
@@ -1463,6 +1464,7 @@ describe('workspace_id optional on most tools', () => {
 		'request_keychain_credential',
 		'list_keychain_credentials',
 		'request_keychain_access',
+		'update_integration_access',
 		'disconnect_integration',
 		'get_actor',
 	]

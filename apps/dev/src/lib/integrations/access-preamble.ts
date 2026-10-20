@@ -1,17 +1,18 @@
+import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
 import type { ActorIntegrationAccess, AgentAccess } from './agent-access'
 import { getProvider } from './registry'
 
 const LEVEL_TEXT: Record<AgentAccess, string> = {
-	read_write: 'read & write',
-	read: 'read-only (write tools are refused)',
-	write: 'write-only (read tools are refused)',
-	none: 'no access',
+	read_write: `${AGENT_ACCESS_LABELS.read_write} (${AGENT_ACCESS_EFFECT.read_write})`,
+	read: `${AGENT_ACCESS_LABELS.read} (${AGENT_ACCESS_EFFECT.read})`,
+	write: `${AGENT_ACCESS_LABELS.write} (${AGENT_ACCESS_EFFECT.write})`,
+	none: AGENT_ACCESS_LABELS.none,
 }
 
 // Strongest first, so a mixed provider lists its best level first.
 const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'write', 'none']
 
-function providerLabel(provider: string): string {
+export function providerLabel(provider: string): string {
 	try {
 		return getProvider(provider)?.config.displayName ?? provider
 	} catch {

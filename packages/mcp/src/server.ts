@@ -3880,6 +3880,24 @@ export function createMcpServer(config: McpConfig) {
 					setupApiCaller(config),
 				)
 				withUrl = { ...withUrl, setup }
+				// What this agent can use: the same description the Integrations, Keychain and agent
+				// pages and its launch prompt read, so it cannot differ from any of them.
+				if (wsId) {
+					try {
+						const access = await apiCall(
+							config,
+							'GET',
+							`/api/actors/${result.id}/access`,
+							undefined,
+							{
+								workspaceId: wsId,
+							},
+						)
+						withUrl = { ...withUrl, access }
+					} catch {
+						// Not every caller may see it; the rest of the actor is still worth returning.
+					}
+				}
 			}
 
 			const heroCard: HeroCardPayload = {
@@ -6679,6 +6697,65 @@ export function createMcpServer(config: McpConfig) {
 						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
 					},
 				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_integration_access',
+		{
+			description: tools.update_integration_access.description,
+			inputSchema: tools.update_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const toolMeta = meta(
+				'update_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const opts = { workspaceId: args.workspace_id }
+			const applied: string[] = []
+			const failed: string[] = []
+			const run = async (label: string, call: () => Promise<unknown>) => {
+				try {
+					await call()
+					applied.push(label)
+				} catch (err) {
+					failed.push(`${label}: ${err instanceof Error ? err.message : 'failed'}`)
+				}
+			}
+			if (args.default_agent_access) {
+				await run(`default → ${args.default_agent_access}`, () =>
+					apiCall(
+						config,
+						'PUT',
+						`/api/integrations/${args.integration_id}/default-access`,
+						{ defaultAgentAccess: args.default_agent_access },
+						opts,
+					),
+				)
+			}
+			for (const entry of args.agent_access ?? []) {
+				const path = `/api/integrations/${args.integration_id}/grants/${entry.agent_id}`
+				await run(`${entry.agent_id} → ${entry.access}`, () =>
+					entry.access === 'default'
+						? apiCall(config, 'DELETE', path, undefined, opts)
+						: apiCall(config, 'PUT', path, { access: entry.access }, opts),
+				)
+			}
+			const text = [
+				applied.length ? `Applied: ${applied.join('; ')}.` : 'Nothing was applied.',
+				failed.length ? `Failed: ${failed.join('; ')}.` : '',
+				'Applies to sessions started after this.',
+			]
+				.filter(Boolean)
+				.join(' ')
+			return {
+				_meta: toolMeta,
+				...(failed.length && !applied.length ? { isError: true } : {}),
+				content: [{ type: 'text' as const, text }],
 			}
 		},
 	)

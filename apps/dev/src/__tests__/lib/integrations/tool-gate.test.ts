@@ -93,7 +93,7 @@ describe('refusal messages', () => {
 			access: 'read',
 		})
 		expect(msg).toContain('slack_send_message needs write access to Slack')
-		expect(msg).toContain('read-only access')
+		expect(msg).toContain('"Read"')
 		expect(msg).toContain('do not retry')
 		expect(msg).toContain('Settings → Integrations')
 	})
@@ -234,9 +234,9 @@ describe('buildAccessPreamble', () => {
 			row('gmail', 'none'),
 		])
 		expect(text).toContain('## Integration access')
-		expect(text).toMatch(/- slack: read-only/i)
-		expect(text).toMatch(/- linear: read & write/i)
-		expect(text).toMatch(/- gmail: no access/i)
+		expect(text).toContain('- Slack: Read (read tools only')
+		expect(text).toMatch(/- linear: Read & write/i)
+		expect(text).toMatch(/- gmail: No access/i)
 		expect(text).toContain('do not retry')
 		expect(text.endsWith('\n\n')).toBe(true)
 	})

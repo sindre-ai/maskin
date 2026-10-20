@@ -17,14 +17,9 @@ import type { AgentGrant, AgentGrantAccess, IntegrationResponse } from '@/lib/ap
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { ChevronRight, X } from 'lucide-react'
 import { useState } from 'react'
-
-const ACCESS_LABEL: Record<AgentGrantAccess, string> = {
-	read: 'Read',
-	write: 'Write',
-	read_write: 'Read & write',
-}
 
 const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'write']
 
@@ -119,8 +114,8 @@ export function AgentAccess({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="read">Read</SelectItem>
-								<SelectItem value="none">No access</SelectItem>
+								<SelectItem value="read">{AGENT_ACCESS_LABELS.read}</SelectItem>
+								<SelectItem value="none">{AGENT_ACCESS_LABELS.none}</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -148,7 +143,7 @@ export function AgentAccess({
 									<SelectContent>
 										{ACCESS_ORDER.map((a) => (
 											<SelectItem key={a} value={a}>
-												{ACCESS_LABEL[a]}
+												{AGENT_ACCESS_LABELS[a]}
 											</SelectItem>
 										))}
 									</SelectContent>

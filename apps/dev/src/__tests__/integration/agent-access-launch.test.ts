@@ -75,8 +75,8 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 		const writerPrompt = await promptFor(s, s.writer.id)
 
 		expect(readerPrompt).toContain('## Integration access')
-		expect(readerPrompt).toMatch(/- Slack: read-only/)
-		expect(writerPrompt).toMatch(/- Slack: read & write/)
+		expect(readerPrompt).toContain('- Slack: Read (read tools only')
+		expect(writerPrompt).toMatch(/- Slack: Read & write/)
 		// The agent's own prompt and the access block both survive.
 		expect(readerPrompt).toContain('Reader agent')
 		expect(readerPrompt.indexOf('Reader agent')).toBeLessThan(
@@ -90,9 +90,9 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 			.update(integrations)
 			.set({ defaultAgentAccess: 'none' })
 			.where(eq(integrations.id, s.slack.id))
-		expect(await promptFor(s, s.reader.id)).toMatch(/- Slack: no access/)
+		expect(await promptFor(s, s.reader.id)).toMatch(/- Slack: No access/)
 		// The explicit grant still wins over a restricted default.
-		expect(await promptFor(s, s.writer.id)).toMatch(/- Slack: read & write/)
+		expect(await promptFor(s, s.writer.id)).toMatch(/- Slack: Read & write/)
 	})
 
 	it('adds nothing for a workspace with no connected integration', async () => {

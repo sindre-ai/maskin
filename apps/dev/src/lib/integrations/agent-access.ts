@@ -82,6 +82,38 @@ export interface ActorIntegrationAccess {
 	providerMode: IntegrationProviderMode
 	displayName: string | null
 	access: AgentAccess
+	/** Where the access comes from: the agent's own grant, or the integration's default. */
+	source: 'grant' | 'default'
+	defaultAgentAccess: IntegrationDefaultAccess
+	status: string
+	/** Who connected or saved it: with workspace admins, the people who may change access. */
+	createdBy: string
+	/** False when the integration is switched off for agent sessions. */
+	exposed: boolean
+}
+
+/**
+ * Whether an integration's MCP server is attached to an agent's session. The one rule:
+ * session launch uses it to attach, and every screen and tool that says "attached" uses it
+ * to report, so they cannot disagree. `hasServer` is whether the provider has a server to
+ * attach at all (a provider with only an API, like Skjald, has none).
+ */
+export function attachesServer(
+	row: {
+		providerMode: IntegrationProviderMode
+		status: string
+		exposed: boolean
+		access: AgentAccess
+	},
+	hasServer: boolean,
+): boolean {
+	return (
+		hasServer &&
+		row.providerMode === 'registered' &&
+		row.status === 'active' &&
+		row.exposed &&
+		row.access !== 'none'
+	)
 }
 
 /**
@@ -100,6 +132,9 @@ export async function listAgentAccess(
 			providerMode: integrations.providerMode,
 			displayName: integrations.displayName,
 			defaultAgentAccess: integrations.defaultAgentAccess,
+			status: integrations.status,
+			createdBy: integrations.createdBy,
+			config: integrations.config,
 			grant: agentGrants.access,
 		})
 		.from(integrations)
@@ -120,6 +155,13 @@ export async function listAgentAccess(
 		providerMode: r.providerMode,
 		displayName: r.displayName,
 		access: effectiveAccess(r, r.grant),
+		source: r.grant || isKeychainMode(r.providerMode) ? ('grant' as const) : ('default' as const),
+		defaultAgentAccess: r.defaultAgentAccess,
+		status: r.status,
+		createdBy: r.createdBy,
+		exposed:
+			(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
+			false,
 	}))
 }
 

@@ -99,6 +99,7 @@ import {
 import { buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
+	attachesServer,
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
@@ -2613,7 +2614,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					},
 					null,
 				)
-			const autoInjectServer = mcp?.server && access !== 'none' ? mcp.server : null
+			const autoInjectServer =
+				mcp?.server &&
+				attachesServer(
+					{ providerMode: 'registered', status: 'active', exposed: true, access },
+					true,
+				)
+					? mcp.server
+					: null
 
 			// LinkedIn has one server per connected identity and no single spec: attach each.
 			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {

@@ -288,6 +288,14 @@ function useGrantMutation<V>(
 	})
 }
 
+/** What one agent can use. Refreshes with the integration list, so it never lags a change. */
+export function useAgentAccess(workspaceId: string, actorId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.agentAccess(workspaceId, actorId),
+		queryFn: () => api.actors.access(actorId, workspaceId),
+	})
+}
+
 export function useSetAgentGrant(workspaceId: string, integrationId: string) {
 	return useGrantMutation(
 		workspaceId,

@@ -1,4 +1,5 @@
 import type { Database } from '@maskin/db'
+import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { recordEvent } from '../events/record-event'
 import { logger } from '../logger'
@@ -25,12 +26,8 @@ export interface ToolGateConfig {
 	access: AgentAccess
 }
 
-const ACCESS_WORDS: Record<AgentAccess, string> = {
-	none: 'no access',
-	read: 'read-only access',
-	write: 'write-only access',
-	read_write: 'read & write access',
-}
+/** The level as the UI names it ("Read", "Read & write"), so a refusal matches what the person sees. */
+const levelName = (access: AgentAccess) => AGENT_ACCESS_LABELS[access]
 
 export function allows(access: AgentAccess, kind: ToolKind): boolean {
 	return kind === 'read' ? canRead(access) : canWrite(access)
@@ -48,7 +45,7 @@ export function accessDeniedMessage(input: {
 	const have =
 		access === 'none'
 			? `You have no access to ${providerLabel}.`
-			: `You have ${ACCESS_WORDS[access]} to ${providerLabel}.`
+			: `Your access to ${providerLabel} is "${levelName(access)}" (${AGENT_ACCESS_EFFECT[access]}).`
 	return [
 		`Access denied: ${toolName} needs ${need} access to ${providerLabel}. ${have}`,
 		'This is a permission set by a person, not an outage, so do not retry and do not look for a workaround.',
@@ -65,7 +62,7 @@ export function unavailableNote(
 	const need = kind === 'read' ? 'read' : 'write'
 	return access === 'none'
 		? `[Unavailable: you have no access to ${providerLabel}.]`
-		: `[Unavailable: needs ${need} access to ${providerLabel}; you have ${ACCESS_WORDS[access]}.]`
+		: `[Unavailable: needs ${need} access to ${providerLabel}; your access is "${levelName(access)}".]`
 }
 
 async function recordDenial(cfg: ToolGateConfig, toolName: string, kind: ToolKind): Promise<void> {

@@ -9,6 +9,27 @@ last_updated: 2026-10-20
 
 A person decides what each agent may do with each connected integration and each saved credential. Everything except the Maskin MCP is covered.
 
+## One source of truth, shown the same everywhere
+
+Access lives in `agent_grants` plus `integrations.default_agent_access`, resolved by `lib/integrations/agent-access.ts`. Every screen and tool reads that, never its own copy, and a change made anywhere shows up everywhere:
+
+| Surface | Reads | Changes through |
+|---------|-------|-----------------|
+| Integrations page | `GET /api/integrations` (`defaultAgentAccess`, `agentGrants`) | the grants and default-access routes |
+| Keychain page | the same list | `PUT /:id/grants` |
+| Agent page (Access) | `GET /api/actors/:id/access` | the same grants routes |
+| `get_actor` (`access`) | `GET /api/actors/:id/access` | `update_integration_access` |
+| `list_integrations` | `GET /api/integrations` | `update_integration_access` |
+| `list_keychain_credentials` | `describeAgentAccess` | `request_keychain_access` (a person allows) |
+| Launch prompt and attached servers | `listAgentAccess` / `attachesServer` | (never written: read at launch) |
+
+Rules that keep it that way:
+
+- Add a new place that shows or changes access by reading `describeAgentAccess` / the grants routes, not by recomputing it. "Is the MCP server attached" is `attachesServer()`, used by launch and by every report of it.
+- Wording comes from `@maskin/shared` (`AGENT_ACCESS_LABELS`, `AGENT_ACCESS_EFFECT`): "Read", "Write", "Read & write", "No access".
+- Web: the per-agent access query is nested under `queryKeys.integrations.all(workspaceId)`, and the SSE handler invalidates that key on every `integration` event, so an open page refreshes when access changes elsewhere.
+- `apps/dev/src/__tests__/integration/access-alignment.test.ts` changes access through every entry point and asserts the list, the agent view, the session list and a real launch agree after each. Extend it when you add an entry point.
+
 ## The model
 
 - `agent_grants` holds one row per `(integration, agent)` with `access` = `read`, `write` or `read_write`. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
