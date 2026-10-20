@@ -5802,7 +5802,7 @@ ${HUMAN_MESSAGE_STYLE}`
 		// the logs only reports the last segment. stopSession()'s provisional write
 		// carries no usage: the genuine report that follows reads the same logs, so
 		// adding on both would count one envelope twice. The genuine report adds.
-		const usageColumns =
+		const segmentUsage =
 			usage && !stoppedByUser
 				? {
 						totalCostUsd:
@@ -5831,6 +5831,11 @@ ${HUMAN_MESSAGE_STYLE}`
 								: undefined,
 					}
 				: null
+
+		// Drizzle rejects an update with nothing to set, so an envelope without any
+		// usage figure leaves this null rather than an object of undefined fields.
+		const usageColumns =
+			segmentUsage && Object.values(segmentUsage).some((v) => v !== undefined) ? segmentUsage : null
 
 		// A thrown DB error here must not permanently strand the session: giving
 		// up immediately would skip the audit event, the terminal system log
