@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KmsDecryptError, type KmsProvider, MasterKeyProvider } from '@maskin/auth/kms'
-import { type Integration, agentGrants, events, integrations } from '@maskin/db/schema'
+import { events, type Integration, agentGrants, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 

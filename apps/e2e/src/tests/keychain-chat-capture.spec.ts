@@ -266,12 +266,11 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 			})
 			const rows = (await list.json()) as Array<{
 				displayName: string | null
-				scopeGrants: Array<{ kind: string; actorId?: string }>
+				agentGrants: Array<{ actorId: string; access: string }>
 			}>
-			// The pasting person keeps their own grant; the ticked agent is added.
-			const grants = rows.find((r) => r.displayName === name)?.scopeGrants
-			expect(grants).toHaveLength(2)
-			expect(grants).toContainEqual({ kind: 'actor', actorId: agent.id })
+			// Only the ticked agent holds it: a person needs no grant of their own.
+			const grants = rows.find((r) => r.displayName === name)?.agentGrants
+			expect(grants).toEqual([{ actorId: agent.id, access: 'read_write' }])
 			const overflow = await page.evaluate(
 				() => document.documentElement.scrollWidth > window.innerWidth,
 			)
