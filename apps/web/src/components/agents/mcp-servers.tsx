@@ -16,11 +16,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useIntegrations, useLinkedInIdentities } from '@/hooks/use-integrations'
-import type { IntegrationResponse } from '@/lib/api'
-import { useWorkspace } from '@/lib/workspace-context'
-import { githubOwnerLoginToEnvKey } from '@maskin/shared'
-import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
+import { FileJson, Globe, Pencil, Plus, Terminal, Trash2 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
 interface McpServer {
@@ -42,47 +38,6 @@ interface McpServersProps {
 	readOnly?: boolean
 }
 
-const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
-	linear: {
-		type: 'http',
-		url: 'https://mcp.linear.app/mcp',
-		headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' },
-	},
-	slack: {
-		type: 'http',
-		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
-		headers: {
-			Authorization: 'Bearer ${MASKIN_API_KEY}',
-			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-		},
-	},
-	gmail: {
-		type: 'http',
-		url: 'https://gmailmcp.googleapis.com/mcp/v1',
-		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
-	},
-	'google-calendar': {
-		type: 'http',
-		url: 'https://calendarmcp.googleapis.com/mcp/v1',
-		headers: { Authorization: 'Bearer ${GOOGLE_CALENDAR_TOKEN}' },
-	},
-	posthog: {
-		type: 'http',
-		url: 'https://mcp.posthog.com/mcp',
-		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
-	},
-	resend: {
-		type: 'http',
-		url: 'https://mcp.resend.com/mcp',
-		headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
-	},
-	ubersuggest: {
-		type: 'http',
-		url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
-		headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
-	},
-}
-
 const PLATFORM_MCP_PRESET: McpServer = {
 	type: 'http',
 	url: '${MASKIN_API_URL}/mcp',
@@ -99,22 +54,6 @@ const BROWSER_MCP_PRESET: McpServer = {
 	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
 }
 
-/**
- * P3-K · Build the per-identity LinkedIn MCP server template. The URL points at
- * `/api/integrations/linkedin-unipile/mcp/${instanceSlug}` so only this one
- * identity's tools land on the agent — no shared endpoint, no filter param.
- */
-function buildLinkedInIdentityPreset(instanceSlug: string): McpServer {
-	return {
-		type: 'http',
-		url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${instanceSlug}`,
-		headers: {
-			Authorization: 'Bearer ${MASKIN_API_KEY}',
-			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-		},
-	}
-}
-
 function isHttpServer(server: McpServer): boolean {
 	return !!server.url
 }
@@ -126,9 +65,6 @@ function parseServers(tools: Record<string, unknown> | null): McpServersMap {
 }
 
 export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProps) {
-	const { workspaceId } = useWorkspace()
-	const { data: integrations } = useIntegrations(workspaceId)
-	const { data: linkedinIdentities } = useLinkedInIdentities(workspaceId)
 	const servers = parseServers(tools)
 	const serverEntries = Object.entries(servers)
 
@@ -168,14 +104,6 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		[servers, onUpdate],
 	)
 
-	const handleQuickAdd = useCallback(
-		(name: string, preset: McpServer) => {
-			const updated = { ...servers, [name]: preset }
-			onUpdate({ mcpServers: updated })
-		},
-		[servers, onUpdate],
-	)
-
 	const handleAddMaskin = useCallback(() => {
 		const updated = { ...servers, maskin: PLATFORM_MCP_PRESET }
 		onUpdate({ mcpServers: updated })
@@ -185,61 +113,6 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		const updated = { ...servers, playwright: BROWSER_MCP_PRESET }
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
-
-	// Active GitHub installations not yet added to this agent's MCP servers
-	const unaddedGithubInstallations = (integrations ?? []).filter(
-		(i: IntegrationResponse) =>
-			i.provider === 'github' &&
-			i.status === 'active' &&
-			typeof i.config.owner_login === 'string' &&
-			!servers[`github-${(i.config.owner_login as string).toLowerCase()}`],
-	)
-	const showAddGithub = unaddedGithubInstallations.length > 0
-
-	const handleAddGithub = useCallback(() => {
-		const updated = { ...servers }
-		for (const i of unaddedGithubInstallations) {
-			const ownerLogin = i.config.owner_login as string
-			updated[`github-${ownerLogin.toLowerCase()}`] = {
-				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: {
-					GITHUB_PERSONAL_ACCESS_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}`,
-				},
-			}
-		}
-		onUpdate({ mcpServers: updated })
-	}, [servers, unaddedGithubInstallations, onUpdate])
-
-	// P3-K · one Quick Add button per connected LinkedIn identity (personal
-	// profile plus each admined company page). Sorted alphabetically by display
-	// name for determinism. A button is only rendered when its identity is NOT
-	// already in `mcpServers` — matches how the other Quick Adds hide once
-	// their entry is present.
-	const unaddedLinkedInIdentities = (linkedinIdentities ?? [])
-		.filter((identity) => !servers[identity.instanceSlug])
-		.slice()
-		.sort((a, b) => a.displayName.localeCompare(b.displayName))
-
-	const handleQuickAddLinkedIn = useCallback(
-		(instanceSlug: string) => {
-			handleQuickAdd(instanceSlug, buildLinkedInIdentityPreset(instanceSlug))
-		},
-		[handleQuickAdd],
-	)
-
-	// Quick-add items for static-preset providers (GitHub and LinkedIn handled
-	// separately above — GitHub fans out per installation, LinkedIn per identity).
-	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =
-		[]
-	for (const i of integrations ?? []) {
-		if (i.status !== 'active' || i.provider === 'github' || i.provider === 'linkedin-unipile')
-			continue
-		const preset = INTEGRATION_MCP_PRESETS[i.provider]
-		if (!preset || servers[i.provider]) continue
-		availableQuickAdds.push({ id: i.id, name: i.provider, label: i.provider, preset })
-	}
 
 	const hasMaskin = !!servers.maskin
 	const hasBrowser = !!servers.playwright
@@ -308,34 +181,6 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 								<FileJson className="h-3.5 w-3.5 mr-1" />
 								Import .mcp.json
 							</Button>
-							{availableQuickAdds.map(({ id, name, label, preset }) => (
-								<Button
-									key={id}
-									size="sm"
-									variant="outline"
-									onClick={() => handleQuickAdd(name, preset)}
-								>
-									<Zap className="h-3.5 w-3.5 mr-1" />
-									Add {label}
-								</Button>
-							))}
-							{unaddedLinkedInIdentities.map((identity) => (
-								<Button
-									key={identity.instanceSlug}
-									size="sm"
-									variant="outline"
-									onClick={() => handleQuickAddLinkedIn(identity.instanceSlug)}
-								>
-									<Zap className="h-3.5 w-3.5 mr-1" />
-									Add {identity.displayName}
-								</Button>
-							))}
-							{showAddGithub && (
-								<Button size="sm" variant="outline" onClick={handleAddGithub}>
-									<Zap className="h-3.5 w-3.5 mr-1" />
-									Add github
-								</Button>
-							)}
 						</div>
 					)}
 

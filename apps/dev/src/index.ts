@@ -9,7 +9,11 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
+import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { RotateDeksJob } from './jobs/rotate-deks'
+import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -19,6 +23,7 @@ import {
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
+import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
@@ -61,6 +66,10 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
+// first credential read.
+assertKeychainKeyConfig()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -257,6 +266,29 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Keychain: flips chat-captured keys from pending_undo to active once the undo
+// window has passed. One UPDATE per minute, no key use.
+const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
+keychainUndoSweeperJob.start()
+logger.info('Keychain undo sweeper started')
+
+// Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
+// unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
+const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
+upgradeLegacyCredentialsJob.start()
+logger.info('Legacy credential upgrade job scheduled')
+
+// Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
+// under a fresh DEK and the current master key (the lazy half of master key rotation).
+const rotateDeksJob = new RotateDeksJob(db)
+rotateDeksJob.start()
+logger.info('DEK rotation job scheduled')
+
+// Keychain: daily audit-chain snapshot into credential_chain_snapshots, plus the verifier.
+const chainSnapshotJob = new ChainSnapshotJob(db)
+chainSnapshotJob.start()
+logger.info('Chain snapshot job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -394,6 +426,10 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	keychainUndoSweeperJob.stop()
+	upgradeLegacyCredentialsJob.stop()
+	rotateDeksJob.stop()
+	chainSnapshotJob.stop()
 	notificationPush.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()

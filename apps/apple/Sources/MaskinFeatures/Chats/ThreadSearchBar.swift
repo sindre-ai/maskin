@@ -29,7 +29,7 @@ struct ThreadSearchBar: View {
 				.foregroundStyle(MaskinColor.ink)
 				.focused($focused)
 				.submitLabel(.search)
-				.onSubmit { onStep(-1) }
+				.onSubmit { onStep(-1) }  // Return steps to the next older match
 				.autocorrectionDisabled()
 				.frame(minHeight: Self.buttonSize)
 			if !text.isEmpty {

@@ -15,6 +15,7 @@ const { default: marketplaceLoopsRoutes } = await import('../../routes/marketpla
 const { default: integrationsRoutes } = await import('../../routes/integrations')
 const { default: skjaldConnectRoutes } = await import('../../routes/integrations-skjald-connect')
 const { default: slackMcpRoutes } = await import('../../routes/integrations-slack-mcp')
+const { default: gatewayRoutes } = await import('../../routes/integrations-gateway')
 const { default: googleMeetMcpRoutes } = await import('../../routes/integrations-google-meet-mcp')
 const { default: linkedinMcpRoutes } = await import(
 	'../../routes/integrations-linkedin-unipile-mcp'
@@ -55,6 +56,7 @@ function createApp() {
 	app.route('/api/integrations/google-meet/mcp', googleMeetMcpRoutes as never)
 	app.route('/api/integrations', integrationsRoutes as never)
 	app.route('/api/integrations/slack/mcp', slackMcpRoutes as never)
+	app.route('/api/integrations', gatewayRoutes as never)
 	app.route('/api/admin/linkedin-unipile', adminLinkedinRoutes as never)
 	app.route('/api/claude-oauth', claudeOauthRoutes as never)
 	app.route('/api/mini-apps', miniAppRegenRoutes as never)
@@ -158,6 +160,8 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 			['linkedin mcp by identity', 'POST', `${li}/mcp/acme`, mcp],
 			['slack mcp', 'POST', `${ig}/slack/mcp`, mcp],
 			['google meet mcp', 'POST', `${ig}/google-meet/mcp`, mcp],
+			['mcp gateway', 'POST', `${ig}/linear/gateway`, mcp],
+			['mcp gateway end', 'DELETE', `${ig}/linear/gateway`, undefined],
 			['linkedin refresh', 'POST', '/api/admin/linkedin-unipile/refresh-identities', undefined],
 			['claude oauth disconnect', 'DELETE', '/api/claude-oauth', undefined],
 			['claude nickname', 'PATCH', '/api/claude-oauth/nickname', nickname],

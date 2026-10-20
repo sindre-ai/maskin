@@ -177,7 +177,8 @@ public final class ConversationsStore {
 				conversations: ConversationGrouping.filter(conversations, agentID: agentFilterID), flowRooms: rooms,
 				archived: archivedConversations, options: displayOptions,
 				chip: displayOptions.showsFilterChips ? chip : .all, query: query, currentActorID: currentActorID,
-				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs, now: now))
+				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs,
+				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs, now: now))
 	}
 
 	/// Agents running right now, from the workspace actor list.
@@ -190,10 +191,10 @@ public final class ConversationsStore {
 	public func status(
 		for conversation: ConversationSummary, draft: String? = nil, tick: ConversationRowStatus.Tick? = nil
 	) -> ConversationRowStatus {
-		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }.count
+		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }
 		return ConversationRowStatus.make(
 			conversation: conversation, draft: draft, typing: typingConversationIDs.contains(conversation.id),
-			workingAgents: working, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
+			workingAgents: working.count, workingNames: working.map { TeamLayout.firstName($0.name) }, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no

@@ -100,7 +100,7 @@ describe('SessionManager.markRemoteSessionComplete — usage across a resume (In
 			// stopSession()'s provisional write, then the agent-server's real report.
 			await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
 			const provisional = await readRow(session.id)
-			expect(provisional?.status).toBe('failed')
+			expect(provisional?.status).toBe('user_stopped')
 			expect(provisional?.inputTokens).toBe(FIRST_SEGMENT_TOTALS.inputTokens)
 			expect(provisional?.totalCostUsd).toBe(FIRST_SEGMENT_TOTALS.totalCostUsd)
 

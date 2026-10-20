@@ -5,11 +5,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * For You — the v4 feed (`Maskin For You - Feed v4`).
  *
- * One scrolling column: today's brief, then a card per unread thread. Cards
+ * One scrolling column: today's brief, then a card per curated item. Cards
  * view expands them all, List view collapses them to rows, and an option taken
  * posts the reply and leaves a green receipt in the card's place.
  *
- * The unread feed is mocked so the surface is deterministic; display settings
+ * The curated For You list is mocked so the surface is deterministic; display settings
  * and the briefing hit the real backend.
  */
 
@@ -126,13 +126,30 @@ function feed(workspaceId: string) {
 	]
 }
 
+// The page reads the Chief of Staff's curated list; each fixture card is one
+// of its items, in the order given.
+function curated(items: ReturnType<typeof feed>) {
+	return items.map((item, index) => ({
+		notification_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+		rank: index + 1,
+		headline: item.latest_mention.content.split('\n')[0],
+		rationale: null,
+		created_at: item.latest_activity_at,
+		entity_type: item.entity_type,
+		entity_id: item.entity_id,
+		session_id: null,
+		object: item.object,
+		latest_mention: item.latest_mention,
+	}))
+}
+
 async function mockFeed(page: Page, workspaceId: string, items = feed(workspaceId)) {
-	await page.route('**/api/subscriptions/unread*', async (route) => {
+	await page.route('**/api/for-you*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({ items }),
+			body: JSON.stringify({ items: curated(items) }),
 		})
 	})
 }
@@ -206,7 +223,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 })
 
 test.describe('For You v4 — cards, options and the receipt', () => {
-	test('renders one standalone card per unread thread', async ({ page, account }) => {
+	test('renders one standalone card per curated item', async ({ page, account }) => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
@@ -219,7 +236,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		// The reply marks the thread read, so the server drops it from the unread
 		// feed straight away — the receipt has to survive that refetch.
 		let dropped = false
-		await page.route('**/api/subscriptions/unread*', async (route) => {
+		await page.route('**/api/for-you*', async (route) => {
 			if (route.request().method() !== 'GET') return route.fallback()
 			const items = feed(account.workspaceId).filter(
 				(entry) => !dropped || entry.entity_id !== 'task-decision',
@@ -227,7 +244,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ items }),
+				body: JSON.stringify({ items: curated(items) }),
 			})
 		})
 		let posted: { entity_id?: string; content?: string } | null = null
@@ -289,7 +306,8 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await page.getByRole('button', { name: 'Feed actions' }).click()
-		await expect(page.getByRole('menuitem', { name: /Dismiss all FYIs/ })).toBeVisible()
+		// There are no FYIs on a curated list, so there is nothing to bulk-dismiss as one.
+		await expect(page.getByRole('menuitem', { name: /Dismiss all FYIs/ })).toHaveCount(0)
 		await expect(page.getByRole('menuitem', { name: /Take every suggested option/ })).toBeVisible()
 		await expect(page.getByRole('menuitem', { name: /Dismiss all/ }).last()).toBeVisible()
 	})

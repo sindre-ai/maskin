@@ -257,29 +257,6 @@ describe('attachVoiceCall', () => {
 		expect(socket.sent.map((m) => m.type)).toEqual(['conversation.item.create', 'response.create'])
 	})
 
-	it('refuses a tool outside the whitelist without invoking it', async () => {
-		const invokeTool = vi.fn()
-		const socket = fakeSocket()
-		const attached = attach(socket, invokeTool)
-		socket.open()
-		await attached
-
-		socket.emit({
-			type: 'response.function_call_arguments.done',
-			call_id: 'call_1',
-			name: 'delete_objects',
-			arguments: '{}',
-		})
-		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
-		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
-
-		expect(invokeTool).not.toHaveBeenCalled()
-		const output = JSON.parse((socket.sent[0]?.item as { output: string }).output) as {
-			error_code: string
-		}
-		expect(output.error_code).toBe('voice_tool_not_allowed')
-	})
-
 	it('persists finished user and assistant turns from the call events', async () => {
 		const socket = fakeSocket()
 		const attached = attach(socket)

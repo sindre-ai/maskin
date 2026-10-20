@@ -23,12 +23,13 @@ import {
 	PauseCircle,
 	Play,
 	RotateCcw,
+	XCircle,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { SessionDetailPanel } from './session-detail-panel'
 
-type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'failed'
+type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'stopped' | 'failed'
 
 /** Sessions listed before the section collapses behind "Show all" (mockup 2427). */
 const COLLAPSED_SESSIONS = 5
@@ -72,6 +73,13 @@ const STATE_META: Record<SessionState, StateMeta> = {
 		iconFg: 'text-status-completed-text',
 		dot: 'bg-status-completed-text',
 	},
+	stopped: {
+		label: 'Stopped',
+		Icon: XCircle,
+		iconBg: 'bg-muted',
+		iconFg: 'text-muted-foreground',
+		dot: 'bg-muted-foreground',
+	},
 	failed: {
 		label: 'Failed',
 		Icon: AlertCircle,
@@ -85,6 +93,7 @@ const RUNNING_STATUSES = new Set(['running', 'starting', 'pending', 'queued', 's
 const WAITING_STATUSES = new Set(['waiting_for_input'])
 const PAUSED_STATUSES = new Set(['paused'])
 const FAILED_STATUSES = new Set(['failed', 'timeout'])
+const STOPPED_STATUSES = new Set(['user_stopped'])
 const COMPLETED_STATUSES = new Set(['completed'])
 
 function deriveState(status: string): SessionState {
@@ -92,6 +101,7 @@ function deriveState(status: string): SessionState {
 	if (WAITING_STATUSES.has(status)) return 'waiting'
 	if (PAUSED_STATUSES.has(status)) return 'paused'
 	if (FAILED_STATUSES.has(status)) return 'failed'
+	if (STOPPED_STATUSES.has(status)) return 'stopped'
 	if (COMPLETED_STATUSES.has(status)) return 'completed'
 	return 'waiting'
 }
@@ -129,13 +139,15 @@ function derivePhases(session: SessionResponse, state: SessionState): Phase[] {
 		phases.push({ label: 'NOW', text: now, dot: meta.dot.replace('bg-', 'bg-') })
 	}
 
-	if (state === 'completed' || state === 'failed' || state === 'paused') {
+	if (state === 'completed' || state === 'failed' || state === 'paused' || state === 'stopped') {
 		const end =
 			state === 'failed'
 				? 'Ended with an error'
 				: state === 'paused'
 					? 'Paused — will resume on the next tick'
-					: 'Finished'
+					: state === 'stopped'
+						? 'Stopped on request'
+						: 'Finished'
 		phases.push({ label: 'END', text: end, dot: meta.dot })
 	}
 
