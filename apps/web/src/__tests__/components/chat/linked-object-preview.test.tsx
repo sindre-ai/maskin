@@ -107,18 +107,11 @@ describe('LinkedObjectPreviews', () => {
 		}
 	})
 
-	it('folds a long text until Read all is pressed', async () => {
-		useObject.mockReturnValue({ data: objectRow({ content: 'word '.repeat(120) }) })
-		renderCard()
-		await userEvent.click(screen.getByRole('button', { name: 'Read all' }))
-		expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
-	})
-
-	it('is a preview only, with no status menu or Edit, when it has no chat to tell', () => {
+	it('is a preview only, with no status menu or next-phase button, when it has no chat to tell', () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard()
 		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 	})
 
 	it('lists the workspace statuses for the type and moves the object to the chosen one', async () => {
@@ -145,18 +138,34 @@ describe('LinkedObjectPreviews', () => {
 		expect(sendMutate).toHaveBeenCalledTimes(1)
 		const message = sendMutate.mock.calls[0][0]
 		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain('to done')
+		expect(message.content).toContain('to Done')
 		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
 	})
 
-	it('does not tell the agent when the switch is off', async () => {
+	it('offers the next phase in the workspace order as a button that moves and tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
-		await userEvent.click(screen.getByRole('switch', { name: 'Tell the agent' }))
-		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
-		expect(updateMutate).toHaveBeenCalled()
-		expect(sendMutate).not.toHaveBeenCalled()
+		await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
+		expect(updateMutate).toHaveBeenCalledWith(
+			{ id: ID, data: { status: 'done' } },
+			expect.any(Object),
+		)
+		expect(sendMutate).toHaveBeenCalledTimes(1)
+	})
+
+	it('has no next-phase button on the last status', () => {
+		useObject.mockReturnValue({ data: objectRow({ status: 'done' }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
+	})
+
+	it('puts Open in the header, above the text', () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		const open = screen.getByRole('link', { name: /Open/ })
+		const text = screen.getByText(/tillykke med fusionen/)
+		expect(open.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 
 	it('does nothing when the chosen status is the current one', async () => {

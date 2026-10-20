@@ -1,18 +1,15 @@
 import { StatusSelect } from '@/components/objects/property-selects'
 import { MarkdownContent } from '@/components/shared/markdown-content'
-import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
+import { statusLabel } from '@/lib/constants'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Pencil } from 'lucide-react'
-import { useState } from 'react'
-
-// A body this long is shown folded until the reader asks for the rest.
-const FOLD_AT = 280
+import { ArrowRight, ArrowUpRight } from 'lucide-react'
 
 interface PreviewProps {
 	workspaceId: string
@@ -29,9 +26,6 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
 	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
-	const [expanded, setExpanded] = useState(false)
-	const [editing, setEditing] = useState(false)
-	const [tellAgent, setTellAgent] = useState(true)
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -44,19 +38,20 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
-	const folded = !editing && !expanded && body.length > FOLD_AT
+	// The phase after this one in the workspace's own order, if there is one.
+	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
-	// The text goes in the message so the agent can compare it with what the task
-	// holds now before it sends anything.
+	// The agent is always told. The text goes in the message so it can compare it
+	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
 		update.mutate(
 			{ id: object.id, data: { status } },
 			{
 				onSuccess: () => {
-					if (!tellAgent || !conversationId || !agentId) return
+					if (!conversationId || !agentId) return
 					sendMessage.mutate({
-						content: `Moved "${object.title || 'Untitled'}" to ${status.replace(/_/g, ' ')}. The text as it stands:\n\n${body
+						content: `Moved "${object.title || 'Untitled'}" to ${statusLabel(status)}. The text as it stands:\n\n${body
 							.split('\n')
 							.map((line) => `> ${line}`)
 							.join('\n')}`,
@@ -82,66 +77,48 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 						variant="chip"
 					/>
 				) : null}
-			</div>
-			<div className="px-3 pt-3">
-				<p className="text-sm font-semibold leading-snug text-foreground">
-					{object.title || 'Untitled'}
-				</p>
-				<div className={cn('relative mt-2 text-[13.5px]', folded && 'max-h-32 overflow-hidden')}>
-					<MarkdownContent
-						content={body}
-						size="sm"
-						editable={editing}
-						onChange={async (value) => {
-							await update.mutateAsync({ id: object.id, data: { content: value } })
-							setEditing(false)
-						}}
-					/>
-					{folded ? (
-						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-card to-transparent" />
-					) : null}
-				</div>
-			</div>
-			<div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-2 pt-1 text-xs text-muted-foreground">
-				{body.length > FOLD_AT && !editing ? (
-					<button
-						type="button"
-						onClick={() => setExpanded((open) => !open)}
-						className="-ml-1 rounded px-1 py-1 hover:text-foreground"
-					>
-						{expanded ? 'Show less' : 'Read all'}
-					</button>
-				) : null}
-				{canAct && !editing ? (
-					<button
-						type="button"
-						onClick={() => setEditing(true)}
-						className="inline-flex items-center gap-1 rounded px-1 py-1 hover:text-foreground"
-					>
-						<Pencil size={12} aria-hidden />
-						Edit
-					</button>
-				) : null}
-				<span className="flex-1" />
-				{canAct ? (
-					<label className="inline-flex items-center gap-1.5">
-						<Switch
-							checked={tellAgent}
-							onCheckedChange={setTellAgent}
-							aria-label="Tell the agent"
-						/>
-						Tell the agent
-					</label>
-				) : null}
 				<Link
 					to="/$workspaceId/objects/$objectId"
 					params={{ workspaceId, objectId: object.id }}
-					className="inline-flex items-center gap-1 rounded px-1 py-1 hover:text-foreground"
+					className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
 				>
 					Open
 					<ArrowUpRight size={13} aria-hidden />
 				</Link>
 			</div>
+			<div className="px-3 pt-3">
+				<p className="text-sm font-semibold leading-snug text-foreground">
+					{object.title || 'Untitled'}
+				</p>
+				{/* Click the text to edit it where it stands; it saves when you click away.
+				    A very long text scrolls inside the card instead of being cut off. */}
+				<div className="mt-2 max-h-80 overflow-y-auto text-[13.5px]">
+					<MarkdownContent
+						content={body}
+						size="sm"
+						editable={canAct}
+						editorLabel="Edit the text"
+						onChange={async (value) => {
+							await update.mutateAsync({ id: object.id, data: { content: value } })
+						}}
+					/>
+				</div>
+			</div>
+			{canAct && nextStatus ? (
+				<div className="flex items-center justify-end px-3 pb-3 pt-1">
+					<Button
+						type="button"
+						size="sm"
+						disabled={update.isPending}
+						onClick={() => moveTo(nextStatus)}
+					>
+						Move to {statusLabel(nextStatus)}
+						<ArrowRight size={14} aria-hidden />
+					</Button>
+				</div>
+			) : (
+				<div className="pb-3" />
+			)}
 			{update.error ? (
 				<p role="alert" className="px-3 pb-2 text-xs text-destructive">
 					Could not save: {update.error.message}
@@ -153,9 +130,9 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 
 /**
  * Shows the objects a message links to as cards: what they say, their status
- * (changeable from the card, with the writing agent told), and an Edit for the
- * text. Works for any agent and any object type, because it reads the link, not
- * a tool call.
+ * (changeable from the card, with the writing agent told), a button for the
+ * next phase, and the text editable in place. Works for any agent and any object
+ * type, because it reads the link, not a tool call.
  */
 export function LinkedObjectPreviews({
 	workspaceId,
