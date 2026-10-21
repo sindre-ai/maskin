@@ -136,6 +136,9 @@ export interface CreateAppOptions {
 	onNodeWebSocket?: (nodeWebSocket: NodeWebSocket) => void
 }
 
+const STATIC_FILE_PATH_RE =
+	/^\/(assets|fonts)\/|\.(js|mjs|css|map|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|xml|webmanifest)$/i
+
 const OPENAPI_INFO = {
 	title: 'Maskin Dev Workspace API',
 	version: '0.1.0',
@@ -530,6 +533,15 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			}),
 		)
 		app.get('*', (c) => {
+			// A path under /assets/ or /fonts/, or one naming a static file, is a missing file
+			// rather than a client route. Answering it with index.html and a 200 lets a CDN cache
+			// HTML under a .js URL (Cloudflare caches by extension, 4h), so every browser that loads
+			// the module script gets "MIME type of text/html" and a blank page until it expires.
+			// This happens when a request for a new bundle lands before the new build is live.
+			if (STATIC_FILE_PATH_RE.test(c.req.path)) {
+				c.header('Cache-Control', 'no-store')
+				return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+			}
 			try {
 				const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
 				return c.html(html)
