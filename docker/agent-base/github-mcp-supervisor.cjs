@@ -30,7 +30,7 @@ const REQUIRED_ENV = [
 // An expiry is an isError tool result carrying GitHub's 401 / Bad credentials
 // text. A successful result that merely mentions 401 does not count.
 function isExpiryResult(message) {
-	const result = message && message.result
+	const result = message?.result
 	if (!result || result.isError !== true || !Array.isArray(result.content)) return false
 	const text = result.content
 		.map((part) => (part && typeof part.text === 'string' ? part.text : ''))
@@ -137,7 +137,7 @@ function createSupervisor(options) {
 		proc.stderr.on('data', (chunk) => errput.write(chunk))
 		proc.on('error', (err) => {
 			if (current === child) {
-				log(`child failed to start: ${err && err.code ? err.code : 'error'}`)
+				log(`child failed to start: ${err?.code ? err.code : 'error'}`)
 				finish(1)
 			}
 		})
