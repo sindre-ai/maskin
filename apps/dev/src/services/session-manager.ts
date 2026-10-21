@@ -3254,11 +3254,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
 					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
-					// Explicit grant only: a Keychain credential has no default access. Written as
-					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
-					// from those renders unqualified (known-pitfalls.md).
+					// The same rule as effectiveAccess: the agent's own grant ('none' is off), else the
+					// credential's default ('none' unless a person set it to 'read', meaning every agent).
+					// Written as literal qualified SQL, not Drizzle column objects: a correlated subquery
+					// built from those renders unqualified (known-pitfalls.md).
 					// An Allow for this one chat counts too, but only for sessions in that conversation.
-					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId}) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
+					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId} AND agent_grants.access <> 'none') OR (integrations.default_agent_access = 'read' AND NOT EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId})) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))
