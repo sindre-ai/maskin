@@ -1,7 +1,8 @@
 import {
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
-	splitAtLinkedObjects,
+	showsObjectCard,
+	targetOfHref,
 } from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
@@ -55,33 +56,50 @@ describe('extractLinkedFileIds', () => {
 	})
 })
 
-describe('splitAtLinkedObjects', () => {
-	it('keeps a message without links as one piece', () => {
-		expect(splitAtLinkedObjects('One.\n\nTwo.')).toEqual([{ text: 'One.\n\nTwo.', objectIds: [] }])
+describe('showsObjectCard', () => {
+	const draft = { workspaceId: 'ws', content: 'Hej', preview: { body: 'Hej' } }
+
+	it('is true for a draft with text in this workspace', () => {
+		expect(showsObjectCard(draft, 'ws')).toBe(true)
 	})
 
-	it('puts the card right after the paragraph that links it', () => {
-		const text = `Intro.\n\nDraft: /objects/${A}\n\nClosing.`
-		expect(splitAtLinkedObjects(text)).toEqual([
-			{ text: `Intro.\n\nDraft: /objects/${A}`, objectIds: [A] },
-			{ text: 'Closing.', objectIds: [] },
-		])
+	it('is false for a plain task, another workspace, no text, or no object', () => {
+		expect(showsObjectCard({ ...draft, preview: null }, 'ws')).toBe(false)
+		expect(showsObjectCard(draft, 'other')).toBe(false)
+		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
+		expect(showsObjectCard(undefined, 'ws')).toBe(false)
+	})
+})
+
+describe('targetOfHref', () => {
+	const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+
+	it('reads an object or file id from an address', () => {
+		expect(targetOfHref(`https://x.io/ws/objects/${id.toUpperCase()}`)).toEqual({
+			kind: 'object',
+			id,
+		})
+		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
 	})
 
-	it('gives a repeated link one card, at its first mention', () => {
-		const text = `First /objects/${A}\n\nAgain /objects/${A}`
-		expect(splitAtLinkedObjects(text).map((s) => s.objectIds)).toEqual([[A], []])
+	it('ignores any other address', () => {
+		expect(targetOfHref('https://x.io/ws/agents')).toBeNull()
+		expect(targetOfHref(undefined)).toBeNull()
+	})
+})
+
+describe('extractLinkedObjectIds / extractLinkedFileIds in code and with boundaries', () => {
+	it('ignores addresses in inline code and fenced blocks', () => {
+		const text = `Use \`/ws/objects/${A}\`.\n\n\`\`\`\n/ws/objects/${B}\n/ws/files/${C}\n\`\`\`\n\nReal: /ws/objects/${D}`
+		expect(extractLinkedObjectIds(text)).toEqual([D])
+		expect(extractLinkedFileIds(text)).toEqual([])
 	})
 
-	it('does not cut inside a fenced block', () => {
-		const text = `Look:\n\n\`\`\`\nline\n\n/objects/${A}\n\`\`\`\n\nDone.`
-		const segments = splitAtLinkedObjects(text)
-		expect(segments[0].text).toContain('line\n\n/objects/')
-		expect(segments[0].objectIds).toEqual([A])
-	})
-
-	it('stops giving cards after the maximum', () => {
-		const text = [A, B, C, D].map((id) => `/objects/${id}`).join('\n\n')
-		expect(splitAtLinkedObjects(text, 3).flatMap((s) => s.objectIds)).toEqual([A, B, C])
+	it('needs the id to end where an address ends', () => {
+		expect(extractLinkedObjectIds(`/ws/objects/${A}x`)).toEqual([])
+		expect(extractLinkedObjectIds(`/ws/objects/${A}-more`)).toEqual([])
+		expect(
+			extractLinkedObjectIds(`(/ws/objects/${A}), /ws/objects/${B}?x=1 /ws/objects/${C}/`),
+		).toEqual([A, B, C])
 	})
 })

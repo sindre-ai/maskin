@@ -62,6 +62,30 @@ export const config: ProviderConfig = {
 		},
 	},
 
+	// Event definitions only. No `mapping` key and no `webhook` key: a webhook
+	// key would opt the provider into the generic /api/webhooks/:provider route,
+	// and Unipile deliveries are handled by the dedicated route in
+	// routes/integrations-linkedin-unipile.ts using event-map.ts.
+	events: {
+		definitions: [
+			{
+				entityType: 'linkedin.message',
+				actions: ['received', 'received_cold', 'received_unresolved'],
+				label: 'LinkedIn message',
+			},
+			{
+				entityType: 'linkedin.connection',
+				actions: ['accepted', 'new'],
+				label: 'LinkedIn connection',
+			},
+			{
+				entityType: 'linkedin.account',
+				actions: ['status_changed'],
+				label: 'LinkedIn account status',
+			},
+		],
+	},
+
 	// What agents can draft here for a person to read, edit and approve. The send tools are
 	// served per identity, so each is prefixed `linkedin-{account}-{identity}__`; `sendTool`
 	// names the verb. Limits mirror operations.ts (8000-character messages, 3000-character

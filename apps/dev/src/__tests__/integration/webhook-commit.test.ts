@@ -136,4 +136,63 @@ describe('commitWebhookDelivery Integration', () => {
 			.where(eq(webhookDeliveries.id, claimRowId))
 		expect(row?.processedAt?.getTime()).toBe(earlier.getTime())
 	})
+
+	it('marks additional claims processed in the same transaction, and rolls back if one is gone', async () => {
+		const action = `linkedin.multi.${randomUUID()}`
+		const claims = await db
+			.insert(webhookDeliveries)
+			.values([
+				{ provider: 'linkedin-unipile', externalId: 'evt:acc:1', workspaceId },
+				{ provider: 'linkedin-unipile', externalId: 'msg:acc:1', workspaceId },
+			])
+			.returning({ id: webhookDeliveries.id })
+		const [first, second] = claims
+		if (!first || !second) throw new Error('claims not inserted')
+		const row = {
+			workspaceId,
+			actorId,
+			action,
+			entityType: 'integration',
+			entityId: workspaceId,
+			data: { ref: 'multi' },
+		}
+
+		// Second claim gone: the whole transaction aborts, including the first claim's update.
+		await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, second.id))
+		await expect(
+			commitWebhookDelivery(db, {
+				eventRows: [row],
+				claimRowId: first.id,
+				additionalClaimRowIds: [second.id],
+			}),
+		).rejects.toBeInstanceOf(ClaimReleasedError)
+		const [stillOpen] = await db
+			.select({ processedAt: webhookDeliveries.processedAt })
+			.from(webhookDeliveries)
+			.where(eq(webhookDeliveries.id, first.id))
+		expect(stillOpen?.processedAt).toBeNull()
+
+		// Both claims present: events land and both claims are marked processed together.
+		const [replacement] = await db
+			.insert(webhookDeliveries)
+			.values({ provider: 'linkedin-unipile', externalId: 'msg:acc:2', workspaceId })
+			.returning({ id: webhookDeliveries.id })
+		if (!replacement) throw new Error('claim not inserted')
+		await commitWebhookDelivery(db, {
+			eventRows: [row],
+			claimRowId: first.id,
+			additionalClaimRowIds: [replacement.id],
+		})
+		const processed = await db
+			.select({ processedAt: webhookDeliveries.processedAt })
+			.from(webhookDeliveries)
+			.where(eq(webhookDeliveries.workspaceId, workspaceId))
+		expect(processed).toHaveLength(2)
+		expect(processed.every((c) => c.processedAt !== null)).toBe(true)
+		const landed = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, workspaceId), eq(events.action, action)))
+		expect(landed).toHaveLength(1)
+	})
 })
