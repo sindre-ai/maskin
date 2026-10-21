@@ -11,7 +11,10 @@ import { recordEvent } from '../lib/events/record-event'
 const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
 const CHAT_TITLE = 'Chief of Staff'
 
-async function findChiefOfStaffId(db: Database, workspaceId: string): Promise<string | null> {
+export async function findChiefOfStaffId(
+	db: Database,
+	workspaceId: string,
+): Promise<string | null> {
 	const [row] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)

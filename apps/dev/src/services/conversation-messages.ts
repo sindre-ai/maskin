@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
@@ -36,12 +36,15 @@ export type InsertedConversationMessage = typeof messages.$inferSelect
  * and `evaluateAndRespond` stay with the route. That omission is what makes an
  * auto-posted final output structurally incapable of waking another agent.
  *
+ * Takes a Database or a Transaction, so a caller holding a lock (the proactive
+ * message service) can insert inside its own transaction.
+ *
  * Returns null when the insert was suppressed by a unique constraint — the
  * finalizer's dedupe key. Callers that can't conflict should treat null as an
  * error.
  */
 export async function insertConversationMessage(
-	db: Database,
+	db: Database | Transaction,
 	args: InsertConversationMessageArgs,
 ): Promise<InsertedConversationMessage | null> {
 	const [created] = await db
@@ -102,7 +105,7 @@ export async function insertConversationMessage(
  * logged and never blocks the message.
  */
 export async function mirrorAsObjectComment(
-	db: Database,
+	db: Database | Transaction,
 	msg: {
 		conversationId: string
 		workspaceId: string

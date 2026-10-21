@@ -6,13 +6,16 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FromSuggestedStep,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	NeededTool,
 	SafeMetadata,
 	SendRoundInput,
 	SendRoundResponse,
+	SuggestedStep,
 	TriggerResponse,
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
@@ -40,7 +43,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -301,6 +304,13 @@ export const api = {
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
+		// hash is the preview's `content_hash`, so a draft that changed since is refused.
+		approve: (id: string, contentHash?: string) =>
+			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
+				method: 'POST',
+				body: contentHash ? { content_hash: contentHash } : {},
+			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
 				method: 'POST',
@@ -1076,6 +1086,19 @@ export const api = {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
 	},
 
+	webPush: {
+		// Per-actor, not per-workspace — no workspaceId. `public_key` is the VAPID application
+		// server key (public by design); `enabled` is false when the server has no VAPID keys.
+		config: () => request<{ enabled: boolean; public_key: string | null }>('/web-push/config'),
+		subscribe: (body: {
+			endpoint: string
+			keys: { p256dh: string; auth: string }
+			user_agent?: string
+		}) => request<{ id: string }>('/web-push/subscriptions', { method: 'POST', body }),
+		unsubscribe: (id: string) =>
+			request<{ deleted: boolean }>(`/web-push/subscriptions/${id}`, { method: 'DELETE' }),
+	},
+
 	featureFlags: {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
@@ -1492,6 +1515,9 @@ export interface ObjectResponse {
 	// endpoints — create / update / verify / undo-write / bulk — omit it, so
 	// the field is optional here and every reader defaults to `false`.
 	is_starred_by_me?: boolean
+	// Detail endpoint only: present when `metadata.kind` is something an integration
+	// delivers (an email, a LinkedIn message). Computed on read, never stored.
+	preview?: ObjectPreview | null
 }
 
 export interface StarToggleResponse {
@@ -1540,6 +1566,8 @@ export interface LatestMentionDecisionOption {
 	label: string
 	consequences: string[]
 	recommended?: boolean
+	/** The option that sends or otherwise reaches real people. */
+	destructive?: boolean
 }
 
 /**
@@ -1548,6 +1576,8 @@ export interface LatestMentionDecisionOption {
  * here; `object_id` says which object it came from.
  */
 export interface LatestMentionDecisionDraft {
+	/** The projection of the object behind the draft, when it is a kind an integration delivers. */
+	preview?: ObjectPreview
 	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
 	id?: string
 	object_id?: string
@@ -2446,6 +2476,14 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
+	suggested_steps?: SuggestedStep[]
+	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
+	needed_tools?: NeededTool[]
+	/** Backend-owned: how many trailing paragraphs of an intro the web drops when it draws the steps and tool rows. */
+	plain_tail?: number
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step?: FromSuggestedStep
 }
 
 export interface MessageResponse {

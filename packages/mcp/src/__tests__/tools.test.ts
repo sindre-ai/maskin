@@ -79,6 +79,7 @@ const ALL_TOOL_NAMES = [
 	'resume_session',
 	'ask_user_question',
 	'gmail_send_email',
+	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
 	'get_notification',

@@ -4,12 +4,12 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { parseCommentDecision } from '@maskin/shared'
 import { and, count, desc, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import type { ApnsSender, PushDecision } from './apns'
+import type { PushChannel, PushDecision, PushMessage } from './push-types'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * Fan an in-app notification out as an APNs push.
+ * Fan an in-app notification out as a push on every enabled channel (APNs, Web Push).
  *
  * Hooks the PG NOTIFY `events` stream (post-commit, so a rolled-back
  * notification never pushes) instead of patching each insert site: every
@@ -23,7 +23,7 @@ export class NotificationPushFanout {
 	constructor(
 		private db: Database,
 		private bridge: PgNotifyBridge,
-		private sender: ApnsSender,
+		private channels: PushChannel[],
 	) {}
 
 	start() {
@@ -42,8 +42,9 @@ export class NotificationPushFanout {
 	}
 
 	async handleEvent(event: PgEvent): Promise<void> {
-		// Cheap exit before any DB work when push isn't configured.
-		if (!this.sender.isEnabled()) return
+		// Cheap exit before any DB work when no channel is configured.
+		const channels = this.channels.filter((c) => c.isEnabled())
+		if (channels.length === 0) return
 
 		const [n] = await this.db
 			.select()
@@ -64,7 +65,8 @@ export class NotificationPushFanout {
 
 		const badge = await this.pendingCount(n.targetActorId)
 
-		await this.sender.sendToActor(n.targetActorId, {
+		const targetActorId = n.targetActorId
+		const message: PushMessage = {
 			title: decision?.title ?? n.title,
 			body: decision?.ask ?? n.content,
 			workspaceId: n.workspaceId,
@@ -75,7 +77,9 @@ export class NotificationPushFanout {
 			// A decision, or anything else waiting on this person, should break through Focus.
 			interruption: decision || n.type === 'needs_input' ? 'time-sensitive' : 'active',
 			badge,
-		})
+		}
+		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
+		await Promise.allSettled(channels.map((c) => c.sendToActor(targetActorId, message)))
 	}
 
 	/** The app-icon badge: the actor's pending notifications. Best effort, `null` leaves it alone. */

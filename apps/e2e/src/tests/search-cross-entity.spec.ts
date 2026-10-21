@@ -112,7 +112,10 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			const objectRow = page.getByRole('button', { name: new RegExp(`${kindToken} Bet`) })
 			await expect(objectRow).toBeVisible({ timeout: 20000 })
-			const agentRow = page.getByRole('button', { name: new RegExp(`${kindToken} Agent`) })
+			// Not the agent's "Meet …" intro chat, which carries the same name.
+			const agentRow = page.getByRole('button', {
+				name: new RegExp(`^(?!Meet ).*${kindToken} Agent`),
+			})
 			await expect(agentRow).toBeVisible()
 
 			// Mockup 2544: the trailing column is the same uniform kind label on

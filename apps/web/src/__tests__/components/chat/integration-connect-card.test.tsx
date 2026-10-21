@@ -1,4 +1,5 @@
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,9 +57,14 @@ function active(providerName: string, id = 'i-1'): IntegrationResponse {
 	} as unknown as IntegrationResponse
 }
 
-function renderCard(name: string) {
+function renderCard(name: string, introState?: IntegrationToolState) {
 	return render(
-		<IntegrationConnectCard workspaceId="ws-1" conversationId="conv-1" provider={name} />,
+		<IntegrationConnectCard
+			workspaceId="ws-1"
+			conversationId="conv-1"
+			provider={name}
+			introState={introState}
+		/>,
 		{
 			wrapper: TestWrapper,
 		},
@@ -179,5 +185,83 @@ describe('IntegrationConnectCard', () => {
 		const { container } = renderCard('not-a-provider')
 
 		expect(container).toBeEmptyDOMElement()
+	})
+
+	describe('the quiet intro row', () => {
+		it('says "Not connected yet" with an outline Connect button named for the tool', async () => {
+			providers = [provider({})]
+			renderCard('linear', 'missing')
+
+			expect(screen.getByText('Not connected yet')).toBeInTheDocument()
+			expect(screen.queryByText('9 event types available')).not.toBeInTheDocument()
+			const connect = screen.getByRole('button', { name: 'Connect Linear' })
+			expect(connect).toHaveTextContent('Connect')
+			await userEvent.setup().click(connect)
+
+			expect(connectMutate).toHaveBeenCalledWith({ provider: 'linear', returnTo: RETURN_TO })
+		})
+
+		it('says "Needs reconnecting" with a Reconnect button for a revoked row', () => {
+			providers = [provider({})]
+			integrations = [{ ...active('linear'), status: 'revoked' }]
+			renderCard('linear', 'needs_reconnect')
+
+			expect(screen.getByText('Needs reconnecting')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Reconnect Linear' })).toBeInTheDocument()
+		})
+
+		it('says "Connected, ready to use" only for a tool the agent can use', () => {
+			providers = [provider({})]
+			integrations = [active('linear')]
+			renderCard('linear', 'ready')
+
+			expect(screen.getByText('Connected, ready to use')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Connected' })).toBeDisabled()
+		})
+
+		it('says "Connected to the workspace" when the agent cannot use the tool yet', () => {
+			providers = [provider({})]
+			integrations = [active('linear')]
+			renderCard('linear', 'connected_not_on_agent')
+
+			expect(screen.getByText('Connected to the workspace')).toBeInTheDocument()
+			expect(screen.queryByText('Connected, ready to use')).not.toBeInTheDocument()
+		})
+
+		it('draws one quiet row, not the install count card, for a multi-install provider', () => {
+			providers = [provider({ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom' })]
+			integrations = [active('github', 'g-1')]
+			renderCard('github', 'connected_not_on_agent')
+
+			expect(screen.getByText('GitHub')).toBeInTheDocument()
+			expect(screen.getByText('Connected to the workspace')).toBeInTheDocument()
+			expect(screen.queryByText('GitHub · 1')).not.toBeInTheDocument()
+			expect(screen.queryByText('1 active installation')).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Add another' })).not.toBeInTheDocument()
+		})
+
+		it('says "Needs reconnecting" with one Reconnect button when the sign-in lacks permissions', async () => {
+			providers = [provider({ name: 'slack', displayName: 'Slack' })]
+			integrations = [
+				{ ...active('slack'), needsReconnect: true, missingScopes: ['channels:history'] },
+			]
+			renderCard('slack', 'needs_reconnect')
+
+			expect(screen.getByText('Needs reconnecting')).toBeInTheDocument()
+			expect(screen.queryByText(/history access/)).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Connected' })).not.toBeInTheDocument()
+			const reconnect = screen.getAllByRole('button', { name: 'Reconnect' })
+			expect(reconnect).toHaveLength(1)
+			await userEvent.setup().click(reconnect[0])
+
+			expect(connectMutate).toHaveBeenCalledWith({ provider: 'slack', returnTo: RETURN_TO })
+		})
+
+		it('keeps the full card, with its event count subtitle, when no intro state is given', () => {
+			providers = [provider({})]
+			renderCard('linear')
+
+			expect(screen.getByText('9 event types available')).toBeInTheDocument()
+		})
 	})
 })

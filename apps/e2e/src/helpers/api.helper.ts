@@ -349,6 +349,7 @@ export class TestAPI {
 	async updateActor(
 		id: string,
 		data: {
+			name?: string
 			system_prompt?: string | null
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null

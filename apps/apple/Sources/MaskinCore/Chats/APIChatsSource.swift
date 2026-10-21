@@ -142,21 +142,47 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func messages(
 		conversationID: String, beforeID: Int?, afterID: Int?, limit: Int
 	) async throws -> MessagePage {
+		try await fetchMessages(
+			conversationID: conversationID, beforeID: beforeID, afterID: afterID, limit: limit, rootID: nil)
+	}
+
+	public func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage] {
+		var all: [ChatMessage] = []
+		var before: Int?
+		// A thread rarely passes one page; the loop keeps a long one whole.
+		for _ in 0..<5 {
+			let page = try await fetchMessages(
+				conversationID: conversationID, beforeID: before, afterID: nil,
+				limit: ChatLimits.maxMessagesPage, rootID: rootID)
+			all = page.messages + all
+			guard page.hasMore, let oldest = page.messages.first?.serverID else { break }
+			before = oldest
+		}
+		return all
+	}
+
+	private func fetchMessages(
+		conversationID: String, beforeID: Int?, afterID: Int?, limit: Int, rootID: Int?
+	) async throws -> MessagePage {
 		let output = try await client.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages(
 			.init(
 				path: .init(id: conversationID),
-				query: .init(before_id: beforeID, after_id: afterID, limit: limit),
+				query: .init(before_id: beforeID, after_id: afterID, limit: limit, thread_root_id: rootID),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
 		case .ok(let ok):
 			let body = try ok.body.json
 			let messages = body.messages.map { row in
-				ChatMessage.confirmed(
+				var message = ChatMessage.confirmed(
 					serverID: Int(row.id), conversationID: row.conversationId, actorID: row.actorId,
 					actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
 					kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
 					editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata),
-					spawnedSessions: (row.spawned_sessions ?? []).map(Self.spawned))
+					spawnedSessions: (row.spawned_sessions ?? []).map(Self.spawned),
+					threadRootID: row.threadRootId.map { Int($0) }, alsoInChannel: row.threadAlsoInChannel)
+				message.thread = Self.json(row.thread).flatMap(Self.summary)
+				message.reactions = Self.reactions(Self.json(row.reactions))
+				return message
 			}
 			return MessagePage(messages: messages.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }, hasMore: body.has_more)
 		default:
@@ -164,8 +190,108 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		}
 	}
 
+	public func threads(limit: Int) async throws -> [ThreadListItem] {
+		let output = try await client.get_sol_api_sol_conversations_sol_threads(
+			.init(
+				query: .init(limit: min(limit, 100)),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw ChatsError("Couldn't load threads.") }
+		return try ok.body.json.threads.compactMap { row in
+			guard let item = Self.json(row), let root = item["root"], let thread = item["thread"],
+				let summary = Self.summary(thread), let rootMessage = Self.message(root)
+			else { return nil }
+			return ThreadListItem(
+				conversationID: row.conversationId, conversationTitle: row.conversationTitle,
+				root: rootMessage, summary: summary, lastReply: item["lastReply"].flatMap(Self.message))
+		}
+	}
+
+	public func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws {
+		let path = Operations
+			.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions
+			.Input.Path(id: conversationID, messageId: messageID)
+		let headers = Operations
+			.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions
+			.Input.Headers(x_hyphen_workspace_hyphen_id: workspaceID)
+		if add {
+			let output = try await client
+				.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(
+					.init(path: path, headers: headers, body: .json(.init(emoji: emoji))))
+			guard case .noContent = output else { throw ChatsError("Couldn't add the reaction.") }
+		} else {
+			let output = try await client
+				.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(
+					.init(
+						path: .init(id: conversationID, messageId: messageID),
+						query: .init(emoji: emoji),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			guard case .noContent = output else { throw ChatsError("Couldn't remove the reaction.") }
+		}
+	}
+
+	private static func reactions(_ value: JSONValue?) -> [MessageReaction] {
+		value?.arrayValue?.compactMap { item in
+			guard let emoji = item["emoji"]?.stringValue, let count = item["count"]?.intValue else { return nil }
+			let people: [ChatParticipant] = item["actors"]?.arrayValue?.compactMap { actor in
+				guard let id = actor["actorId"]?.stringValue else { return nil }
+				return ChatParticipant(id: id, name: actor["actorName"]?.stringValue ?? "", kind: .human)
+			} ?? []
+			return MessageReaction(
+				emoji: emoji, count: count, reactedByMe: item["reactedByMe"]?.boolValue ?? false, people: people)
+		} ?? []
+	}
+
+	public func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws {
+		let output = try await client
+			.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read(
+				.init(
+					path: .init(id: conversationID, messageId: rootID),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(.init(last_read_message_id: lastMessageID))))
+		guard case .ok = output else { throw ChatsError("Couldn't mark the thread read.") }
+	}
+
+	/// A message row (list item, send result) as the app's model, read from its JSON form.
+	private static func message(_ value: JSONValue) -> ChatMessage? {
+		guard let id = value["id"]?.intValue, let conversationID = value["conversationId"]?.stringValue,
+			let actorID = value["actorId"]?.stringValue
+		else { return nil }
+		return ChatMessage.confirmed(
+			serverID: id, conversationID: conversationID, actorID: actorID,
+			actorName: value["actorName"]?.stringValue ?? "",
+			author: value["actorType"]?.stringValue == "agent" ? .agent : .human,
+			kind: value["kind"]?.stringValue ?? "message", content: value["content"]?.stringValue ?? "",
+			createdAt: ChatDates.parse(value["createdAt"]?.stringValue),
+			editedAt: ChatDates.parse(value["editedAt"]?.stringValue),
+			metadata: value["metadata"] == .null ? nil : value["metadata"],
+			threadRootID: value["threadRootId"]?.intValue,
+			alsoInChannel: value["threadAlsoInChannel"]?.boolValue ?? false)
+	}
+
+	private static func summary(_ value: JSONValue) -> ThreadSummary? {
+		guard let count = value["replyCount"]?.intValue, let last = value["lastReplyId"]?.intValue else { return nil }
+		let people: [ChatParticipant] = value["participants"]?.arrayValue?.compactMap { person in
+			guard let id = person["actorId"]?.stringValue else { return nil }
+			return ChatParticipant(
+				id: id, name: person["actorName"]?.stringValue ?? "",
+				actorType: person["actorType"]?.stringValue ?? "human")
+		} ?? []
+		return ThreadSummary(
+			replyCount: count, unreadCount: value["unreadCount"]?.intValue ?? 0, lastReplyID: last,
+			lastReplyAt: ChatDates.parse(value["lastReplyAt"]?.stringValue), participants: people)
+	}
+
 	public func send(
 		conversationID: String, content: String, metadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ChatMessage {
+		try await send(
+			conversationID: conversationID, content: content, metadata: metadata, thread: nil,
+			idempotencyKey: idempotencyKey)
+	}
+
+	public func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
 	) async throws -> ChatMessage {
 		let wireMetadata = try metadata.flatMap { value -> Metadata? in
 			guard !value.isEmpty else { return nil }
@@ -178,7 +304,10 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				.init(
 					path: .init(id: conversationID),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-					body: .json(.init(content: content, metadata: wireMetadata))))
+					body: .json(
+						.init(
+							content: content, metadata: wireMetadata, thread_root_id: thread?.rootID,
+							also_in_channel: thread?.alsoInChannel == true ? true : nil))))
 		}
 		switch output {
 		case .created(let created):
@@ -187,11 +316,15 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				serverID: Int(row.id), conversationID: row.conversationId, actorID: row.actorId,
 				actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
 				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
-				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata))
+				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata),
+				threadRootID: row.threadRootId.map { Int($0) }, alsoInChannel: row.threadAlsoInChannel)
 		case .badRequest:
 			throw ChatsHTTPError(status: 400, message: "The message was rejected.")
 		case .notFound:
-			throw ChatsHTTPError(status: 404, message: "This conversation no longer exists.")
+			throw ChatsHTTPError(
+				status: 404,
+				message: thread == nil
+					? "This conversation no longer exists." : "That thread's first message is gone.")
 		case .undocumented(let status, _):
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
