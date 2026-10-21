@@ -13,6 +13,8 @@ const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
+	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 /**
@@ -26,7 +28,7 @@ interface ThreadComposerProps {
  * responder pipeline's mention fast-path auto-joins them as participants if
  * they weren't one already.
  */
-export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerProps) {
+export function ThreadComposer({ workspaceId, conversationId, fillRequest }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
@@ -151,6 +153,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			// would make the same control a different control to a screen reader.
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
+			fillRequest={fillRequest}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}

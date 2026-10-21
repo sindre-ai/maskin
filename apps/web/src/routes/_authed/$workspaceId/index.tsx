@@ -303,19 +303,27 @@ function ForYouFeed() {
 		(item: UnreadItem, option: DecidedOption) => {
 			const key = feedItemKey(item)
 			setDecided((prev) => new Map(prev).set(key, { item, option }))
+			// Choosing the option that sends is the person's approval of the draft behind the
+			// card. It is recorded first, bound to the text they saw, so the agent's send
+			// tool can check it. A draft that changed since refuses here and the card reopens.
+			const decision = item.latest_mention?.decision
+			const sends = decision?.options.some((o) => o.label === option.label && o.destructive)
+			const approval = sends ? approveDraft(decision?.draft) : Promise.resolve()
 			// `mutateAsync` for the same reason as `markItemRead`: "Take every
 			// suggested option" calls this in a loop over one shared observer,
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
-			postReply
-				.mutateAsync({
-					entity_id: item.entity_id,
-					content: option.label,
-					// The answer belongs under the question. Without this it lands as
-					// a loose comment on the object, and the agent that asked has to
-					// infer from timing which of its asks was just answered.
-					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
-				})
+			approval
+				.then(() =>
+					postReply.mutateAsync({
+						entity_id: item.entity_id,
+						content: option.label,
+						// The answer belongs under the question. Without this it lands as
+						// a loose comment on the object, and the agent that asked has to
+						// infer from timing which of its asks was just answered.
+						...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+					}),
+				)
 				.then(() => {
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
@@ -342,11 +350,14 @@ function ForYouFeed() {
 			const what = [draft.label ?? 'Message', draft.to ? `to ${draft.to}` : null]
 				.filter(Boolean)
 				.join(' ')
-			return postReply.mutateAsync({
-				entity_id: item.entity_id,
-				content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
-				...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
-			})
+			const approval = action === 'send' ? approveDraft(draft) : Promise.resolve()
+			return approval.then(() =>
+				postReply.mutateAsync({
+					entity_id: item.entity_id,
+					content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
+					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+				}),
+			)
 		},
 		[postReply],
 	)
@@ -656,6 +667,14 @@ function ForYouFeed() {
 			</div>
 		</div>
 	)
+}
+
+// Records the person's approval of the object behind a draft, bound to the text the card
+// showed. A draft without a preview (plain text on the card) has nothing to approve and
+// resolves at once; the reply to the agent is what carries the decision for those.
+function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<unknown> {
+	if (!draft?.preview || !draft.object_id) return Promise.resolve()
+	return api.objects.approve(draft.object_id, draft.preview.content_hash)
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on

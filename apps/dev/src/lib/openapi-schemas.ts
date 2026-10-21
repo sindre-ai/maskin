@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
 } from '@maskin/shared'
@@ -72,6 +73,9 @@ export const objectResponseSchema = z.object({
 	// caller just mutated — can omit it without lying about the schema; the
 	// star toggle endpoints carry their own scalar in the response body.
 	is_starred_by_me: z.boolean().optional(),
+	// Present only on the detail endpoint, and only for an object whose
+	// `metadata.kind` an integration declares as deliverable (see lib/object-preview.ts).
+	preview: objectPreviewSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({

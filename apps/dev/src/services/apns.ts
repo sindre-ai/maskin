@@ -47,6 +47,7 @@ import { deviceTokens } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type WorkingAgent, encodeAgentsState } from './live-activity-agents'
+import type { PushChannel, PushDecision, PushMessage } from './push-types'
 
 export interface ApnsConfig {
 	keyId: string
@@ -71,34 +72,7 @@ export interface ApnsTransport {
 	send(req: ApnsRequest): Promise<ApnsResponse>
 }
 
-export interface PushDecision {
-	/** The agent's decision comment (events.id). */
-	eventId: number
-	/** The comment's own parent, when the decision was posted as a reply. */
-	parentEventId?: number | null
-	objectId?: string | null
-	options: { label: string; destructive?: boolean }[]
-	/** Zero-based index into `options` of the recommended choice. */
-	recommended?: number | null
-}
-
-export interface PushMessage {
-	title: string
-	body?: string | null
-	workspaceId: string
-	notificationId: string
-	objectId?: string | null
-	conversationId?: string | null
-	decision?: PushDecision | null
-	/** Banner behaviour: `time-sensitive` breaks through Focus (decisions), `passive` is silent. */
-	interruption?: PushInterruption
-	/** App-icon badge to show (the actor's pending notifications); omitted leaves it untouched. */
-	badge?: number | null
-	/** https image the notification service extension downloads and attaches to the banner. */
-	imageUrl?: string | null
-}
-
-export type PushInterruption = 'time-sensitive' | 'active' | 'passive'
+export type { PushDecision, PushInterruption, PushMessage } from './push-types'
 
 export const APNS_HOSTS = {
 	production: 'api.push.apple.com',
@@ -361,7 +335,7 @@ export interface ApnsSenderOptions {
 	now?: () => number
 }
 
-export class ApnsSender {
+export class ApnsSender implements PushChannel {
 	private config: ApnsConfig | null
 	private transport: ApnsTransport
 	private now: () => number
