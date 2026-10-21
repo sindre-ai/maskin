@@ -283,6 +283,12 @@
 														"null"
 													]
 												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -791,6 +797,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -1416,6 +1428,12 @@
 														}
 													},
 													"subject": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"context": {
 														"type": [
 															"string",
 															"null"
@@ -2223,6 +2241,12 @@
 															"null"
 														]
 													},
+													"context": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"body": {
 														"type": "string"
 													},
@@ -2545,6 +2569,12 @@
 																"null"
 															]
 														},
+														"context": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
 														"body": {
 															"type": "string"
 														},
@@ -2835,6 +2865,12 @@
 																}
 															},
 															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"context": {
 																"type": [
 																	"string",
 																	"null"
@@ -3512,6 +3548,12 @@
 														"null"
 													]
 												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -3846,6 +3888,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -4325,6 +4373,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -4824,6 +4878,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -47312,6 +47372,12 @@
 																			"null"
 																		]
 																	},
+																	"context": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -47547,6 +47613,12 @@
 																								"null"
 																							]
 																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -47678,6 +47750,12 @@
 																						}
 																					},
 																					"subject": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"context": {
 																						"type": [
 																							"string",
 																							"null"
@@ -49834,6 +49912,12 @@
 																			"null"
 																		]
 																	},
+																	"context": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -50069,6 +50153,12 @@
 																								"null"
 																							]
 																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -50200,6 +50290,12 @@
 																						}
 																					},
 																					"subject": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"context": {
 																						"type": [
 																							"string",
 																							"null"
@@ -50563,6 +50659,12 @@
 																}
 															},
 															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"context": {
 																"type": [
 																	"string",
 																	"null"

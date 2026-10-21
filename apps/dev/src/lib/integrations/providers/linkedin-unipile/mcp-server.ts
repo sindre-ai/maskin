@@ -28,6 +28,7 @@ import {
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
 } from './operations'
+import { replyWithApprovedObject } from './send-object'
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
@@ -373,26 +374,34 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'reply'),
 			{
-				description: scopedDescription('Reply in an existing LinkedIn conversation thread', cfg),
+				description: scopedDescription(
+					'Reply in an existing LinkedIn conversation thread. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. Then thread_id is optional when the object has metadata.thread_id, and body and idempotency_key are not used. Without object_id, pass thread_id, body and idempotency_key',
+					cfg,
+				),
 				inputSchema: {
-					thread_id: z.string().min(1),
-					body: z.string().min(1).max(8000),
-					idempotency_key: z.string().min(1).max(128),
 					object_id: sendObjectIdSchema,
+					thread_id: z.string().min(1).optional(),
+					body: z.string().min(1).max(8000).optional(),
+					idempotency_key: z.string().min(1).max(128).optional(),
 				},
 			},
 			async (args) => {
 				try {
-					return await sendForObject(
-						ctx,
-						args.object_id,
-						() => replyToLinkedInThread(opCtx, args),
-						(sent) => ({
-							message_id: sent.message_id,
-							chat_id: sent.chat_id,
-							sent_at: sent.sent_at,
-						}),
-					)
+					if (args.object_id) {
+						if (args.body !== undefined) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								'Do not pass body with object_id: the text sent is the approved text on the object.',
+							)
+						}
+						return jsonResult(
+							await replyWithApprovedObject(opCtx, {
+								object_id: args.object_id,
+								thread_id: args.thread_id,
+							}),
+						)
+					}
+					return jsonResult(await replyToLinkedInThread(opCtx, args))
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply'), err)
 				}

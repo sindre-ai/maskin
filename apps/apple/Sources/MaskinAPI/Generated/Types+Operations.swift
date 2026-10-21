@@ -249,6 +249,8 @@ public enum Operations {
                             public var recipients: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.previewPayload.recipientsPayload
                             /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/preview/subject`.
                             public var subject: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/preview/context`.
+                            public var context: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/preview/body`.
                             public var body: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/preview/maxLength`.
@@ -298,6 +300,7 @@ public enum Operations {
                             ///   - provider:
                             ///   - recipients:
                             ///   - subject:
+                            ///   - context:
                             ///   - body:
                             ///   - maxLength:
                             ///   - missing:
@@ -310,6 +313,7 @@ public enum Operations {
                                 provider: Swift.String? = nil,
                                 recipients: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.previewPayload.recipientsPayload,
                                 subject: Swift.String? = nil,
+                                context: Swift.String? = nil,
                                 body: Swift.String,
                                 maxLength: Swift.Int? = nil,
                                 missing: [Swift.String],
@@ -322,6 +326,7 @@ public enum Operations {
                                 self.provider = provider
                                 self.recipients = recipients
                                 self.subject = subject
+                                self.context = context
                                 self.body = body
                                 self.maxLength = maxLength
                                 self.missing = missing
@@ -335,6 +340,7 @@ public enum Operations {
                                 case provider
                                 case recipients
                                 case subject
+                                case context
                                 case body
                                 case maxLength
                                 case missing
@@ -873,6 +879,8 @@ public enum Operations {
                             public var recipients: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.previewPayload.recipientsPayload
                             /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/preview/subject`.
                             public var subject: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/preview/context`.
+                            public var context: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/preview/body`.
                             public var body: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/preview/maxLength`.
@@ -922,6 +930,7 @@ public enum Operations {
                             ///   - provider:
                             ///   - recipients:
                             ///   - subject:
+                            ///   - context:
                             ///   - body:
                             ///   - maxLength:
                             ///   - missing:
@@ -934,6 +943,7 @@ public enum Operations {
                                 provider: Swift.String? = nil,
                                 recipients: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.previewPayload.recipientsPayload,
                                 subject: Swift.String? = nil,
+                                context: Swift.String? = nil,
                                 body: Swift.String,
                                 maxLength: Swift.Int? = nil,
                                 missing: [Swift.String],
@@ -946,6 +956,7 @@ public enum Operations {
                                 self.provider = provider
                                 self.recipients = recipients
                                 self.subject = subject
+                                self.context = context
                                 self.body = body
                                 self.maxLength = maxLength
                                 self.missing = missing
@@ -959,6 +970,7 @@ public enum Operations {
                                 case provider
                                 case recipients
                                 case subject
+                                case context
                                 case body
                                 case maxLength
                                 case missing
@@ -2480,6 +2492,8 @@ public enum Operations {
                             public var recipients: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.previewPayload.recipientsPayload
                             /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/preview/subject`.
                             public var subject: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/preview/context`.
+                            public var context: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/preview/body`.
                             public var body: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/preview/maxLength`.
@@ -2529,6 +2543,7 @@ public enum Operations {
                             ///   - provider:
                             ///   - recipients:
                             ///   - subject:
+                            ///   - context:
                             ///   - body:
                             ///   - maxLength:
                             ///   - missing:
@@ -2541,6 +2556,7 @@ public enum Operations {
                                 provider: Swift.String? = nil,
                                 recipients: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.previewPayload.recipientsPayload,
                                 subject: Swift.String? = nil,
+                                context: Swift.String? = nil,
                                 body: Swift.String,
                                 maxLength: Swift.Int? = nil,
                                 missing: [Swift.String],
@@ -2553,6 +2569,7 @@ public enum Operations {
                                 self.provider = provider
                                 self.recipients = recipients
                                 self.subject = subject
+                                self.context = context
                                 self.body = body
                                 self.maxLength = maxLength
                                 self.missing = missing
@@ -2566,6 +2583,7 @@ public enum Operations {
                                 case provider
                                 case recipients
                                 case subject
+                                case context
                                 case body
                                 case maxLength
                                 case missing
@@ -3042,6 +3060,8 @@ public enum Operations {
                                 public var recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.previewPayload.recipientsPayload
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/preview/subject`.
                                 public var subject: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/preview/context`.
+                                public var context: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/preview/body`.
                                 public var body: Swift.String
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/preview/maxLength`.
@@ -3091,6 +3111,7 @@ public enum Operations {
                                 ///   - provider:
                                 ///   - recipients:
                                 ///   - subject:
+                                ///   - context:
                                 ///   - body:
                                 ///   - maxLength:
                                 ///   - missing:
@@ -3103,6 +3124,7 @@ public enum Operations {
                                     provider: Swift.String? = nil,
                                     recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.previewPayload.recipientsPayload,
                                     subject: Swift.String? = nil,
+                                    context: Swift.String? = nil,
                                     body: Swift.String,
                                     maxLength: Swift.Int? = nil,
                                     missing: [Swift.String],
@@ -3115,6 +3137,7 @@ public enum Operations {
                                     self.provider = provider
                                     self.recipients = recipients
                                     self.subject = subject
+                                    self.context = context
                                     self.body = body
                                     self.maxLength = maxLength
                                     self.missing = missing
@@ -3128,6 +3151,7 @@ public enum Operations {
                                     case provider
                                     case recipients
                                     case subject
+                                    case context
                                     case body
                                     case maxLength
                                     case missing
@@ -3428,6 +3452,8 @@ public enum Operations {
                                 public var recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.previewPayload.recipientsPayload
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/preview/subject`.
                                 public var subject: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/preview/context`.
+                                public var context: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/preview/body`.
                                 public var body: Swift.String
                                 /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/preview/maxLength`.
@@ -3477,6 +3503,7 @@ public enum Operations {
                                 ///   - provider:
                                 ///   - recipients:
                                 ///   - subject:
+                                ///   - context:
                                 ///   - body:
                                 ///   - maxLength:
                                 ///   - missing:
@@ -3489,6 +3516,7 @@ public enum Operations {
                                     provider: Swift.String? = nil,
                                     recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.previewPayload.recipientsPayload,
                                     subject: Swift.String? = nil,
+                                    context: Swift.String? = nil,
                                     body: Swift.String,
                                     maxLength: Swift.Int? = nil,
                                     missing: [Swift.String],
@@ -3501,6 +3529,7 @@ public enum Operations {
                                     self.provider = provider
                                     self.recipients = recipients
                                     self.subject = subject
+                                    self.context = context
                                     self.body = body
                                     self.maxLength = maxLength
                                     self.missing = missing
@@ -3514,6 +3543,7 @@ public enum Operations {
                                     case provider
                                     case recipients
                                     case subject
+                                    case context
                                     case body
                                     case maxLength
                                     case missing
@@ -4718,6 +4748,8 @@ public enum Operations {
                             public var recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload.recipientsPayload
                             /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/preview/subject`.
                             public var subject: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/preview/context`.
+                            public var context: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/preview/body`.
                             public var body: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/preview/maxLength`.
@@ -4767,6 +4799,7 @@ public enum Operations {
                             ///   - provider:
                             ///   - recipients:
                             ///   - subject:
+                            ///   - context:
                             ///   - body:
                             ///   - maxLength:
                             ///   - missing:
@@ -4779,6 +4812,7 @@ public enum Operations {
                                 provider: Swift.String? = nil,
                                 recipients: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload.recipientsPayload,
                                 subject: Swift.String? = nil,
+                                context: Swift.String? = nil,
                                 body: Swift.String,
                                 maxLength: Swift.Int? = nil,
                                 missing: [Swift.String],
@@ -4791,6 +4825,7 @@ public enum Operations {
                                 self.provider = provider
                                 self.recipients = recipients
                                 self.subject = subject
+                                self.context = context
                                 self.body = body
                                 self.maxLength = maxLength
                                 self.missing = missing
@@ -4804,6 +4839,7 @@ public enum Operations {
                                 case provider
                                 case recipients
                                 case subject
+                                case context
                                 case body
                                 case maxLength
                                 case missing
@@ -5337,6 +5373,8 @@ public enum Operations {
                             public var recipients: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload.recipientsPayload
                             /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/preview/subject`.
                             public var subject: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/preview/context`.
+                            public var context: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/preview/body`.
                             public var body: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/preview/maxLength`.
@@ -5386,6 +5424,7 @@ public enum Operations {
                             ///   - provider:
                             ///   - recipients:
                             ///   - subject:
+                            ///   - context:
                             ///   - body:
                             ///   - maxLength:
                             ///   - missing:
@@ -5398,6 +5437,7 @@ public enum Operations {
                                 provider: Swift.String? = nil,
                                 recipients: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload.recipientsPayload,
                                 subject: Swift.String? = nil,
+                                context: Swift.String? = nil,
                                 body: Swift.String,
                                 maxLength: Swift.Int? = nil,
                                 missing: [Swift.String],
@@ -5410,6 +5450,7 @@ public enum Operations {
                                 self.provider = provider
                                 self.recipients = recipients
                                 self.subject = subject
+                                self.context = context
                                 self.body = body
                                 self.maxLength = maxLength
                                 self.missing = missing
@@ -5423,6 +5464,7 @@ public enum Operations {
                                 case provider
                                 case recipients
                                 case subject
+                                case context
                                 case body
                                 case maxLength
                                 case missing
@@ -58061,6 +58103,8 @@ public enum Operations {
                                     public var recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload.recipientsPayload
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/preview/subject`.
                                     public var subject: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/preview/context`.
+                                    public var context: Swift.String?
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/preview/body`.
                                     public var body: Swift.String
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/preview/maxLength`.
@@ -58110,6 +58154,7 @@ public enum Operations {
                                     ///   - provider:
                                     ///   - recipients:
                                     ///   - subject:
+                                    ///   - context:
                                     ///   - body:
                                     ///   - maxLength:
                                     ///   - missing:
@@ -58122,6 +58167,7 @@ public enum Operations {
                                         provider: Swift.String? = nil,
                                         recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload.recipientsPayload,
                                         subject: Swift.String? = nil,
+                                        context: Swift.String? = nil,
                                         body: Swift.String,
                                         maxLength: Swift.Int? = nil,
                                         missing: [Swift.String],
@@ -58134,6 +58180,7 @@ public enum Operations {
                                         self.provider = provider
                                         self.recipients = recipients
                                         self.subject = subject
+                                        self.context = context
                                         self.body = body
                                         self.maxLength = maxLength
                                         self.missing = missing
@@ -58147,6 +58194,7 @@ public enum Operations {
                                         case provider
                                         case recipients
                                         case subject
+                                        case context
                                         case body
                                         case maxLength
                                         case missing
@@ -58402,6 +58450,8 @@ public enum Operations {
                                             public var recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload.previewPayload.recipientsPayload
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/subject`.
                                             public var subject: Swift.String?
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/context`.
+                                            public var context: Swift.String?
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/body`.
                                             public var body: Swift.String
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/maxLength`.
@@ -58451,6 +58501,7 @@ public enum Operations {
                                             ///   - provider:
                                             ///   - recipients:
                                             ///   - subject:
+                                            ///   - context:
                                             ///   - body:
                                             ///   - maxLength:
                                             ///   - missing:
@@ -58463,6 +58514,7 @@ public enum Operations {
                                                 provider: Swift.String? = nil,
                                                 recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload.previewPayload.recipientsPayload,
                                                 subject: Swift.String? = nil,
+                                                context: Swift.String? = nil,
                                                 body: Swift.String,
                                                 maxLength: Swift.Int? = nil,
                                                 missing: [Swift.String],
@@ -58475,6 +58527,7 @@ public enum Operations {
                                                 self.provider = provider
                                                 self.recipients = recipients
                                                 self.subject = subject
+                                                self.context = context
                                                 self.body = body
                                                 self.maxLength = maxLength
                                                 self.missing = missing
@@ -58488,6 +58541,7 @@ public enum Operations {
                                                 case provider
                                                 case recipients
                                                 case subject
+                                                case context
                                                 case body
                                                 case maxLength
                                                 case missing
@@ -58595,6 +58649,8 @@ public enum Operations {
                                             public var recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload.previewPayload.recipientsPayload
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/subject`.
                                             public var subject: Swift.String?
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/context`.
+                                            public var context: Swift.String?
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/body`.
                                             public var body: Swift.String
                                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/maxLength`.
@@ -58644,6 +58700,7 @@ public enum Operations {
                                             ///   - provider:
                                             ///   - recipients:
                                             ///   - subject:
+                                            ///   - context:
                                             ///   - body:
                                             ///   - maxLength:
                                             ///   - missing:
@@ -58656,6 +58713,7 @@ public enum Operations {
                                                 provider: Swift.String? = nil,
                                                 recipients: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload.previewPayload.recipientsPayload,
                                                 subject: Swift.String? = nil,
+                                                context: Swift.String? = nil,
                                                 body: Swift.String,
                                                 maxLength: Swift.Int? = nil,
                                                 missing: [Swift.String],
@@ -58668,6 +58726,7 @@ public enum Operations {
                                                 self.provider = provider
                                                 self.recipients = recipients
                                                 self.subject = subject
+                                                self.context = context
                                                 self.body = body
                                                 self.maxLength = maxLength
                                                 self.missing = missing
@@ -58681,6 +58740,7 @@ public enum Operations {
                                                 case provider
                                                 case recipients
                                                 case subject
+                                                case context
                                                 case body
                                                 case maxLength
                                                 case missing
@@ -61063,6 +61123,8 @@ public enum Operations {
                                     public var recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload.recipientsPayload
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/preview/subject`.
                                     public var subject: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/preview/context`.
+                                    public var context: Swift.String?
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/preview/body`.
                                     public var body: Swift.String
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/preview/maxLength`.
@@ -61112,6 +61174,7 @@ public enum Operations {
                                     ///   - provider:
                                     ///   - recipients:
                                     ///   - subject:
+                                    ///   - context:
                                     ///   - body:
                                     ///   - maxLength:
                                     ///   - missing:
@@ -61124,6 +61187,7 @@ public enum Operations {
                                         provider: Swift.String? = nil,
                                         recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload.recipientsPayload,
                                         subject: Swift.String? = nil,
+                                        context: Swift.String? = nil,
                                         body: Swift.String,
                                         maxLength: Swift.Int? = nil,
                                         missing: [Swift.String],
@@ -61136,6 +61200,7 @@ public enum Operations {
                                         self.provider = provider
                                         self.recipients = recipients
                                         self.subject = subject
+                                        self.context = context
                                         self.body = body
                                         self.maxLength = maxLength
                                         self.missing = missing
@@ -61149,6 +61214,7 @@ public enum Operations {
                                         case provider
                                         case recipients
                                         case subject
+                                        case context
                                         case body
                                         case maxLength
                                         case missing
@@ -61404,6 +61470,8 @@ public enum Operations {
                                             public var recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload.previewPayload.recipientsPayload
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/subject`.
                                             public var subject: Swift.String?
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/context`.
+                                            public var context: Swift.String?
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/body`.
                                             public var body: Swift.String
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/preview/maxLength`.
@@ -61453,6 +61521,7 @@ public enum Operations {
                                             ///   - provider:
                                             ///   - recipients:
                                             ///   - subject:
+                                            ///   - context:
                                             ///   - body:
                                             ///   - maxLength:
                                             ///   - missing:
@@ -61465,6 +61534,7 @@ public enum Operations {
                                                 provider: Swift.String? = nil,
                                                 recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload.previewPayload.recipientsPayload,
                                                 subject: Swift.String? = nil,
+                                                context: Swift.String? = nil,
                                                 body: Swift.String,
                                                 maxLength: Swift.Int? = nil,
                                                 missing: [Swift.String],
@@ -61477,6 +61547,7 @@ public enum Operations {
                                                 self.provider = provider
                                                 self.recipients = recipients
                                                 self.subject = subject
+                                                self.context = context
                                                 self.body = body
                                                 self.maxLength = maxLength
                                                 self.missing = missing
@@ -61490,6 +61561,7 @@ public enum Operations {
                                                 case provider
                                                 case recipients
                                                 case subject
+                                                case context
                                                 case body
                                                 case maxLength
                                                 case missing
@@ -61597,6 +61669,8 @@ public enum Operations {
                                             public var recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload.previewPayload.recipientsPayload
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/subject`.
                                             public var subject: Swift.String?
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/context`.
+                                            public var context: Swift.String?
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/body`.
                                             public var body: Swift.String
                                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/preview/maxLength`.
@@ -61646,6 +61720,7 @@ public enum Operations {
                                             ///   - provider:
                                             ///   - recipients:
                                             ///   - subject:
+                                            ///   - context:
                                             ///   - body:
                                             ///   - maxLength:
                                             ///   - missing:
@@ -61658,6 +61733,7 @@ public enum Operations {
                                                 provider: Swift.String? = nil,
                                                 recipients: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload.previewPayload.recipientsPayload,
                                                 subject: Swift.String? = nil,
+                                                context: Swift.String? = nil,
                                                 body: Swift.String,
                                                 maxLength: Swift.Int? = nil,
                                                 missing: [Swift.String],
@@ -61670,6 +61746,7 @@ public enum Operations {
                                                 self.provider = provider
                                                 self.recipients = recipients
                                                 self.subject = subject
+                                                self.context = context
                                                 self.body = body
                                                 self.maxLength = maxLength
                                                 self.missing = missing
@@ -61683,6 +61760,7 @@ public enum Operations {
                                                 case provider
                                                 case recipients
                                                 case subject
+                                                case context
                                                 case body
                                                 case maxLength
                                                 case missing
