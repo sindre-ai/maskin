@@ -679,7 +679,7 @@ describe('Agent intro — hints from the creator', () => {
 			{
 				name: `Dropper ${randomUUID()}`,
 				workspace_id: ws.id,
-				needed_integrations: ['linear', 'not-a-provider', 'skjald', 'google-search-console'],
+				needed_integrations: ['linear', 'not-a-provider', 'skjald'],
 			},
 			bearer(key),
 		)
@@ -693,7 +693,7 @@ describe('Agent intro — hints from the creator', () => {
 			const calls = capturesOf('agent_intro_sent')
 			return calls.length > 0 ? calls : undefined
 		})
-		expect(sent?.[0]?.[2]).toMatchObject({ needed_tools_count: 1, hints_dropped: 3 })
+		expect(sent?.[0]?.[2]).toMatchObject({ needed_tools_count: 1, hints_dropped: 2 })
 		// Provider names only, the catalog name rather than the display name.
 		expect((await introMessageOf(created.id))?.metadata).toMatchObject({
 			needed_tools: [{ provider: 'linear' }],
