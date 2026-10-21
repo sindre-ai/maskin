@@ -1,3 +1,4 @@
+import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
 import { useState } from 'react'
@@ -28,10 +29,11 @@ export function DraftPreview({ draft }: DraftPreviewProps) {
 		>
 			<div className="flex items-baseline gap-2">
 				<span className="eyebrow shrink-0">{draft.label ?? 'Draft'}</span>
-				{draft.to ? (
+				{draft.to && !draft.preview ? (
 					<span className="min-w-0 truncate text-[12px] text-muted-foreground">To {draft.to}</span>
 				) : null}
 			</div>
+			{draft.preview ? <ObjectPreviewMeta preview={draft.preview} /> : null}
 			<p
 				className={`whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground ${
 					folds && !open ? 'line-clamp-4' : ''
