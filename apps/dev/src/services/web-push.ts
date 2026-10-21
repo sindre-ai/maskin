@@ -18,6 +18,7 @@
  * A 404 or 410 from the push service means the subscription is gone (the user revoked
  * permission or the browser dropped it); the row is deleted so it stops being targeted.
  */
+import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { webPushSubscriptions } from '@maskin/db/schema'
 import { isAllowedWebPushEndpoint } from '@maskin/shared'
@@ -99,10 +100,17 @@ export function buildWebPushPayload(msg: PushMessage): WebPushPayload {
 		title: truncate(msg.title, TITLE_MAX),
 		...(msg.body ? { body: truncate(msg.body, BODY_MAX) } : {}),
 		url: webUrlFor(msg),
-		tag: msg.notificationId,
+		tag: msg.collapseKey?.trim() || msg.notificationId,
 		silent: interruption === 'passive',
 		requireInteraction: interruption === 'time-sensitive',
 	}
+}
+
+/** A collapse key is arbitrary text, so it is hashed down to a valid topic (stable per key). */
+export function webPushTopic(msg: PushMessage): string {
+	const key = msg.collapseKey?.trim()
+	if (key) return createHash('sha256').update(key).digest('hex').slice(0, 32)
+	return msg.notificationId.replace(/[^A-Za-z0-9]/g, '').slice(0, 32)
 }
 
 export function buildWebPushOptions(msg: PushMessage): WebPushSendOptions {
@@ -112,7 +120,7 @@ export function buildWebPushOptions(msg: PushMessage): WebPushSendOptions {
 		urgency:
 			interruption === 'time-sensitive' ? 'high' : interruption === 'passive' ? 'low' : 'normal',
 		// RFC 8030 topics are ≤32 URL-safe characters; a uuid without its hyphens is exactly 32.
-		topic: msg.notificationId.replace(/[^A-Za-z0-9]/g, '').slice(0, 32),
+		topic: webPushTopic(msg),
 	}
 }
 

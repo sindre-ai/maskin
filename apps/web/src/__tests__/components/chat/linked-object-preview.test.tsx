@@ -107,6 +107,15 @@ describe('LinkedObjectPreviews', () => {
 		expect(useObject).not.toHaveBeenCalled()
 	})
 
+	it('shows no card for an object an earlier message already shows', () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		const { container } = render(
+			<LinkedObjectPreviews workspaceId={WS} content={CONTENT} skipIds={new Set([ID])} />,
+		)
+		expect(container).toBeEmptyDOMElement()
+		expect(useObject).not.toHaveBeenCalled()
+	})
+
 	it('shows nothing for an object from another workspace', () => {
 		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other' }) })
 		const { container } = renderCard()
