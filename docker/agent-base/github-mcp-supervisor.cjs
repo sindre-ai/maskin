@@ -27,15 +27,16 @@ const REQUIRED_ENV = [
 	'MASKIN_WORKSPACE_ID',
 ]
 
-// An expiry is an isError tool result carrying GitHub's 401 / Bad credentials
-// text. A successful result that merely mentions 401 does not count.
+// An expiry is an isError tool result carrying GitHub's 401 status line
+// ("GET <url>: 401 Bad credentials") or Bad credentials text. A successful
+// result, or an error whose URL merely contains 401 (issue 401), does not count.
 function isExpiryResult(message) {
 	const result = message?.result
 	if (!result || result.isError !== true || !Array.isArray(result.content)) return false
 	const text = result.content
 		.map((part) => (part && typeof part.text === 'string' ? part.text : ''))
 		.join('\n')
-	return /\b401\b|bad credentials/i.test(text)
+	return /:\s401\b|bad credentials/i.test(text)
 }
 
 function withMarker(message) {

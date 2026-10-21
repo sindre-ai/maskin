@@ -5,7 +5,8 @@
 // tokens in the tests are made-up strings.
 //
 // Tools: get_me and list_branches (need auth), echo, slow, stats, forbidden,
-// mentions_401 (a successful result whose text mentions 401), crash.
+// mentions_401 (a successful result whose text mentions 401), issue_401_not_found
+// (a 404 error whose URL contains 401), crash.
 // Any other method with an id is answered with { discovered: true }.
 
 const readline = require('node:readline')
@@ -48,6 +49,13 @@ function handleTool(id, name, args) {
 			id,
 			errorText(
 				'GET https://api.github.com/repos/x/y: 403 Resource not accessible by integration []',
+			),
+		)
+	} else if (name === 'issue_401_not_found') {
+		reply(
+			id,
+			errorText(
+				'failed to get issue: GET https://api.github.com/repos/x/y/issues/401: 404 Not Found []',
 			),
 		)
 	} else if (name === 'mentions_401') {

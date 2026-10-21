@@ -271,6 +271,17 @@ test('non-401 error passes through and mints nothing', async () => {
 	})
 })
 
+test('a 404 error whose URL contains 401 passes through and mints nothing', async () => {
+	await withSupervisor({}, async (h) => {
+		const response = await h.call('issue_401_not_found')
+		assert.equal(response.result.isError, true)
+		assert.match(response.result.content[0].text, /404 Not Found/)
+		assert.ok(!response.result.content[0].text.includes(REMINT_MARKER))
+		assert.equal(h.mint.calls.length, 0)
+		assert.equal(remintLines(h).length, 0)
+	})
+})
+
 test('a successful result that only contains the text 401 does not trigger a mint', async () => {
 	await withSupervisor({}, async (h) => {
 		const response = await h.call('mentions_401')
