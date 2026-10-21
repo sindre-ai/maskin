@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
@@ -10,6 +9,7 @@ import { canActWithoutAsking, canWrite, resolveAgentAccess } from '../lib/integr
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { contentHash, shownDraftText } from '../lib/integrations/providers/gmail/approval-hash'
 import {
 	GmailSendError,
 	type OutgoingEmail,
@@ -143,18 +143,6 @@ const readGmailCredential = (db: Database, workspaceId: string, actorId: string)
 		ctx: readContextFor(actorId, 'gmail:send'),
 	})
 
-const contentHash = (to: Recipient[], cc: Recipient[], subject: string, body: string) =>
-	createHash('sha256')
-		.update(
-			JSON.stringify([
-				to.map((r) => r.address).sort(),
-				cc.map((r) => r.address).sort(),
-				subject,
-				body,
-			]),
-		)
-		.digest('hex')
-
 function sendFailureFor(err: GmailSendError): Fail {
 	switch (err.code) {
 		case 'INVALID_EMAIL':
@@ -206,6 +194,14 @@ async function textChangedAfter(
 	return later.length === 0 && !!updatedAt && !!answer.createdAt && updatedAt > answer.createdAt
 }
 
+const changedAfterApproval = () =>
+	fail(
+		409,
+		'CONFLICT',
+		'The draft was changed after the person approved it (or emptied, or their answer does not record what they saw), so this is not the text they approved. Do not send it.',
+		'Post a new approval card with the current text and wait for the person to approve it again.',
+	)
+
 /** The email an approval card asks about, once a person has chosen to send it. */
 async function loadApproval(
 	db: Database,
@@ -246,7 +242,12 @@ async function loadApproval(
 	}
 
 	let draft: DecisionDraft
-	let answer: { id: number; content: string | null; createdAt: Date | null }
+	let answer: {
+		id: number
+		content: string | null
+		createdAt: Date | null
+		approvedHash: string | null
+	}
 
 	if (stack?.length) {
 		// One card, several messages. Each message is approved on its own: the person's tap
@@ -279,6 +280,7 @@ async function loadApproval(
 				id: events.id,
 				content: sql<string | null>`${events.data}->>'content'`,
 				createdAt: events.createdAt,
+				approvedHash: sql<string | null>`${events.data}->>'approved_send_hash'`,
 			})
 			.from(events)
 			.innerJoin(actors, eq(actors.id, events.actorId))
@@ -347,6 +349,7 @@ async function loadApproval(
 				id: events.id,
 				content: sql<string | null>`${events.data}->>'content'`,
 				createdAt: events.createdAt,
+				approvedHash: sql<string | null>`${events.data}->>'approved_send_hash'`,
 			})
 			.from(events)
 			.innerJoin(actors, eq(actors.id, events.actorId))
@@ -384,29 +387,21 @@ async function loadApproval(
 	}
 
 	// The text is what the card shows: the draft object's current text, else the stored body.
-	let text: string | undefined
 	if (draft.object_id) {
 		const [object] = await db
 			.select({ content: objects.content, updatedAt: objects.updatedAt })
 			.from(objects)
 			.where(and(eq(objects.id, draft.object_id), eq(objects.workspaceId, workspaceId)))
 			.limit(1)
-		if (object?.content?.trim()) {
-			if (await textChangedAfter(db, workspaceId, draft.object_id, answer, object.updatedAt)) {
-				return {
-					failure: fail(
-						409,
-						'CONFLICT',
-						'The draft was changed after the person approved it, so they did not approve this text. Do not send it.',
-						'Post a new approval card with the current text.',
-					),
-				}
-			}
-			text = object.content
+		if (
+			object?.content?.trim() &&
+			(await textChangedAfter(db, workspaceId, draft.object_id, answer, object.updatedAt))
+		) {
+			return { failure: changedAfterApproval() }
 		}
 	}
-	text ??= draft.body
-	if (!text?.trim()) {
+	const text = await shownDraftText(db, workspaceId, draft)
+	if (!text) {
 		return { failure: fail(400, 'BAD_REQUEST', 'The approval card has no draft text.') }
 	}
 
@@ -433,6 +428,16 @@ async function loadApproval(
 				`The card's recipient has no usable email address (${err.message}) ${SEND_APPROVAL_HOWTO}`,
 			),
 		}
+	}
+
+	// What goes out must be exactly what the person saw when they answered. Always compared,
+	// also when the draft object was emptied or the answer carries no fingerprint: then there is
+	// nothing to show it is the approved text, so it is not sent.
+	if (
+		!answer.approvedHash ||
+		answer.approvedHash !== contentHash(to, [], parts.subject, parts.body)
+	) {
+		return { failure: changedAfterApproval() }
 	}
 	return { email: { to, subject: parts.subject, body: parts.body } }
 }
