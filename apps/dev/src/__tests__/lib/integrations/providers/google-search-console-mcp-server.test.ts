@@ -81,7 +81,9 @@ describe('Search Console MCP server', () => {
 	it('inspect_url posts inspectionUrl and siteUrl with the server-side token and returns the raw status', async () => {
 		const { client, fetchImpl, getAccessToken } = await connect()
 		const google = {
-			inspectionResult: { indexStatusResult: { verdict: 'PASS', coverageState: 'Submitted and indexed' } },
+			inspectionResult: {
+				indexStatusResult: { verdict: 'PASS', coverageState: 'Submitted and indexed' },
+			},
 		}
 		fetchImpl.mockResolvedValueOnce(jsonResponse(200, google))
 
