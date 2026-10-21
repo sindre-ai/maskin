@@ -46,6 +46,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
+import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
@@ -80,6 +81,15 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * watchdog in `apps/web/src/lib/sse.ts`.
  */
 const SSE_HEARTBEAT_MS = 15_000
+
+/**
+ * Session row for an HTTP response. The stored config can hold env_vars values
+ * and mcps env / headers values, so those are masked here, in the one place every
+ * session-returning handler goes through. Internal readers use the raw row.
+ */
+function serializeSession<T extends { config: unknown } & Record<string, unknown>>(session: T) {
+	return serialize({ ...session, config: redactSessionConfig(session.config) })
+}
 
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
@@ -226,7 +236,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		}
 		session = row
 	}
-	const created = serialize(session) as z.infer<typeof sessionResponseSchema>
+	const created = serializeSession(session) as z.infer<typeof sessionResponseSchema>
 	// The work still runs when the chain is too deep; the caller is told nothing
 	// will be sent back, so it does not wait for a return that cannot come.
 	if (!link.linked && link.reason === 'hop_cap') {
@@ -336,7 +346,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 				.limit(query.limit)
 				.offset(query.offset)
 
-			return c.json(serializeArray(fenced) as z.infer<typeof sessionResponseSchema>[])
+			return c.json(fenced.map(serializeSession) as z.infer<typeof sessionResponseSchema>[])
 		}
 
 		const results = await db
@@ -347,7 +357,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 			.offset(query.offset)
 			.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
-		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+		return c.json(results.map(serializeSession) as z.infer<typeof sessionResponseSchema>[])
 	}
 
 	// Lean path: LEFT JOIN triggers for title synthesis (the trigger's name is
@@ -554,7 +564,7 @@ app.openapi(getSessionRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 	}
 
-	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
+	const serialized = serializeSession(session) as z.infer<typeof sessionResponseSchema>
 
 	if (!include_logs) {
 		return c.json(serialized as z.infer<typeof getSessionResponseSchema>)
@@ -722,7 +732,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 				: { notify_on_complete: 'skipped' as const, notify_skip_reason: notifyOutcome.reason }
 
 	return c.json({
-		...serialize(updated),
+		...serializeSession(updated),
 		...notify,
 	} as z.infer<typeof sessionNotifyResponseSchema>)
 }) as RouteHandler<typeof patchSessionRoute, Env>)
@@ -781,7 +791,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof stopSessionRoute, Env>)
 
 // POST /:id/pause - Pause and snapshot a session
@@ -838,7 +848,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof pauseSessionRoute, Env>)
 
 // POST /:id/resume - Resume a paused session
@@ -895,7 +905,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
 // POST /:id/input - Send a user turn to an interactive session

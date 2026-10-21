@@ -283,6 +283,12 @@
 														"null"
 													]
 												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -791,6 +797,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -1416,6 +1428,12 @@
 														}
 													},
 													"subject": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"context": {
 														"type": [
 															"string",
 															"null"
@@ -2223,6 +2241,12 @@
 															"null"
 														]
 													},
+													"context": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"body": {
 														"type": "string"
 													},
@@ -2545,6 +2569,12 @@
 																"null"
 															]
 														},
+														"context": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
 														"body": {
 															"type": "string"
 														},
@@ -2835,6 +2865,12 @@
 																}
 															},
 															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"context": {
 																"type": [
 																	"string",
 																	"null"
@@ -3512,6 +3548,12 @@
 														"null"
 													]
 												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -3846,6 +3888,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -4325,6 +4373,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -4824,6 +4878,12 @@
 													}
 												},
 												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"context": {
 													"type": [
 														"string",
 														"null"
@@ -47080,7 +47140,7 @@
 				"tags": [
 					"For You"
 				],
-				"summary": "The Chief of Staff's ranked list of what needs the current actor",
+				"summary": "What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them",
 				"parameters": [
 					{
 						"schema": {
@@ -47106,11 +47166,27 @@
 												"type": "object",
 												"properties": {
 													"notification_id": {
-														"type": "string",
+														"type": [
+															"string",
+															"null"
+														],
 														"format": "uuid"
+													},
+													"source": {
+														"type": "string",
+														"enum": [
+															"curated",
+															"decision"
+														]
 													},
 													"rank": {
 														"type": "number"
+													},
+													"latest_event_id": {
+														"type": [
+															"number",
+															"null"
+														]
 													},
 													"headline": {
 														"type": "string"
@@ -47291,6 +47367,12 @@
 																		}
 																	},
 																	"subject": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"context": {
 																		"type": [
 																			"string",
 																			"null"
@@ -47531,6 +47613,12 @@
 																								"null"
 																							]
 																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -47667,6 +47755,12 @@
 																							"null"
 																						]
 																					},
+																					"context": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
 																					"body": {
 																						"type": "string"
 																					},
@@ -47753,7 +47847,9 @@
 												},
 												"required": [
 													"notification_id",
+													"source",
 													"rank",
+													"latest_event_id",
 													"headline",
 													"rationale",
 													"created_at",
@@ -49816,6 +49912,12 @@
 																			"null"
 																		]
 																	},
+																	"context": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -50051,6 +50153,12 @@
 																								"null"
 																							]
 																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -50182,6 +50290,12 @@
 																						}
 																					},
 																					"subject": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"context": {
 																						"type": [
 																							"string",
 																							"null"
@@ -50545,6 +50659,12 @@
 																}
 															},
 															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"context": {
 																"type": [
 																	"string",
 																	"null"
