@@ -29,16 +29,16 @@ function renderCard(overrides: Partial<Parameters<typeof VaultedCard>[0]> = {}) 
 }
 
 describe('VaultedCard', () => {
-	it('offers View credential', () => {
+	it('offers View in Keychain', () => {
 		renderCard()
-		expect(screen.getByRole('link', { name: 'View credential' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'View in Keychain' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
 	})
 
-	it('puts Retry before View credential when the restart failed', () => {
+	it('puts Retry before View in Keychain when the restart failed', () => {
 		renderCard({ phase: 'failed' })
 		const retry = screen.getByRole('button', { name: 'Retry' })
-		const view = screen.getByRole('link', { name: 'View credential' })
+		const view = screen.getByRole('link', { name: 'View in Keychain' })
 		expect(retry.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 

@@ -97,11 +97,18 @@ describe('effectiveAccess (pure)', () => {
 			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read' }, 'none'),
 		).toBe('none')
 	})
-	it('treats a Keychain credential as explicit-grant on/off, ignoring the default', () => {
-		expect(effectiveAccess({ providerMode: 'byo_apikey', defaultAgentAccess: 'read' }, null)).toBe(
-			'none',
-		)
-		expect(effectiveAccess({ providerMode: 'byo_login', defaultAgentAccess: 'read' }, 'read')).toBe(
+	it('treats a Keychain credential as on/off: its own entry, else the default', () => {
+		const key = (defaultAgentAccess: 'read' | 'none') => ({
+			providerMode: 'byo_apikey' as const,
+			defaultAgentAccess,
+		})
+		// Fail-closed until a person says otherwise.
+		expect(effectiveAccess(key('none'), null)).toBe('none')
+		expect(effectiveAccess(key('read'), null)).toBe('read_write')
+		// An entry of its own wins in both directions, and any non-none level is just "on".
+		expect(effectiveAccess(key('read'), 'none')).toBe('none')
+		expect(effectiveAccess(key('none'), 'read_write')).toBe('read_write')
+		expect(effectiveAccess({ ...key('none'), providerMode: 'byo_login' }, 'read')).toBe(
 			'read_write',
 		)
 	})
@@ -284,7 +291,7 @@ describe('grants routes (Integration)', () => {
 		).toBe(403)
 	})
 
-	it('only allows read_write on a Keychain credential, and no default', async () => {
+	it('only allows read_write or none on a Keychain credential, and lets its default be set', async () => {
 		const s = await setup()
 		const key = await insertIntegration(s, {
 			provider: 'custom',
@@ -302,9 +309,31 @@ describe('grants routes (Integration)', () => {
 				.status,
 		).toBe(200)
 		expect(
+			(await req(app, 'PUT', `/${key.id}/grants/${s.agentA.id}`, s.ws.id, { access: 'none' }))
+				.status,
+		).toBe(200)
+		expect(
 			(await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'read' }))
 				.status,
-		).toBe(400)
+		).toBe(200)
+	})
+
+	it('gives every agent a Keychain credential whose default is Full access, except one set to No access', async () => {
+		const s = await setup()
+		const key = await insertIntegration(s, {
+			provider: 'custom',
+			providerMode: 'byo_apikey',
+			displayName: 'K',
+			defaultAgentAccess: 'none',
+		})
+		expect(await resolveAgentAccess(db, s.ws.id, key.id, s.agentB.id)).toBe('none')
+
+		const app = appFor(s.human)
+		await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'read' })
+		await req(app, 'PUT', `/${key.id}/grants/${s.agentA.id}`, s.ws.id, { access: 'none' })
+
+		expect(await resolveAgentAccess(db, s.ws.id, key.id, s.agentB.id)).toBe('read_write')
+		expect(await resolveAgentAccess(db, s.ws.id, key.id, s.agentA.id)).toBe('none')
 	})
 
 	it('lets a person switch the default to none, and back', async () => {

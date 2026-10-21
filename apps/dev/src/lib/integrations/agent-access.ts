@@ -15,9 +15,11 @@ import { isGatedRow } from './custom-mcp'
 /**
  * What one actor may do with one integration. The single place that answers it.
  *
- * - Keychain credentials (byo_*) are explicit-grant: any agent_grants row means
- *   on (read_write), no row means off. There is no read/write split for a raw key
- *   or login, because it is injected as an env var and "read" could not stop a write.
+ * - Keychain credentials (byo_*) are on or off: the agent's own row if it has one
+ *   ('none' is off, anything else is on, read_write), else the credential's default
+ *   ('read' is on for every agent without a row, 'none' is off). Every credential starts
+ *   at 'none', so it is fail-closed until a person grants it. There is no read/write split
+ *   for a raw key or login, because it is injected as an env var and "read" could not stop a write.
  * - Every other integration: the agent's row if it has one, else the integration's
  *   default_agent_access ('read' unless a person switched it to 'none').
  * - People are not subject to grants on ordinary integrations; a Keychain credential
@@ -42,9 +44,10 @@ export function effectiveAccess(
 	},
 	grant: AgentGrantAccess | null,
 ): AgentAccess {
-	// A saved key or login is on or off: a row (never 'none') is on, no row is off.
+	// A saved key or login is on or off: its own row decides, else the default does.
 	if (isKeychainMode(integration.providerMode)) {
-		return grant && grant !== 'none' ? 'read_write' : 'none'
+		if (grant) return grant === 'none' ? 'none' : 'read_write'
+		return integration.defaultAgentAccess === 'read' ? 'read_write' : 'none'
 	}
 	return grant ?? integration.defaultAgentAccess
 }
@@ -201,11 +204,7 @@ export async function listAgentAccess(
 			providerMode: r.providerMode,
 			displayName: r.displayName,
 			access: viaChat ? ('read_write' as const) : effectiveAccess(r, r.grant),
-			source: viaChat
-				? ('chat' as const)
-				: r.grant || keychain
-					? ('grant' as const)
-					: ('default' as const),
+			source: viaChat ? ('chat' as const) : r.grant ? ('grant' as const) : ('default' as const),
 			chatCount: keychain ? chats.length : 0,
 			defaultAgentAccess: r.defaultAgentAccess,
 			status: r.status,

@@ -40,6 +40,8 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access), 'none' is off. */
+		default_access: 'read' | 'none'
 		/** 'always': a grant. 'this_chat': an Allow for the chat this is asked from. Else null. */
 		scope: 'always' | 'this_chat' | null
 		/** In how many chats it is shared with this agent, apart from any grant. */
@@ -127,6 +129,7 @@ export async function describeAgentAccess(
 				name: r.displayName,
 				kind: r.providerMode === 'byo_login' ? 'login' : 'api_key',
 				has_access: r.access !== 'none',
+				default_access: r.defaultAgentAccess,
 				scope:
 					r.access === 'none'
 						? null

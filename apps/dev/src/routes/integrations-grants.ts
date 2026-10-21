@@ -156,7 +156,7 @@ function levelNotAllowed(
 	access: string,
 ): 'keychain_access' | 'custom_access' | null {
 	if (isKeychainMode(target.providerMode as never)) {
-		return access !== 'read_write' ? 'keychain_access' : null
+		return access !== 'read_write' && access !== 'none' ? 'keychain_access' : null
 	}
 	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
 		return 'custom_access'
@@ -201,7 +201,7 @@ function failure(reason: string): {
 			return {
 				error: createApiError(
 					'BAD_REQUEST',
-					'A saved key or login is on or off for an agent: use read_write',
+					'A saved key or login is on or off for an agent: use read_write or none',
 				),
 				status: 400,
 			}
@@ -527,12 +527,22 @@ app.openapi(putDefaultRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		// A saved key or login has no default: it is always explicit-grant.
-		if (isKeychainMode(target.providerMode as never)) return 'keychain_default' as const
 		await tx
 			.update(integrations)
 			.set({ defaultAgentAccess, updatedAt: new Date() })
 			.where(eq(integrations.id, id))
+		// A saved key's default decides which agents may read the secret, so it is audited
+		// the same way a per-agent change is.
+		if (isKeychainMode(target.providerMode as never)) {
+			await insertCredentialAccessLog(tx, {
+				workspaceId,
+				integrationId: id,
+				actorId: callerId,
+				action: 'scope_changed',
+				source: 'admin_ui',
+				requestId: `grant-change:${id}:${randomUUID()}`,
+			})
+		}
 		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
@@ -549,12 +559,6 @@ app.openapi(putDefaultRoute, (async (c) => {
 		return 'saved' as const
 	})
 
-	if (outcome === 'keychain_default') {
-		return c.json(
-			createApiError('BAD_REQUEST', 'A saved key or login has no default: grant agents one by one'),
-			400,
-		)
-	}
 	if (outcome !== 'saved') {
 		const f = failure(outcome)
 		return c.json(f.error, f.status)

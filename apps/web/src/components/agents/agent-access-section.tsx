@@ -141,9 +141,10 @@ function CredentialRow({
 				disabled={!canChange || busy}
 				aria-label={`${row.name} for this agent`}
 				onCheckedChange={(on) =>
-					on
-						? setGrant.mutate({ actorId: agentId, access: 'read_write' })
-						: removeGrant.mutate(agentId)
+					// Back to the key's default when the choice matches it; otherwise an entry of its own.
+					on === (row.default_access === 'read')
+						? removeGrant.mutate(agentId)
+						: setGrant.mutate({ actorId: agentId, access: on ? 'read_write' : 'none' })
 				}
 			/>
 		</li>
