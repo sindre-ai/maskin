@@ -1321,6 +1321,29 @@ describe('tool handlers', () => {
 			expect(create?.body).toMatchObject({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
 		})
 
+		it('forwards first_steps and needed_integrations on the agent create call', async () => {
+			const requests = recordRequests()
+			const firstSteps = [
+				{ label: 'Summarise open bugs', prompt: 'Summarise open bugs', action: 'send' },
+				{ label: 'Draft a reply', prompt: 'Draft a reply to: ', action: 'fill' },
+			]
+
+			const handler = getHandler('create_actor')
+			await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).toMatchObject({
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
+		})
+
 		it('does not add the agent to the workspace in a second call, and reports member', async () => {
 			const requests = recordRequests()
 
@@ -2476,7 +2499,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id, status: 'running' }),
 				} as Response)
 
-		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+		it('flag on and the wait times out: asks for the return with one PATCH, false on the create call', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
@@ -2493,7 +2516,8 @@ describe('tool handlers', () => {
 			expect(parsed.notify_on_complete).toBe('registered')
 
 			const [create] = callsWith(fetchSpy, 'POST')
-			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			// False, not omitted: omitted defaults on for a helper started from a chat.
+			expect(JSON.parse(create[1].body as string).notify_on_complete).toBe(false)
 			const patches = callsWith(fetchSpy, 'PATCH')
 			expect(patches).toHaveLength(1)
 			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')
@@ -6565,6 +6589,31 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', hostSession)
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
+	})
+
+	// POST /api/actors reads this header to find the person behind the creating
+	// session, so the new agent can introduce itself to them.
+	async function createActorHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'actor-new' }),
+		} as Response)
+		const handler = handlers.get('create_actor')
+		if (!handler) throw new Error('create_actor handler not registered')
+		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		const call = vi
+			.mocked(fetch)
+			.mock.calls.find(
+				(c) => String(c[0]).endsWith('/api/actors') && (c[1] as RequestInit).method === 'POST',
+			)
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	it('create_actor for an agent sends config.maskinSessionId on the POST /api/actors call', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createActorHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
 	})
 
 	it('post_conversation_message resolves mention_names to metadata.mentions and reports misses', async () => {

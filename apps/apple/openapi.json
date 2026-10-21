@@ -183,6 +183,408 @@
 		"parameters": {}
 	},
 	"paths": {
+		"/api/objects/{id}/approval": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Objects"
+				],
+				"summary": "Approve a drafted object for sending",
+				"description": "Records that the calling person approved the draft exactly as it reads now. Humans only. Pass the preview’s content_hash so a draft that changed since it was shown is refused.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"content_hash": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Approved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"approval_id": {
+											"type": "number"
+										},
+										"preview": {
+											"type": "object",
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
+										}
+									},
+									"required": [
+										"approval_id",
+										"preview"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Cannot be approved yet",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Draft changed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/objects": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -337,6 +739,124 @@
 										},
 										"is_starred_by_me": {
 											"type": "boolean"
+										},
+										"preview": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
 										}
 									},
 									"required": [
@@ -844,6 +1364,124 @@
 											},
 											"is_starred_by_me": {
 												"type": "boolean"
+											},
+											"preview": {
+												"type": [
+													"object",
+													"null"
+												],
+												"properties": {
+													"kind": {
+														"type": "string"
+													},
+													"label": {
+														"type": "string"
+													},
+													"provider": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"recipients": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"role": {
+																	"type": "string",
+																	"enum": [
+																		"to",
+																		"cc"
+																	]
+																},
+																"name": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"address": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																}
+															},
+															"required": [
+																"role",
+																"name",
+																"address"
+															]
+														}
+													},
+													"subject": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"body": {
+														"type": "string"
+													},
+													"maxLength": {
+														"type": [
+															"integer",
+															"null"
+														],
+														"exclusiveMinimum": 0
+													},
+													"missing": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"warnings": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"content_hash": {
+														"type": "string"
+													},
+													"delivery": {
+														"type": "object",
+														"properties": {
+															"state": {
+																"type": "string",
+																"enum": [
+																	"draft",
+																	"approved",
+																	"sent"
+																]
+															},
+															"at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"state",
+															"at"
+														]
+													}
+												},
+												"required": [
+													"kind",
+													"label",
+													"provider",
+													"recipients",
+													"subject",
+													"body",
+													"maxLength",
+													"missing",
+													"warnings",
+													"content_hash"
+												]
 											}
 										},
 										"required": [
@@ -1528,6 +2166,124 @@
 											},
 											"is_starred_by_me": {
 												"type": "boolean"
+											},
+											"preview": {
+												"type": [
+													"object",
+													"null"
+												],
+												"properties": {
+													"kind": {
+														"type": "string"
+													},
+													"label": {
+														"type": "string"
+													},
+													"provider": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"recipients": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"role": {
+																	"type": "string",
+																	"enum": [
+																		"to",
+																		"cc"
+																	]
+																},
+																"name": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"address": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																}
+															},
+															"required": [
+																"role",
+																"name",
+																"address"
+															]
+														}
+													},
+													"subject": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"body": {
+														"type": "string"
+													},
+													"maxLength": {
+														"type": [
+															"integer",
+															"null"
+														],
+														"exclusiveMinimum": 0
+													},
+													"missing": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"warnings": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"content_hash": {
+														"type": "string"
+													},
+													"delivery": {
+														"type": "object",
+														"properties": {
+															"state": {
+																"type": "string",
+																"enum": [
+																	"draft",
+																	"approved",
+																	"sent"
+																]
+															},
+															"at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"state",
+															"at"
+														]
+													}
+												},
+												"required": [
+													"kind",
+													"label",
+													"provider",
+													"recipients",
+													"subject",
+													"body",
+													"maxLength",
+													"missing",
+													"warnings",
+													"content_hash"
+												]
 											}
 										},
 										"required": [
@@ -1732,6 +2488,124 @@
 												},
 												"is_starred_by_me": {
 													"type": "boolean"
+												},
+												"preview": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"kind": {
+															"type": "string"
+														},
+														"label": {
+															"type": "string"
+														},
+														"provider": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
+														"recipients": {
+															"type": "array",
+															"items": {
+																"type": "object",
+																"properties": {
+																	"role": {
+																		"type": "string",
+																		"enum": [
+																			"to",
+																			"cc"
+																		]
+																	},
+																	"name": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"address": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	}
+																},
+																"required": [
+																	"role",
+																	"name",
+																	"address"
+																]
+															}
+														},
+														"subject": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
+														"body": {
+															"type": "string"
+														},
+														"maxLength": {
+															"type": [
+																"integer",
+																"null"
+															],
+															"exclusiveMinimum": 0
+														},
+														"missing": {
+															"type": "array",
+															"items": {
+																"type": "string"
+															}
+														},
+														"warnings": {
+															"type": "array",
+															"items": {
+																"type": "string"
+															}
+														},
+														"content_hash": {
+															"type": "string"
+														},
+														"delivery": {
+															"type": "object",
+															"properties": {
+																"state": {
+																	"type": "string",
+																	"enum": [
+																		"draft",
+																		"approved",
+																		"sent"
+																	]
+																},
+																"at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																}
+															},
+															"required": [
+																"state",
+																"at"
+															]
+														}
+													},
+													"required": [
+														"kind",
+														"label",
+														"provider",
+														"recipients",
+														"subject",
+														"body",
+														"maxLength",
+														"missing",
+														"warnings",
+														"content_hash"
+													]
 												}
 											},
 											"required": [
@@ -1909,6 +2783,124 @@
 													},
 													"is_starred_by_me": {
 														"type": "boolean"
+													},
+													"preview": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"kind": {
+																"type": "string"
+															},
+															"label": {
+																"type": "string"
+															},
+															"provider": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"recipients": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"role": {
+																			"type": "string",
+																			"enum": [
+																				"to",
+																				"cc"
+																			]
+																		},
+																		"name": {
+																			"type": [
+																				"string",
+																				"null"
+																			]
+																		},
+																		"address": {
+																			"type": [
+																				"string",
+																				"null"
+																			]
+																		}
+																	},
+																	"required": [
+																		"role",
+																		"name",
+																		"address"
+																	]
+																}
+															},
+															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"body": {
+																"type": "string"
+															},
+															"maxLength": {
+																"type": [
+																	"integer",
+																	"null"
+																],
+																"exclusiveMinimum": 0
+															},
+															"missing": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"warnings": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"content_hash": {
+																"type": "string"
+															},
+															"delivery": {
+																"type": "object",
+																"properties": {
+																	"state": {
+																		"type": "string",
+																		"enum": [
+																			"draft",
+																			"approved",
+																			"sent"
+																		]
+																	},
+																	"at": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	}
+																},
+																"required": [
+																	"state",
+																	"at"
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"label",
+															"provider",
+															"recipients",
+															"subject",
+															"body",
+															"maxLength",
+															"missing",
+															"warnings",
+															"content_hash"
+														]
 													}
 												},
 												"required": [
@@ -2463,6 +3455,124 @@
 										},
 										"is_starred_by_me": {
 											"type": "boolean"
+										},
+										"preview": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
 										}
 									},
 									"required": [
@@ -2684,6 +3794,124 @@
 										},
 										"is_starred_by_me": {
 											"type": "boolean"
+										},
+										"preview": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
 										}
 									},
 									"required": [
@@ -3045,6 +4273,124 @@
 										},
 										"is_starred_by_me": {
 											"type": "boolean"
+										},
+										"preview": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
 										}
 									},
 									"required": [
@@ -3426,6 +4772,124 @@
 										},
 										"is_starred_by_me": {
 											"type": "boolean"
+										},
+										"preview": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"kind": {
+													"type": "string"
+												},
+												"label": {
+													"type": "string"
+												},
+												"provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"recipients": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"role": {
+																"type": "string",
+																"enum": [
+																	"to",
+																	"cc"
+																]
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"address": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"role",
+															"name",
+															"address"
+														]
+													}
+												},
+												"subject": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"body": {
+													"type": "string"
+												},
+												"maxLength": {
+													"type": [
+														"integer",
+														"null"
+													],
+													"exclusiveMinimum": 0
+												},
+												"missing": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"warnings": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
+												"content_hash": {
+													"type": "string"
+												},
+												"delivery": {
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"draft",
+																"approved",
+																"sent"
+															]
+														},
+														"at": {
+															"type": [
+																"string",
+																"null"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"at"
+													]
+												}
+											},
+											"required": [
+												"kind",
+												"label",
+												"provider",
+												"recipients",
+												"subject",
+												"body",
+												"maxLength",
+												"missing",
+												"warnings",
+												"content_hash"
+											]
 										}
 									},
 									"required": [
@@ -4836,6 +6300,48 @@
 									"workspace_id": {
 										"type": "string",
 										"format": "uuid"
+									},
+									"first_steps": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"label": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 60
+												},
+												"prompt": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200
+												},
+												"action": {
+													"type": "string",
+													"enum": [
+														"send",
+														"fill"
+													]
+												}
+											},
+											"required": [
+												"label",
+												"prompt",
+												"action"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 4
+									},
+									"needed_integrations": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"minItems": 1,
+										"maxItems": 4
 									}
 								},
 								"required": [
@@ -26252,6 +27758,10 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 40
+									},
+									"object_id": {
+										"type": "string",
+										"format": "uuid"
 									}
 								}
 							}
@@ -34207,6 +35717,113 @@
 												"type": "string",
 												"format": "uuid"
 											},
+											"delivery": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40
+													},
+													"version": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 80
+													},
+													"dedupe_key": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"comment_event_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"kind"
+												]
+											},
+											"suggested_steps": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 60
+														},
+														"prompt": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 200
+														},
+														"action": {
+															"type": "string",
+															"enum": [
+																"send",
+																"fill"
+															]
+														}
+													},
+													"required": [
+														"label",
+														"prompt",
+														"action"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											},
+											"needed_tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"provider": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														}
+													},
+													"required": [
+														"provider"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 3
+											},
+											"plain_tail": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 10
+											},
+											"from_suggested_step": {
+												"type": "object",
+												"properties": {
+													"intro_message_id": {
+														"type": "integer"
+													},
+													"index": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 3
+													}
+												},
+												"required": [
+													"intro_message_id",
+													"index"
+												]
+											},
 											"comment_event_id": {
 												"type": "integer"
 											}
@@ -36925,6 +38542,113 @@
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"delivery": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40
+													},
+													"version": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 80
+													},
+													"dedupe_key": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"comment_event_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"kind"
+												]
+											},
+											"suggested_steps": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 60
+														},
+														"prompt": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 200
+														},
+														"action": {
+															"type": "string",
+															"enum": [
+																"send",
+																"fill"
+															]
+														}
+													},
+													"required": [
+														"label",
+														"prompt",
+														"action"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											},
+											"needed_tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"provider": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														}
+													},
+													"required": [
+														"provider"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 3
+											},
+											"plain_tail": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 10
+											},
+											"from_suggested_step": {
+												"type": "object",
+												"properties": {
+													"intro_message_id": {
+														"type": "integer"
+													},
+													"index": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 3
+													}
+												},
+												"required": [
+													"intro_message_id",
+													"index"
+												]
 											},
 											"comment_event_id": {
 												"type": "integer"
@@ -45515,6 +47239,124 @@
 															},
 															"is_starred_by_me": {
 																"type": "boolean"
+															},
+															"preview": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"kind": {
+																		"type": "string"
+																	},
+																	"label": {
+																		"type": "string"
+																	},
+																	"provider": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"recipients": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"role": {
+																					"type": "string",
+																					"enum": [
+																						"to",
+																						"cc"
+																					]
+																				},
+																				"name": {
+																					"type": [
+																						"string",
+																						"null"
+																					]
+																				},
+																				"address": {
+																					"type": [
+																						"string",
+																						"null"
+																					]
+																				}
+																			},
+																			"required": [
+																				"role",
+																				"name",
+																				"address"
+																			]
+																		}
+																	},
+																	"subject": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"body": {
+																		"type": "string"
+																	},
+																	"maxLength": {
+																		"type": [
+																			"integer",
+																			"null"
+																		],
+																		"exclusiveMinimum": 0
+																	},
+																	"missing": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
+																	"warnings": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
+																	"content_hash": {
+																		"type": "string"
+																	},
+																	"delivery": {
+																		"type": "object",
+																		"properties": {
+																			"state": {
+																				"type": "string",
+																				"enum": [
+																					"draft",
+																					"approved",
+																					"sent"
+																				]
+																			},
+																			"at": {
+																				"type": [
+																					"string",
+																					"null"
+																				]
+																			}
+																		},
+																		"required": [
+																			"state",
+																			"at"
+																		]
+																	}
+																},
+																"required": [
+																	"kind",
+																	"label",
+																	"provider",
+																	"recipients",
+																	"subject",
+																	"body",
+																	"maxLength",
+																	"missing",
+																	"warnings",
+																	"content_hash"
+																]
 															}
 														},
 														"required": [
@@ -45622,74 +47464,272 @@
 																			"type": "object",
 																			"properties": {
 																				"id": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 40,
-																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																					"type": "string"
 																				},
 																				"object_id": {
-																					"type": "string",
-																					"format": "uuid",
-																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																					"type": "string"
 																				},
 																				"label": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 30,
-																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																					"type": "string"
 																				},
 																				"to": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 300,
-																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																					"type": "string"
 																				},
 																				"body": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 20000,
-																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																					"type": "string"
+																				},
+																				"preview": {
+																					"type": "object",
+																					"properties": {
+																						"kind": {
+																							"type": "string"
+																						},
+																						"label": {
+																							"type": "string"
+																						},
+																						"provider": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
+																						"recipients": {
+																							"type": "array",
+																							"items": {
+																								"type": "object",
+																								"properties": {
+																									"role": {
+																										"type": "string",
+																										"enum": [
+																											"to",
+																											"cc"
+																										]
+																									},
+																									"name": {
+																										"type": [
+																											"string",
+																											"null"
+																										]
+																									},
+																									"address": {
+																										"type": [
+																											"string",
+																											"null"
+																										]
+																									}
+																								},
+																								"required": [
+																									"role",
+																									"name",
+																									"address"
+																								]
+																							}
+																						},
+																						"subject": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
+																						"body": {
+																							"type": "string"
+																						},
+																						"maxLength": {
+																							"type": [
+																								"integer",
+																								"null"
+																							],
+																							"exclusiveMinimum": 0
+																						},
+																						"missing": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
+																						"warnings": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
+																						"content_hash": {
+																							"type": "string"
+																						},
+																						"delivery": {
+																							"type": "object",
+																							"properties": {
+																								"state": {
+																									"type": "string",
+																									"enum": [
+																										"draft",
+																										"approved",
+																										"sent"
+																									]
+																								},
+																								"at": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								}
+																							},
+																							"required": [
+																								"state",
+																								"at"
+																							]
+																						}
+																					},
+																					"required": [
+																						"kind",
+																						"label",
+																						"provider",
+																						"recipients",
+																						"subject",
+																						"body",
+																						"maxLength",
+																						"missing",
+																						"warnings",
+																						"content_hash"
+																					]
 																				}
 																			}
-																		},
-																		"minItems": 1,
-																		"maxItems": 10,
-																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																		}
 																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
 																			"id": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 40,
-																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				"type": "string"
 																			},
 																			"object_id": {
-																				"type": "string",
-																				"format": "uuid",
-																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				"type": "string"
 																			},
 																			"label": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 30,
-																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				"type": "string"
 																			},
 																			"to": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 300,
-																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				"type": "string"
 																			},
 																			"body": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 20000,
-																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				"type": "string"
+																			},
+																			"preview": {
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string"
+																					},
+																					"label": {
+																						"type": "string"
+																					},
+																					"provider": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"recipients": {
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"role": {
+																									"type": "string",
+																									"enum": [
+																										"to",
+																										"cc"
+																									]
+																								},
+																								"name": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								},
+																								"address": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								}
+																							},
+																							"required": [
+																								"role",
+																								"name",
+																								"address"
+																							]
+																						}
+																					},
+																					"subject": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"body": {
+																						"type": "string"
+																					},
+																					"maxLength": {
+																						"type": [
+																							"integer",
+																							"null"
+																						],
+																						"exclusiveMinimum": 0
+																					},
+																					"missing": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
+																					},
+																					"warnings": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
+																					},
+																					"content_hash": {
+																						"type": "string"
+																					},
+																					"delivery": {
+																						"type": "object",
+																						"properties": {
+																							"state": {
+																								"type": "string",
+																								"enum": [
+																									"draft",
+																									"approved",
+																									"sent"
+																								]
+																							},
+																							"at": {
+																								"type": [
+																									"string",
+																									"null"
+																								]
+																							}
+																						},
+																						"required": [
+																							"state",
+																							"at"
+																						]
+																					}
+																				},
+																				"required": [
+																					"kind",
+																					"label",
+																					"provider",
+																					"recipients",
+																					"subject",
+																					"body",
+																					"maxLength",
+																					"missing",
+																					"warnings",
+																					"content_hash"
+																				]
 																			}
-																		},
-																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+																		}
 																	}
 																},
 																"required": [
@@ -47394,6 +49434,124 @@
 															},
 															"is_starred_by_me": {
 																"type": "boolean"
+															},
+															"preview": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"kind": {
+																		"type": "string"
+																	},
+																	"label": {
+																		"type": "string"
+																	},
+																	"provider": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"recipients": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"role": {
+																					"type": "string",
+																					"enum": [
+																						"to",
+																						"cc"
+																					]
+																				},
+																				"name": {
+																					"type": [
+																						"string",
+																						"null"
+																					]
+																				},
+																				"address": {
+																					"type": [
+																						"string",
+																						"null"
+																					]
+																				}
+																			},
+																			"required": [
+																				"role",
+																				"name",
+																				"address"
+																			]
+																		}
+																	},
+																	"subject": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"body": {
+																		"type": "string"
+																	},
+																	"maxLength": {
+																		"type": [
+																			"integer",
+																			"null"
+																		],
+																		"exclusiveMinimum": 0
+																	},
+																	"missing": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
+																	"warnings": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
+																	"content_hash": {
+																		"type": "string"
+																	},
+																	"delivery": {
+																		"type": "object",
+																		"properties": {
+																			"state": {
+																				"type": "string",
+																				"enum": [
+																					"draft",
+																					"approved",
+																					"sent"
+																				]
+																			},
+																			"at": {
+																				"type": [
+																					"string",
+																					"null"
+																				]
+																			}
+																		},
+																		"required": [
+																			"state",
+																			"at"
+																		]
+																	}
+																},
+																"required": [
+																	"kind",
+																	"label",
+																	"provider",
+																	"recipients",
+																	"subject",
+																	"body",
+																	"maxLength",
+																	"missing",
+																	"warnings",
+																	"content_hash"
+																]
 															}
 														},
 														"required": [
@@ -47501,74 +49659,272 @@
 																			"type": "object",
 																			"properties": {
 																				"id": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 40,
-																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																					"type": "string"
 																				},
 																				"object_id": {
-																					"type": "string",
-																					"format": "uuid",
-																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																					"type": "string"
 																				},
 																				"label": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 30,
-																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																					"type": "string"
 																				},
 																				"to": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 300,
-																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																					"type": "string"
 																				},
 																				"body": {
-																					"type": "string",
-																					"minLength": 1,
-																					"maxLength": 20000,
-																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																					"type": "string"
+																				},
+																				"preview": {
+																					"type": "object",
+																					"properties": {
+																						"kind": {
+																							"type": "string"
+																						},
+																						"label": {
+																							"type": "string"
+																						},
+																						"provider": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
+																						"recipients": {
+																							"type": "array",
+																							"items": {
+																								"type": "object",
+																								"properties": {
+																									"role": {
+																										"type": "string",
+																										"enum": [
+																											"to",
+																											"cc"
+																										]
+																									},
+																									"name": {
+																										"type": [
+																											"string",
+																											"null"
+																										]
+																									},
+																									"address": {
+																										"type": [
+																											"string",
+																											"null"
+																										]
+																									}
+																								},
+																								"required": [
+																									"role",
+																									"name",
+																									"address"
+																								]
+																							}
+																						},
+																						"subject": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
+																						"body": {
+																							"type": "string"
+																						},
+																						"maxLength": {
+																							"type": [
+																								"integer",
+																								"null"
+																							],
+																							"exclusiveMinimum": 0
+																						},
+																						"missing": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
+																						"warnings": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
+																						"content_hash": {
+																							"type": "string"
+																						},
+																						"delivery": {
+																							"type": "object",
+																							"properties": {
+																								"state": {
+																									"type": "string",
+																									"enum": [
+																										"draft",
+																										"approved",
+																										"sent"
+																									]
+																								},
+																								"at": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								}
+																							},
+																							"required": [
+																								"state",
+																								"at"
+																							]
+																						}
+																					},
+																					"required": [
+																						"kind",
+																						"label",
+																						"provider",
+																						"recipients",
+																						"subject",
+																						"body",
+																						"maxLength",
+																						"missing",
+																						"warnings",
+																						"content_hash"
+																					]
 																				}
 																			}
-																		},
-																		"minItems": 1,
-																		"maxItems": 10,
-																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																		}
 																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
 																			"id": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 40,
-																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				"type": "string"
 																			},
 																			"object_id": {
-																				"type": "string",
-																				"format": "uuid",
-																				"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				"type": "string"
 																			},
 																			"label": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 30,
-																				"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				"type": "string"
 																			},
 																			"to": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 300,
-																				"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				"type": "string"
 																			},
 																			"body": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 20000,
-																				"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				"type": "string"
+																			},
+																			"preview": {
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string"
+																					},
+																					"label": {
+																						"type": "string"
+																					},
+																					"provider": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"recipients": {
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"role": {
+																									"type": "string",
+																									"enum": [
+																										"to",
+																										"cc"
+																									]
+																								},
+																								"name": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								},
+																								"address": {
+																									"type": [
+																										"string",
+																										"null"
+																									]
+																								}
+																							},
+																							"required": [
+																								"role",
+																								"name",
+																								"address"
+																							]
+																						}
+																					},
+																					"subject": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
+																					"body": {
+																						"type": "string"
+																					},
+																					"maxLength": {
+																						"type": [
+																							"integer",
+																							"null"
+																						],
+																						"exclusiveMinimum": 0
+																					},
+																					"missing": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
+																					},
+																					"warnings": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
+																					},
+																					"content_hash": {
+																						"type": "string"
+																					},
+																					"delivery": {
+																						"type": "object",
+																						"properties": {
+																							"state": {
+																								"type": "string",
+																								"enum": [
+																									"draft",
+																									"approved",
+																									"sent"
+																								]
+																							},
+																							"at": {
+																								"type": [
+																									"string",
+																									"null"
+																								]
+																							}
+																						},
+																						"required": [
+																							"state",
+																							"at"
+																						]
+																					}
+																				},
+																				"required": [
+																					"kind",
+																					"label",
+																					"provider",
+																					"recipients",
+																					"subject",
+																					"body",
+																					"maxLength",
+																					"missing",
+																					"warnings",
+																					"content_hash"
+																				]
 																			}
-																		},
-																		"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+																		}
 																	}
 																},
 																"required": [
@@ -47812,6 +50168,124 @@
 													},
 													"is_starred_by_me": {
 														"type": "boolean"
+													},
+													"preview": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"kind": {
+																"type": "string"
+															},
+															"label": {
+																"type": "string"
+															},
+															"provider": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"recipients": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"role": {
+																			"type": "string",
+																			"enum": [
+																				"to",
+																				"cc"
+																			]
+																		},
+																		"name": {
+																			"type": [
+																				"string",
+																				"null"
+																			]
+																		},
+																		"address": {
+																			"type": [
+																				"string",
+																				"null"
+																			]
+																		}
+																	},
+																	"required": [
+																		"role",
+																		"name",
+																		"address"
+																	]
+																}
+															},
+															"subject": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"body": {
+																"type": "string"
+															},
+															"maxLength": {
+																"type": [
+																	"integer",
+																	"null"
+																],
+																"exclusiveMinimum": 0
+															},
+															"missing": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"warnings": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"content_hash": {
+																"type": "string"
+															},
+															"delivery": {
+																"type": "object",
+																"properties": {
+																	"state": {
+																		"type": "string",
+																		"enum": [
+																			"draft",
+																			"approved",
+																			"sent"
+																		]
+																	},
+																	"at": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	}
+																},
+																"required": [
+																	"state",
+																	"at"
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"label",
+															"provider",
+															"recipients",
+															"subject",
+															"body",
+															"maxLength",
+															"missing",
+															"warnings",
+															"content_hash"
+														]
 													},
 													"$id": {
 														"type": "string"
