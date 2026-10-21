@@ -47,6 +47,12 @@ struct SettingsServices {
 		return apiBaseURL
 	}
 
+	/// The web app's workspace settings page, where Privacy & data lives. Nil without a workspace.
+	var webSettingsURL: URL? {
+		guard let workspaceId else { return nil }
+		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
+	}
+
 	func webURL(_ path: String) -> URL? {
 		guard let workspaceId else { return nil }
 		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
