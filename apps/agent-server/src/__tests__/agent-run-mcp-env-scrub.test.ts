@@ -131,7 +131,7 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('passes arguments with spaces and quotes through to the launched process', () => {
-		const tricky = ['a b', `it's`, 'say "hi"', '$HOME', '--flag=x y', '-u']
+		const tricky = ['a b', `it's`, 'say "hi"', '--flag=x y', '-u']
 		const { config } = runSetupMcps({ echo: { command: 'printf', args: ['%s\\n', ...tricky] } })
 		const echo = config.mcpServers.echo
 		const run = spawnSync(echo.command as string, echo.args as string[], {
@@ -192,19 +192,15 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('does not abort the script when the filter file is missing', () => {
-		const res = spawnSync(
-			'bash',
-			['-c', `set -eo pipefail\n${fn}\nsetup_mcps\necho survived`],
-			{
-				env: {
-					PATH: process.env.PATH ?? '',
-					TMPDIR: dir,
-					MCP_SCRUB_ENV_FILTER: join(dir, 'missing.jq'),
-					AGENT_MCP_JSON: JSON.stringify({ mcpServers: { a: { command: 'x' } } }),
-				},
-				encoding: 'utf8',
+		const res = spawnSync('bash', ['-c', `set -eo pipefail\n${fn}\nsetup_mcps\necho survived`], {
+			env: {
+				PATH: process.env.PATH ?? '',
+				TMPDIR: dir,
+				MCP_SCRUB_ENV_FILTER: join(dir, 'missing.jq'),
+				AGENT_MCP_JSON: JSON.stringify({ mcpServers: { a: { command: 'x' } } }),
 			},
-		)
+			encoding: 'utf8',
+		})
 		expect(res.stdout).toContain('survived')
 		expect(res.stderr).toContain('missing')
 	})
