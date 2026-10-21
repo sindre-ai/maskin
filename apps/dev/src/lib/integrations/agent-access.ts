@@ -117,6 +117,8 @@ export interface ActorIntegrationAccess {
 	exposed: boolean
 	/** A custom tool server Maskin sits in front of (has Read / Read & write / No access). */
 	gated: boolean
+	/** Which account this is when a provider can be connected more than once (GitHub: the org). */
+	accountLabel?: string | null
 }
 
 /**
@@ -212,8 +214,15 @@ export async function listAgentAccess(
 				(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
 				false,
 			gated: isGatedRow(r.config),
+			accountLabel: accountLabelOf(r.config),
 		}
 	})
+}
+
+/** The org or login an install belongs to, when the provider stores one (GitHub). */
+function accountLabelOf(config: unknown): string | null {
+	const login = (config as { owner_login?: unknown } | null)?.owner_login
+	return typeof login === 'string' && login.length > 0 ? login : null
 }
 
 /** Whether every actor id is an agent in the workspace. Grants name agents only. */

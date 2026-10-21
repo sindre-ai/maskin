@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
-import type { IntegrationDefaultAccess } from '@maskin/db/schema'
+import { type IntegrationDefaultAccess, actors } from '@maskin/db/schema'
+import { inArray } from 'drizzle-orm'
 import { providerLabel } from './access-preamble'
 import { attachesServer, listAgentAccess } from './agent-access'
 import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
@@ -58,6 +59,17 @@ function hasServer(provider: string): boolean {
 	}
 }
 
+/** Display names of the members behind these actor ids, for labelling per-member connections. */
+async function memberNames(db: Database, ids: string[]): Promise<Map<string, string>> {
+	const unique = [...new Set(ids)]
+	if (unique.length === 0) return new Map()
+	const found = await db
+		.select({ id: actors.id, name: actors.name })
+		.from(actors)
+		.where(inArray(actors.id, unique))
+	return new Map(found.map((a) => [a.id, a.name]))
+}
+
 export async function describeAgentAccess(
 	db: Database,
 	workspaceId: string,
@@ -71,15 +83,35 @@ export async function describeAgentAccess(
 		integrations: [],
 		credentials: [],
 	}
+	// A provider connected more than once (two GitHub orgs) would show the same name twice, so
+	// each of its rows says which account it is: "GitHub (sindre-ai)".
+	const perProvider = new Map<string, number>()
 	for (const r of rows) {
 		if (r.providerMode === 'registered') {
+			perProvider.set(r.provider, (perProvider.get(r.provider) ?? 0) + 1)
+		}
+	}
+	const linkedInOwners = await memberNames(
+		db,
+		rows.filter((r) => r.provider === 'linkedin-unipile').map((r) => r.createdBy),
+	)
+	const accountOf = (r: (typeof rows)[number]): string | null =>
+		r.provider === 'linkedin-unipile'
+			? (linkedInOwners.get(r.createdBy) ?? null)
+			: (r.accountLabel ?? null)
+
+	for (const r of rows) {
+		if (r.providerMode === 'registered') {
+			const account = (perProvider.get(r.provider) ?? 0) > 1 ? accountOf(r) : null
 			view.integrations.push({
 				integration_id: r.integrationId,
 				provider: r.provider,
 				name:
 					r.provider === CUSTOM_MCP_PROVIDER
 						? (r.displayName ?? 'Tool server')
-						: providerLabel(r.provider),
+						: account
+							? `${providerLabel(r.provider)} (${account})`
+							: providerLabel(r.provider),
 				access: r.access,
 				source: r.source === 'chat' ? 'grant' : r.source,
 				default_access: r.defaultAgentAccess,
