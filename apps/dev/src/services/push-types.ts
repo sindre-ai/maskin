@@ -31,6 +31,11 @@ export interface PushMessage {
 	badge?: number | null
 	/** https image the notification service extension downloads and attaches to the banner. */
 	imageUrl?: string | null
+	/**
+	 * A newer push with the same key replaces an older one: becomes `apns-collapse-id` and
+	 * `aps.thread-id` (APNs) and the Web Push tag/topic. Defaults to the notification id.
+	 */
+	collapseKey?: string | null
 }
 
 export interface PushChannel {

@@ -13,6 +13,7 @@ import {
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -2158,6 +2159,58 @@ export const webPushSubscriptions = pgTable(
 )
 
 export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
+// ── Notification preferences ────────────────────────────────────────────────
+//
+// Per-actor push policy settings (quiet hours, categories, muted workspaces,
+// morning briefing). One row per actor; a missing row means all defaults.
+// quiet_hours_* are minutes from local midnight in `timezone` (null => UTC).
+
+export const notificationPreferences = pgTable(
+	'notification_preferences',
+	{
+		actorId: uuid('actor_id')
+			.primaryKey()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		timezone: text('timezone'),
+		quietHoursStart: smallint('quiet_hours_start'),
+		quietHoursEnd: smallint('quiet_hours_end'),
+		categories: jsonb('categories')
+			.$type<Record<string, boolean>>()
+			.notNull()
+			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
+		briefingTime: smallint('briefing_time').notNull().default(510),
+		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
+		// Local date (in `timezone`) of the last daily briefing push; the scheduler claims a day
+		// with one conditional UPDATE, so it is sent once across restarts and replicas. Migration 0105.
+		briefingLastSentOn: date('briefing_last_sent_on', { mode: 'string' }),
+		// One-time lifecycle pushes already sent: { first_task, activation, reminder_at,
+		// 'reminded:<notification id>' } -> ISO timestamp. Migration 0105.
+		lifecycleSent: jsonb('lifecycle_sent')
+			.$type<Record<string, string>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'notification_preferences_quiet_start_chk',
+			sql`${t.quietHoursStart} IS NULL OR (${t.quietHoursStart} >= 0 AND ${t.quietHoursStart} <= 1439)`,
+		),
+		check(
+			'notification_preferences_quiet_end_chk',
+			sql`${t.quietHoursEnd} IS NULL OR (${t.quietHoursEnd} >= 0 AND ${t.quietHoursEnd} <= 1439)`,
+		),
+		check(
+			'notification_preferences_briefing_time_chk',
+			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+	],
+)
+
+export type NotificationPreferencesRow = typeof notificationPreferences.$inferSelect
 
 // ── Live Activity tokens ────────────────────────────────────────────────────
 //
