@@ -47,6 +47,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
@@ -1110,8 +1111,10 @@ app.openapi(askSessionRoute, (async (c) => {
 	// Chief of Staff, so every question lands in one thread.
 	let conversationId = session.conversationId ?? helperAskConversationId(session)
 	let deliveredTo: 'chat' | 'chief_of_staff' = 'chat'
+	let cosHumanId: string | null = null
 	if (!conversationId) {
 		const humanId = await resolveAskTargetHuman(db, session.workspaceId, session.createdBy)
+		cosHumanId = humanId
 		const cosChat = humanId ? await ensureChiefOfStaffChat(db, session.workspaceId, humanId) : null
 		if (cosChat) {
 			conversationId = cosChat.conversationId
@@ -1171,6 +1174,37 @@ app.openapi(askSessionRoute, (async (c) => {
 				)}::jsonb)`,
 			})
 			.where(eq(sessions.id, session.id))
+	}
+
+	// Push the person: an agent is blocked on them. Recipients: for the Chief of
+	// Staff 1-1 it is the resolved human (the 1-1's only human); otherwise every
+	// active human in the conversation the question was posted to, because that
+	// chat -- not session.createdBy, which for a helper is the asking agent and
+	// for a chat session is whoever sent the first message -- is where the
+	// answer will be read. Best effort and after the post: it never alters the
+	// response.
+	try {
+		const askTargets =
+			deliveredTo === 'chief_of_staff' && cosHumanId
+				? [cosHumanId]
+				: await humanParticipants(db, conversationId, session.actorId)
+		await notifyAgentQuestion(db, {
+			workspaceId: session.workspaceId,
+			agentId: session.actorId,
+			conversationId,
+			messageId: created.id,
+			targets: askTargets,
+			firstQuestion: questions[0]?.question ?? '',
+			objectId: session.initiatedFromObjectId,
+			sessionId: session.id,
+		})
+	} catch (err) {
+		logger.warn('Failed to notify the person about an agent question', {
+			sessionId: session.id,
+			conversationId,
+			messageId: created.id,
+			error: String(err),
+		})
 	}
 
 	logger.info('Posted agent question into conversation', {
