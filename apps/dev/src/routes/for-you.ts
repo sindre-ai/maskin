@@ -2,12 +2,12 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND, commentDecisionSchema, parseForYouMetadata } from '@maskin/shared'
-import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
-import { toLatestMention } from './subscriptions'
+import { fillDraftBodies, toLatestMention } from './subscriptions'
 
 type Env = {
 	Variables: {
@@ -34,10 +34,21 @@ const CLOSED_OBJECT_STATUSES = [
 	'archived',
 	'shipped',
 	'dismissed',
+	'discarded',
+	'rejected',
 ]
 
+/** Decision cards older than this are not live asks any more; the scan also stays bounded. */
+const DECISION_WINDOW_DAYS = 14
+const DECISION_SCAN_LIMIT = 300
+
 const forYouItemSchema = z.object({
-	notification_id: z.string().uuid(),
+	// Null for a decision card, which comes straight from an agent's comment and has no
+	// notification behind it.
+	notification_id: z.string().uuid().nullable(),
+	// `curated` is on the list because the Chief of Staff put it there; `decision` is a
+	// decision card an agent addressed to this person directly.
+	source: z.enum(['curated', 'decision']),
 	rank: z.number(),
 	headline: z.string(),
 	rationale: z.string().nullable(),
@@ -64,7 +75,8 @@ const listForYouRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['For You'],
-	summary: "The Chief of Staff's ranked list of what needs the current actor",
+	summary:
+		"What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them",
 	request: { headers: workspaceIdHeader },
 	responses: {
 		200: {
@@ -100,8 +112,6 @@ app.openapi(listForYouRoute, async (c) => {
 		const meta = parseForYouMetadata(row.metadata)
 		return meta ? [{ row, meta }] : []
 	})
-	if (candidates.length === 0) return c.json({ items: [] }, 200)
-
 	const objectIds = [
 		...new Set(candidates.flatMap((x) => (x.row.objectId ? [x.row.objectId] : []))),
 	]
@@ -167,7 +177,7 @@ app.openapi(listForYouRoute, async (c) => {
 				)
 		: []
 
-	const items = candidates
+	const curatedItems = candidates
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
@@ -202,6 +212,7 @@ app.openapi(listForYouRoute, async (c) => {
 				meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
 			return {
 				notification_id: row.id,
+				source: 'curated' as const,
 				rank: meta.rank,
 				headline: meta.headline,
 				rationale: meta.rationale ?? null,
@@ -213,6 +224,109 @@ app.openapi(listForYouRoute, async (c) => {
 				...(source ? { latest_mention: toLatestMention(source) } : {}),
 			}
 		})
+
+	// Decision cards: an agent asked this person for a call directly (a draft to approve, a
+	// batch to send). They reach the list without the Chief of Staff, so a draft waiting on
+	// someone never depends on an hourly run. Plain mentions do not: only a comment that
+	// carries a decision block is a blocked ask.
+	const curatedEntityIds = new Set(curatedItems.flatMap((i) => (i.entity_id ? [i.entity_id] : [])))
+	const decisionRows = await db
+		.select({ event: events })
+		.from(events)
+		.leftJoin(
+			readState,
+			and(
+				eq(readState.workspaceId, events.workspaceId),
+				eq(readState.actorId, actorId),
+				eq(readState.entityType, 'object'),
+				eq(readState.entityId, events.entityId),
+			),
+		)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+				ne(events.actorId, actorId),
+				sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
+				sql`jsonb_typeof(${events.data}->'decision') = 'object'`,
+				sql`${events.createdAt} >= now() - make_interval(days => ${DECISION_WINDOW_DAYS})`,
+				gt(events.id, sql`coalesce(${readState.lastReadEventId}, 0)`),
+			),
+		)
+		.orderBy(desc(events.id))
+		.limit(DECISION_SCAN_LIMIT)
+
+	// Newest decision per object; the rows arrive newest first.
+	const latestDecisionByEntity = new Map<string, typeof events.$inferSelect>()
+	for (const { event } of decisionRows) {
+		if (curatedEntityIds.has(event.entityId)) continue
+		if (!latestDecisionByEntity.has(event.entityId))
+			latestDecisionByEntity.set(event.entityId, event)
+	}
+
+	const decisionEntityIds = [...latestDecisionByEntity.keys()]
+	const [decisionObjects, decisionReplies] = decisionEntityIds.length
+		? await Promise.all([
+				db
+					.select()
+					.from(objects)
+					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, decisionEntityIds))),
+				db
+					.select({ entityId: events.entityId, id: events.id })
+					.from(events)
+					.where(
+						and(
+							eq(events.workspaceId, workspaceId),
+							eq(events.action, 'commented'),
+							eq(events.actorId, actorId),
+							inArray(events.entityId, decisionEntityIds),
+							gt(
+								events.id,
+								Math.min(...[...latestDecisionByEntity.values()].map((e) => Number(e.id))),
+							),
+						),
+					),
+			])
+		: [[], []]
+	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
+
+	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
+		const obj = decisionObjectById.get(event.entityId)
+		// Gone or closed (done, discarded, shipped…): the card would only ask about finished work.
+		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
+		// The person already answered on this thread.
+		return !decisionReplies.some((r) => r.entityId === event.entityId && r.id > event.id)
+	})
+
+	const rankBase = curatedItems.reduce((max, i) => Math.max(max, i.rank), 0)
+	const decisionItems = liveDecisions.map((event, index) => {
+		const mention = toLatestMention(event)
+		const obj = decisionObjectById.get(event.entityId)
+		return {
+			notification_id: null,
+			source: 'decision' as const,
+			rank: rankBase + 1 + index,
+			headline: mention.decision?.title ?? 'Needs your call',
+			rationale: null,
+			created_at: mention.created_at,
+			entity_type: 'object' as const,
+			entity_id: event.entityId,
+			session_id: null,
+			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
+			latest_mention: mention,
+		}
+	})
+
+	const items = [...curatedItems, ...decisionItems]
+
+	// Drafts show the object's description as it is now, not as it was when the card was posted.
+	await fillDraftBodies(
+		db,
+		workspaceId,
+		items.flatMap((i) => (i.latest_mention ? [i.latest_mention] : [])),
+		new Map([...objectById, ...decisionObjectById]),
+	)
 
 	return c.json({ items }, 200)
 })

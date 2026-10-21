@@ -20606,6 +20606,936 @@
 				}
 			}
 		},
+		"/api/custom-mcp-servers": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Add a custom MCP server to the workspace (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Added. No agent has it until it is granted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/custom-mcp-servers/{id}": {
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Read a custom MCP server, with secret values masked",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Change a custom MCP server (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"server": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"command": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 512
+											},
+											"args": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"maxItems": 100
+											},
+											"env": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											},
+											"url": {
+												"type": "string",
+												"maxLength": 2048
+											},
+											"headers": {
+												"type": "object",
+												"additionalProperties": {
+													"type": "string",
+													"maxLength": 4096
+												}
+											}
+										},
+										"additionalProperties": false
+									}
+								},
+								"required": [
+									"name",
+									"server"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Saved. Applies to sessions started after this call",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"server": {
+											"type": "object",
+											"properties": {
+												"type": {
+													"type": "string",
+													"enum": [
+														"stdio",
+														"http"
+													]
+												},
+												"command": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 512
+												},
+												"args": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"maxLength": 2048
+													},
+													"maxItems": 100
+												},
+												"env": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												},
+												"url": {
+													"type": "string",
+													"maxLength": 2048
+												},
+												"headers": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "string",
+														"maxLength": 4096
+													}
+												}
+											},
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"id",
+										"name",
+										"server"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Name taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/chat-capture": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -40610,6 +41540,16 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 64
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"minimum": 1,
 							"maximum": 100,
@@ -41660,7 +42600,7 @@
 				"tags": [
 					"For You"
 				],
-				"summary": "The Chief of Staff's ranked list of what needs the current actor",
+				"summary": "What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them",
 				"parameters": [
 					{
 						"schema": {
@@ -41686,8 +42626,18 @@
 												"type": "object",
 												"properties": {
 													"notification_id": {
-														"type": "string",
+														"type": [
+															"string",
+															"null"
+														],
 														"format": "uuid"
+													},
+													"source": {
+														"type": "string",
+														"enum": [
+															"curated",
+															"decision"
+														]
 													},
 													"rank": {
 														"type": "number"
@@ -41971,6 +42921,7 @@
 												},
 												"required": [
 													"notification_id",
+													"source",
 													"rank",
 													"headline",
 													"rationale",
@@ -42321,7 +43272,7 @@
 					"Devices"
 				],
 				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
-				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to the device's Agents working activity for the workspace in `X-Workspace-Id`; a new activity mints a new token (the old one is deleted by the app). The device must be one of the caller’s registered devices.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -42346,7 +43297,10 @@
 										"pattern": "^[0-9a-fA-F]+$"
 									},
 									"session_id": {
-										"type": "string",
+										"type": [
+											"string",
+											"null"
+										],
 										"format": "uuid"
 									}
 								},
@@ -42382,7 +43336,7 @@
 											"type": "string",
 											"format": "uuid"
 										},
-										"session_id": {
+										"workspace_id": {
 											"type": [
 												"string",
 												"null"
@@ -42397,7 +43351,7 @@
 										"id",
 										"kind",
 										"device_id",
-										"session_id",
+										"workspace_id",
 										"updated_at"
 									]
 								}
@@ -42462,7 +43416,7 @@
 						}
 					},
 					"404": {
-						"description": "Device or session not found",
+						"description": "Device or workspace not found",
 						"content": {
 							"application/json": {
 								"schema": {

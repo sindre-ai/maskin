@@ -1522,7 +1522,9 @@ export interface UnreadResponse {
 
 /** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
 export interface ForYouItem {
-	notification_id: string
+	/** Null for a decision card an agent addressed to the person directly. */
+	notification_id: string | null
+	source: 'curated' | 'decision'
 	rank: number
 	headline: string
 	rationale: string | null
