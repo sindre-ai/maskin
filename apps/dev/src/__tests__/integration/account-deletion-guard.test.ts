@@ -19,6 +19,7 @@ const ERASED = new Set([
 	'star_state',
 	'subscriptions',
 	'user_display_settings',
+	'web_push_subscriptions',
 	'workspace_members',
 ])
 
