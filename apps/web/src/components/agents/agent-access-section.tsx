@@ -10,15 +10,15 @@ import { Switch } from '@/components/ui/switch'
 import { useAgentAccess, useRemoveAgentGrant, useSetAgentGrant } from '@/hooks/use-integrations'
 import type { ActorResponse, AgentAccessView, AgentGrantAccess } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS, supportsAskFirst } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { Lock } from 'lucide-react'
 
 type IntegrationRowData = AgentAccessView['integrations'][number]
 type CredentialRowData = AgentAccessView['credentials'][number]
 
 const LEVELS: AgentGrantAccess[] = ['read', 'read_write', 'none']
-const LEVELS_ASK_FIRST: AgentGrantAccess[] = ['read', 'ask_first', 'read_write', 'none']
 
 /** Same rule as the Integrations and Keychain pages: whoever connected it, or an admin or owner. */
 function useCanChange(createdBy: string): boolean {
@@ -66,7 +66,7 @@ function IntegrationRow({
 					<SelectItem value="default">
 						Default ({AGENT_ACCESS_LABELS[row.default_access]})
 					</SelectItem>
-					{(supportsAskFirst(row.provider) ? LEVELS_ASK_FIRST : LEVELS).map((level) => (
+					{LEVELS.map((level) => (
 						<SelectItem key={level} value={level}>
 							{AGENT_ACCESS_LABELS[level]}
 						</SelectItem>
@@ -162,8 +162,11 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 	if (!data) return null
 	// A tool server Maskin cannot sit in front of (one that runs in the container) is on or off;
 	// everything else, custom servers included, has Read / Read & write / No access.
-	const switchRows = data.integrations.filter((r) => r.kind === 'tool_server' && !r.gated)
-	const levelRows = data.integrations.filter((r) => !(r.kind === 'tool_server' && !r.gated))
+	const isSwitchRow = (r: IntegrationRowData) => r.kind === 'tool_server' && !r.gated
+	// One alphabetical list: the Maskin row stays first (fixed, built in), the rest sort by name
+	// whichever control they use.
+	const toolRows = sortByName(data.integrations, (r) => r.integration_id)
+	const credentialRows = sortByName(data.credentials, (r) => r.integration_id)
 
 	return (
 		<section aria-labelledby="agent-access-heading" className="flex flex-col gap-2.5">
@@ -181,28 +184,29 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 							{AGENT_ACCESS_LABELS[data.maskin_mcp.access]}
 						</span>
 					</li>
-					{switchRows.map((row) => (
-						<ToolServerRow
-							key={row.integration_id}
-							row={row}
-							agentId={agent.id}
-							workspaceId={workspaceId}
-						/>
-					))}
-					{levelRows.map((row) => (
-						<IntegrationRow
-							key={row.integration_id}
-							row={row}
-							agentId={agent.id}
-							workspaceId={workspaceId}
-						/>
-					))}
+					{toolRows.map((row) =>
+						isSwitchRow(row) ? (
+							<ToolServerRow
+								key={row.integration_id}
+								row={row}
+								agentId={agent.id}
+								workspaceId={workspaceId}
+							/>
+						) : (
+							<IntegrationRow
+								key={row.integration_id}
+								row={row}
+								agentId={agent.id}
+								workspaceId={workspaceId}
+							/>
+						),
+					)}
 				</ul>
 				{data.credentials.length > 0 && (
 					<>
 						<p className="settings-label pb-1 pt-3">Keychain</p>
 						<ul className="divide-y divide-border" aria-label="Keychain credentials">
-							{data.credentials.map((row) => (
+							{credentialRows.map((row) => (
 								<CredentialRow
 									key={row.integration_id}
 									row={row}

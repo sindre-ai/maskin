@@ -12,20 +12,23 @@ import {
 	useSetAgentGrant,
 	useSetDefaultAgentAccess,
 } from '@/hooks/use-integrations'
-import type { AgentGrant, AgentGrantAccess, IntegrationResponse } from '@/lib/api'
+import type {
+	AgentGrant,
+	AgentGrantAccess,
+	DefaultAgentAccess,
+	IntegrationResponse,
+} from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS, supportsAskFirst } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
-const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
-/** Gmail adds the middle step: the agent may draft, but each email waits for a person. */
-const ACCESS_ORDER_ASK_FIRST: AgentGrantAccess[] = ['read', 'ask_first', 'read_write', 'none']
-
-export const accessOrderFor = (provider: string): AgentGrantAccess[] =>
-	supportsAskFirst(provider) ? ACCESS_ORDER_ASK_FIRST : ACCESS_ORDER
+/** The levels offered for one agent, and for "All other agents". */
+export const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
+export const DEFAULT_ACCESS_ORDER: DefaultAgentAccess[] = ['read', 'read_write', 'none']
 
 /**
  * The one-line reading of who can do what, shown while the section is collapsed. The
@@ -33,16 +36,21 @@ export const accessOrderFor = (provider: string): AgentGrantAccess[] =>
  * agents can read, two can also write") never needs a list.
  */
 export function summarizeAgentAccess(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	grants: Pick<AgentGrant, 'access'>[],
 ): string {
 	const writers = grants.filter((g) => g.access === 'read_write').length
-	const asking = grants.filter((g) => g.access === 'ask_first').length
 	const blocked = grants.filter((g) => g.access === 'none').length
+	if (defaultAccess === 'read_write') {
+		const parts = ['All agents can read & write']
+		const readers = grants.filter((g) => g.access === 'read').length
+		if (readers > 0) parts.push(`${readers} can only read`)
+		if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} no access`)
+		return parts.join(' · ')
+	}
 	if (defaultAccess === 'read') {
 		const parts = ['All agents can read']
 		if (writers > 0) parts.push(`${writers} can also write`)
-		if (asking > 0) parts.push(`${asking} can write after you approve`)
 		if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} no access`)
 		return parts.join(' · ')
 	}
@@ -52,12 +60,8 @@ export function summarizeAgentAccess(
 }
 
 /** What a newly added agent starts with: the step up from the default. */
-export function startingAccess(
-	defaultAccess: 'read' | 'none',
-	provider?: string,
-): AgentGrantAccess {
-	// An agent added to Gmail starts by asking first, never by sending on its own.
-	if (provider && supportsAskFirst(provider)) return 'ask_first'
+export function startingAccess(defaultAccess: DefaultAgentAccess): AgentGrantAccess {
+	// When every agent already writes, an entry of its own can only hold one back.
 	return defaultAccess === 'read' ? 'read_write' : 'read'
 }
 
@@ -66,7 +70,7 @@ export function startingAccess(
  * the default's 'read' means Full access, which is `read_write` on an entry.
  */
 export function matchesDefault(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	access: AgentGrantAccess,
 	isKey = false,
 ): boolean {
@@ -77,10 +81,11 @@ export function matchesDefault(
 /** A saved key is on or off per agent, so these two are its only levels. */
 const KEY_ACCESS_LABELS = { read_write: 'Full access', none: 'No access' } as const
 const KEY_ACCESS_ORDER: AgentGrantAccess[] = ['read_write', 'none']
+const KEY_DEFAULT_ORDER: DefaultAgentAccess[] = ['read', 'none']
 
 /** The collapsed line for a saved key: who has it, in words. */
 export function summarizeKeyAccess(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	grants: Pick<AgentGrant, 'access'>[],
 ): string {
 	const blocked = grants.filter((g) => g.access === 'none').length
@@ -120,16 +125,13 @@ export function AgentAccess({
 
 	const defaultAccess = integration.defaultAgentAccess ?? (isKey ? 'none' : 'read')
 	const grants = integration.agentGrants ?? []
-	const agents = (actors ?? []).filter((a) => a.type === 'agent')
-	const listed = grants
-		.flatMap((g) => {
-			const agent = agents.find((a) => a.id === g.actorId)
-			return agent ? [{ agent, access: g.access }] : []
-		})
-		.sort((a, b) => a.agent.name.localeCompare(b.agent.name))
-	const addable = agents
-		.filter((a) => !grants.some((g) => g.actorId === a.id))
-		.sort((a, b) => a.name.localeCompare(b.name))
+	const agents = sortByName((actors ?? []).filter((a) => a.type === 'agent'))
+	// Walk the sorted agents (not the grants) so the listed rows are alphabetical too.
+	const listed = agents.flatMap((agent) => {
+		const grant = grants.find((g) => g.actorId === agent.id)
+		return grant ? [{ agent, access: grant.access }] : []
+	})
+	const addable = agents.filter((a) => !grants.some((g) => g.actorId === a.id))
 
 	const me = getStoredActor()
 	const canEdit =
@@ -172,17 +174,18 @@ export function AgentAccess({
 						</div>
 						<Select
 							value={defaultAccess}
-							onValueChange={(v) => setDefault.mutate(v as 'read' | 'none')}
+							onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
 							disabled={!canEdit || busy}
 						>
 							<SelectTrigger aria-label="Access for all other agents" className="w-full sm:w-36">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="read">
-									{isKey ? 'Full access' : AGENT_ACCESS_LABELS.read}
-								</SelectItem>
-								<SelectItem value="none">{AGENT_ACCESS_LABELS.none}</SelectItem>
+								{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
+									<SelectItem key={a} value={a}>
+										{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
+									</SelectItem>
+								))}
 							</SelectContent>
 						</Select>
 					</div>
@@ -206,7 +209,7 @@ export function AgentAccess({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										{(isKey ? KEY_ACCESS_ORDER : accessOrderFor(integration.provider)).map((a) => (
+										{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
 											<SelectItem key={a} value={a}>
 												{isKey && (a === 'read_write' || a === 'none')
 													? KEY_ACCESS_LABELS[a]
@@ -229,7 +232,7 @@ export function AgentAccess({
 										? defaultAccess === 'read'
 											? 'none'
 											: 'read_write'
-										: startingAccess(defaultAccess, integration.provider),
+										: startingAccess(defaultAccess),
 								})
 							}
 							disabled={busy}
@@ -247,10 +250,10 @@ export function AgentAccess({
 						</Select>
 					)}
 
-					{supportsAskFirst(integration.provider) && (
+					{requiresApprovalToAct(integration.provider) && (
 						<p className="text-xs text-muted-foreground">
-							Ask first: the agent can write drafts, and each email waits for your approval in the
-							chat. Read & write: it sends on its own, except to contacts you marked protected.
+							Read & write lets an agent write drafts. Each email still waits for your approval in
+							the chat before it is sent.
 						</p>
 					)}
 

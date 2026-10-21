@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -35,9 +36,11 @@ function KeychainPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading, isError, error, refetch } = useIntegrations(workspaceId)
 
-	const credentials = (integrations ?? [])
-		.filter(isKeychainCredential)
-		.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+	const credentials = sortBy(
+		(integrations ?? []).filter(isKeychainCredential),
+		(c) => c.displayName ?? '',
+		(c) => c.id,
+	)
 
 	return (
 		<div className="max-w-[720px]">

@@ -1,6 +1,7 @@
 import {
+	ACCESS_ORDER,
 	AgentAccess,
-	accessOrderFor,
+	DEFAULT_ACCESS_ORDER,
 	startingAccess,
 	summarizeAgentAccess,
 } from '@/components/integrations/agent-access'
@@ -99,33 +100,35 @@ describe('summarizeAgentAccess', () => {
 	it('does not count a No access entry as having access when the default is none', () => {
 		expect(summarizeAgentAccess('none', [{ access: 'none' }])).toBe('No agents have access')
 	})
+
+	it('says all agents can read & write, and counts the ones held back', () => {
+		expect(summarizeAgentAccess('read_write', [])).toBe('All agents can read & write')
+		expect(summarizeAgentAccess('read_write', [{ access: 'read_write' }])).toBe(
+			'All agents can read & write',
+		)
+		expect(
+			summarizeAgentAccess('read_write', [
+				{ access: 'read' },
+				{ access: 'none' },
+				{ access: 'none' },
+			]),
+		).toBe('All agents can read & write · 1 can only read · 2 have no access')
+	})
 })
 
 describe('startingAccess', () => {
 	it('starts a new agent one step above the default', () => {
 		expect(startingAccess('read')).toBe('read_write')
 		expect(startingAccess('none')).toBe('read')
-	})
-
-	it('starts an agent added to Gmail by asking first, never by sending on its own', () => {
-		expect(startingAccess('read', 'gmail')).toBe('ask_first')
-		expect(startingAccess('none', 'gmail')).toBe('ask_first')
-		expect(startingAccess('read', 'slack')).toBe('read_write')
+		// Everyone already writes: an entry of its own can only hold the agent back.
+		expect(startingAccess('read_write')).toBe('read')
 	})
 })
 
-describe('accessOrderFor', () => {
-	it('offers "Ask first" for Gmail and for no other provider', () => {
-		expect(accessOrderFor('gmail')).toEqual(['read', 'ask_first', 'read_write', 'none'])
-		expect(accessOrderFor('slack')).toEqual(['read', 'read_write', 'none'])
-	})
-})
-
-describe('summarizeAgentAccess with ask first', () => {
-	it('counts agents that write only after approval apart from those that write freely', () => {
-		expect(summarizeAgentAccess('read', [{ access: 'ask_first' }, { access: 'read_write' }])).toBe(
-			'All agents can read · 1 can also write · 1 can write after you approve',
-		)
+describe('access levels offered', () => {
+	it('offers the same three levels for every integration, Gmail included', () => {
+		expect(ACCESS_ORDER).toEqual(['read', 'read_write', 'none'])
+		expect(DEFAULT_ACCESS_ORDER).toEqual(['read', 'read_write', 'none'])
 	})
 })
 
@@ -178,6 +181,23 @@ describe('AgentAccess', () => {
 		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
 		await user.click(await screen.findByRole('option', { name: 'No access' }))
 		expect(setDefault).toHaveBeenCalledWith('none')
+	})
+
+	it('lets the default for all other agents be Read & write', async () => {
+		const { open, user } = renderOpen()
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
+		await user.click(await screen.findByRole('option', { name: 'Read & write' }))
+		expect(setDefault).toHaveBeenCalledWith('read_write')
+	})
+
+	it('offers Read & write as the default for Gmail too, and says each email still needs approval', async () => {
+		const { open, user } = renderOpen({ provider: 'gmail' })
+		await open()
+		expect(screen.getByText(/Each email still waits for your approval/)).toBeInTheDocument()
+		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
+		await user.click(await screen.findByRole('option', { name: 'Read & write' }))
+		expect(setDefault).toHaveBeenCalledWith('read_write')
 	})
 
 	it('adds an agent that has no override, starting at read & write when the default is read', async () => {
