@@ -5,7 +5,7 @@ export type ProviderCardTone = 'available' | 'connected' | 'warning'
 
 interface ProviderCardProps {
 	name: string
-	subtitle: string
+	subtitle?: string
 	/** `warning` colours both the dot and the subtitle; `connected` only the dot. */
 	tone: ProviderCardTone
 	/** Tooltip for the subtitle, e.g. the scopes a reconnect would grant. */
@@ -16,6 +16,8 @@ interface ProviderCardProps {
 	actions: ReactNode
 	/** The tighter row used inside a chat message, with a subtitle that announces changes. */
 	compact?: boolean
+	/** Full-width section under the row, e.g. which agents may use the integration. */
+	footer?: ReactNode
 }
 
 /**
@@ -31,6 +33,7 @@ export function ProviderCard({
 	notes,
 	actions,
 	compact = false,
+	footer,
 }: ProviderCardProps) {
 	return (
 		<div
@@ -47,19 +50,22 @@ export function ProviderCard({
 			/>
 			<div className="min-w-0 flex-1 basis-40">
 				<p className="text-sm font-medium text-foreground truncate">{name}</p>
-				<p
-					className={cn(
-						'text-xs truncate',
-						tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
-					)}
-					title={subtitleTitle}
-					aria-live={compact ? 'polite' : undefined}
-				>
-					{subtitle}
-				</p>
+				{subtitle && (
+					<p
+						className={cn(
+							'text-xs truncate',
+							tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
+						)}
+						title={subtitleTitle}
+						aria-live={compact ? 'polite' : undefined}
+					>
+						{subtitle}
+					</p>
+				)}
 				{notes}
 			</div>
 			{actions}
+			{footer && <div className="basis-full">{footer}</div>}
 		</div>
 	)
 }

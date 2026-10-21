@@ -38,15 +38,10 @@ const config = {
 }
 
 // Tools whose `registerAppTool` calls are intentionally commented out in
-// server.ts (notification MCP tools are temporarily hidden). Keep the tool
-// *definitions* in `tools.ts` so re-enabling stays a one-line change.
-const HIDDEN_TOOL_NAMES = new Set([
-	'create_notification',
-	'list_notifications',
-	'get_notification',
-	'update_notification',
-	'delete_notification',
-])
+// server.ts (get/delete notification stay hidden; create/list/update are live for
+// the Chief of Staff's For You list). Keep the tool *definitions* in `tools.ts`
+// so re-enabling stays a one-line change.
+const HIDDEN_TOOL_NAMES = new Set(['get_notification', 'delete_notification'])
 
 describe('createMcpServer', () => {
 	beforeEach(() => {
@@ -57,6 +52,18 @@ describe('createMcpServer', () => {
 		createMcpServer(config)
 		const expectedCount = Object.keys(tools).filter((name) => !HIDDEN_TOOL_NAMES.has(name)).length
 		expect(registerAppTool).toHaveBeenCalledTimes(expectedCount)
+	})
+
+	it("keeps the approve tool out of the model's tool list", () => {
+		createMcpServer(config)
+		const call = vi.mocked(registerAppTool).mock.calls.find((c) => c[1] === 'approve_object_draft')
+		const meta = (call?.[2] as { _meta?: { ui?: { visibility?: string[] } } } | undefined)?._meta
+		// Only the preview card may call it: a model that could would approve its own draft.
+		expect(meta?.ui?.visibility).toEqual(['app'])
+	})
+
+	it('lets gmail_send_email send an email object by id', () => {
+		expect(Object.keys(tools.gmail_send_email.inputSchema.shape)).toContain('object_id')
 	})
 
 	it('registers a UI resource for every defined resource', () => {
@@ -3110,9 +3117,8 @@ describe('tool handlers', () => {
 		})
 	})
 
-	// Notification MCP tools are temporarily hidden — see server.ts. Skip the
-	// handler tests until the tools are re-enabled.
-	describe.skip('create_notification handler', () => {
+	// create_notification is registered again (the Chief of Staff writes the For You list).
+	describe('create_notification handler', () => {
 		it('passes native array metadata.actions through unchanged', async () => {
 			const mockResult = { id: 'notif-1' }
 			mockFetchSuccess(mockResult)
@@ -6608,5 +6614,37 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', hostSession)
 		build({ maskinSessionId: callerSession })
 		expect((await createActorHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
+
+	it('post_conversation_message resolves mention_names to metadata.mentions and reports misses', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const isPost = String(input).endsWith('/messages')
+			return {
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve(
+						isPost
+							? { id: 'msg-1' }
+							: { participants: [{ actorId: 'actor-strategist', actorName: 'Strategist' }] },
+					),
+			} as Response
+		})
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		const result = await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'over to you',
+			mention_names: ['Strategist', 'Nobody'],
+		})
+		const post = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((post?.[1] as RequestInit).body as string)
+		expect(sent.metadata.mentions).toEqual(['actor-strategist'])
+		expect(sent.mention_names).toBeUndefined()
+		const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? ''
+		expect(JSON.parse(text).unresolved_mentions).toEqual([
+			{ name: 'Nobody', reason: 'not_in_conversation' },
+		])
 	})
 })

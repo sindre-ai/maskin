@@ -3,46 +3,57 @@ import {
 	actors,
 	conversations,
 	deviceTokens,
+	liveActivityCards,
 	liveActivityTokens,
-	notifications,
+	sessionLogs,
 	sessions,
+	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import type { ApnsSender, LiveActivityEvent, LiveActivityStatus } from './apns'
+import { LIVE_ACTIVITY_STALE_S } from './apns'
+import type { ApnsSender, LiveActivityEvent } from './apns'
+import {
+	type WorkingAgent,
+	type WorkingSessionRow,
+	groupWorkingAgents,
+} from './live-activity-agents'
 import type { SessionTurnEvent } from './session-manager'
 
-/** Min gap between two routine step updates for one session (APNs/iOS budget friendly). */
+/** Min gap between two routine updates for one workspace (APNs/iOS budget friendly). */
 export const LIVE_ACTIVITY_THROTTLE_MS = 5_000
 
-/** Upper bound on every per-session map below, so a leaked entry can never grow without limit. */
+/** Upper bound on every per-workspace / per-session map below, so a leak can never grow without limit. */
 export const LIVE_ACTIVITY_MAX_TRACKED = 1_000
-/** How long an update that found no tokens suppresses further lookups for that session. */
-const NO_TOKENS_TTL_MS = 5_000
+
+/** An interactive session whose last log row is older than this is not mid-turn, whatever it says. */
+export const INTERACTIVE_TURN_STALE_MS = 20 * 60 * 1000
+
+/** Card bookkeeping older than this is dropped: the card is long gone. */
+export const CARD_TTL_MS = 24 * 60 * 60 * 1000
+
+const LIVE_STATUSES = ['pending', 'starting', 'running']
 
 /**
- * session lifecycle event -> what the Live Activity does.
- *  start   : push-to-start the activity on the human's devices
- *  update  : step changed (throttled)
- *  end     : final state, then the activity is dismissed
- *
- * Interactive (chat) sessions stay `running` across many turns, so their
- * activity follows the TURN, not the session: it starts when a user turn is
- * written to the CLI and ends when the turn's closing message is posted (both
- * signalled in-process by SessionManager's `'turn'` event). Session-level
- * start events are ignored for them; session-level end events remain as a
- * safety net, because an end for an activity that is already gone is a no-op.
+ * session lifecycle action -> does it change the set of working agents? `session_updated` is the
+ * routine step change (throttled); everything else is a lifecycle edge and syncs at once.
  */
-const START_ACTIONS = new Set(['session_started', 'session_resumed'])
-const UPDATE_ACTIONS = new Set(['session_updated'])
-const END_STATUS: Record<string, LiveActivityStatus> = {
-	session_completed: 'done',
-	session_stopped: 'done',
-	session_paused: 'done',
-	session_failed: 'failed',
-	session_timeout: 'failed',
-	session_budget_stopped: 'failed',
+const STEP_ACTION = 'session_updated'
+
+/**
+ * Lets the token-registration route flush a card whose end (or latest state) had nowhere to go,
+ * without owning the sender. Set by `LiveActivityFanout.start()`; a no-op when the fan-out is not
+ * running.
+ */
+let cardFlusher: ((actorId: string, workspaceId: string) => Promise<void>) | null = null
+export async function flushLiveActivityCard(actorId: string, workspaceId: string) {
+	if (!cardFlusher) return
+	try {
+		await cardFlusher(actorId, workspaceId)
+	} catch (err) {
+		logger.warn('Live activity card flush failed', { workspaceId, error: String(err) })
+	}
 }
 
 interface Pending {
@@ -50,23 +61,44 @@ interface Pending {
 	timer: ReturnType<typeof setTimeout> | null
 }
 
+interface Target {
+	id: string
+	token: string
+	environment: string
+}
+
 /**
- * Drives iOS Live Activities for a running agent turn.
+ * Drives the ONE aggregate "Agents working" Live Activity per recipient and workspace.
  *
- * Like `NotificationPushFanout` it listens to the PG NOTIFY `events` stream (post-commit,
- * entirely off the write path) instead of patching every session mutation site, so a push
- * failure or slowness can never affect a session. Only sessions bound to a conversation are
- * mirrored, to the conversation's creator — a person watching a chat, not every background
- * loop run. With APNs unconfigured, or no registered ActivityKit tokens, it does nothing.
+ * Like `NotificationPushFanout` it listens to the PG NOTIFY `events` stream (post-commit, off the
+ * write path) rather than patching every session mutation site, so a push failure or slowness can
+ * never affect a session. For each workspace touched by a session event it recomputes who is
+ * working and pushes the difference to every member with a registered ActivityKit token:
+ *
+ *   0 -> n working : `start` on the member's push-to-start tokens
+ *   change         : `update` on the card's update tokens (routine step changes throttled)
+ *   n -> 0         : `end` on the update tokens, which then are useless and removed
+ *
+ * ActivityKit can only end or update a card through that card's OWN push token; a push-to-start
+ * token can only start one. When the last agent stops before the device has registered the
+ * card's update token, the end is held (`live_activity_cards.end_pending`) and sent the moment
+ * the token registers (`flushCard`).
+ *
+ * "Working" = a non-interactive session that is pending/starting/running, plus an interactive
+ * (chat) session with a turn in flight. A chat session stays `running` between turns, so it only
+ * counts while a turn is open: SessionManager's `'turn'` events say so, and after a restart the
+ * session's last log row decides (a `"type":"result"` row is a closed turn).
  */
 export class LiveActivityFanout {
 	private handler: ((event: PgEvent) => void) | null = null
-	private pending = new Map<string, Pending>()
-	/** Interactive sessions with a turn in flight -> when that turn started (their activity is live). */
-	private activeTurns = new Map<string, Date>()
-	/** sessionId -> until when an update lookup may be skipped (no registered tokens). */
-	private noTokensUntil = new Map<string, number>()
 	private turnHandler: ((event: SessionTurnEvent) => void) | null = null
+	private pending = new Map<string, Pending>()
+	/** Interactive sessions with a turn in flight -> when that turn started. */
+	private activeTurns = new Map<string, Date>()
+	/** `actor|workspace` -> signature of the last state pushed, so an unchanged state sends nothing. */
+	private lastSig = new Map<string, string>()
+	/** Per-workspace serial queue: two events for one workspace must not both decide "start". */
+	private queues = new Map<string, Promise<void>>()
 
 	constructor(
 		private db: Database,
@@ -85,11 +117,9 @@ export class LiveActivityFanout {
 	}
 
 	start() {
+		cardFlusher = (actorId, workspaceId) => this.flushCard(actorId, workspaceId)
 		this.handler = (event) => {
-			const relevant =
-				event.entity_type === 'session' ||
-				(event.entity_type === 'notification' && event.action === 'created')
-			if (!relevant) return
+			if (event.entity_type !== 'session') return
 			this.handleEvent(event).catch((err) =>
 				logger.warn('Live activity fan-out failed', { error: String(err) }),
 			)
@@ -106,6 +136,7 @@ export class LiveActivityFanout {
 	}
 
 	stop() {
+		cardFlusher = null
 		if (this.handler) this.bridge.off('event', this.handler)
 		this.handler = null
 		if (this.turnHandler) this.opts.turns?.off('turn', this.turnHandler)
@@ -113,241 +144,299 @@ export class LiveActivityFanout {
 		for (const p of this.pending.values()) if (p.timer) clearTimeout(p.timer)
 		this.pending.clear()
 		this.activeTurns.clear()
-		this.noTokensUntil.clear()
+		this.lastSig.clear()
+		this.queues.clear()
 	}
 
-	/** Turn boundary of an interactive session: the activity starts and ends with it. */
+	/** Turn boundary of an interactive session: it counts as working only while a turn is open. */
 	async handleTurn(event: SessionTurnEvent): Promise<void> {
 		if (!this.sender.isEnabled()) return
-		const { sessionId } = event
-		if (event.phase === 'started') {
-			const startedAt = new Date(this.now())
-			remember(this.activeTurns, sessionId, startedAt)
-			this.clearPending(sessionId)
-			this.noTokensUntil.delete(sessionId)
-			await this.push(sessionId, 'start', { turn: true })
-		} else {
-			const startedAt = this.activeTurns.get(sessionId)
-			this.activeTurns.delete(sessionId)
-			this.clearPending(sessionId)
-			await this.push(sessionId, 'end', {
-				endStatus: event.outcome === 'failed' ? 'failed' : 'done',
-				startedAt,
-			})
-		}
+		if (event.phase === 'started') remember(this.activeTurns, event.sessionId, new Date(this.now()))
+		else this.activeTurns.delete(event.sessionId)
+		const [row] = await this.db
+			.select({ workspaceId: sessions.workspaceId })
+			.from(sessions)
+			.where(eq(sessions.id, event.sessionId))
+			.limit(1)
+		if (row) await this.sync(row.workspaceId)
 	}
 
 	async handleEvent(event: PgEvent): Promise<void> {
 		if (!this.sender.isEnabled()) return
-
-		if (event.entity_type === 'notification') {
-			await this.handleNotification(event)
+		if (event.entity_type !== 'session') return
+		const workspaceId = event.workspace_id
+		if (!workspaceId) return
+		if (event.action === STEP_ACTION) {
+			await this.scheduleStepSync(workspaceId)
 			return
 		}
-		if (event.entity_type !== 'session') return
-
-		const sessionId = event.entity_id
-		if (START_ACTIONS.has(event.action)) {
-			this.clearPending(sessionId)
-			this.noTokensUntil.delete(sessionId)
-			await this.push(sessionId, 'start')
-		} else if (UPDATE_ACTIONS.has(event.action)) {
-			await this.scheduleUpdate(sessionId)
-		} else if (END_STATUS[event.action]) {
-			const startedAt = this.activeTurns.get(sessionId)
-			this.activeTurns.delete(sessionId)
-			this.clearPending(sessionId)
-			this.noTokensUntil.delete(sessionId)
-			await this.push(sessionId, 'end', { endStatus: END_STATUS[event.action], startedAt })
+		// Lifecycle edge (started, resumed, completed, stopped, failed, paused ...): sync at once.
+		if (event.action !== 'session_started' && event.action !== 'session_resumed') {
+			this.activeTurns.delete(event.entity_id)
 		}
+		this.clearPending(workspaceId)
+		await this.sync(workspaceId)
 	}
 
-	/** A needs_input notification tied to a session flips its activity to "needs you" now. */
-	private async handleNotification(event: PgEvent) {
-		const [n] = await this.db
-			.select({
-				type: notifications.type,
-				sessionId: notifications.sessionId,
-				targetActorId: notifications.targetActorId,
-				title: notifications.title,
-				content: notifications.content,
-			})
-			.from(notifications)
-			.where(eq(notifications.id, event.entity_id))
-			.limit(1)
-		if (!n || n.type !== 'needs_input' || !n.sessionId) return
-		this.clearPending(n.sessionId)
-		this.noTokensUntil.delete(n.sessionId)
-		await this.push(n.sessionId, 'update', {
-			alert: { title: n.title, body: n.content },
-			onlyRecipient: n.targetActorId,
-		})
-	}
-
-	private rememberNoTokens(sessionId: string) {
-		if (
-			!this.noTokensUntil.has(sessionId) &&
-			this.noTokensUntil.size >= LIVE_ACTIVITY_MAX_TRACKED
-		) {
-			const oldest = this.noTokensUntil.keys().next().value
-			if (oldest !== undefined) this.noTokensUntil.delete(oldest)
-		}
-		this.noTokensUntil.set(sessionId, this.now() + NO_TOKENS_TTL_MS)
-	}
-
-	private clearPending(sessionId: string) {
-		const p = this.pending.get(sessionId)
+	private clearPending(workspaceId: string) {
+		const p = this.pending.get(workspaceId)
 		if (p?.timer) clearTimeout(p.timer)
-		this.pending.delete(sessionId)
+		this.pending.delete(workspaceId)
 	}
 
-	/** Leading edge sends at once; further updates inside the window collapse to one trailing send. */
-	private async scheduleUpdate(sessionId: string): Promise<void> {
+	/** Leading edge syncs at once; further step changes inside the window collapse to one trailing sync. */
+	private async scheduleStepSync(workspaceId: string): Promise<void> {
 		const throttleMs = this.opts.throttleMs ?? LIVE_ACTIVITY_THROTTLE_MS
 		const now = this.now()
-		// Nobody is showing this session's activity: skip the lookups entirely.
-		if ((this.noTokensUntil.get(sessionId) ?? 0) > now) return
-		const p = this.pending.get(sessionId) ?? { lastSentAt: 0, timer: null }
-		if (!this.pending.has(sessionId)) {
-			// Bounded: evict the oldest entry (and its timer) rather than grow forever.
+		const p = this.pending.get(workspaceId) ?? { lastSentAt: 0, timer: null }
+		if (!this.pending.has(workspaceId)) {
 			if (this.pending.size >= LIVE_ACTIVITY_MAX_TRACKED) {
 				const oldest = this.pending.keys().next().value
 				if (oldest !== undefined) this.clearPending(oldest)
 			}
-			this.pending.set(sessionId, p)
+			this.pending.set(workspaceId, p)
 		}
 		const wait = p.lastSentAt + throttleMs - now
 		if (wait <= 0) {
 			p.lastSentAt = now
-			await this.push(sessionId, 'update')
+			await this.sync(workspaceId)
 			return
 		}
-		if (p.timer) return // a trailing send is already queued; it reads fresh state when it fires
+		if (p.timer) return // a trailing sync is already queued; it reads fresh state when it fires
 		p.timer = setTimeout(() => {
 			p.timer = null
 			p.lastSentAt = this.now()
-			this.push(sessionId, 'update').catch((err) =>
-				logger.warn('Live activity update failed', { sessionId, error: String(err) }),
+			this.sync(workspaceId).catch((err) =>
+				logger.warn('Live activity update failed', { workspaceId, error: String(err) }),
 			)
 		}, wait)
 		p.timer.unref?.()
 	}
 
-	private async push(
-		sessionId: string,
-		kind: LiveActivityEvent,
-		extra: {
-			endStatus?: LiveActivityStatus
-			alert?: { title: string; body?: string | null }
-			onlyRecipient?: string | null
-			/** Start caused by an interactive turn boundary rather than a session lifecycle event. */
-			turn?: boolean
-			/** Overrides the session's start as the activity's elapsed-time origin (turn start). */
-			startedAt?: Date
-		} = {},
-	): Promise<void> {
-		const [row] = await this.db
+	/** The device just registered an update token: deliver whatever the card has been missing. */
+	async flushCard(actorId: string, workspaceId: string): Promise<void> {
+		if (!this.sender.isEnabled()) return
+		await this.sync(workspaceId, { onlyActor: actorId, force: true })
+	}
+
+	/** Recompute the working set of a workspace and push the difference. Serialised per workspace. */
+	sync(workspaceId: string, opts: { onlyActor?: string; force?: boolean } = {}): Promise<void> {
+		const prev = this.queues.get(workspaceId) ?? Promise.resolve()
+		const next = prev.then(
+			() => this.doSync(workspaceId, opts),
+			() => this.doSync(workspaceId, opts),
+		)
+		const tail = next.catch(() => {})
+		this.queues.set(workspaceId, tail)
+		tail.then(() => {
+			if (this.queues.get(workspaceId) === tail) this.queues.delete(workspaceId)
+		})
+		return next
+	}
+
+	/** Who is working in the workspace right now, one row per agent. */
+	async loadWorkingAgents(workspaceId: string): Promise<WorkingAgent[]> {
+		const rows = await this.db
 			.select({
 				sessionId: sessions.id,
-				workspaceId: sessions.workspaceId,
-				conversationId: sessions.conversationId,
+				actorId: sessions.actorId,
+				agentName: actors.name,
 				currentActivity: sessions.currentActivity,
-				status: sessions.status,
 				interactive: sessions.interactive,
 				startedAt: sessions.startedAt,
 				createdAt: sessions.createdAt,
-				agentName: actors.name,
-				recipientId: conversations.createdBy,
+				conversationId: sessions.conversationId,
+				topic: conversations.title,
 			})
 			.from(sessions)
 			.innerJoin(actors, eq(actors.id, sessions.actorId))
-			.innerJoin(conversations, eq(conversations.id, sessions.conversationId))
-			.where(eq(sessions.id, sessionId))
-			.limit(1)
-		// No conversation = a background run nobody is watching in a chat.
-		if (!row) return
-		// A "needs you" nudge for someone other than the chat's owner is not ours to show.
-		if (extra.onlyRecipient && extra.onlyRecipient !== row.recipientId) return
-		// A chat session is `running` between turns; only its turns have an activity.
-		if (row.interactive) {
-			if (kind === 'start' && !extra.turn) return
-			if (kind === 'update' && !this.activeTurns.has(sessionId)) return
+			.leftJoin(conversations, eq(conversations.id, sessions.conversationId))
+			.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.status, LIVE_STATUSES)))
+		const working: WorkingSessionRow[] = []
+		for (const r of rows) {
+			let startedAt = r.startedAt ?? r.createdAt ?? new Date(this.now())
+			if (r.interactive) {
+				const turn = this.activeTurns.get(r.sessionId)
+				if (turn) startedAt = turn
+				else if (!(await this.turnOpenByLog(r.sessionId))) continue
+			}
+			working.push({
+				sessionId: r.sessionId,
+				actorId: r.actorId,
+				agentName: r.agentName,
+				currentActivity: r.currentActivity,
+				startedAt,
+				conversationId: r.conversationId,
+				topic: r.topic,
+			})
 		}
+		return groupWorkingAgents(working)
+	}
 
-		const tokens = await this.db
+	/**
+	 * No in-process turn event (restart, or another node ran it): a chat session is mid-turn when
+	 * its newest log row is recent and is not the CLI's closing `result` envelope.
+	 */
+	private async turnOpenByLog(sessionId: string): Promise<boolean> {
+		const [last] = await this.db
+			.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
+			.from(sessionLogs)
+			.where(eq(sessionLogs.sessionId, sessionId))
+			.orderBy(desc(sessionLogs.id))
+			.limit(1)
+		if (!last) return false
+		if (last.createdAt && this.now() - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) {
+			return false
+		}
+		return !last.content.includes('"type":"result"')
+	}
+
+	private async doSync(
+		workspaceId: string,
+		opts: { onlyActor?: string; force?: boolean },
+	): Promise<void> {
+		const agents = await this.loadWorkingAgents(workspaceId)
+
+		const startTokens = await this.db
 			.select({
 				id: liveActivityTokens.id,
-				kind: liveActivityTokens.kind,
+				actorId: liveActivityTokens.actorId,
 				token: liveActivityTokens.token,
-				deviceId: liveActivityTokens.deviceId,
-				sessionId: liveActivityTokens.sessionId,
+				environment: deviceTokens.environment,
+			})
+			.from(liveActivityTokens)
+			.innerJoin(deviceTokens, eq(deviceTokens.id, liveActivityTokens.deviceId))
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, liveActivityTokens.actorId),
+					eq(workspaceMembers.workspaceId, workspaceId),
+				),
+			)
+			.where(
+				and(
+					eq(liveActivityTokens.kind, 'push_to_start'),
+					// The device may have changed hands since the token was registered.
+					eq(deviceTokens.actorId, liveActivityTokens.actorId),
+				),
+			)
+		const updateTokens = await this.db
+			.select({
+				id: liveActivityTokens.id,
+				actorId: liveActivityTokens.actorId,
+				token: liveActivityTokens.token,
 				environment: deviceTokens.environment,
 			})
 			.from(liveActivityTokens)
 			.innerJoin(deviceTokens, eq(deviceTokens.id, liveActivityTokens.deviceId))
 			.where(
 				and(
-					eq(liveActivityTokens.actorId, row.recipientId),
+					eq(liveActivityTokens.kind, 'update'),
+					eq(liveActivityTokens.workspaceId, workspaceId),
 					// The device may have changed hands since the token was registered.
-					eq(deviceTokens.actorId, row.recipientId),
-					kind === 'start'
-						? inArray(liveActivityTokens.kind, ['push_to_start', 'update'])
-						: eq(liveActivityTokens.sessionId, sessionId),
+					eq(deviceTokens.actorId, liveActivityTokens.actorId),
 				),
 			)
+		const cards = await this.db
+			.select()
+			.from(liveActivityCards)
+			.where(eq(liveActivityCards.workspaceId, workspaceId))
 
-		// Start only the devices that are not already showing this session's activity.
-		let targets = tokens
-		if (kind === 'start') {
-			const running = new Set(
-				tokens
-					.filter((t) => t.kind === 'update' && t.sessionId === sessionId)
-					.map((t) => t.deviceId),
-			)
-			targets = tokens.filter((t) => t.kind === 'push_to_start' && !running.has(t.deviceId))
-		} else {
-			targets = tokens.filter((t) => t.kind === 'update')
-		}
-		if (targets.length === 0) {
-			// Remember it so the next burst of updates does not repeat 3 queries to find nothing.
-			if (kind === 'update') this.rememberNoTokens(sessionId)
-			return
-		}
+		const actorIds = new Set<string>()
+		for (const t of startTokens) actorIds.add(t.actorId)
+		for (const t of updateTokens) actorIds.add(t.actorId)
+		for (const c of cards) actorIds.add(c.actorId)
 
-		let status: LiveActivityStatus = extra.endStatus ?? 'running'
-		if (kind !== 'end') {
-			const [waiting] = await this.db
-				.select({ id: notifications.id })
-				.from(notifications)
-				.where(
-					and(
-						eq(notifications.sessionId, sessionId),
-						eq(notifications.targetActorId, row.recipientId),
-						eq(notifications.type, 'needs_input'),
-						eq(notifications.status, 'pending'),
+		const sig = JSON.stringify(
+			agents.map((a) => [a.id, a.sessionId, a.doing ?? '', a.topic ?? '', a.startedAt.getTime()]),
+		)
+		const now = this.now()
+
+		for (const actorId of actorIds) {
+			if (opts.onlyActor && opts.onlyActor !== actorId) continue
+			const key = `${actorId}|${workspaceId}`
+			const mine = <T extends { actorId: string }>(rows: T[]) =>
+				rows.filter((r) => r.actorId === actorId)
+			const starts = mine(startTokens)
+			const updates = mine(updateTokens)
+			const card = cards.find((c) => c.actorId === actorId)
+
+			if (card && now - card.updatedAt.getTime() > CARD_TTL_MS && updates.length === 0) {
+				await this.db
+					.delete(liveActivityCards)
+					.where(
+						and(
+							eq(liveActivityCards.actorId, actorId),
+							eq(liveActivityCards.workspaceId, workspaceId),
+						),
+					)
+				this.lastSig.delete(key)
+				continue
+			}
+
+			if (agents.length > 0) {
+				// A card whose end was held, or that never got an update token and has outlived its
+				// stale date, is gone from the device (swiped away / stale): a new start is allowed.
+				const leftover =
+					!!card &&
+					updates.length === 0 &&
+					(card.endPending || now - card.updatedAt.getTime() > LIVE_ACTIVITY_STALE_S * 1000)
+				const exists = (!!card && !leftover) || updates.length > 0
+				if (exists) {
+					if (updates.length === 0) continue // card up, token not registered yet: heals on register
+					if (!opts.force && this.lastSig.get(key) === sig) continue
+					await this.deliver(updates, { event: 'update', workspaceId, agents })
+					this.lastSig.set(key, sig)
+					await this.touchCard(actorId, workspaceId, false)
+				} else if (starts.length > 0) {
+					await this.deliver(starts, { event: 'start', workspaceId, agents })
+					this.lastSig.set(key, sig)
+					await this.touchCard(actorId, workspaceId, false)
+				}
+				continue
+			}
+
+			// Nobody is working any more.
+			if (updates.length > 0) {
+				await this.deliver(updates, { event: 'end', workspaceId, agents: [] })
+				await this.db.delete(liveActivityTokens).where(
+					inArray(
+						liveActivityTokens.id,
+						updates.map((u) => u.id),
 					),
 				)
-				.limit(1)
-			if (waiting) status = 'needsYou'
+				await this.db
+					.delete(liveActivityCards)
+					.where(
+						and(
+							eq(liveActivityCards.actorId, actorId),
+							eq(liveActivityCards.workspaceId, workspaceId),
+						),
+					)
+				this.lastSig.delete(key)
+			} else if (card && !card.endPending) {
+				// The card is up but the device never registered its update token: hold the end.
+				await this.touchCard(actorId, workspaceId, true)
+				this.lastSig.delete(key)
+			}
 		}
+	}
 
-		const push = {
-			event: kind,
-			sessionId,
-			workspaceId: row.workspaceId,
-			conversationId: row.conversationId,
-			agentName: row.agentName,
-			step: row.currentActivity,
-			startedAt:
-				extra.startedAt ??
-				this.activeTurns.get(sessionId) ??
-				row.startedAt ??
-				row.createdAt ??
-				new Date(this.now()),
-			status,
-			alert: extra.alert ?? null,
-		}
+	private async touchCard(actorId: string, workspaceId: string, endPending: boolean) {
+		const now = new Date(this.now())
+		await this.db
+			.insert(liveActivityCards)
+			.values({ actorId, workspaceId, endPending, createdAt: now, updatedAt: now })
+			.onConflictDoUpdate({
+				target: [liveActivityCards.actorId, liveActivityCards.workspaceId],
+				set: { endPending, updatedAt: now },
+			})
+	}
 
+	private async deliver(
+		targets: Target[],
+		push: { event: LiveActivityEvent; workspaceId: string; agents: WorkingAgent[] },
+	): Promise<void> {
 		const dead: string[] = []
 		await Promise.all(
 			targets.map(async (t) => {
@@ -360,14 +449,6 @@ export class LiveActivityFanout {
 		)
 		if (dead.length > 0) {
 			await this.db.delete(liveActivityTokens).where(inArray(liveActivityTokens.id, dead))
-		}
-		if (kind === 'end') {
-			// The activity is over; its update tokens are now useless.
-			await this.db
-				.delete(liveActivityTokens)
-				.where(
-					and(eq(liveActivityTokens.sessionId, sessionId), eq(liveActivityTokens.kind, 'update')),
-				)
 		}
 	}
 }

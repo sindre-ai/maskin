@@ -114,21 +114,21 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: maskin_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 20
+    env:
+      # actions/cache waits 10 minutes per segment by default; when the cache
+      # backend is unavailable (e.g. "Egress is over the account limit") the
+      # setup-node pnpm cache restore alone burned half of this job's budget.
+      # A cache miss only costs a cold install, so fail fast instead.
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
     steps:
+      # A throwaway database: durability buys nothing here, and each test file
+      # clones its own database from a template, so run it on tmpfs with fsync
+      # off and enough connections for parallel workers. (A `services:` block
+      # cannot pass server flags, hence docker run.)
+      - name: Start Postgres
+        run: |
+          docker run -d --name pg -p 5432:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=maskin_test postgres:16-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300
       - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v5
@@ -178,8 +178,14 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
-      - run: pnpm test:integration -- --run
+      - name: Wait for Postgres
+        run: until docker exec pg pg_isready -U postgres; do sleep 1; done
+
+      # Calls the package script directly: `pnpm test:integration` goes through
+      # turbo, which re-runs the ^build tasks the `pnpm build` step just did.
+      - run: pnpm --filter @maskin/dev test:integration -- --run
         env:
+          INTEGRATION_WORKERS: 4
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
@@ -272,7 +278,9 @@ jobs:
         run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright cannot install chromium on
+    # ("does not support chromium on ubuntu26.04-x64"). Unpin once Playwright supports it.
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and

@@ -6,6 +6,7 @@ import {
 	bigserial,
 	boolean,
 	check,
+	date,
 	index,
 	integer,
 	jsonb,
@@ -296,9 +297,30 @@ export type IntegrationStatus =
 	 * is the intent — it must never be mistaken for a live connection.
 	 */
 	| 'inactive'
+	/**
+	 * Keychain chat capture (see credentials.source = 'chat_capture'): vaulted and
+	 * readable through getCredential during the undo window, before the sweeper
+	 * flips it to 'active'. Written by the capture endpoint (a later Keychain PR).
+	 */
+	| 'pending_undo'
+	/** Keychain undo: the row survives for FK integrity and audit; credentials and dek_ciphertext are zeroised. */
+	| 'undone'
 
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
+export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+
+export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+
+/**
+ * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
+ * Keychain credentials only ever use 'read_write' (on/off): no row is off.
+ */
+export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+
+/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
+export type IntegrationDefaultAccess = 'read' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -310,7 +332,8 @@ export const integrations = pgTable(
 		provider: text('provider').notNull(),
 		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
-		credentials: text('credentials').notNull(),
+		// NULL only on an undone row (Keychain undo zeroises it); see migration 0088.
+		credentials: text('credentials'),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
@@ -326,6 +349,27 @@ export const integrations = pgTable(
 		// Phase 1 rows that predate R11 carry NULL until the next
 		// `account.reconnect` webhook or the admin refresh-identities call fills it.
 		unipileAccSlug: text('unipile_acc_slug'),
+		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'.
+		providerMode: text('provider_mode')
+			.$type<IntegrationProviderMode>()
+			.notNull()
+			.default('registered'),
+		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
+		displayName: text('display_name'),
+		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
+		defaultAgentAccess: text('default_agent_access')
+			.$type<IntegrationDefaultAccess>()
+			.notNull()
+			.default('read'),
+		// Master-key-wrapped per-credential DEK. NULL = legacy row, decrypted under
+		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
+		dekCiphertext: text('dek_ciphertext'),
+		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
+		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id, {
+			onDelete: 'set null',
+		}),
+		undoExpiresAt: timestamp('undo_expires_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -336,16 +380,166 @@ export const integrations = pgTable(
 		uniqueIndex('integrations_ws_actor_provider_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
+		// One per provider for registered and OAuth connections. A bring-your-own API key
+		// or login is a named credential, so a workspace may hold several for one provider
+		// (0089, 0093).
 		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider)
-			.where(sql`${t.externalId} IS NULL`),
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} NOT IN ('byo_apikey', 'byo_login')`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
+		index('integrations_undo_sweeper_idx')
+			.on(t.status, t.undoExpiresAt)
+			.where(sql`${t.status} = 'pending_undo'`),
+		check(
+			'integrations_byo_needs_display_name',
+			sql`${t.providerMode} = 'registered' OR ${t.displayName} IS NOT NULL`,
+		),
+		check(
+			'integrations_default_agent_access_enum',
+			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+		),
+		check(
+			'integrations_source_enum',
+			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
+		),
+		check(
+			'integrations_credentials_null_only_when_undone',
+			sql`${t.credentials} IS NOT NULL OR ${t.status} = 'undone'`,
+		),
 		index('integrations_unipile_acc_slug_idx')
 			.on(t.unipileAccSlug)
 			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
 export type Integration = typeof integrations.$inferSelect
+
+/**
+ * Which agents may use an integration, and how. One row per (integration, agent);
+ * an agent with no row falls back to integrations.default_agent_access. Humans are
+ * not subject to grants. Resolution lives in apps/dev/src/lib/integrations/agent-access.ts.
+ */
+export const agentGrants = pgTable(
+	'agent_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		access: text('access').$type<AgentGrantAccess>().notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
+		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
+		check(
+			'agent_grants_access_enum',
+			sql`${t.access} IN ('none', 'read', 'ask_first', 'read_write')`,
+		),
+	],
+)
+export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only
+ * sessions of this agent in this conversation; removed with the chat or the credential.
+ */
+export const agentChatGrants = pgTable(
+	'agent_chat_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),
+		index('agent_chat_grants_actor_conv_idx').on(t.actorId, t.conversationId),
+	],
+)
+export type AgentChatGrant = typeof agentChatGrants.$inferSelect
+
+// ── Keychain ────────────────────────────────────────────────────────────────
+
+export type CredentialAccessAction =
+	| 'read'
+	| 'create'
+	| 'undone'
+	| 'rotated'
+	| 'sweeper_activated'
+	| 'scope_changed'
+
+/**
+ * Hash-chained audit log of credential use. Insert-only: the app role has no
+ * UPDATE or DELETE. prev_row_hash, row_hash, read_at and id are all assigned by
+ * the credential_access_log_insert() BEFORE INSERT trigger under a per-workspace
+ * lock, so a caller cannot set them (see migration 0087).
+ */
+export const credentialAccessLog = pgTable(
+	'credential_access_log',
+	{
+		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// No FKs on integration_id and actor_id: the log is insert-only, so a reference
+		// would make the actor or integration undeletable (migration 0094).
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		sessionId: uuid('session_id'),
+		loopId: uuid('loop_id'),
+		outboundTarget: text('outbound_target'),
+		action: text('action').$type<CredentialAccessAction>().notNull().default('read'),
+		source: text('source').notNull().default('unknown'),
+		requestId: text('request_id').notNull(),
+		readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+		detail: text('detail'),
+		prevRowHash: text('prev_row_hash').notNull().default(''),
+		rowHash: text('row_hash').notNull().default(''),
+	},
+	(t) => [
+		index('cal_ws_read_at_idx').on(t.workspaceId, t.readAt),
+		index('cal_integration_read_at_idx').on(t.integrationId, t.readAt),
+		index('cal_actor_read_at_idx').on(t.actorId, t.readAt),
+		index('cal_action_idx').on(t.workspaceId, t.action),
+	],
+)
+/**
+ * The audit-chain head, once per workspace per UTC day. Append-only: a trigger
+ * rejects UPDATE and DELETE (see migration 0092).
+ */
+export const credentialChainSnapshots = pgTable(
+	'credential_chain_snapshots',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		snapshotDate: date('snapshot_date').notNull(),
+		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),
+		rowHash: text('row_hash').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.snapshotDate] })],
+)
 export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
@@ -638,11 +832,24 @@ export const conversations = pgTable(
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
 		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		// What a group chat is about: an object (task/bet/insight) or an installed
+		// loop. Polymorphic, so no FK; the create route checks the target exists in
+		// the workspace. NULL for ordinary chats.
+		subjectType: text('subject_type'),
+		subjectId: uuid('subject_id'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One group chat per subject: asking for it again finds the existing one.
+		uniqueIndex('conversations_subject_uniq')
+			.on(t.workspaceId, t.subjectType, t.subjectId)
+			.where(sql`${t.subjectId} IS NOT NULL`),
+		check(
+			'conversations_subject_check',
+			sql`(${t.subjectType} IS NULL AND ${t.subjectId} IS NULL) OR (${t.subjectType} IN ('object', 'loop') AND ${t.subjectId} IS NOT NULL)`,
+		),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
@@ -721,14 +928,31 @@ export const messages = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set on a reply inside a thread: the id of the thread's root message in the
+		// same conversation. Roots are never replies themselves (one level only), so
+		// this never chains. Cascades with the root.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'cascade' },
+		),
+		// A thread reply the author also posted to the main timeline ("also send to
+		// channel"). Only meaningful when thread_root_id is set.
+		threadAlsoInChannel: boolean('thread_also_in_channel').notNull().default(false),
 	},
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_thread_root_idx')
+			.on(t.threadRootId, t.id)
+			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
 		// re-post every past turn of every live chat. See migration 0061.
+		// A comment copied into an object's chat lands once, however often the copy runs.
+		uniqueIndex('messages_comment_event_uniq')
+			.on(t.conversationId, sql`((${t.metadata}->>'comment_event_id'))`)
+			.where(sql`(${t.metadata}->>'comment_event_id') IS NOT NULL`),
 		uniqueIndex('messages_final_output_dedupe_uniq')
 			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
 			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
@@ -738,6 +962,41 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// One emoji one actor put on one message. The primary key makes adding idempotent and lets
+// the same person use several different emoji on a message.
+export const messageReactions = pgTable(
+	'message_reactions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
+
+// Per-actor read cursor for one thread. Advance-only (GREATEST on write), like
+// conversation_participants.last_read_message_id. A missing row means the actor
+// has not opened the thread; replies by others then all count as unread.
+export const messageThreadReads = pgTable(
+	'message_thread_reads',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		rootMessageId: bigint('root_message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }).notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.actorId, t.rootMessageId] })],
+)
 
 // Chat turns waiting for an agent's interactive conversation session to
 // become writable. A message that arrives while the (conversation, agent)
@@ -1869,6 +2128,37 @@ export const deviceTokens = pgTable(
 	],
 )
 
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+//
+// One row per browser push subscription (RFC 8030 / 8291). Kept apart from `device_tokens`,
+// whose APNs token is a hex string used as a URL path segment toward Apple; a browser
+// subscription is an opaque endpoint URL plus an encryption key pair. `endpoint` is unique so
+// re-subscribing from the same browser upserts, and a browser that changes hands moves to the
+// new actor. The p256dh/auth keys are per-subscription secrets: never logged, never returned
+// by the API. Cascades with the actor.
+
+export const webPushSubscriptions = pgTable(
+	'web_push_subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		endpoint: text('endpoint').notNull(),
+		p256dh: text('p256dh').notNull(),
+		auth: text('auth').notNull(),
+		userAgent: text('user_agent'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('web_push_subscriptions_endpoint_uniq').on(t.endpoint),
+		index('web_push_subscriptions_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
 // ── Live Activity tokens ────────────────────────────────────────────────────
 //
 // ActivityKit push tokens. Two kinds share one table:
@@ -1891,24 +2181,48 @@ export const liveActivityTokens = pgTable(
 		// 'push_to_start' | 'update' — validated by registerLiveActivityTokenSchema.
 		kind: text('kind').notNull(),
 		token: text('token').notNull(),
-		// Set for 'update' tokens only.
-		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		// Set for 'update' tokens only: the workspace of the aggregate "Agents working" activity
+		// the token belongs to (one activity per device and workspace).
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check(
-			'live_activity_tokens_kind_session_chk',
-			sql`(${t.kind} = 'push_to_start' AND ${t.sessionId} IS NULL) OR (${t.kind} = 'update' AND ${t.sessionId} IS NOT NULL)`,
+			'live_activity_tokens_kind_workspace_chk',
+			sql`(${t.kind} = 'push_to_start' AND ${t.workspaceId} IS NULL) OR (${t.kind} = 'update' AND ${t.workspaceId} IS NOT NULL)`,
 		),
 		uniqueIndex('live_activity_tokens_push_to_start_uniq')
 			.on(t.deviceId)
 			.where(sql`${t.kind} = 'push_to_start'`),
 		uniqueIndex('live_activity_tokens_update_uniq')
-			.on(t.deviceId, t.sessionId)
+			.on(t.deviceId, t.token)
 			.where(sql`${t.kind} = 'update'`),
-		index('live_activity_tokens_session_idx').on(t.sessionId),
+		index('live_activity_tokens_workspace_idx').on(t.workspaceId, t.actorId),
 		index('live_activity_tokens_actor_idx').on(t.actorId),
+	],
+)
+
+// The (actor, workspace) pairs the backend believes have an "Agents working" card outstanding.
+// `endPending`: the last agent stopped while no per-activity update token was registered, so the
+// end could not be addressed (ActivityKit ends a card only through that card's own token;
+// push-to-start tokens can only start). Flushed when the device registers the update token.
+export const liveActivityCards = pgTable(
+	'live_activity_cards',
+	{
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		endPending: boolean('end_pending').notNull().default(false),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceId] }),
+		index('live_activity_cards_workspace_idx').on(t.workspaceId),
 	],
 )
 
@@ -2050,3 +2364,42 @@ export const triggerEventQueue = pgTable(
 
 export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
 export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
+
+// A device (Apple TV) asking to be signed in by a person who is already signed in elsewhere:
+// the OAuth device-authorization pattern (RFC 8628). The device shows `user_code`; the person
+// types it into maskin.io/tv on a phone or laptop and approves; the device, polling with
+// `device_code`, then receives the actor's session exactly as `POST /api/auth/login` would give it.
+//
+// Both codes are stored only as SHA-256 hashes, so a database read cannot be replayed as a sign-in.
+// A row is single-use (`approved` -> `consumed` in one UPDATE) and short-lived (`expires_at`).
+export const deviceAuthCodes = pgTable(
+	'device_auth_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		deviceCodeHash: text('device_code_hash').notNull(),
+		userCodeHash: text('user_code_hash').notNull(),
+		// Which client is asking ('tvos'); the approver sees it so they know what they are signing in.
+		clientSource: text('client_source').notNull(),
+		deviceName: text('device_name'),
+		// pending -> approved -> consumed, or pending -> denied.
+		status: text('status').notNull().default('pending'),
+		// Who approved. Null until then.
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('device_auth_codes_device_code_hash_uniq').on(t.deviceCodeHash),
+		uniqueIndex('device_auth_codes_user_code_hash_uniq').on(t.userCodeHash),
+		index('device_auth_codes_expires_at_idx').on(t.expiresAt),
+		check(
+			'device_auth_codes_status_check',
+			sql`${t.status} IN ('pending','approved','denied','consumed')`,
+		),
+	],
+)
+
+export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
+export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert

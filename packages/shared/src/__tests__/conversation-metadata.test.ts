@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+	formatKeychainRequestAsMarkdown,
 	fromSuggestedStepSchema,
 	messageMetadataSchema,
 	neededToolsSchema,
+	sessionKeychainCardSchema,
 	stripServerOwnedMetadata,
 	suggestedStepSchema,
 	suggestedStepsSchema,
@@ -180,5 +182,64 @@ describe('messageMetadataSchema intro keys', () => {
 		})
 
 		expect(parsed.success).toBe(true)
+	})
+})
+
+describe('keychain_request', () => {
+	it('is removed from client metadata so a client cannot forge a Keychain card', () => {
+		const stripped = stripServerOwnedMetadata({
+			mentions: [SESSION_ID],
+			keychain_request: { session_id: SESSION_ID, kind: 'login' },
+		})
+
+		expect(stripped).toEqual({ mentions: [SESSION_ID] })
+	})
+
+	it('accepts a login or api_key request, with an optional name and hint', () => {
+		for (const kind of ['login', 'api_key'] as const) {
+			const parsed = messageMetadataSchema.safeParse({
+				keychain_request: {
+					session_id: SESSION_ID,
+					kind,
+					suggested_name: 'e-conomic',
+					hint: 'To read invoices.',
+				},
+			})
+			expect(parsed.success).toBe(true)
+		}
+	})
+
+	it('rejects an unknown kind, a bad session id and an over-long name', () => {
+		const bad = [
+			{ session_id: SESSION_ID, kind: 'password' },
+			{ session_id: 'nope', kind: 'login' },
+			{ session_id: SESSION_ID, kind: 'login', suggested_name: 'x'.repeat(81) },
+		]
+		for (const keychain_request of bad) {
+			expect(messageMetadataSchema.safeParse({ keychain_request }).success).toBe(false)
+		}
+	})
+})
+
+describe('sessionKeychainCardSchema', () => {
+	it('needs a kind and trims the optional fields', () => {
+		expect(sessionKeychainCardSchema.safeParse({}).success).toBe(false)
+		expect(
+			sessionKeychainCardSchema.parse({ kind: 'api_key', suggested_name: '  Stripe  ' }),
+		).toEqual({ kind: 'api_key', suggested_name: 'Stripe' })
+	})
+})
+
+describe('formatKeychainRequestAsMarkdown', () => {
+	it('says what is needed and where it goes, for readers that are not the chat UI', () => {
+		const text = formatKeychainRequestAsMarkdown('login', 'e-conomic', 'To read invoices.')
+		expect(text).toContain('login')
+		expect(text).toContain('**e-conomic**')
+		expect(text).toContain('To read invoices.')
+		expect(text).toContain('Settings → Keychain')
+	})
+
+	it('names an API key when that is the kind, and copes with no name or hint', () => {
+		expect(formatKeychainRequestAsMarkdown('api_key')).toContain('an API key')
 	})
 })

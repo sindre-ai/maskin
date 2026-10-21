@@ -135,9 +135,6 @@ struct LoopsSnapshotTests {
 		for width in Self.widths {
 			try render(LoopDetailContent(store: store).padding(MaskinSpace.s9), width: width, dark: dark, name: "loop-detail")
 			try render(
-				LoopDetailContent(store: store, initialTab: .actions).padding(MaskinSpace.s9),
-				width: width, dark: dark, name: "loop-detail-actions")
-			try render(
 				LoopDetailContent(store: store, initialTab: .activity).padding(MaskinSpace.s9),
 				width: width, dark: dark, name: "loop-detail-activity")
 			try render(

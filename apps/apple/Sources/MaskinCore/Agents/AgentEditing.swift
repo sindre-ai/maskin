@@ -207,18 +207,6 @@ public struct MCPPreset: Identifiable, Equatable, Sendable {
 			"posthog", "PostHog", "Product analytics. Needs the PostHog integration.",
 			symbol: "chart.xyaxis.line", url: "https://mcp.posthog.com/mcp",
 			headers: ["Authorization": "Bearer ${POSTHOG_TOKEN}"]),
-		MCPPreset(
-			id: "playwright", title: "Browser", detail: "Drive a browser for research and testing.",
-			symbol: "safari",
-			tool: AgentTool(
-				name: "playwright", kind: "stdio",
-				spec: .object([
-					"type": .string("stdio"), "command": .string("npx"),
-					"args": .array([
-						.string("@playwright/mcp@latest"), .string("--cdp-endpoint"),
-						.string("${BROWSER_CDP_URL}"),
-					]),
-				]))),
 	]
 
 	/// Presets not already on the agent.

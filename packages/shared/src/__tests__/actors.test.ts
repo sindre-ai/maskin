@@ -273,32 +273,6 @@ describe('updateActorSchema does not accept is_system or isSystem', () => {
 	})
 })
 
-describe('updateActorSchema — browser MCP misconfiguration', () => {
-	// The write path an agent or the UI actually uses. Catching it only in
-	// sessions.ts would leave the real door open.
-	it('rejects a CDP endpoint configured as an http MCP server', () => {
-		const result = updateActorSchema.safeParse({
-			tools: { mcpServers: { playwright: { type: 'http', url: '${BROWSER_CDP_URL}' } } },
-		})
-		expect(result.success).toBe(false)
-	})
-
-	it('accepts the stdio browser preset', () => {
-		const result = updateActorSchema.safeParse({
-			tools: {
-				mcpServers: {
-					playwright: {
-						type: 'stdio',
-						command: 'npx',
-						args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-					},
-				},
-			},
-		})
-		expect(result.success).toBe(true)
-	})
-})
-
 describe('createActorSchema first_steps and needed_integrations', () => {
 	const base = { type: 'agent', name: 'Scout' } as const
 

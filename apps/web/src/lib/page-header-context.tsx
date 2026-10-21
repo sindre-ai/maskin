@@ -21,6 +21,10 @@ interface PageHeaderState {
 	title?: string
 	subtitle?: string
 	actions?: ReactNode
+	// Controls that sit in the right-hand cluster but BEFORE the workspace search,
+	// instead of after it like `actions`. Used when a page's own control should
+	// read first, left to right (the Desktop screen's Take over).
+	leadingActions?: ReactNode
 	// Controls that belong beside the <h1>, inside the left cluster, rather
 	// than out in the right-hand cluster with search and New — the Objects
 	// screen's type tabs (mockup 146–153, `margin-left:14px` on the h1's
@@ -52,6 +56,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setTitle: (title: string | undefined) => void
 	setSubtitle: (subtitle: string | undefined) => void
 	setActions: (actions: ReactNode) => void
+	setLeadingActions: (leadingActions: ReactNode) => void
 	setTitleTabs: (titleTabs: ReactNode) => void
 	setStickyIdentity: (stickyIdentity: ReactNode) => void
 	setCrumb: (crumb: PageHeaderCrumb | undefined) => void
@@ -65,6 +70,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setTitle: () => {},
 	setSubtitle: () => {},
 	setActions: () => {},
+	setLeadingActions: () => {},
 	setTitleTabs: () => {},
 	setStickyIdentity: () => {},
 	setCrumb: () => {},
@@ -87,6 +93,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 
 	const setActions = useCallback((actions: ReactNode) => {
 		setState((prev) => ({ ...prev, actions }))
+	}, [])
+
+	const setLeadingActions = useCallback((leadingActions: ReactNode) => {
+		setState((prev) => ({ ...prev, leadingActions }))
 	}, [])
 
 	const setTitleTabs = useCallback((titleTabs: ReactNode) => {
@@ -124,6 +134,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setTitle,
 				setSubtitle,
 				setActions,
+				setLeadingActions,
 				setTitleTabs,
 				setStickyIdentity,
 				setCrumb,

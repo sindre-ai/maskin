@@ -1096,11 +1096,13 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
+		const threadRootId = await this.resolveThreadRootId(turnMessageId)
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
 			workspaceId: gate.workspaceId,
 			actorId: gate.actorId,
+			threadRootId,
 			content,
 			metadata: {
 				source: 'final_output',
@@ -1840,6 +1842,28 @@ export class InteractiveTurnFinalizer {
 	 * envelope can share a Docker chunk with its neighbours, and parsing the
 	 * whole row would throw and silently yield an unanchored message.
 	 */
+	/**
+	 * A reply to a message posted inside a thread answers in that thread. The turn's
+	 * triggering message is either the thread's root (which starts the thread) or one
+	 * of its replies; only a reply carries a root, so an agent answering a top-level
+	 * message still posts to the main timeline. Best-effort: a lookup failure posts
+	 * the reply top-level rather than losing it.
+	 */
+	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		if (turnMessageId === null) return null
+		try {
+			const [row] = await this.db
+				.select({ threadRootId: messages.threadRootId })
+				.from(messages)
+				.where(eq(messages.id, turnMessageId))
+				.limit(1)
+			return row?.threadRootId ?? null
+		} catch (err) {
+			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
+			return null
+		}
+	}
+
 	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		const [row] = await this.db
 			.select({ content: sessionLogs.content })

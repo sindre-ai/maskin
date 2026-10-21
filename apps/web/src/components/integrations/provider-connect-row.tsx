@@ -1,3 +1,4 @@
+import { AgentAccess } from '@/components/integrations/agent-access'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
@@ -223,6 +224,12 @@ export function ProviderRow({
 					</div>
 				)
 			}
+			footer={
+				// Who can use it is managed in Settings, not from the chat card.
+				isConnected && variant === 'settings' ? (
+					<AgentAccess integration={integration} workspaceId={workspaceId} />
+				) : undefined
+			}
 		/>
 	)
 }
@@ -370,6 +377,7 @@ export function GroupedProviderRow({
 							actorScoped={isActorScoped}
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
+							workspaceId={workspaceId}
 							onDisconnect={() => disconnect.mutate(installation.id)}
 							disconnecting={disconnect.isPending}
 						/>
@@ -413,6 +421,7 @@ function NestedInstallationRow({
 	actorScoped = false,
 	actorName,
 	isOwn = false,
+	workspaceId,
 	onDisconnect,
 	disconnecting,
 }: {
@@ -422,6 +431,7 @@ function NestedInstallationRow({
 	/** Display name of the member who connected an actor-scoped install. */
 	actorName?: string
 	isOwn?: boolean
+	workspaceId: string
 	onDisconnect: () => void
 	disconnecting: boolean
 }) {
@@ -437,7 +447,7 @@ function NestedInstallationRow({
 			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
+		<div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
 			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">
@@ -461,6 +471,9 @@ function NestedInstallationRow({
 			>
 				Disconnect
 			</Button>
+			<div className="basis-full">
+				<AgentAccess integration={integration} workspaceId={workspaceId} />
+			</div>
 		</div>
 	)
 }

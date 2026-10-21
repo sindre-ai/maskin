@@ -1,13 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { actors, notifications, sessions } from '@maskin/db/schema'
+import { actors, notifications, objects, sessions, workspaceMembers } from '@maskin/db/schema'
 import {
+	FOR_YOU_KIND,
 	createNotificationSchema,
 	notificationQuerySchema,
 	respondNotificationSchema,
 	updateNotificationSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { trackCreateNotificationCalled } from '../lib/analytics/notification-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -26,6 +27,7 @@ import {
 	isWorkspaceMember,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import { findChiefOfStaffId } from '../services/chief-of-staff-chat'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
@@ -64,6 +66,29 @@ async function mayChangeNotification(
 	return true
 }
 
+const isForYouMetadata = (metadata: unknown) =>
+	(metadata as { kind?: unknown } | null | undefined)?.kind === FOR_YOU_KIND
+
+const forYouForbidden = () =>
+	createApiError('FORBIDDEN', 'Only the Chief of Staff can curate For You items')
+
+/**
+ * Extra gate for For You items on edit and delete. The Chief of Staff may do
+ * anything to them; the person an item is for may dismiss or delete it but not
+ * rewrite its metadata (rank, headline); everyone else is refused. Turning any
+ * notification into a For You item counts as curating.
+ */
+async function mayCurateForYou(
+	db: Database,
+	actorId: string,
+	existing: { workspaceId: string; targetActorId: string | null; metadata: unknown },
+	newMetadata?: unknown,
+): Promise<boolean> {
+	if (!isForYouMetadata(existing.metadata) && !isForYouMetadata(newMetadata)) return true
+	if (existing.targetActorId === actorId && !newMetadata) return true
+	return (await findChiefOfStaffId(db, existing.workspaceId)) === actorId
+}
+
 // POST /api/notifications
 const createNotificationRoute = createRoute({
 	method: 'post',
@@ -90,6 +115,14 @@ const createNotificationRoute = createRoute({
 			description: 'Invalid request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Only the Chief of Staff can curate For You items',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Referenced object or session not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Internal server error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -104,6 +137,50 @@ app.openapi(createNotificationRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
+
+	// For You items are the Chief of Staff's curation: nobody else writes them, and
+	// they may only point at a person in this workspace and at its own objects.
+	if (isForYouMetadata(body.metadata)) {
+		if ((await findChiefOfStaffId(db, workspaceId)) !== actorId) {
+			return c.json(forYouForbidden(), 403)
+		}
+		const [target] = body.target_actor_id
+			? await db
+					.select({ id: actors.id })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(
+						and(
+							eq(workspaceMembers.workspaceId, workspaceId),
+							eq(workspaceMembers.actorId, body.target_actor_id),
+							eq(actors.type, 'human'),
+						),
+					)
+					.limit(1)
+			: []
+		if (!target) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'target_actor_id must be a human member of this workspace'),
+				400,
+			)
+		}
+		if (body.object_id) {
+			const [obj] = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.id, body.object_id), eq(objects.workspaceId, workspaceId)))
+				.limit(1)
+			if (!obj) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+		}
+		if (body.session_id) {
+			const [session] = await db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(and(eq(sessions.id, body.session_id), eq(sessions.workspaceId, workspaceId)))
+				.limit(1)
+			if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+		}
+	}
 
 	const [created] = await db
 		.insert(notifications)
@@ -174,7 +251,7 @@ const listNotificationsRoute = createRoute({
 app.openapi(listNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { status, type, object_id, limit, offset, order } = c.req.valid('query')
+	const { status, type, object_id, kind, limit, offset, order } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) {
@@ -186,6 +263,7 @@ app.openapi(listNotificationsRoute, (async (c) => {
 	}
 	if (type) conditions.push(eq(notifications.type, type))
 	if (object_id) conditions.push(eq(notifications.objectId, object_id))
+	if (kind) conditions.push(sql`${notifications.metadata}->>'kind' = ${kind}`)
 
 	const results = await db
 		.select()
@@ -258,6 +336,10 @@ const updateNotificationRoute = createRoute({
 			description: 'Notification updated',
 			content: { 'application/json': { schema: notificationResponseSchema } },
 		},
+		403: {
+			description: 'Only the Chief of Staff can curate For You items',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Notification not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -276,6 +358,9 @@ app.openapi(updateNotificationRoute, (async (c) => {
 
 	if (!existing || !(await mayChangeNotification(db, actorId, existing, !!body.metadata))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
+	if (!(await mayCurateForYou(db, actorId, existing, body.metadata))) {
+		return c.json(forYouForbidden(), 403)
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
@@ -335,6 +420,10 @@ const respondNotificationRoute = createRoute({
 			description: 'Cannot respond to this notification',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Only the Chief of Staff can curate For You items',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Notification not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -359,6 +448,9 @@ app.openapi(respondNotificationRoute, (async (c) => {
 
 	if (!notification || !(await isWorkspaceWriter(db, actorId, notification.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
+	if (!(await mayCurateForYou(db, actorId, notification))) {
+		return c.json(forYouForbidden(), 403)
 	}
 
 	if (notification.status !== 'pending' && notification.status !== 'seen') {
@@ -545,6 +637,10 @@ const deleteNotificationRoute = createRoute({
 			description: 'Notification deleted',
 			content: { 'application/json': { schema: z.object({ deleted: z.boolean() }) } },
 		},
+		403: {
+			description: 'Only the Chief of Staff can curate For You items',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Notification not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -561,6 +657,9 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	if (!existing || !(await mayChangeNotification(db, actorId, existing))) {
 		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
+	if (!(await mayCurateForYou(db, actorId, existing))) {
+		return c.json(forYouForbidden(), 403)
 	}
 
 	await db.delete(notifications).where(eq(notifications.id, id))

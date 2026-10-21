@@ -47,9 +47,19 @@ export const config: ProviderConfig = {
 	// same "no single spec" signal github uses for its per-installation surface.
 	// The route test enumerating which providers omit `server` in
 	// `integrations.test.ts` is what holds this line.
+	//
+	// `entry` is how agents' copies of those per-identity URLs are recognised
+	// (mcp-detach.ts): one credential owns the slugs that start with
+	// `linkedin-{unipileAccSlug}-`. A credential that never enumerated an
+	// identity owns none.
 	mcp: {
 		envKey: 'LINKEDIN_UNIPILE_TOKEN',
 		autoInject: false,
+		entry: {
+			kind: 'per-identity',
+			urlPath: '/api/integrations/linkedin-unipile/mcp',
+			slugPrefix: (owner) => (owner.unipileAccSlug ? `linkedin-${owner.unipileAccSlug}-` : null),
+		},
 	},
 
 	externalIdDisplay: 'installation',

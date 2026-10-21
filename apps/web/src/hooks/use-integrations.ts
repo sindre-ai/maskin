@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../lib/api'
+import { type AgentGrantAccess, type CustomMcpServerSpec, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -186,5 +186,188 @@ export function useLinkedInIdentities(workspaceId: string) {
 		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
 		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
 		staleTime: FIVE_MINUTES,
+	})
+}
+
+/** Keychain: paste an API key. The secret goes up once and is never kept in the cache. */
+export function useCreateByoApiKey(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; rawSecret: string }) =>
+			api.integrations.createByoApiKey(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Keychain: add a username and password. Both go up once and are never kept in the cache. */
+export function useCreateByoLogin(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; username: string; password: string }) =>
+			api.integrations.createByoLogin(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/**
+ * Keychain: replace which agents may use a saved key. The error stays on the mutation so
+ * the access sheet can show it inline; only the success toast lives here. The list and the
+ * audit log are refetched because the Agents block and the SCOPE CHANGED row both read them.
+ */
+export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		// The sheet shows the failure inline, so the global error toast would only cover Save.
+		meta: { handlesOwnErrors: true },
+		mutationFn: (agentIds: string[]) =>
+			api.integrations.replaceGrants(
+				integrationId,
+				workspaceId,
+				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
+			),
+		onSuccess: () => {
+			toast.success('Access updated')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+			})
+		},
+	})
+}
+
+/**
+ * Keychain: remove a saved key or login at any time. The secret is destroyed on the server,
+ * so the credential drops out of the list. The page shows the failure inline in its dialog,
+ * so the global error toast is switched off.
+ */
+export function useRemoveCredential(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (integrationId: string) => api.integrations.remove(integrationId, workspaceId),
+		onSuccess: () => {
+			toast.success('Credential removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Keychain: one credential's audit log, newest first, paged by the last row's id. */
+export function useCredentialAuditLog(workspaceId: string, integrationId: string) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+		queryFn: ({ pageParam }) =>
+			api.integrations.auditLog(integrationId, workspaceId, pageParam || undefined),
+		initialPageParam: '',
+		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
+		enabled: !!workspaceId && !!integrationId,
+	})
+}
+
+/**
+ * Agent access: the three changes the Integrations page makes to who may use an
+ * integration. Each refetches the list, which carries `defaultAgentAccess` and
+ * `agentGrants` per integration. The audit trail and SSE event are written server-side.
+ */
+function useGrantMutation<V>(
+	workspaceId: string,
+	mutationFn: (variables: V) => Promise<unknown>,
+	successMessage: string,
+) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn,
+		onSuccess: () => {
+			toast.success(successMessage)
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** What one agent can use. Refreshes with the integration list, so it never lags a change. */
+export function useAgentAccess(workspaceId: string, actorId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.agentAccess(workspaceId, actorId),
+		queryFn: () => api.actors.access(actorId, workspaceId),
+	})
+}
+
+export function useSetAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(v: { actorId: string; access: AgentGrantAccess }) =>
+			api.integrations.setGrant(integrationId, workspaceId, v.actorId, v.access),
+		'Agent access updated',
+	)
+}
+
+export function useRemoveAgentGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(actorId: string) => api.integrations.removeGrant(integrationId, workspaceId, actorId),
+		'Agent access removed',
+	)
+}
+
+export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(defaultAgentAccess: 'read' | 'none') =>
+			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
+		'Default access updated',
+	)
+}
+
+/** A custom MCP server's definition, secrets masked. Fetched when its edit form opens. */
+export function useCustomMcpServer(workspaceId: string, id: string | null) {
+	return useQuery({
+		queryKey: [...queryKeys.integrations.all(workspaceId), 'custom-mcp', id] as const,
+		queryFn: () => api.customMcpServers.get(id as string, workspaceId),
+		enabled: !!workspaceId && !!id,
+		// A secret is never kept around: read it fresh each time the form opens.
+		gcTime: 0,
+	})
+}
+
+/** Add a custom MCP server. It reaches no agent until it is granted. */
+export function useCreateCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.create(workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server added')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+export function useUpdateCustomMcpServer(workspaceId: string, id: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.update(id, workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server saved')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Remove a custom MCP server: it drops out of every agent's next session. */
+export function useRemoveCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.integrations.disconnect(id, workspaceId),
+		onSuccess: () => {
+			toast.success('Tool server removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
 	})
 }

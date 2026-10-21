@@ -220,6 +220,58 @@ export const fromSuggestedStepSchema = z.object({
 	index: z.number().int().min(0).max(3),
 })
 
+/** What an agent can ask the human to put into the Keychain from a chat card. */
+export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
+export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
+
+/**
+ * An agent's request for a credential, shown as a Keychain card in the chat instead of
+ * the agent asking for it in plain text. Never accepted from a client. Holds no secret
+ * and never can: the human types the value into the card, which sends it straight to
+ * the vault, so it never passes through the agent or this message.
+ */
+export const messageKeychainRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** A name for the credential the card pre-fills, e.g. "e-conomic". */
+	suggested_name: z.string().min(1).max(80).optional(),
+	/** One line on what the credential is for, shown on the card. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
+/**
+ * An agent's request to use a credential that already exists in the Keychain, shown as a
+ * card with Allow / Not now. Never accepted from a client. Holds no secret: the card only
+ * names the credential, and allowing it grants the agent access on the server.
+ */
+export const messageKeychainAccessRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** The credential being asked for. */
+	integration_id: z.string().uuid(),
+	/** Its name as the person knows it, e.g. "Stripe". */
+	credential_name: z.string().min(1).max(80),
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	/** One line on what the agent needs it for. */
+	hint: z.string().min(1).max(300).optional(),
+})
+
+/**
+ * An agent's request for the person to act on the agent's own computer, shown as a card
+ * in the chat. Never accepted from a client. Holds nothing sensitive: it only says what
+ * the person should do. The card opens the live view of the asking agent's computer
+ * (whose computer is the message's author, so it is not stored here and cannot be
+ * pointed at another agent's), and its Done button hands control back by posting a
+ * message.
+ */
+export const messageComputerRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	/** What the person should do on the computer, in the agent's words. */
+	task: z.string().min(1).max(500),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -244,6 +296,12 @@ export const messageMetadataSchema = z.object({
 	question_answer: messageQuestionAnswerSchema.optional(),
 	/** Backend-owned: an agent's request to connect an integration, shown as a card. */
 	integration_connect: messageIntegrationConnectSchema.optional(),
+	/** Backend-owned: an agent's request for a credential, shown as a Keychain card. */
+	keychain_request: messageKeychainRequestSchema.optional(),
+	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
+	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
+	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
+	computer_request: messageComputerRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/** Backend-owned: how the server itself put this message in the chat. */
@@ -256,6 +314,8 @@ export const messageMetadataSchema = z.object({
 	plain_tail: z.number().int().min(0).max(10).optional(),
 	/** Client-supplied: the intro step a message was sent from. */
 	from_suggested_step: fromSuggestedStepSchema.optional(),
+	/** Backend-owned: the `commented` event this message was copied from (object chats). */
+	comment_event_id: z.number().int().optional(),
 })
 
 /**
@@ -278,12 +338,25 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		suggested_steps: _suggestedSteps,
 		needed_tools: _neededTools,
 		plain_tail: _plainTail,
+		keychain_request: _keychainRequest,
+		keychain_access_request: _keychainAccessRequest,
+		computer_request: _computerRequest,
+		comment_event_id: _commentEventId,
 		...rest
 	} = metadata
 	return rest as T
 }
 
+/** What a group chat is about: an object (task, bet, insight) or an installed loop. */
+export const conversationSubjectSchema = z.object({
+	type: z.enum(['object', 'loop']),
+	id: z.string().uuid(),
+})
+
 export const createConversationSchema = z.object({
+	// With a subject, asking again returns the chat that already exists for it
+	// (and adds any new participants) instead of creating a second one.
+	subject: conversationSubjectSchema.optional(),
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
 	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
 	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
@@ -307,6 +380,8 @@ export const conversationListQuerySchema = z.object({
 	// default "Chats" list, archived ones need an explicit filter to surface.
 	archived: booleanQueryParam.default(false),
 	unread_only: booleanQueryParam.optional(),
+	subject_type: z.enum(['object', 'loop']).optional(),
+	subject_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -322,6 +397,11 @@ export const postMessageSchema = z.object({
 	// config.conversation — see conversations route for the ownership check.
 	// Ignored (silently) otherwise, e.g. for human-authored messages.
 	session_id: z.string().uuid().optional(),
+	// Post as a reply in the thread rooted at this message. The root must be a
+	// top-level message of the same conversation (threads do not nest).
+	thread_root_id: z.number().int().positive().optional(),
+	// With thread_root_id: also show the reply in the main timeline.
+	also_in_channel: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({
@@ -335,6 +415,16 @@ export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(200).default(50),
+	// Return only the replies of this thread (newest-first like the main list).
+	thread_root_id: z.coerce.number().int().positive().optional(),
+})
+
+export const threadListQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+
+export const markThreadReadSchema = z.object({
+	last_read_message_id: z.number().int().positive(),
 })
 
 export const updateConversationParticipantStateSchema = z
@@ -407,7 +497,71 @@ export function formatIntegrationConnectAsMarkdown(displayName: string): string 
 	return `Connect **${displayName}** to continue — use the Connect card below, or go to Settings → Integrations.`
 }
 
+/** The `keychain-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainCardSchema = z.object({
+	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
+	suggested_name: z.string().trim().min(1).max(80).optional(),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/**
+ * The plain-markdown rendering of a keychain card, used as the message's `content` so
+ * every reader that isn't the chat UI still says what is needed.
+ */
+export function formatKeychainRequestAsMarkdown(
+	kind: KeychainRequestKind,
+	suggestedName?: string,
+	hint?: string,
+): string {
+	const what = kind === 'login' ? 'a login (username and password)' : 'an API key'
+	const named = suggestedName ? ` for **${suggestedName}**` : ''
+	const why = hint ? ` ${hint}` : ''
+	return `I need ${what}${named}.${why} Add it with the Keychain card below, or in Settings → Keychain. It goes straight to your vault, so I never see it.`
+}
+
+/** The `keychain-access-card` request body: the tool input, minus the session the server knows. */
+export const sessionKeychainAccessCardSchema = z.object({
+	/** The credential's name, as listed by `list_keychain_credentials`. */
+	credential_name: z.string().trim().min(1).max(80),
+	hint: z.string().trim().min(1).max(300).optional(),
+})
+
+/** The plain-markdown rendering of an access card, for every reader that isn't the chat UI. */
+export function formatKeychainAccessRequestAsMarkdown(
+	credentialName: string,
+	hint?: string,
+): string {
+	const why = hint ? ` ${hint}` : ''
+	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
+}
+
+/** The `computer-card` request body: the tool input, minus the session the server knows. */
+export const sessionComputerCardSchema = z.object({
+	/** What the person should do, e.g. "Log in to e-conomic and approve the 2FA prompt." */
+	task: z.string().trim().min(1).max(500),
+})
+
+/** The plain-markdown rendering of a computer card, for every reader that isn't the chat UI. */
+export function formatComputerRequestAsMarkdown(task: string): string {
+	return `I need you to do something on my computer: ${task}\n\nOpen it with the card below. Press Done there when you have finished, and I will carry on.`
+}
+
 /** The `ask` request body: the tool input, as the in-container hook forwards it. */
 export const sessionAskSchema = z.object({
 	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
 })
+
+export const MESSAGE_REACTION_MAX_LENGTH = 16
+
+/** One emoji (possibly several code points: skin tones, ZWJ sequences, variation selectors). */
+export const reactionEmojiSchema = z
+	.string()
+	.min(1)
+	.max(MESSAGE_REACTION_MAX_LENGTH)
+	.refine((v) => /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u.test(v), {
+		message: 'Must be an emoji',
+	})
+
+export const addReactionSchema = z.object({ emoji: reactionEmojiSchema })
+
+export const removeReactionQuerySchema = z.object({ emoji: reactionEmojiSchema })

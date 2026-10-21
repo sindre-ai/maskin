@@ -1,3 +1,4 @@
+import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -15,9 +16,12 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
+import { KeychainAccessRequestCard } from './keychain-access-request-card'
+import { KeychainRequestCard } from './keychain-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -302,6 +306,14 @@ export function MessageBubble({
 						<MarkdownContent content={message.content} size="sm" renderVisuals />
 					</div>
 				) : null}
+				{/* What the objects this message links to say, so a draft or a page can be
+				    read without leaving the chat. */}
+				<LinkedObjectPreviews
+					workspaceId={workspaceId}
+					content={message.content}
+					conversationId={message.conversationId}
+					agentId={message.actorId}
+				/>
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
 				    message's own content already renders the questions as markdown
 				    above, so this adds the affordance rather than the information —
@@ -323,6 +335,38 @@ export function MessageBubble({
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
 						provider={message.metadata.integration_connect.provider}
+					/>
+				) : null}
+				{/* An agent's request_keychain_credential call, surfaced as a Keychain card.
+				    The person types the credential into the card; it never reaches the agent. */}
+				{message.metadata?.keychain_request ? (
+					<KeychainRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_request}
+					/>
+				) : null}
+				{/* An agent's request_keychain_access call: Allow / Not now for a credential that
+				    already exists. Allowing grants the agent access on the server. */}
+				{message.metadata?.keychain_access_request ? (
+					<KeychainAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's show_computer call: a card that opens the agent's own computer so
+				    the person can act on it, then hands control back with Done. */}
+				{message.metadata?.computer_request ? (
+					<ComputerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						agentId={message.actorId}
+						agentName={message.actorName}
+						request={message.metadata.computer_request}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip

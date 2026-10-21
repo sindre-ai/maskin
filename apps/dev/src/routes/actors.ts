@@ -40,6 +40,7 @@ import { resolveBearerCaller } from '../lib/bearer-caller'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -912,6 +913,70 @@ app.openapi(getActorRoute, (async (c) => {
 	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
 	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
+
+// GET /:id/access - What this actor can use: integrations and saved credentials
+//
+// The same description the launch prompt is built from, so the agent page, get_actor and a
+// running session never disagree. Read-only; changes go through the integration grants routes.
+const actorAccessRoute = createRoute({
+	method: 'get',
+	path: '/{id}/access',
+	tags: ['Actors'],
+	summary: 'What an actor can use: integrations (level, server attached) and saved credentials',
+	request: {
+		params: idParamSchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						integrations: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								provider: z.string(),
+								name: z.string(),
+								access: z.enum(['none', 'read', 'ask_first', 'read_write']),
+								source: z.enum(['grant', 'default']),
+								default_access: z.enum(['read', 'none']),
+								server_attached: z.boolean(),
+								created_by: z.string().uuid(),
+							}),
+						),
+						credentials: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								name: z.string(),
+								kind: z.enum(['api_key', 'login']),
+								has_access: z.boolean(),
+								scope: z.enum(['always', 'this_chat']).nullable(),
+								chat_count: z.number().int(),
+								created_by: z.string().uuid(),
+							}),
+						),
+					}),
+				},
+			},
+			description: 'Access by integration and credential',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(actorAccessRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	return c.json(await describeAgentAccess(db, workspaceId, id), 200)
+}) as RouteHandler<typeof actorAccessRoute, Env>)
 
 // PATCH /:id - Update actor
 const updateActorRoute = createRoute({
