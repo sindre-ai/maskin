@@ -23,6 +23,7 @@ This directory holds one canonical page per Maskin primitive. Each page follows 
 - [mcp-tools.md](./mcp-tools.md) — the MCP tool surface: which tools exist, what they return, and when to reach for each.
 - [notifications.md](./notifications.md) — the notification primitive: `needs_input` vs. informational, @mention semantics, and how sessions get spawned from mentions.
 - [agent-access.md](./agent-access.md) — agent grants: which agents may use an integration or saved credential, and how (read, write, read & write); defaults, enforcement, and the MCP gateway.
+- [drafts.md](./drafts.md) — drafts and previews: an email or message as an ordinary object with `metadata.kind`, the `preview` projection, human-only approval bound to a content hash, and sending with `object_id`.
 - [workspace-schema.md](./workspace-schema.md) — the workspace schema primitive: how to discover valid object types, statuses, metadata fields, and enum values before writing.
 
 ## Frontmatter shape

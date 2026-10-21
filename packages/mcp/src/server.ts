@@ -11,6 +11,7 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
@@ -1558,6 +1559,8 @@ export interface HeroCardObject {
 	contextLine?: string
 	badges?: string[]
 	url?: string
+	/** A draft an integration can deliver: the card shows its text and an Approve button. */
+	preview?: ObjectPreview
 	// Actor-only: the raw role, independent of `status`'s isSystem/type fallback.
 	role?: string | null
 	// Full detail fields — populated by get_actor, ignored by list display
@@ -1601,6 +1604,8 @@ interface RawObject {
 	createdAt?: string | null
 	updatedAt?: string | null
 	metadata?: Record<string, unknown> | null
+	/** Present when the object is a draft an integration can deliver. */
+	preview?: ObjectPreview | null
 }
 
 /**
@@ -1752,6 +1757,7 @@ export function buildHeroCardObject(
 		status: obj.status ?? null,
 		driver,
 		contextLine: buildContextLine(obj, driver, nowMs, annotations),
+		...(obj.preview ? { preview: obj.preview } : {}),
 	}
 }
 
@@ -1770,6 +1776,8 @@ export function pickResourceUri(
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
 	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
+	// A draft to review always gets the card that can approve it.
+	if (payload.object.preview) return UI_RESOURCES.heroCard
 	const type = payload.object.type
 	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
@@ -2755,6 +2763,10 @@ export function createMcpServer(config: McpConfig) {
 						workspaceId: withUrl.workspaceId,
 					}
 					if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+					// A draft an integration can deliver always carries its preview: who it goes to,
+					// the subject, the exact text and whether a person approved it. Small, and the
+					// reason anyone reads it. Absent for every other object.
+					if (withUrl.preview) projectedObject.preview = withUrl.preview
 					if (includeSet.has('content') && 'content' in withUrl) {
 						projectedObject.content = withUrl.content
 					}
@@ -6187,6 +6199,38 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// Called by the Approve button inside the preview card (an MCP App), never by the model:
+	// `visibility: ['app']` keeps it out of the tool list the agent sees, and the server
+	// refuses a caller that is not a person. So a model cannot approve its own draft.
+	registerAppTool(
+		server,
+		'approve_object_draft',
+		{
+			description: tools.approve_object_draft.description,
+			inputSchema: tools.approve_object_draft.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.objects, visibility: ['app'] } },
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('approve_object_draft', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/objects/${args.object_id}/approval`,
+					args.content_hash ? { content_hash: args.content_hash } : {},
+					{ workspaceId: args.workspace_id },
+				)
+				return reply('Approved. The agent can now send it.')
+			} catch (err) {
+				return reply(err instanceof Error ? err.message : String(err), true)
+			}
+		},
+	)
+
 	registerAppTool(
 		server,
 		'gmail_send_email',
@@ -6213,6 +6257,7 @@ export function createMcpServer(config: McpConfig) {
 						body: args.body,
 						approval_comment_id: args.approval_comment_id,
 						draft_id: args.draft_id,
+						object_id: args.object_id,
 					},
 					{ workspaceId: args.workspace_id },
 				)) as { message_id: string; mode: 'approved_draft' | 'direct' }
