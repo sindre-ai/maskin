@@ -6,6 +6,7 @@ import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { captureEditorParseError } from '@/lib/editor-events'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
+import { capture } from '@/lib/posthog'
 import {
 	MarkdownRenderer,
 	type MentionActor,
