@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Delete workspace (Settings > General, billing owner only) and delete account (Profile).
@@ -21,6 +22,8 @@ test.describe('Delete workspace', () => {
 			}) => {
 				await page.setViewportSize({ width: viewport.width, height: viewport.height })
 				await setTheme(page, theme)
+				// A trial actor may own a single workspace - this spec needs a second one to delete.
+				await grantPlanHeadroom(account.apiKey, account.workspaceId)
 				const doomed = await account.api.createWorkspace(`Doomed ${Date.now()}`)
 
 				await page.goto(`/${doomed.id}/settings`)

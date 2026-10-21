@@ -3,6 +3,9 @@ export const queryKeys = {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
 	},
+	webPush: {
+		config: () => ['web-push', 'config'] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -38,6 +41,9 @@ export const queryKeys = {
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
+	},
+	desktops: {
+		all: (workspaceId: string) => ['desktops', workspaceId] as const,
 	},
 	workspaces: {
 		all: () => ['workspaces'] as const,

@@ -4,19 +4,24 @@ import {
 	actors,
 	conversationParticipants,
 	conversations,
+	installedLoops,
+	messageReactions,
 	messageThreadReads,
 	messages,
+	objects,
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
 	addConversationParticipantsSchema,
+	addReactionSchema,
 	conversationListQuerySchema,
 	createConversationSchema,
 	editMessageSchema,
 	markThreadReadSchema,
 	messageQuerySchema,
 	postMessageSchema,
+	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
 	threadListQuerySchema,
 	updateConversationParticipantStateSchema,
@@ -42,10 +47,12 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
-import { insertConversationMessage } from '../services/conversation-messages'
+import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
+import { importObjectComments } from '../services/object-chat-sync'
 import type { SessionManager } from '../services/session-manager'
 import {
 	anchorSpawnedSessionsToMessage,
@@ -232,6 +239,75 @@ const messageColumns = {
 	threadAlsoInChannel: messages.threadAlsoInChannel,
 }
 
+// The chat that already exists for a subject, if any.
+async function findSubjectConversation(
+	db: Database,
+	workspaceId: string,
+	subject: { type: 'object' | 'loop'; id: string },
+) {
+	const [row] = await db
+		.select()
+		.from(conversations)
+		.where(
+			and(
+				eq(conversations.workspaceId, workspaceId),
+				eq(conversations.subjectType, subject.type),
+				eq(conversations.subjectId, subject.id),
+			),
+		)
+		.limit(1)
+	return row
+}
+
+// Asking for a subject's chat again puts the asker (and anyone they named) in
+// it: new people are added, people who left come back.
+async function joinSubjectConversation(
+	db: Database,
+	conversation: typeof conversations.$inferSelect,
+	participantIds: string[],
+	callerId: string,
+) {
+	await db
+		.insert(conversationParticipants)
+		.values(
+			participantIds.map((actorId) => ({
+				conversationId: conversation.id,
+				actorId,
+				addedBy: callerId,
+			})),
+		)
+		.onConflictDoUpdate({
+			target: [conversationParticipants.conversationId, conversationParticipants.actorId],
+			set: { leftAt: null, updatedAt: new Date() },
+		})
+	await recordEvent(db, {
+		workspaceId: conversation.workspaceId,
+		actorId: callerId,
+		action: 'conversation_participant_added',
+		entityType: 'conversation',
+		entityId: conversation.id,
+		data: { added_actor_ids: participantIds },
+	})
+	const [mine] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, conversation.id),
+				eq(conversationParticipants.actorId, callerId),
+			),
+		)
+	const participants = await loadParticipantsByConversation(db, [conversation.id])
+	return {
+		...serialize(conversation),
+		pinned: mine?.pinned ?? false,
+		archived: mine?.archived ?? false,
+		unread_count: 0,
+		last_read_message_id: mine?.lastReadMessageId ?? null,
+		participants: participants.get(conversation.id) ?? [],
+	} as z.infer<typeof conversationDetailResponseSchema>
+}
+
 // POST / - Create conversation
 const createConversationRoute = createRoute({
 	method: 'post',
@@ -244,6 +320,10 @@ const createConversationRoute = createRoute({
 		body: { content: { 'application/json': { schema: createConversationSchema } } },
 	},
 	responses: {
+		200: {
+			content: { 'application/json': { schema: conversationDetailResponseSchema } },
+			description: 'The existing chat for this subject; new participants were added to it',
+		},
 		201: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
 			description: 'Conversation created',
@@ -293,52 +373,121 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
-	const { conversation, initialMessage } = await db.transaction(async (tx) => {
-		const [created] = await tx
-			.insert(conversations)
-			.values({ workspaceId, title: body.title, createdBy: callerId })
-			.returning()
-		if (!created) throw new Error('Failed to create conversation')
-
-		await tx.insert(conversationParticipants).values(
-			participantIds.map((actorId) => ({
-				conversationId: created.id,
-				actorId,
-				addedBy: callerId,
-			})),
-		)
-
-		let initialMessage: typeof messages.$inferSelect | undefined
-		if (body.initial_message) {
-			const [msg] = await tx
-				.insert(messages)
-				.values({
-					conversationId: created.id,
-					actorId: callerId,
-					content: body.initial_message,
-					metadata: stripServerOwnedMetadata(body.initial_message_metadata) ?? null,
-				})
-				.returning()
-			initialMessage = msg
-			await tx
-				.update(conversations)
-				.set({ lastMessageAt: msg?.createdAt ?? new Date(), updatedAt: new Date() })
-				.where(eq(conversations.id, created.id))
+	if (body.subject) {
+		const { type, id } = body.subject
+		const [target] =
+			type === 'object'
+				? await db
+						.select({ id: objects.id })
+						.from(objects)
+						.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
+						.limit(1)
+				: await db
+						.select({ id: installedLoops.id })
+						.from(installedLoops)
+						.where(and(eq(installedLoops.id, id), eq(installedLoops.workspaceId, workspaceId)))
+						.limit(1)
+		if (!target) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'The subject was not found in this workspace', [
+					{ field: 'subject', message: `No ${type} with id ${id}` },
+				]),
+				400,
+			)
 		}
 
-		await recordEvent(tx, {
-			workspaceId,
-			actorId: callerId,
-			action: 'conversation_created',
-			entityType: 'conversation',
-			entityId: created.id,
-			data: { participant_actor_ids: participantIds },
-		})
+		const existing = await findSubjectConversation(db, workspaceId, body.subject)
+		if (existing)
+			return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
+	}
 
-		return { conversation: created, initialMessage }
-	})
+	let txResult: Awaited<ReturnType<typeof createInTransaction>>
+	try {
+		txResult = await createInTransaction()
+	} catch (err) {
+		// Two people opened the same subject at once; the unique index let one
+		// win. Join the winner's chat instead of failing.
+		const existing = body.subject
+			? await findSubjectConversation(db, workspaceId, body.subject)
+			: undefined
+		if (!existing) throw err
+		return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
+	}
+	const { conversation, initialMessage } = txResult
+	if (body.subject?.type === 'object') {
+		await importObjectComments(db, {
+			conversationId: conversation.id,
+			workspaceId,
+			objectId: body.subject.id,
+			actorId: callerId,
+		})
+	}
+
+	async function createInTransaction() {
+		return db.transaction(async (tx) => {
+			const [created] = await tx
+				.insert(conversations)
+				.values({
+					workspaceId,
+					title: body.title,
+					createdBy: callerId,
+					subjectType: body.subject?.type ?? null,
+					subjectId: body.subject?.id ?? null,
+				})
+				.returning()
+			if (!created) throw new Error('Failed to create conversation')
+
+			await tx.insert(conversationParticipants).values(
+				participantIds.map((actorId) => ({
+					conversationId: created.id,
+					actorId,
+					addedBy: callerId,
+				})),
+			)
+
+			let initialMessage: typeof messages.$inferSelect | undefined
+			if (body.initial_message) {
+				const [msg] = await tx
+					.insert(messages)
+					.values({
+						conversationId: created.id,
+						actorId: callerId,
+						content: body.initial_message,
+						metadata: stripServerOwnedMetadata(body.initial_message_metadata) ?? null,
+					})
+					.returning()
+				initialMessage = msg
+				await tx
+					.update(conversations)
+					.set({ lastMessageAt: msg?.createdAt ?? new Date(), updatedAt: new Date() })
+					.where(eq(conversations.id, created.id))
+			}
+
+			await recordEvent(tx, {
+				workspaceId,
+				actorId: callerId,
+				action: 'conversation_created',
+				entityType: 'conversation',
+				entityId: created.id,
+				data: {
+					participant_actor_ids: participantIds,
+					...(body.subject ? { subject: body.subject } : {}),
+				},
+			})
+
+			return { conversation: created, initialMessage }
+		})
+	}
 
 	if (initialMessage) {
+		await mirrorAsObjectComment(db, {
+			conversationId: conversation.id,
+			workspaceId,
+			actorId: callerId,
+			content: initialMessage.content,
+			mentions: body.initial_message_metadata?.mentions,
+			messageId: initialMessage.id,
+		})
 		evaluateAndRespond({
 			db,
 			sessionManager,
@@ -412,6 +561,8 @@ app.openapi(listConversationsRoute, (async (c) => {
 		eq(conversationParticipants.archived, query.archived),
 	]
 	if (query.pinned !== undefined) conditions.push(eq(conversationParticipants.pinned, query.pinned))
+	if (query.subject_type) conditions.push(eq(conversations.subjectType, query.subject_type))
+	if (query.subject_id) conditions.push(eq(conversations.subjectId, query.subject_id))
 	if (query.unread_only) {
 		// Table names (not Drizzle column refs) inside the correlated subquery —
 		// interpolating column objects here renders unqualified and silently
@@ -938,6 +1089,12 @@ app.openapi(listMessagesRoute, (async (c) => {
 		actorId: callerId,
 	})
 
+	const reactions = await loadReactionsByMessage(
+		db,
+		callerId,
+		page.map((m) => m.id),
+	)
+
 	const summaries = await loadThreadSummaries(
 		db,
 		callerId,
@@ -959,6 +1116,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 				({
 					...serialize(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
+					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
 				}) as z.infer<typeof messageWithSpawnedSessionsSchema>,
 		),
@@ -1334,6 +1492,128 @@ app.openapi(editMessageRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof editMessageRoute, Env>)
+
+// PUT /:id/messages/:messageId/reactions - React with an emoji (idempotent)
+const addReactionRoute = createRoute({
+	method: 'put',
+	path: '/{id}/messages/{messageId}/reactions',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'React to a message with an emoji',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: addReactionSchema } } },
+	},
+	responses: {
+		204: { description: 'Reaction recorded' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+// DELETE /:id/messages/:messageId/reactions?emoji= - Take your reaction back
+const removeReactionRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}/reactions',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Remove your emoji reaction from a message',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		query: removeReactionQuerySchema,
+	},
+	responses: {
+		204: { description: 'Reaction removed (or was not there)' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+/** The message must be a real (non-system) message of a conversation the caller is in. */
+async function findReactableMessage(
+	db: Database,
+	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
+): Promise<boolean> {
+	const row = await loadConversationWithAuth(db, args.conversationId, args.callerId)
+	if (!row || row.conversation.workspaceId !== args.workspaceId) return false
+	const [message] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.where(
+			and(
+				eq(messages.id, args.messageId),
+				eq(messages.conversationId, args.conversationId),
+				eq(messages.kind, 'message'),
+			),
+		)
+		.limit(1)
+	return Boolean(message)
+}
+
+app.openapi(addReactionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { emoji } = c.req.valid('json')
+
+	if (!(await findReactableMessage(db, { conversationId: id, messageId, callerId, workspaceId }))) {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	const inserted = await db
+		.insert(messageReactions)
+		.values({ messageId, actorId: callerId, emoji })
+		.onConflictDoNothing()
+		.returning({ messageId: messageReactions.messageId })
+	// Only a change is an event: repeating a reaction must not wake every open chat.
+	if (inserted.length > 0) {
+		// `message_updated` makes open clients re-read the page, which carries the reactions.
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId, reaction: { emoji, added: true } },
+		})
+	}
+	return c.body(null, 204)
+}) as RouteHandler<typeof addReactionRoute, Env>)
+
+app.openapi(removeReactionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { emoji } = c.req.valid('query')
+
+	if (!(await findReactableMessage(db, { conversationId: id, messageId, callerId, workspaceId }))) {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	const removed = await db
+		.delete(messageReactions)
+		.where(
+			and(
+				eq(messageReactions.messageId, messageId),
+				eq(messageReactions.actorId, callerId),
+				eq(messageReactions.emoji, emoji),
+			),
+		)
+		.returning({ messageId: messageReactions.messageId })
+	if (removed.length > 0) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_updated',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId, reaction: { emoji, added: false } },
+		})
+	}
+	return c.body(null, 204)
+}) as RouteHandler<typeof removeReactionRoute, Env>)
 
 // POST /:id/messages/:messageId/retry - Ask agents to respond to a message again
 const retryMessageRoute = createRoute({

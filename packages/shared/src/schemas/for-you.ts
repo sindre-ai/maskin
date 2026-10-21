@@ -20,9 +20,11 @@ export const forYouMetadataSchema = z.object({
 		.min(1)
 		.describe('One line saying what is needed from the human, not what happened.'),
 	rationale: z.string().optional().describe('Why the agents could not settle this themselves.'),
+	// Event ids come back from the API as strings (they are bigints), and an agent
+	// copying one into metadata passes it on as text. Accept digits either way:
+	// a strict number made the whole item vanish from the list without an error.
 	source_comment_id: z
-		.number()
-		.int()
+		.preprocess((v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v), z.number().int())
 		.optional()
 		.describe(
 			'Event id of the comment carrying the ask. The item drops once the human replies to or dismisses that thread.',

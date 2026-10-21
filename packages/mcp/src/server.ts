@@ -11,6 +11,7 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
@@ -1073,6 +1074,14 @@ async function enrichSessionActorName<T extends SessionRow>(
 // still running at the limit is left running and reported as not settled.
 const WAIT_POLL_MS = 5_000
 const WAIT_LIMIT_MS = 660_000
+
+// Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
+// still going backs off so a long one is not ~130 requests against the API.
+function waitPollDelayMs(attempt: number): number {
+	if (attempt < 6) return WAIT_POLL_MS
+	if (attempt < 12) return WAIT_POLL_MS * 2
+	return WAIT_POLL_MS * 4
+}
 // Consecutive failed status checks tolerated before the wait gives up. A blip
 // (deploy restart, 502, dropped socket) must not orphan a session that is
 // already running.
@@ -1087,7 +1096,7 @@ async function createSessionAndWait(
 	args: z.infer<typeof tools.create_session.inputSchema>,
 ) {
 	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
-	// ignored, and it is never sent on this create call (registered below instead).
+	// ignored, and it is never true on this create call (registered below instead).
 	const {
 		workspace_id,
 		wait: _wait,
@@ -1096,10 +1105,17 @@ async function createSessionAndWait(
 	} = args as typeof args & { notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
-	// 1. Create session. notify_on_complete is deliberately NOT sent here: this
-	// call returns the result inline, so it is only registered (below) if the
-	// wait runs out.
-	const session = (await apiCall(config, 'POST', '/api/sessions', createBody, wsOpts)) as {
+	// 1. Create session. notify_on_complete is sent as false here: this call
+	// returns the result inline, so it is only registered (below) if the wait runs
+	// out. False, not omitted, because an omitted value defaults on for a helper
+	// started from a chat, and the waiting caller would get the result twice.
+	const session = (await apiCall(
+		config,
+		'POST',
+		'/api/sessions',
+		{ ...createBody, notify_on_complete: false },
+		wsOpts,
+	)) as {
 		id: string
 		status: string
 	}
@@ -1121,8 +1137,10 @@ async function createSessionAndWait(
 	let settled = false
 	let pollFailures = 0
 	let pollError: string | undefined
+	let pollAttempt = 0
 	while (Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
+		const delay = Math.min(waitPollDelayMs(pollAttempt++), deadline - Date.now())
+		await new Promise((resolve) => setTimeout(resolve, delay))
 		try {
 			current = (await apiCall(
 				config,
@@ -1550,6 +1568,8 @@ export interface HeroCardObject {
 	contextLine?: string
 	badges?: string[]
 	url?: string
+	/** A draft an integration can deliver: the card shows its text and an Approve button. */
+	preview?: ObjectPreview
 	// Actor-only: the raw role, independent of `status`'s isSystem/type fallback.
 	role?: string | null
 	// Full detail fields — populated by get_actor, ignored by list display
@@ -1593,6 +1613,8 @@ interface RawObject {
 	createdAt?: string | null
 	updatedAt?: string | null
 	metadata?: Record<string, unknown> | null
+	/** Present when the object is a draft an integration can deliver. */
+	preview?: ObjectPreview | null
 }
 
 /**
@@ -1744,6 +1766,7 @@ export function buildHeroCardObject(
 		status: obj.status ?? null,
 		driver,
 		contextLine: buildContextLine(obj, driver, nowMs, annotations),
+		...(obj.preview ? { preview: obj.preview } : {}),
 	}
 }
 
@@ -1762,6 +1785,8 @@ export function pickResourceUri(
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
 	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
+	// A draft to review always gets the card that can approve it.
+	if (payload.object.preview) return UI_RESOURCES.heroCard
 	const type = payload.object.type
 	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
@@ -2754,6 +2779,10 @@ export function createMcpServer(config: McpConfig) {
 						workspaceId: withUrl.workspaceId,
 					}
 					if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+					// A draft an integration can deliver always carries its preview: who it goes to,
+					// the subject, the exact text and whether a person approved it. Small, and the
+					// reason anyone reads it. Absent for every other object.
+					if (withUrl.preview) projectedObject.preview = withUrl.preview
 					if (includeSet.has('content') && 'content' in withUrl) {
 						projectedObject.content = withUrl.content
 					}
@@ -5953,6 +5982,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.type) params.set('type', args.type)
+			if (args.kind) params.set('kind', args.kind)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = await apiCall(config, 'GET', `/api/notifications?${params}`, undefined, {
@@ -6193,6 +6223,86 @@ export function createMcpServer(config: McpConfig) {
 			return reply(
 				'Your question has been posted and the person is being shown the options. Do not call this tool again and do not repeat the question in your own words. End your turn now, without a closing message; their answer will arrive as your next turn.',
 			)
+		},
+	)
+
+	// Called by the Approve button inside the preview card (an MCP App), never by the model:
+	// `visibility: ['app']` keeps it out of the tool list the agent sees, and the server
+	// refuses a caller that is not a person. So a model cannot approve its own draft.
+	registerAppTool(
+		server,
+		'approve_object_draft',
+		{
+			description: tools.approve_object_draft.description,
+			inputSchema: tools.approve_object_draft.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.objects, visibility: ['app'] } },
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('approve_object_draft', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/objects/${args.object_id}/approval`,
+					args.content_hash ? { content_hash: args.content_hash } : {},
+					{ workspaceId: args.workspace_id },
+				)
+				return reply('Approved. The agent can now send it.')
+			} catch (err) {
+				return reply(err instanceof Error ? err.message : String(err), true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_send_email',
+		{
+			description: tools.gmail_send_email.description,
+			inputSchema: tools.gmail_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/send',
+					{
+						to: args.to,
+						cc: args.cc,
+						subject: args.subject,
+						body: args.body,
+						approval_comment_id: args.approval_comment_id,
+						draft_id: args.draft_id,
+						object_id: args.object_id,
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { message_id: string; mode: 'approved_draft' | 'direct' }
+				return reply(
+					sent.mode === 'approved_draft'
+						? 'Sent: the email went out exactly as the person approved it. Do not send it again.'
+						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
 		},
 	)
 
@@ -6762,6 +6872,68 @@ export function createMcpServer(config: McpConfig) {
 					{
 						type: 'text' as const,
 						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'show_computer',
+		{
+			description: tools.show_computer.description,
+			inputSchema: tools.show_computer.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat opens the agent's OWN computer; the person acts there and
+			// presses Done, which sends the agent a message. A 409 means the session has no
+			// human on the other end (autonomous run, or not an agent session at all).
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'show_computer',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what you need the user to do on the computer.',
+				)
+			}
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/computer-card`,
+					{ task: args.task },
+					{ workspaceId: args.workspace_id },
+				)
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what you need the user to do.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'Computers are not available in this workspace, so no card could be shown. Say in your reply what you need the user to do.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done. Then call desktop_screenshot to see what changed before you carry on.',
 					},
 				],
 			}
@@ -7692,6 +7864,195 @@ ${claudeCredsBlock}`,
 			}
 		}
 	}
+
+	// The agent a person means rides along as ?agent_id=; agents omit it.
+	const desktopPath = (path: string, agentId?: string) =>
+		agentId ? `${path}?agent_id=${encodeURIComponent(agentId)}` : path
+
+	// Agent computers. Every tool goes through apps/dev's /api/desktop/*, which
+	// applies the `workspace-desktop` flag and workspace membership.
+	registerAppTool(
+		server,
+		'desktop_screenshot',
+		{
+			description: tools.desktop_screenshot.description,
+			inputSchema: tools.desktop_screenshot.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const shot = (await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/screenshot', args.agent_id),
+				{},
+				{ workspaceId: args.workspace_id },
+			)) as { image_base64: string; mime_type: string; width: number; height: number }
+			return {
+				_meta: meta('desktop_screenshot', config, args.workspace_id),
+				content: [
+					{ type: 'image' as const, data: shot.image_base64, mimeType: shot.mime_type },
+					{
+						type: 'text' as const,
+						text: `Desktop screenshot, ${shot.width}x${shot.height} pixels. (0,0) is the top-left.`,
+					},
+				],
+			}
+		},
+	)
+
+	const desktopInputActions = {
+		desktop_click: 'click',
+		desktop_move: 'move',
+		desktop_drag: 'drag',
+		desktop_scroll: 'scroll',
+		desktop_type: 'type',
+		desktop_key: 'key',
+	} as const
+	for (const [toolName, action] of Object.entries(desktopInputActions) as Array<
+		[keyof typeof desktopInputActions, string]
+	>) {
+		registerAppTool(
+			server,
+			toolName,
+			{
+				description: tools[toolName].description,
+				inputSchema: tools[toolName].inputSchema.shape,
+				_meta: {},
+			},
+			async (args: { workspace_id?: string; agent_id?: string } & Record<string, unknown>) => {
+				const { workspace_id, agent_id, ...input } = args
+				await apiCall(
+					config,
+					'POST',
+					desktopPath('/api/desktop/input', agent_id),
+					{ action, ...input },
+					{ workspaceId: workspace_id },
+				)
+				return {
+					_meta: meta(toolName, config, workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: 'Input sent. Call desktop_screenshot to see the result.',
+						},
+					],
+				}
+			},
+		)
+	}
+
+	registerAppTool(
+		server,
+		'desktop_run',
+		{
+			description: tools.desktop_run.description,
+			inputSchema: tools.desktop_run.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/exec', agent_id),
+				body,
+				{
+					workspaceId: workspace_id,
+				},
+			)
+			return {
+				_meta: meta('desktop_run', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_expose_port',
+		{
+			description: tools.desktop_expose_port.description,
+			inputSchema: tools.desktop_expose_port.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			if (!sessionId) {
+				return {
+					_meta: meta('desktop_expose_port', config, args.workspace_id),
+					isError: true,
+					content: [
+						{
+							type: 'text' as const,
+							text: 'This only works from inside an agent session: there is no sandbox to reach.',
+						},
+					],
+				}
+			}
+			const result = (await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/ports', args.agent_id),
+				{ session_id: sessionId, guest_port: args.guest_port },
+				{ workspaceId: args.workspace_id },
+			)) as { guest_port: number; relay_port: number; url: string }
+			return {
+				_meta: meta('desktop_expose_port', config, args.workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: `Port ${result.guest_port} in your sandbox is open on your computer at ${result.url}. Open that URL in Chromium on your computer (not localhost). To free the slot later, call desktop_close_port with relay_port ${result.relay_port}.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_list_ports',
+		{
+			description: tools.desktop_list_ports.description,
+			inputSchema: tools.desktop_list_ports.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/ports', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_list_ports', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_close_port',
+		{
+			description: tools.desktop_close_port.description,
+			inputSchema: tools.desktop_close_port.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'DELETE',
+				desktopPath(`/api/desktop/ports/${args.relay_port}`, args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_close_port', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
 
 	// Expose the collected handlers so `getServerHandlers(server)` (and
 	// `createInvokeTool` in ./invoke.ts) can dispatch tools by name without a

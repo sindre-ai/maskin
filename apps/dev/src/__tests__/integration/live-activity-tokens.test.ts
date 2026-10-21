@@ -248,7 +248,7 @@ describe('live_activity_tokens routes (real Postgres)', () => {
 		await register(human, { kind: 'push_to_start', device_id: device.id, token: hex(100) })
 		await register(
 			human,
-			{ kind: 'update', device_id: device.id, session_id: sessionId, token: hex(100) },
+			{ kind: 'update', device_id: device.id, token: hex(100) },
 			{ 'X-Workspace-Id': workspaceId },
 		)
 		expect(
