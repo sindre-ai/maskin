@@ -90,6 +90,10 @@ targets:
         # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion. Settings › Delete
         # account exists, so every configuration shows "Create account" (docs/app-store-notes.md).
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
+        # The public legal pages: shown on the sign-in / sign-up screen. Signed in, Settings also
+        # opens the web app's own Privacy & data settings.
+        MaskinTermsURL: https://maskin.io/terms/
+        MaskinPrivacyURL: https://maskin.io/privacy/
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
         NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages and talk with your agents in a live call.

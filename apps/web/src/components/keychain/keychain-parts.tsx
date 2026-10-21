@@ -1,4 +1,3 @@
-import { Badge } from '@/components/ui/badge'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -7,8 +6,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import type { AgentGrant, IntegrationResponse } from '@/lib/api'
-import { cn } from '@/lib/cn'
+import type { IntegrationResponse } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
 
 /** Rows the Keychain lists: held by the member (paste or chat), not the registered providers,
@@ -44,48 +42,7 @@ export function credentialName(integration: IntegrationResponse): string {
 	return integration.displayName?.trim() || providerLabel(integration.provider)
 }
 
-export function isUnassigned(integration: IntegrationResponse): boolean {
-	return (integration.agentGrants ?? []).length === 0
-}
-
-/** Plain-words scope: which agents can use this credential. Names come from the workspace's actors. */
-export function describeScope(
-	grants: AgentGrant[] | undefined,
-	actorName: (actorId: string) => string | undefined,
-): string {
-	if (!grants || grants.length === 0) return 'No agents — fail-closed'
-	const [first, ...rest] = grants.map((g) => actorName(g.actorId) ?? 'Unknown agent')
-	return rest.length > 0 ? `${first} + ${rest.length} more` : (first ?? '')
-}
-
-export function CredentialStatusBadge({ integration }: { integration: IntegrationResponse }) {
-	return isUnassigned(integration) ? (
-		<Badge variant="outline">Unassigned</Badge>
-	) : (
-		<Badge variant="secondary">Assigned</Badge>
-	)
-}
-
-export function CapturedViaChatBadge({
-	children = 'Captured via chat',
-	className,
-}: {
-	children?: React.ReactNode
-	className?: string
-}) {
-	return (
-		<Badge
-			variant="secondary"
-			className={cn('shrink-0 gap-1 bg-brand-subtle text-brand hover:bg-brand-subtle', className)}
-			title="This credential was captured through an in-chat message and vaulted automatically"
-		>
-			<span aria-hidden>💬</span>
-			{children}
-		</Badge>
-	)
-}
-
-/** Keychain › {current page}, shared by the add form and the credential detail. */
+/** Keychain › {current page}, shown on the add form. */
 export function KeychainBreadcrumb({
 	workspaceId,
 	current,

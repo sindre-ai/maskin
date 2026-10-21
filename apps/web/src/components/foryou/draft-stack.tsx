@@ -7,6 +7,7 @@ import { DraftPreview } from './draft-preview'
 export type DraftAction = 'send' | 'skip'
 
 interface DraftStackProps {
+	workspaceId: string
 	drafts: readonly LatestMentionDecisionDraft[]
 	/** Posts the reader's call on one message. Rejects when the reply could not be sent. */
 	onAction: (draft: LatestMentionDecisionDraft, action: DraftAction) => Promise<unknown>
@@ -18,11 +19,11 @@ const keyOf = (draft: LatestMentionDecisionDraft, index: number) => draft.id ?? 
 
 /**
  * One card, several messages: each is its own preview with its own Send and Skip,
- * stacked so the reader decides them one at a time. Sending reaches a real person,
+ * stacked so the reader can decide them one at a time (the card's own bar decides them all). Sending reaches a real person,
  * so it asks for a second tap before it goes. A message that has been dealt with
  * folds down to a one-line receipt, and the card settles once the last one is.
  */
-export function DraftStack({ drafts, onAction, onAllDone }: DraftStackProps) {
+export function DraftStack({ workspaceId, drafts, onAction, onAllDone }: DraftStackProps) {
 	const [done, setDone] = useState<ReadonlyMap<string, DraftAction>>(new Map())
 	const [confirming, setConfirming] = useState<string | null>(null)
 	const [pending, setPending] = useState<string | null>(null)
@@ -66,7 +67,7 @@ export function DraftStack({ drafts, onAction, onAllDone }: DraftStackProps) {
 				const busy = pending === key
 				return (
 					<div key={key} className="flex flex-col gap-2">
-						<DraftPreview draft={draft} />
+						<DraftPreview workspaceId={workspaceId} draft={draft} />
 						<div className="flex flex-wrap items-center gap-2">
 							{confirming === key ? (
 								<>
@@ -90,9 +91,12 @@ export function DraftStack({ drafts, onAction, onAllDone }: DraftStackProps) {
 								</>
 							) : (
 								<>
+									{/* Quiet on purpose: the card's own bar is the main action, this is
+									    for sending one reply on its own. */}
 									<Button
 										type="button"
 										size="sm"
+										variant="outline"
 										disabled={busy}
 										onClick={() => setConfirming(key)}
 									>
