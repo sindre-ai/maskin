@@ -121,12 +121,13 @@ describe('AgentComputerSection', () => {
 		const dialog = await screen.findByRole('dialog')
 		// The viewer mounts once the popup has finished animating in (so noVNC fits the
 		// final size, not a moving one).
-		expect(
-			await within(dialog).findByRole('toolbar', { name: 'Computer controls' }),
-		).toBeInTheDocument()
+		await waitFor(() => expect(instances).toHaveLength(2))
 		// The inline view closed its stream; the popup opened the only live one.
 		expect(inline.disconnected).toBe(true)
-		await waitFor(() => expect(instances).toHaveLength(2))
+		act(() => (instances[1] as InstanceType<typeof FakeRfb>).emit('connect'))
+		// The popup's controls float under the picture once it is live.
+		expect(await within(dialog).findByRole('button', { name: 'Take over' })).toBeInTheDocument()
+		expect(within(dialog).getByText('Take control')).toBeInTheDocument()
 		expect(screen.getByText(/is open in a popup/i)).toBeInTheDocument()
 
 		await user.click(within(dialog).getByRole('button', { name: 'Close popup' }))
