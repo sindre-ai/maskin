@@ -36,9 +36,9 @@ test.describe('Agent intro chat', () => {
 		await expect(page.getByPlaceholder(`Reply to ${name}…`)).toBeVisible()
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()
-		await expect(
-			page.getByText('How can I help? Start with one of these, or tell me what you need.').first(),
-		).toBeVisible()
+		// The e2e workspace has no LLM credentials, so the intro says it cannot run yet instead of
+		// offering first steps.
+		await expect(page.getByText("I can't run yet.").first()).toBeVisible()
 	})
 })
 

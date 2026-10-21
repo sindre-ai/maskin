@@ -86,18 +86,21 @@ test.describe('Marketplace composition chip row', () => {
 			).toHaveCount(0)
 
 			// Where the kind chip row does render, it reads as a label and wraps
-			// inside its card rather than overflowing it.
-			const kindRows = page.locator('[data-testid="kind-chip-row"]')
-			const kindRowCount = await kindRows.count()
-			for (let i = 0; i < kindRowCount; i++) {
-				const row = kindRows.nth(i)
-				await expect(row).toBeVisible()
-				await expect(row).toContainText(/Agent|Trigger|Skill|Integration/)
-				const overflow = await row.evaluate((el) => ({
+			// inside its card rather than overflowing it. The cards re-render as the
+			// catalog loads, so read every row in one snapshot instead of locator by locator.
+			await page.waitForLoadState('networkidle')
+			const kindRows = await page.locator('[data-testid="kind-chip-row"]').evaluateAll((els) =>
+				els.map((el) => ({
+					text: el.textContent ?? '',
+					shown: (el as HTMLElement).offsetParent !== null,
 					scroll: (el as HTMLElement).scrollWidth,
 					client: (el as HTMLElement).clientWidth,
-				}))
-				expect(overflow.scroll).toBeLessThanOrEqual(overflow.client + 1)
+				})),
+			)
+			for (const row of kindRows) {
+				expect(row.shown).toBe(true)
+				expect(row.text).toMatch(/Agent|Trigger|Skill|Integration/)
+				expect(row.scroll).toBeLessThanOrEqual(row.client + 1)
 			}
 		})
 	}
