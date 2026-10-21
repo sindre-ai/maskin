@@ -1,7 +1,7 @@
 import { TextCommentCompose } from '@/components/files/text-comment-compose'
 import type { CommentRequest } from '@maskin/markdown/react/editor'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const request: CommentRequest = {
 	anchor: { quote: 'the quoted passage', prefix: 'before ', suffix: ' after' },
@@ -54,6 +54,39 @@ describe('TextCommentCompose', () => {
 
 	it('Esc closes with no draft', () => {
 		const { onSave, onDiscard } = renderCompose()
+		fireEvent.keyDown(screen.getByPlaceholderText('Add a comment…'), { key: 'Escape' })
+		expect(onDiscard).toHaveBeenCalledTimes(1)
+		expect(onSave).not.toHaveBeenCalled()
+	})
+})
+
+describe('TextCommentCompose — bottom sheet at 640px and below', () => {
+	const originalMatchMedia = window.matchMedia
+	beforeEach(() => {
+		window.matchMedia = ((query: string) => ({
+			matches: true,
+			media: query,
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		})) as unknown as typeof window.matchMedia
+	})
+	afterEach(() => {
+		window.matchMedia = originalMatchMedia
+	})
+
+	it('keeps typed text when the user taps outside it', () => {
+		const { onDiscard } = renderCompose()
+		fireEvent.change(screen.getByPlaceholderText('Add a comment…'), { target: { value: 'Why?' } })
+		fireEvent.pointerDown(document.body)
+		fireEvent.pointerUp(document.body)
+		fireEvent.click(document.body)
+		expect(onDiscard).not.toHaveBeenCalled()
+		expect(screen.getByPlaceholderText('Add a comment…')).toHaveValue('Why?')
+	})
+
+	it('Esc still closes with no draft', () => {
+		const { onSave, onDiscard } = renderCompose()
+		fireEvent.change(screen.getByPlaceholderText('Add a comment…'), { target: { value: 'Why?' } })
 		fireEvent.keyDown(screen.getByPlaceholderText('Add a comment…'), { key: 'Escape' })
 		expect(onDiscard).toHaveBeenCalledTimes(1)
 		expect(onSave).not.toHaveBeenCalled()
