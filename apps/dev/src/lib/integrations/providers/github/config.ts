@@ -9,6 +9,21 @@ export const GITHUB_MCP_SERVER_SPEC = {
 	args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
 }
 
+// Same server behind the token-refresh supervisor (docker/agent-base/
+// github-mcp-supervisor.cjs), which re-mints the 1-hour installation token and
+// restarts the child behind a stable pipe. The guard runs the plain binary when
+// the image predates the supervisor, so a stale image behaves as today. "$@"
+// carries GITHUB_MCP_SERVER_SPEC.args to whichever process runs.
+export const GITHUB_MCP_SUPERVISED_SPEC = {
+	command: 'sh',
+	args: [
+		'-c',
+		'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+		'github-mcp-server',
+		...GITHUB_MCP_SERVER_SPEC.args,
+	],
+}
+
 export const config: ProviderConfig = {
 	name: 'github',
 	displayName: 'GitHub',
