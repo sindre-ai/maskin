@@ -46,13 +46,19 @@ function runSetupMcps(servers: Record<string, Server>, env: Record<string, strin
 	})
 	expect(res.status, res.stderr).toBe(0)
 	const out = res.stdout.slice(res.stdout.indexOf('{'))
-	return { raw: out, config: JSON.parse(out) as { mcpServers: Record<string, Server> } }
+	const config = JSON.parse(out) as { mcpServers: Record<string, Server> }
+	const server = (name: string): Server => {
+		const found = config.mcpServers[name]
+		if (!found) throw new Error(`no server named ${name} in the written config`)
+		return found
+	}
+	return { raw: out, config, server }
 }
 
 const unsetNames = (server: Server) => {
 	const args = server.args as string[]
 	const names: string[] = []
-	for (let i = 0; args[i] === '-u'; i += 2) names.push(args[i + 1])
+	for (let i = 0; args[i] === '-u'; i += 2) names.push(args[i + 1] as string)
 	return names
 }
 
@@ -62,8 +68,8 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('unsets every credential variable an entry does not name', () => {
-		const { config } = runSetupMcps({ third: { command: 'npx', args: ['-y', 'some-server'] } })
-		const third = config.mcpServers.third
+		const { server } = runSetupMcps({ third: { command: 'npx', args: ['-y', 'some-server'] } })
+		const third = server('third')
 		expect(third.command).toBe('env')
 		expect(unsetNames(third).sort()).toEqual(Object.keys(CREDENTIALS).sort())
 		expect(third.args).toEqual([
@@ -87,13 +93,13 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('keeps the variables an entry names in its env block', () => {
-		const { config } = runSetupMcps({
+		const { server } = runSetupMcps({
 			maskin: {
 				command: 'maskin-mcp',
 				env: { MASKIN_API_KEY: '${MASKIN_API_KEY}', MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}' },
 			},
 		})
-		const maskin = config.mcpServers.maskin
+		const maskin = server('maskin')
 		expect(unsetNames(maskin)).not.toContain('MASKIN_API_KEY')
 		expect(unsetNames(maskin)).not.toContain('MASKIN_WORKSPACE_ID')
 		expect(unsetNames(maskin)).toContain('MASKIN_API_URL')
@@ -112,19 +118,19 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 			headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
 		}
 		const sse = { type: 'sse', url: 'http://fake-sse/events' }
-		const { config } = runSetupMcps({ http, sse, third: { command: 'npx' } })
+		const { config, server } = runSetupMcps({ http, sse, third: { command: 'npx' } })
 		expect(config.mcpServers.http).toEqual({
 			type: 'http',
 			url: 'http://fake-api/mcp',
 			headers: { Authorization: `Bearer ${CREDENTIALS.MASKIN_API_KEY}` },
 		})
 		expect(config.mcpServers.sse).toEqual(sse)
-		expect(config.mcpServers.third.command).toBe('env')
+		expect(server('third').command).toBe('env')
 	})
 
 	it('wraps an entry that has no env block and no args', () => {
-		const { config } = runSetupMcps({ bare: { command: 'github-mcp-server' } })
-		const bare = config.mcpServers.bare
+		const { server } = runSetupMcps({ bare: { command: 'github-mcp-server' } })
+		const bare = server('bare')
 		expect(bare.command).toBe('env')
 		expect((bare.args as string[]).slice(-2)).toEqual(['--', 'github-mcp-server'])
 		expect(bare.env).toBeUndefined()
@@ -132,8 +138,8 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 
 	it('passes arguments with spaces and quotes through to the launched process', () => {
 		const tricky = ['a b', `it's`, 'say "hi"', '--flag=x y', '-u']
-		const { config } = runSetupMcps({ echo: { command: 'printf', args: ['%s\\n', ...tricky] } })
-		const echo = config.mcpServers.echo
+		const { server } = runSetupMcps({ echo: { command: 'printf', args: ['%s\\n', ...tricky] } })
+		const echo = server('echo')
 		const run = spawnSync(echo.command as string, echo.args as string[], {
 			env: { PATH: process.env.PATH ?? '', ...CREDENTIALS },
 			encoding: 'utf8',
@@ -142,7 +148,7 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('starts a tool server that cannot see credentials it does not name', () => {
-		const { config } = runSetupMcps({
+		const { server } = runSetupMcps({
 			third: { command: 'bash', args: ['-c', 'env | cut -d= -f1 | sort'] },
 			named: {
 				command: 'bash',
@@ -158,9 +164,9 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 			})
 			return run.stdout.split('\n')
 		}
-		const third = names(config.mcpServers.third)
+		const third = names(server('third'))
 		for (const name of Object.keys(CREDENTIALS)) expect(third).not.toContain(name)
-		const named = names(config.mcpServers.named)
+		const named = names(server('named'))
 		expect(named).toContain('MASKIN_API_KEY')
 		expect(named).not.toContain('MASKIN_API_URL')
 		expect(named).not.toContain('GITHUB_TOKEN_ACME')
