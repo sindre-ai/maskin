@@ -186,6 +186,10 @@ struct ChatThreadView: View {
 					if liveCalls?.visibleConversationID == store.conversationID { liveCalls?.visibleConversationID = nil }
 				}
 				.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
+				// An agent's reply is on screen: the moment to explain notifications.
+				.onChange(of: store.messages.contains { $0.author == .agent && $0.status == .sent }, initial: true) { _, seen in
+					if seen { runtime?.valueMomentSeen() }
+				}
 				.alert(
 					"Something went wrong",
 					isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })

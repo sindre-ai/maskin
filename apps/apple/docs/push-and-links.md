@@ -38,6 +38,20 @@ watchOS and tvOS have no push/URL entitlements here: the backend's single APNs t
 Failure behaviour: a bad payload, a failed or slow download, or the ~30 s budget expiring all still deliver the notification with whatever was ready (the decision category is set synchronously, the image is best effort).
 Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app (enable the capability on the App ID); without it iOS silently treats those pushes as `active`. It is not in `Maskin.entitlements` yet because it needs the portal change first.
 
+**TO ADD ONCE THE CAPABILITY IS ENABLED** (do not add earlier: an entitlement the App ID/profile lacks breaks signing). In `Apps/Maskin/Maskin.entitlements` (iOS) and `Apps/Maskin/Maskin-macOS.entitlements`, inside the top-level `<dict>`:
+
+```xml
+<!-- Enable "Time Sensitive Notifications" on App ID io.maskin.app and regenerate profiles first. -->
+<key>com.apple.developer.usernotifications.time-sensitive</key>
+<true/>
+```
+
+## Notification preferences, timezone, permission timing (client)
+- Settings > Notifications (`NotificationPreferencesSection`) edits `GET/PUT /api/notification-preferences`: Needs you is shown as "Always on" (not a switch; a workspace mute is the only way to quiet it, and even then decisions still arrive without breaking through Focus), Chat replies / Digests / Tips toggles, quiet hours (off by default), the daily briefing and its time, and a mute list of workspace names. Changes are optimistic with rollback and carry an `Idempotency-Key`. The PUT is hand-encoded (`NotificationPreferencesPatch.jsonBody`) because the generated payload cannot send `null`, which is how quiet hours and the timezone are cleared.
+- Timezone: `AppRuntime.syncTimezone()` reads the server value once, and PUTs `TimeZone.current.identifier` only when it differs. It runs at sign-in, every foreground and on `NSSystemTimeZoneDidChange`, never blocks, never shows an error, and simply retries on the next trigger.
+- Permission timing: nothing prompts at first launch or on opening Chats. After the first moment of value (a decision card in For you, or an agent reply in a chat) `NotificationPromptCoordinator` shows the in-app sheet "Get told when an agent needs a decision"; only "Turn on notifications" calls `requestAuthorization`. "Not now" (or swiping it away) is remembered for 7 days (`NotificationPromptPolicy`). Devices already authorized see nothing new and keep registering for remote notifications at launch.
+- Chat pushes: `aps.thread-id` (`chat:<id>`) groups them in Notification Center (iOS does this itself) and `deep_link` `maskin://<ws>/chats/<id>` opens the chat through `PushAppDelegate.receiveTap` > `DeepLinkRouter` (tested in `ServerPushContractTests`).
+
 ## Share extension and the offline queue
 `Apps/MaskinShare` sends a link, text, image or file into Maskin as a new object, files only, or a chat message, in a workspace of the user's choosing. When the network is down it parks the share in the App Group container (`ShareQueue`, `group.io.maskin.app`, at most 20 shares / 14 days) and the app sends it on the next foreground (`AppRuntime.scenePhaseChanged`, `ShareQueueDrainer`). Each share keeps its Idempotency-Key base, so a retry never duplicates anything the extension already created.
 Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and `io.maskin.app.share`, plus **Keychain Sharing** on the share App ID. Without the group the extension still works online and reports "couldn't be saved for later" offline.

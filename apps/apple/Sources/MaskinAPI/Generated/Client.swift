@@ -11636,6 +11636,163 @@ public struct Client: APIProtocol {
             }
         )
     }
+    /// Get the current actor’s push notification preferences
+    ///
+    /// Per-actor, not per-workspace. Returns defaults (updated_at null) when never saved.
+    ///
+    /// - Remark: HTTP `GET /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/get`.
+    public func get_sol_api_sol_notification_hyphen_preferences(_ input: Operations.get_sol_api_sol_notification_hyphen_preferences.Input) async throws -> Operations.get_sol_api_sol_notification_hyphen_preferences.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.get_sol_api_sol_notification_hyphen_preferences.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/notification-preferences",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .get
+                )
+                suppressMutabilityWarning(&request)
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Upsert the current actor’s push notification preferences
+    ///
+    /// Idempotent upsert. Omitted fields keep their current value (or the default); null clears timezone / quiet hours; categories merges key by key.
+    ///
+    /// - Remark: HTTP `PUT /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/put`.
+    public func put_sol_api_sol_notification_hyphen_preferences(_ input: Operations.put_sol_api_sol_notification_hyphen_preferences.Input) async throws -> Operations.put_sol_api_sol_notification_hyphen_preferences.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.put_sol_api_sol_notification_hyphen_preferences.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/notification-preferences",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .put
+                )
+                suppressMutabilityWarning(&request)
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_notification_hyphen_preferences.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
     /// Subscribe current actor to an entity
     ///
     /// - Remark: HTTP `POST /api/subscriptions`.
