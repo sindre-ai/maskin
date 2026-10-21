@@ -54,6 +54,18 @@ describe('createMcpServer', () => {
 		expect(registerAppTool).toHaveBeenCalledTimes(expectedCount)
 	})
 
+	it("keeps the approve tool out of the model's tool list", () => {
+		createMcpServer(config)
+		const call = vi.mocked(registerAppTool).mock.calls.find((c) => c[1] === 'approve_object_draft')
+		const meta = (call?.[2] as { _meta?: { ui?: { visibility?: string[] } } } | undefined)?._meta
+		// Only the preview card may call it: a model that could would approve its own draft.
+		expect(meta?.ui?.visibility).toEqual(['app'])
+	})
+
+	it('lets gmail_send_email send an email object by id', () => {
+		expect(Object.keys(tools.gmail_send_email.inputSchema.shape)).toContain('object_id')
+	})
+
 	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
 		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
