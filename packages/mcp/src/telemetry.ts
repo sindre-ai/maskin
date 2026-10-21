@@ -535,6 +535,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
+	run_agent: 'session_run',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
 	ask_user_question: 'session_ask_user',

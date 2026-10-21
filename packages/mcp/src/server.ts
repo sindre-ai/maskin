@@ -62,10 +62,12 @@ import {
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
+	recordAliasUse,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
+import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
 import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
@@ -6366,6 +6368,52 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
+		},
+	)
+
+	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
+	// through the same wrapper as a real tool, so it gets the same tool_call row,
+	// size event, token cap and mutation event. The handler calls the wait path of
+	// create_session directly rather than the registered create_session handler,
+	// which would record a second tool_call row for one call.
+	//
+	// Argument mapping, derived from run_agent as it was before PR 1986:
+	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
+	//   workspace_id                                    filled from the default when absent
+	//   notify_on_complete                              accepted and ignored: create_session no longer
+	//                                                   takes it and registers the same fallback itself
+	//                                                   when the wait times out
+	//   config, poll_interval_seconds, timeout_seconds,
+	//   depends_on_session_ids                          no equivalent, dropped, names recorded
+	registerAppTool(
+		server,
+		'run_agent',
+		{
+			description: tools.run_agent.description,
+			// The schema object, not its .shape: the SDK rebuilds a raw shape as a
+			// stripping object, and the dropped key names would be gone before this
+			// handler runs.
+			inputSchema: tools.run_agent.inputSchema,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
+			const droppedKeys = RUN_AGENT_DROPPED_KEYS.filter((key) => key in args)
+			// Before the wait, which can hold this call open for about 11 minutes.
+			recordAliasUse(telemetrySink, telemetryTarget, {
+				tool_name: 'run_agent',
+				workspace_id,
+				dropped_keys: droppedKeys,
+				tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+				transport: config.transport,
+			})
+			return createSessionAndWait(config, {
+				workspace_id: workspace_id ?? config.defaultWorkspaceId,
+				actor_id,
+				action_prompt,
+				spawned_by_message_id,
+				wait: true,
+			})
 		},
 	)
 
