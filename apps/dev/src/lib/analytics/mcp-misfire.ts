@@ -17,8 +17,9 @@ export interface McpMisfire {
 	toolName: string
 	requestedShape: Record<string, string>
 	// The raw JSON-RPC error message. Never stored or sent as-is:
-	// `recordMcpMisfire` runs it through `redactErrorMessage` first.
-	errorMessage: string
+	// `recordMcpMisfire` runs it through `redactErrorMessage` first. Absent for
+	// the stdio sink's `error` ingest, which reports no message.
+	errorMessage?: string
 	sessionId: string | null
 	agentActorId: string | null
 }
@@ -156,7 +157,8 @@ export async function recordMcpMisfire(
 	workspaceId: string,
 	event: McpMisfire,
 ): Promise<void> {
-	const errorMessage = redactErrorMessage(event.errorMessage)
+	const errorMessage =
+		event.errorMessage === undefined ? undefined : redactErrorMessage(event.errorMessage)
 	if (db) {
 		try {
 			await db.insert(mcpTelemetry).values({
