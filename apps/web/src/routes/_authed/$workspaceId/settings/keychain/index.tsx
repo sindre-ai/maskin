@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -46,9 +47,11 @@ function KeychainPage() {
 	const { data: actors } = useActors(workspaceId)
 	const actorName = (actorId: string) => actors?.find((a) => a.id === actorId)?.name
 
-	const credentials = (integrations ?? [])
-		.filter(isKeychainCredential)
-		.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+	const credentials = sortBy(
+		(integrations ?? []).filter(isKeychainCredential),
+		(c) => c.displayName ?? '',
+		(c) => c.id,
+	)
 	const hasChatCaptured = credentials.some((c) => c.source === 'chat_capture')
 
 	return (

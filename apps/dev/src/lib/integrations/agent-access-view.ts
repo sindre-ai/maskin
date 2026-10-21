@@ -1,4 +1,5 @@
 import type { Database } from '@maskin/db'
+import type { IntegrationDefaultAccess } from '@maskin/db/schema'
 import { providerLabel } from './access-preamble'
 import { attachesServer, listAgentAccess } from './agent-access'
 import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
@@ -21,10 +22,10 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'ask_first' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		/** 'grant': this agent's own entry. 'default': the integration's default for agents. */
 		source: 'grant' | 'default'
-		default_access: 'read' | 'none'
+		default_access: IntegrationDefaultAccess
 		server_attached: boolean
 		/** Who connected it; they and workspace admins may change access. */
 		created_by: string

@@ -139,6 +139,27 @@ describe('Keychain layout route', () => {
 })
 
 describe('KeychainPage', () => {
+	it('sorts credentials A to Z by name, whichever was added last', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				pasted({ id: 'c-new', displayName: 'Zapier key', createdAt: '2026-10-10T10:00:00.000Z' }),
+				pasted({ id: 'c-old', displayName: 'apple login', createdAt: '2026-10-01T10:00:00.000Z' }),
+				pasted({ id: 'c-mid', displayName: 'Mailgun key', createdAt: '2026-10-05T10:00:00.000Z' }),
+			],
+			isLoading: false,
+		})
+		render(<KeychainPage />)
+
+		const rows = screen
+			.getAllByRole('link')
+			.filter((l) => l.getAttribute('href')?.endsWith('$integrationId'))
+		expect(rows.map((r) => r.textContent)).toEqual([
+			expect.stringContaining('apple login'),
+			expect.stringContaining('Mailgun key'),
+			expect.stringContaining('Zapier key'),
+		])
+	})
+
 	it('names the three paths and offers the first add when there are no credentials', () => {
 		render(<KeychainPage />)
 		expect(
@@ -153,7 +174,7 @@ describe('KeychainPage', () => {
 		)
 	})
 
-	it('lists held credentials newest first, with who can read each and the chat badge only where it applies', () => {
+	it('lists held credentials alphabetically, with who can read each and the chat badge only where it applies', () => {
 		mockUseIntegrations.mockReturnValue({
 			data: [
 				pasted({ agentGrants: [{ actorId: 'agent-2', access: 'read_write' }] }),
