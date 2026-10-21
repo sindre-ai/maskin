@@ -31,7 +31,7 @@ interface TextCommentComposeProps {
 	request: CommentRequest
 	/** Called with the typed text when Save draft is pressed. */
 	onSave: (body: string) => void
-	/** Esc, Discard or a dismissed sheet: nothing is kept. */
+	/** Esc or Discard: nothing is kept. A tap outside only closes an empty box. */
 	onDiscard: () => void
 }
 
@@ -121,6 +121,10 @@ export function TextCommentCompose({ request, onSave, onDiscard }: TextCommentCo
 					onOpenAutoFocus={(event) => {
 						event.preventDefault()
 						textareaRef.current?.focus()
+					}}
+					// Same as the popover: a stray tap must not throw away a typed comment.
+					onInteractOutside={(event) => {
+						if (canSave) event.preventDefault()
 					}}
 				>
 					<SheetTitle className="sr-only">{TEXT_COMMENT_COMPOSE_LABEL}</SheetTitle>
