@@ -129,7 +129,8 @@ export async function describeAgentAccess(
 				name: r.displayName,
 				kind: r.providerMode === 'byo_login' ? 'login' : 'api_key',
 				has_access: r.access !== 'none',
-				default_access: r.defaultAgentAccess,
+				// A saved key has no read/write level: only a 'read' default is on for agents.
+				default_access: r.defaultAgentAccess === 'read' ? 'read' : 'none',
 				scope:
 					r.access === 'none'
 						? null
