@@ -4,6 +4,10 @@ import { evictActor, evictApiKey, evictMembership, verifyPassword } from '@maski
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	deviceAuthCodes,
+	deviceTokens,
+	liveActivityCards,
+	liveActivityTokens,
 	notifications,
 	readState,
 	slackUserLinks,
@@ -204,6 +208,13 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
 		await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.actorId, actorId))
 		await tx.delete(slackUserLinks).where(eq(slackUserLinks.actorId, actorId))
+		// The actor row is kept, so its ON DELETE CASCADE never fires. These hold APNs tokens and
+		// device sign-ins of the person: left behind, a Live Activity or push could still reach their
+		// phone. Tokens go before devices so nothing depends on the device cascade.
+		await tx.delete(liveActivityTokens).where(eq(liveActivityTokens.actorId, actorId))
+		await tx.delete(liveActivityCards).where(eq(liveActivityCards.actorId, actorId))
+		await tx.delete(deviceTokens).where(eq(deviceTokens.actorId, actorId))
+		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. The key
 		// is replaced with a random value nobody holds; null password and email mean no sign-in and

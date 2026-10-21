@@ -14,6 +14,8 @@ interface ProviderCardProps {
 	notes?: ReactNode
 	/** Buttons / inputs on the right. */
 	actions: ReactNode
+	/** The tighter row used inside a chat message, with a subtitle that announces changes. */
+	compact?: boolean
 	/** Full-width section under the row, e.g. which agents may use the integration. */
 	footer?: ReactNode
 }
@@ -30,10 +32,16 @@ export function ProviderCard({
 	subtitleTitle,
 	notes,
 	actions,
+	compact = false,
 	footer,
 }: ProviderCardProps) {
 	return (
-		<div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-4">
+		<div
+			className={cn(
+				'flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card',
+				compact ? 'p-3' : 'p-4',
+			)}
+		>
 			<div
 				className={cn(
 					'h-3 w-3 shrink-0 rounded-full',
@@ -49,6 +57,7 @@ export function ProviderCard({
 							tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
 						)}
 						title={subtitleTitle}
+						aria-live={compact ? 'polite' : undefined}
 					>
 						{subtitle}
 					</p>

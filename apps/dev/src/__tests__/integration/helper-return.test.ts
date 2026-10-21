@@ -250,6 +250,8 @@ describe('Helper return (integration)', () => {
 			expect(msgs).toHaveLength(1)
 			expect(msgs[0].actorId).toBe(helper.id)
 			expect(msgs[0].content).toContain('Helper stopped with an error')
+			// The server-written marker is not stripped (only client input is).
+			expect(msgs[0].metadata).toMatchObject({ helper_return: h.id })
 		})
 
 		it('with no destination it posts nothing and records no_destination', async () => {

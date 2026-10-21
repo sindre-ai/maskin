@@ -374,4 +374,81 @@ describe('GET /api/for-you', () => {
 		})
 		expect(await list()).toEqual([])
 	})
+
+	describe('a card that carries a draft', () => {
+		const decision = (draft: Record<string, unknown>) => ({
+			title: 'Send the Northwind email?',
+			summary: 'Northwind has not heard from us in 14 days.',
+			ask: 'This goes to a customer in your name, so I will not send it alone.',
+			options: [
+				{ label: 'Hold', consequences: ['Nothing is sent', 'Northwind keeps waiting'] },
+				{
+					label: 'Send it',
+					recommended: true,
+					destructive: true,
+					consequences: ['Goes out now', 'Cannot be recalled'],
+				},
+			],
+			draft,
+		})
+
+		async function cardWith(draft: Record<string, unknown>) {
+			const obj = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_review',
+			})
+			const [source] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: agentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: obj.id,
+					data: { content: 'Approve?', mentions: [humanId], decision: decision(draft) },
+				})
+				.returning()
+			await item({ objectId: obj.id }, { source_comment_id: source?.id })
+			const res = await appAs(humanId).request(
+				jsonGet('/api/for-you', { 'X-Workspace-Id': workspaceId }),
+			)
+			const body = (await res.json()) as {
+				items: Array<{
+					latest_mention?: {
+						decision: {
+							draft?: {
+								body?: string
+								label?: string
+								preview?: { subject: string | null; delivery?: { state: string } }
+							}
+						}
+					}
+				}>
+			}
+			return body.items[0]?.latest_mention?.decision.draft
+		}
+
+		it('fills the draft text from the object it names', async () => {
+			const draftObject = await insertObject(db, workspaceId, agentId, {
+				type: 'task',
+				content: 'Hi Mette,\n\nThursday works.',
+			})
+			const draft = await cardWith({ object_id: draftObject.id })
+			expect(draft?.body).toBe('Hi Mette,\n\nThursday works.')
+			expect(draft?.label).toBe('Draft')
+			expect(draft?.preview).toBeUndefined()
+		})
+
+		it('adds the preview and where the draft stands when the object is an email', async () => {
+			const draftObject = await insertObject(db, workspaceId, agentId, {
+				type: 'task',
+				content: 'Hi Mette,\n\nThursday works.',
+				metadata: { kind: 'email', to: 'Mette Holm <mette@northwind.dk>', subject: 'Thursday' },
+			})
+			const draft = await cardWith({ object_id: draftObject.id })
+			expect(draft?.label).toBe('Email')
+			expect(draft?.body).toBe('Hi Mette,\n\nThursday works.')
+			expect(draft?.preview).toMatchObject({ subject: 'Thursday', delivery: { state: 'draft' } })
+		})
+	})
 })

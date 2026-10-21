@@ -41,8 +41,16 @@ vi.mock('@/components/objects/property-selects', () => ({
 	),
 }))
 vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-		<a href="/x" className={className}>
+	Link: ({
+		children,
+		className,
+		onClick,
+	}: {
+		children: React.ReactNode
+		className?: string
+		onClick?: (e: React.MouseEvent) => void
+	}) => (
+		<a href="/x" className={className} onClick={onClick}>
 			{children}
 		</a>
 	),
@@ -72,6 +80,11 @@ function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
 	return render(<LinkedObjectPreviews workspaceId={WS} content={CONTENT} {...props} />)
 }
 
+// The card starts contracted; click its top to read the text.
+async function expand() {
+	await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+}
+
 describe('LinkedObjectPreviews', () => {
 	beforeEach(() => {
 		useObject.mockReset()
@@ -79,9 +92,10 @@ describe('LinkedObjectPreviews', () => {
 		sendMutate.mockReset()
 	})
 
-	it('shows the title and text of an object the message links to', () => {
+	it('shows the title and text of an object the message links to', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard()
+		await expand()
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
 		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
@@ -146,6 +160,7 @@ describe('LinkedObjectPreviews', () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
 		expect(updateMutate).toHaveBeenCalledWith(
 			{ id: ID, data: { status: 'done' } },
@@ -154,18 +169,40 @@ describe('LinkedObjectPreviews', () => {
 		expect(sendMutate).toHaveBeenCalledTimes(1)
 	})
 
-	it('has no next-phase button on the last status', () => {
+	it('has no next-phase button on the last status', async () => {
 		useObject.mockReturnValue({ data: objectRow({ status: 'done' }) })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 	})
 
-	it('puts Open in the header, above the text', () => {
+	it('puts Open in the header, above the text', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		const open = screen.getByRole('link', { name: /Open/ })
 		const text = screen.getByText(/tillykke med fusionen/)
 		expect(open.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('starts contracted with the title only, and the top toggles the text', async () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
+		await expand()
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+		await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+	})
+
+	it('does not toggle when the status menu or Open is used', async () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
+		await userEvent.click(screen.getByRole('link', { name: /Open/ }))
+		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
 	})
 
 	it('does nothing when the chosen status is the current one', async () => {

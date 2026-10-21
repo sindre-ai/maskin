@@ -29,7 +29,7 @@ const isAdminRole = (role: string | null | undefined) => role === 'owner' || rol
  * A session a person started is private to them. One started by a trigger or by
  * an agent is shared work, readable by every member of the workspace.
  */
-async function startedByPerson(
+export async function startedByPerson(
 	db: Database,
 	session: Pick<SessionRow, 'triggerId' | 'createdBy'>,
 ): Promise<boolean> {

@@ -4,6 +4,7 @@ import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -12,15 +13,18 @@ import {
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import type { SessionResponse } from '@/lib/api'
+import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
+import type { MessageMetadata, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
+import { NeededTools } from './needed-tools'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 
 // A thread nobody has touched in this long reads as history rather than as a
@@ -51,6 +55,12 @@ interface ThreadMessagesProps {
 	 *  route boundary on `graph-provenance-writes` so the sessions query fires
 	 *  only for tester actors. */
 	producedEnabled?: boolean
+	/** Fills the composer with a fill step's prompt. */
+	onPickStep?: (prompt: string) => void
+	/** Sends a send step's label as the person's message, with the intro step marker. */
+	onSendStep?: (content: string, metadata: MessageMetadata) => void
+	/** A step send is in flight. */
+	sendingStep?: boolean
 }
 
 export function ThreadMessages({
@@ -60,12 +70,18 @@ export function ThreadMessages({
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
 	producedEnabled = false,
+	onPickStep,
+	onSendStep,
+	sendingStep = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const threadsPane = useThreadsPane()
 	const messages = flattenMessagesOldestFirst(data)
+	// The step row is disabled only once the actor list has loaded and the intro's
+	// agent is not in it. While it loads, or when it fails, the row stays usable.
+	const actors = useActors(workspaceId)
 	const handoffs = useConversationThreads(workspaceId, conversationId)
 	// Each handoff is its own row in the timeline, at the moment its session was
 	// created: before the first message written after it, or at the foot of the
@@ -367,6 +383,19 @@ export function ThreadMessages({
 							</Fragment>
 						)
 					}
+					// An agent intro written with steps and tools: the buttons and rows replace
+					// the plain list and tools sentence at the end of its body.
+					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
+					const bubbleMessage = intro
+						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
+						: message
+					// The steps go once the person has written anything after the intro, an
+					// unsent-yet bubble included. The tool rows stay.
+					const showSteps =
+						intro?.steps != null &&
+						onPickStep != null &&
+						onSendStep != null &&
+						!messages.slice(messages.indexOf(message) + 1).some((m) => m.actorType === 'human')
 					return (
 						<Fragment key={message.id}>
 							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
@@ -388,7 +417,7 @@ export function ThreadMessages({
 							    own avatar. */}
 								<MessageBubble
 									workspaceId={workspaceId}
-									message={message}
+									message={bubbleMessage}
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
@@ -405,6 +434,34 @@ export function ThreadMessages({
 										/>
 									))}
 								/>
+								{intro && (showSteps || intro.tools) ? (
+									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
+										{showSteps && intro.steps ? (
+											<SuggestedSteps
+												steps={intro.steps}
+												onPickStep={onPickStep}
+												onSendStep={(step, stepIndex) =>
+													onSendStep(step.prompt, {
+														from_suggested_step: { intro_message_id: message.id, index: stepIndex },
+													})
+												}
+												sending={sendingStep}
+												disabled={
+													actors.isSuccess && !actors.data.some((a) => a.id === message.actorId)
+												}
+											/>
+										) : null}
+										{intro.tools ? (
+											<NeededTools
+												workspaceId={workspaceId}
+												conversationId={conversationId}
+												agentId={message.actorId}
+												agentName={message.actorName}
+												tools={intro.tools}
+											/>
+										) : null}
+									</div>
+								) : null}
 								{turnsBelowHere.map((turn, turnIndex) => (
 									<MessageActivity
 										key={`${turn.sessionId}-below-${turnIndex}`}
