@@ -1,7 +1,8 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { events, actors } from '@maskin/db/schema'
 import type { ObjectPreview } from '@maskin/shared'
 import { and, desc, eq } from 'drizzle-orm'
+import { recordEventReturning } from './events/record-event'
 
 /**
  * Where a draft stands, read from the object's own `events` log, so nothing about it is
@@ -95,4 +96,41 @@ export async function withDeliveryState(
 			? { state: 'approved', at: approval.createdAt?.toISOString() ?? null }
 			: { state: 'draft', at: null },
 	}
+}
+
+/**
+ * Writes a person's approval of a draft, bound to the content hash they approved. The one
+ * place an `approved` event is created, so the route a button calls and a reply to a
+ * decision card leave the same record behind.
+ *
+ * `via` says how the person said yes: `approval` (the Approve button, which names the hash
+ * the person saw) or `reply` (they chose the send option on a card, so the hash is the text
+ * as it read at that moment).
+ */
+export async function recordObjectApproval(
+	db: Database | Transaction,
+	params: {
+		workspaceId: string
+		actorId: string
+		objectId: string
+		objectType: string
+		preview: Pick<ObjectPreview, 'content_hash' | 'kind'>
+		via: 'approval' | 'reply'
+		/** The decision comment the person answered, when `via` is `reply`. */
+		replyToEventId?: number
+	},
+) {
+	return recordEventReturning(db, {
+		workspaceId: params.workspaceId,
+		actorId: params.actorId,
+		action: APPROVED_ACTION,
+		entityType: params.objectType,
+		entityId: params.objectId,
+		data: {
+			content_hash: params.preview.content_hash,
+			kind: params.preview.kind,
+			via: params.via,
+			...(params.replyToEventId === undefined ? {} : { reply_to_event_id: params.replyToEventId }),
+		},
+	})
 }

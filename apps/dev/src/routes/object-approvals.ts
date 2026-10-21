@@ -4,8 +4,7 @@ import { actors, objects } from '@maskin/db/schema'
 import { objectPreviewSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { recordEventReturning } from '../lib/events/record-event'
-import { APPROVED_ACTION, withDeliveryState } from '../lib/object-delivery'
+import { recordObjectApproval, withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema } from '../lib/openapi-schemas'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
@@ -121,13 +120,13 @@ app.openapi(approveRoute, async (c) => {
 		)
 	}
 
-	const approval = await recordEventReturning(db, {
+	const approval = await recordObjectApproval(db, {
 		workspaceId: object.workspaceId,
 		actorId,
-		action: APPROVED_ACTION,
-		entityType: object.type,
-		entityId: object.id,
-		data: { content_hash: preview.content_hash, kind: preview.kind },
+		objectId: object.id,
+		objectType: object.type,
+		preview,
+		via: 'approval',
 	})
 
 	return c.json(
