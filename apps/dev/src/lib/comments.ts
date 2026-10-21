@@ -30,6 +30,12 @@ export interface PostCommentInput {
 	 * the helper-return comment, which must not wake a session that has a link.
 	 */
 	authorSessionId?: string
+	/**
+	 * Fingerprint of the email an approval card showed when a person answered it (see
+	 * `providers/gmail/approval-hash.ts`). Set by the server for a person's reply, never
+	 * taken from the request body.
+	 */
+	approvedSendHash?: string
 }
 
 export interface PostCommentResult {
@@ -76,6 +82,7 @@ export async function postComment(
 				decision: input.decision,
 				attention: input.attention,
 				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
+				...(input.approvedSendHash ? { approved_send_hash: input.approvedSendHash } : {}),
 			},
 		})
 

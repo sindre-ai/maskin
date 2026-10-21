@@ -88,7 +88,7 @@ test.describe("An agent's computer", () => {
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
 			await expect(page.getByRole('button', { name: 'Wake up' })).toBeVisible()
-			await expect(page.getByText('Asleep')).toBeVisible()
+			await expect(page.getByText('Asleep', { exact: true })).toBeVisible()
 			await expectNoHorizontalOverflow(page)
 			expect(connectCalls).toBe(0)
 		})
@@ -169,11 +169,11 @@ test.describe("An agent's computer", () => {
 				}),
 			})
 		})
+		// Observed, not intercepted: noVNC rejects Playwright's mocked socket, and the real
+		// server refuses the fake ticket, which is the failure this test expects to see.
 		const streamUrl = new Promise<string>((resolve) => {
-			void page.routeWebSocket(/\/api\/desktop\/stream/, (ws) => {
-				resolve(ws.url())
-				// Close before any VNC handshake: the page must report it never came up.
-				void ws.close()
+			page.on('websocket', (ws) => {
+				if (/\/api\/desktop\/stream/.test(ws.url())) resolve(ws.url())
 			})
 		})
 

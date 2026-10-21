@@ -47,6 +47,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
@@ -154,6 +155,19 @@ app.openapi(createSessionRoute, (async (c) => {
 		link.linked && body.interactive !== false
 			? await resolveAskConversationId(db, link.spawnedBySessionId)
 			: null
+	// A helper started from a chat returns into that chat unless the caller said
+	// otherwise: when the sender is in a 1-1 chat,
+	// notify_on_complete defaults on (helper-return.ts then prefers the chat to the
+	// object). An explicit true or false from the caller always wins.
+	const notifyOnComplete =
+		body.notify_on_complete ??
+		(link.linked &&
+			(await returnsToChatByDefault(db, {
+				senderSessionId: link.spawnedBySessionId,
+				senderConversationId: link.senderConversationId,
+				creatorId: actorId,
+				workspaceId,
+			})))
 	const config = link.linked
 		? {
 				...baseConfig,
@@ -161,7 +175,10 @@ app.openapi(createSessionRoute, (async (c) => {
 					? { interactive: true, stop_on_result: true, ask_conversation_id: askConversationId }
 					: {}),
 				hop_depth: link.hopDepth,
-				...(body.notify_on_complete ? { notify_on_complete: true } : {}),
+				// The chat this work belongs to, read by the chat-origin routing
+				// and by session_origin (chat-origin-routing.ts).
+				...(link.originConversationId ? { origin_conversation_id: link.originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			}
 		: baseConfig
 
@@ -1453,7 +1470,7 @@ const computerCardRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Session not found, or computers are not available in this workspace',
+			description: 'Session not found',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },

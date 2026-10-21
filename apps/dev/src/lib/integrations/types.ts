@@ -187,6 +187,46 @@ export interface EventMapping {
 	}
 }
 
+// ── Deliverables ───────────────────────────────────────────────────────────
+
+/**
+ * One field an object of a deliverable kind carries in `metadata`.
+ * `recipients` is a comma separated list of "Name <address>" or bare addresses;
+ * `text` is a single line. The body is never a field: it is the object's content.
+ */
+export interface DeliverableField {
+	key: string
+	label: string
+	type: 'recipients' | 'text'
+	required?: boolean
+	/** Longest accepted value, in characters. */
+	maxLength?: number
+	/** Which side of the message a `recipients` field is. Defaults to `to`. */
+	role?: 'to' | 'cc'
+	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
+	address?: 'email'
+	/** Which part of the preview a `text` field fills. Only `subject` today. */
+	slot?: 'subject'
+}
+
+/**
+ * Something an agent can draft for a person to review and an integration can deliver
+ * (an email, a LinkedIn message, a Slack post). Declared next to the provider's other
+ * config so the preview a person sees, the validation an agent is held to and the send
+ * tool all derive from one place. An object opts in with `metadata.kind = <kind>`.
+ */
+export interface DeliverableKind {
+	/** The value of `metadata.kind`. Unique across providers: "email", "linkedin_message". */
+	kind: string
+	/** Shown above the text: "Email". */
+	label: string
+	fields: DeliverableField[]
+	/** Longest body the channel takes, in characters. */
+	bodyMaxLength?: number
+	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */
+	sendTool: string
+}
+
 // ── Provider config ────────────────────────────────────────────────────────
 
 export interface ProviderConfig {
@@ -201,6 +241,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** What agents can draft for review through this provider. See {@link DeliverableKind}. */
+	deliverables?: DeliverableKind[]
 	/** How to display externalId in the integrations UI. 'email' → "Connected as <id>", 'installation' (default) → "Connected · Installation <id>" */
 	externalIdDisplay?: 'email' | 'installation'
 }

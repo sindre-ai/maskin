@@ -127,6 +127,11 @@ async function startCall(page: Page, workspaceId: string, agentId: string) {
 	await page.goto(`/${workspaceId}/agents/${agentId}`)
 	await page.getByRole('button', { name: /Call Vera Voice/ }).click()
 	await page.getByRole('button', { name: 'Allow microphone & start call' }).click()
+	// The call attaches its data-channel listener after the microphone prompt resolves; an event
+	// sent before that goes nowhere and the call stays on "Starting the call".
+	await page.waitForFunction(
+		() => (window.__voice as unknown as { dcListeners: unknown[] }).dcListeners.length > 0,
+	)
 	await page.evaluate(() => window.__voice.fromRealtime({ type: 'session.created' }))
 }
 

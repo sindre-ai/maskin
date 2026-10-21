@@ -87,6 +87,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/device-auth/token', 'public, polls the device\u2019s own sign-in code'],
 	['POST', '/api/device-auth/approve', 'approves a sign-in code for the caller\u2019s own account'],
 	['POST', '/api/device-auth/deny', 'refuses a sign-in code, no workspace data'],
+	[
+		'POST',
+		'/api/web-push/subscriptions',
+		'registers the caller\u2019s own browser, no workspace data',
+	],
+	['DELETE', '/api/web-push/subscriptions/:id', 'removes only the caller\u2019s own subscription'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
