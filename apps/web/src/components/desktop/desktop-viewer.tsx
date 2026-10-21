@@ -6,7 +6,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, MousePointer2, RefreshCw, Square } from 'lucide-react'
+import { Eye, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -91,6 +91,7 @@ export function DesktopViewer({
 	agentId,
 	toolbarEnd,
 	variant = 'inline',
+	onOpen,
 	onOpenAgent,
 }: {
 	workspaceId: string
@@ -103,6 +104,8 @@ export function DesktopViewer({
 	 * the popup. `immersive`: the popup, controls float under the picture.
 	 */
 	variant?: 'inline' | 'preview' | 'immersive'
+	/** `preview` only: what clicking the live picture does (open the popup). */
+	onOpen?: () => void
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
 }) {
@@ -282,7 +285,7 @@ export function DesktopViewer({
 
 			<div
 				className={cn(
-					'relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
+					'group relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
 					recording && 'ring-2 ring-destructive',
 				)}
 			>
@@ -296,6 +299,20 @@ export function DesktopViewer({
 						phase !== 'connected' && 'invisible',
 					)}
 				/>
+				{/* Not on the error state: that card holds a Reconnect button this must not cover. */}
+				{variant === 'preview' && onOpen && !failed && (
+					<button
+						type="button"
+						aria-label="Open computer in a popup"
+						onClick={onOpen}
+						className="absolute inset-0 flex items-center justify-center focus-visible:outline-none"
+					>
+						<span className="flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+							<Maximize2 size={15} />
+							Open
+						</span>
+					</button>
+				)}
 				{busy && (
 					<EmptyState
 						className="absolute inset-0 py-0"

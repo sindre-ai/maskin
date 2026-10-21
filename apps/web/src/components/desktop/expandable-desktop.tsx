@@ -1,7 +1,7 @@
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Minimize2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 // The popup zooms and slides in for 200ms (ui/dialog). noVNC fits the picture to
@@ -44,26 +44,16 @@ export function ExpandableDesktop({
 		<>
 			{!expanded && (
 				<div className="flex min-w-0 flex-col gap-2">
-					{/* The picture is a preview only: the whole card is one button that opens the
-					    popup, where the controls live. */}
-					<div className="group relative min-w-0 overflow-hidden rounded-2xl">
+					{/* The picture is a preview only: the whole card is one button that opens
+					    the popup, where the controls live. */}
+					<div className="min-w-0 overflow-hidden rounded-2xl">
 						<DesktopViewer
 							workspaceId={workspaceId}
 							agentId={agentId}
 							variant="preview"
+							onOpen={() => setExpanded(true)}
 							onOpenAgent={onOpenAgent}
 						/>
-						<button
-							type="button"
-							aria-label="Open computer in a popup"
-							onClick={() => setExpanded(true)}
-							className="absolute inset-0 flex items-center justify-center focus-visible:outline-none"
-						>
-							<span className="flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-								<Maximize2 size={15} />
-								Open
-							</span>
-						</button>
 					</div>
 					<p className="text-center text-sm text-muted-foreground">{agentName}'s screen</p>
 				</div>
