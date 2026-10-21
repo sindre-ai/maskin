@@ -326,6 +326,9 @@ logger.info('Orphan thread detector started')
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
 voiceSessionTimeoutSweeper.start()
 logger.info('Voice session timeout sweeper started')
+if (!process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()) {
+	logger.warn('MASKIN_VOICE_OPENAI_API_KEY is unset: voice calls will fail at call start')
+}
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher

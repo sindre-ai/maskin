@@ -320,6 +320,24 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
 	})
 
+	it('500s with a clear message and releases the row when the operator key is unset', async () => {
+		process.env.MASKIN_VOICE_OPENAI_API_KEY = ''
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()]]
+
+		const res = await post(app)
+		expect(res.status).toBe(500)
+		expect(JSON.stringify(await res.json())).toContain('Voice is not configured')
+		expect(createCall).not.toHaveBeenCalled()
+		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
+	})
+
 	it('500s and releases the row when the vendor connect fails', async () => {
 		setCreateRealtimeCallFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
 		const { app, mockResults, calls } = createTestApp(

@@ -397,7 +397,7 @@ const postOfferRoute = createRoute({
 		},
 		500: {
 			description:
-				'Vendor connect failed — the session row is marked errored so the caller can start again',
+				'Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -425,6 +425,18 @@ app.openapi(postOfferRoute, async (c) => {
 
 	if (session.status !== 'pending' || session.vendorSessionId !== null) {
 		return c.json(createApiError('CONFLICT', 'This voice session already took an offer'), 409)
+	}
+
+	// Voice is billed to an operator key. Without it every vendor call is a 401
+	// that reads as a vendor outage, so say what is wrong and free the slot.
+	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()
+	if (!apiKey) {
+		logger.error('Voice is not configured: MASKIN_VOICE_OPENAI_API_KEY is unset', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+		})
+		await releasePendingSession(db, session.id)
+		return c.json(createApiError('INTERNAL_ERROR', 'Voice is not configured on this server'), 500)
 	}
 
 	const [agent] = await db
@@ -482,7 +494,6 @@ app.openapi(postOfferRoute, async (c) => {
 		.join('')
 		.trim()
 
-	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY ?? ''
 	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
 	try {
 		toolkit = await invokeToolFactory({
