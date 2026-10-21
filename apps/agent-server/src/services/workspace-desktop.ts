@@ -25,7 +25,7 @@ import {
 } from './microsandbox'
 
 // One long-lived desktop microVM per AGENT (Xvfb + XFCE + Chromium, streamed over
-// noVNC — see docker/desktop-test). A desktop is identified by the pair
+// noVNC — see docker/desktop). A desktop is identified by the pair
 // (workspace, agent): the workspace is the trust boundary for who may look at
 // it, the agent is whose computer it is. Nothing else may reach it — an agent
 // that is logged in to a service on its desktop must not leak that session to
@@ -48,7 +48,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DESKTOP_MEMORY_MIB = 3072
 const DESKTOP_CPUS = 2
 const DESKTOP_GUEST_PORT = 6080
-// desktopd (docker/desktop-test/desktopd.py): the agent control API.
+// desktopd (docker/desktop/desktopd.py): the agent control API.
 const DESKTOP_CONTROL_GUEST_PORT = 6081
 const CONTROL_REQUEST_TIMEOUT_MS = 150_000
 const DESKTOP_CREATE_TIMEOUT_MS = 120_000

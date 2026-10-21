@@ -1,6 +1,7 @@
-# Desktop test image: Xvfb + XFCE + Chromium, streamed to a browser via
-# x11vnc + noVNC. Proof of concept for a viewable agent computer — see
-# README.md. Not wired into CI or the session launcher.
+# Agent computer desktop: Xvfb + XFCE + Chromium, streamed to a browser via
+# x11vnc + noVNC — see README.md. Built and pushed to Docker Hub by
+# .github/workflows/desktop-docker.yml; the agent-server pulls `latest` for every
+# new desktop (DESKTOP_IMAGE).
 FROM debian:bookworm-slim
 
 # xfwm4 (windows) + xfdesktop (wallpaper) + Plank (a macOS-style dock). No XFCE
