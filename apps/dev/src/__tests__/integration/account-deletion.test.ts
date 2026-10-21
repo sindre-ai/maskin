@@ -7,6 +7,7 @@ import {
 	deviceTokens,
 	liveActivityCards,
 	liveActivityTokens,
+	notificationPreferences,
 	notifications,
 	objects,
 	readState,
@@ -67,6 +68,7 @@ describe('account deletion (integration)', () => {
 			status: 'active',
 		})
 
+		await db.insert(notificationPreferences).values({ actorId: me.id, timezone: 'Europe/Oslo' })
 		await db.insert(readState).values({
 			workspaceId: ws.id,
 			actorId: me.id,
@@ -110,6 +112,12 @@ describe('account deletion (integration)', () => {
 		)
 		expect(
 			await db.select().from(notifications).where(eq(notifications.targetActorId, me.id)),
+		).toEqual([])
+		expect(
+			await db
+				.select()
+				.from(notificationPreferences)
+				.where(eq(notificationPreferences.actorId, me.id)),
 		).toEqual([])
 	})
 
