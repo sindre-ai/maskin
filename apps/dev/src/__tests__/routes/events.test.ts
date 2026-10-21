@@ -12,6 +12,13 @@ import {
 	createTestContext,
 } from '../setup'
 
+// Mirroring a comment into the object's chat runs its own queries, which would consume the
+// positional mock-DB results these tests queue for the route itself. It has its own integration
+// coverage (conversation-subjects.test.ts).
+vi.mock('../../services/object-chat-sync', () => ({
+	mirrorCommentIntoChat: vi.fn().mockResolvedValue(undefined),
+}))
+
 const { default: eventsRoutes } = await import('../../routes/events')
 
 const wsId = '00000000-0000-0000-0000-000000000001'

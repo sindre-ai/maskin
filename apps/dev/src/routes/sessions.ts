@@ -1453,7 +1453,7 @@ const computerCardRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Session not found, or computers are not available in this workspace',
+			description: 'Session not found',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
