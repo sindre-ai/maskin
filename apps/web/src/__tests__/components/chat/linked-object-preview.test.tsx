@@ -12,6 +12,9 @@ vi.mock('@/hooks/use-objects', () => ({
 	useApproveObject: () => ({ mutate: approveMutate, isPending: false, error: null }),
 	useUpdateObject: () => ({ mutate: updateMutate, mutateAsync: vi.fn(), error: null }),
 }))
+vi.mock('@/components/shared/file-preview', () => ({
+	FilePreview: ({ fileId }: { fileId: string }) => <div data-testid="file-preview">{fileId}</div>,
+}))
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutate: sendMutate }),
 }))
@@ -312,5 +315,145 @@ describe('LinkedObjectPreviews', () => {
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await userEvent.selectOptions(screen.getByLabelText('Status'), 'in_review')
 		expect(updateMutate).not.toHaveBeenCalled()
+	})
+
+	describe('a draft an integration can deliver', () => {
+		const preview = (overrides: Record<string, unknown> = {}) => ({
+			kind: 'email',
+			label: 'Email',
+			provider: 'gmail',
+			recipients: [{ role: 'to', name: 'Torben Hertel', address: 'th@danfoss.com' }],
+			subject: 'Dokumenter efter demoen',
+			details: [],
+			body: 'Hej Torben, her er dokumenterne.',
+			maxLength: null,
+			missing: [],
+			warnings: [],
+			content_hash: 'hash-1',
+			delivery: { state: 'draft', at: null },
+			...overrides,
+		})
+		const draft = (
+			previewOverrides: Record<string, unknown> = {},
+			row: Record<string, unknown> = {},
+		) =>
+			objectRow({
+				title: 'Follow up with Torben',
+				content: 'Hej Torben, her er dokumenterne.',
+				preview: preview(previewOverrides),
+				...row,
+			})
+		const expandDraft = () => userEvent.click(screen.getByText('Follow up with Torben'))
+
+		it('says what kind of message it is, not that it is a task', () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard()
+			expect(screen.getByText('Email')).toBeInTheDocument()
+			expect(screen.queryByText('task')).not.toBeInTheDocument()
+		})
+
+		it('shows who it goes to and the subject above the text', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard()
+			await expandDraft()
+			expect(screen.getByText('Torben Hertel <th@danfoss.com>')).toBeInTheDocument()
+			expect(screen.getByText('Dokumenter efter demoen')).toBeInTheDocument()
+		})
+
+		it('approves the exact text on screen and tells the agent what was approved', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			approveMutate.mockImplementation((_vars, options) => options.onSuccess())
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
+			expect(approveMutate).toHaveBeenCalledWith(
+				{ id: ID, contentHash: 'hash-1' },
+				expect.any(Object),
+			)
+			expect(sendMutate).toHaveBeenCalledTimes(1)
+			const message = sendMutate.mock.calls[0][0]
+			expect(message.metadata).toEqual({ mentions: [AGENT] })
+			expect(message.content).toContain('Approved "Follow up with Torben"')
+			expect(message.content).toContain('> Hej Torben, her er dokumenterne.')
+		})
+
+		it('cannot be approved from a card that has no agent to tell', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard()
+			await expandDraft()
+			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
+		it('does not offer a next phase instead of Approve and send', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument()
+		})
+
+		it('cannot be approved while something it needs is missing', async () => {
+			useObject.mockReturnValue({ data: draft({ missing: ['To'], recipients: [] }) })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(screen.getByText('Missing: To')).toBeInTheDocument()
+		})
+
+		it('shows that it is approved, and that it has been sent, instead of the button', async () => {
+			for (const [state, label] of [
+				['approved', 'Approved'],
+				['sent', 'Sent'],
+			] as const) {
+				useObject.mockReturnValue({ data: draft({ delivery: { state, at: null } }) })
+				const { unmount } = renderCard()
+				await expandDraft()
+				expect(screen.getByText(label)).toBeInTheDocument()
+				expect(screen.queryByRole('button', { name: 'Approve and send' })).not.toBeInTheDocument()
+				unmount()
+			}
+		})
+
+		it('shows only the post of a LinkedIn post that carries a header, and where it goes', async () => {
+			useObject.mockReturnValue({
+				data: draft(
+					{
+						kind: 'linkedin_post',
+						label: 'LinkedIn post',
+						recipients: [],
+						subject: null,
+						details: [{ label: 'Posting as', value: 'sebk_personal' }],
+						body: 'Most agent demos fail on the handoff.',
+					},
+					{
+						content:
+							'Account: sebk_personal\n\n--- POST ---\nMost agent demos fail on the handoff.\n\n--- MEDIA ---\nnone',
+					},
+				),
+			})
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			expect(screen.getByText('LinkedIn post')).toBeInTheDocument()
+			await expandDraft()
+			expect(screen.getByText('Most agent demos fail on the handoff.')).toBeInTheDocument()
+			expect(screen.getByText('sebk_personal')).toBeInTheDocument()
+			expect(screen.queryByText(/--- POST ---/)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('files the message links to', () => {
+		const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
+
+		it('shows a card for a linked file', () => {
+			render(<LinkedObjectPreviews workspaceId={WS} objectIds={[]} fileIds={[FILE]} />)
+			expect(screen.getByTestId('file-preview')).toHaveTextContent(FILE)
+		})
+
+		it('shows cards for the object and the file when a message links both', () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			render(<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} fileIds={[FILE]} />)
+			expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+			expect(screen.getByTestId('file-preview')).toBeInTheDocument()
+		})
 	})
 })

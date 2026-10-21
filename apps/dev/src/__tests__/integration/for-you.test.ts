@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
+import { events, files, notifications, objects, readState, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -178,6 +178,14 @@ describe('GET /api/for-you', () => {
 		await item({ objectId: obj.id })
 		expect(await list()).toHaveLength(1)
 		await db.update(objects).set({ status: 'completed' }).where(eq(objects.id, obj.id))
+		expect(await list()).toEqual([])
+	})
+
+	it('drops an item whose task was discarded', async () => {
+		const task = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+		await item({ objectId: task.id })
+		expect(await list()).toHaveLength(1)
+		await db.update(objects).set({ status: 'discarded' }).where(eq(objects.id, task.id))
 		expect(await list()).toEqual([])
 	})
 
@@ -419,7 +427,15 @@ describe('GET /api/for-you', () => {
 							draft?: {
 								body?: string
 								label?: string
-								preview?: { subject: string | null; delivery?: { state: string } }
+								file_id?: string
+								file?: { id: string; name: string; mime_type: string; size_bytes: number }
+								preview?: {
+									kind: string
+									subject: string | null
+									body: string
+									details: Array<{ label: string; value: string }>
+									delivery?: { state: string }
+								}
 							}
 						}
 					}
@@ -449,6 +465,90 @@ describe('GET /api/for-you', () => {
 			expect(draft?.label).toBe('Email')
 			expect(draft?.body).toBe('Hi Mette,\n\nThursday works.')
 			expect(draft?.preview).toMatchObject({ subject: 'Thursday', delivery: { state: 'draft' } })
+		})
+
+		it('previews a LinkedIn message with its recipient', async () => {
+			const draftObject = await insertObject(db, workspaceId, agentId, {
+				type: 'task',
+				content: 'Hej Merethe, tak for forbindelsen.',
+				metadata: { kind: 'linkedin_message', to: 'Merethe Aas' },
+			})
+			const draft = await cardWith({ object_id: draftObject.id })
+			expect(draft?.label).toBe('LinkedIn message')
+			expect(draft?.body).toBe('Hej Merethe, tak for forbindelsen.')
+			expect(draft?.preview).toMatchObject({
+				kind: 'linkedin_message',
+				delivery: { state: 'draft' },
+			})
+		})
+
+		it('previews a LinkedIn post as only the post, with where it is published', async () => {
+			const draftObject = await insertObject(db, workspaceId, agentId, {
+				type: 'content',
+				content: 'Account: sebk_personal\n\n--- POST ---\nThe post.\n\n--- MEDIA ---\nnone',
+				metadata: { content_type: 'linkedin_post', account: 'Sebastian Krumhausen' },
+			})
+			const draft = await cardWith({ object_id: draftObject.id })
+			expect(draft?.label).toBe('LinkedIn post')
+			expect(draft?.body).toBe('The post.')
+			expect(draft?.preview?.details).toEqual([
+				{ label: 'Posting as', value: 'Sebastian Krumhausen' },
+			])
+		})
+
+		async function insertFileRow(overrides: Record<string, unknown> = {}) {
+			const [row] = await db
+				.insert(files)
+				.values({
+					workspaceId,
+					name: 'launch-page.html',
+					mimeType: 'text/html',
+					sizeBytes: 1200,
+					storageKey: `workspaces/${workspaceId}/files/test`,
+					createdBy: agentId,
+					...overrides,
+				})
+				.returning()
+			return row
+		}
+
+		it('shows a file the card is about, without any text of its own', async () => {
+			const file = await insertFileRow()
+			const draft = await cardWith({ file_id: file.id })
+			expect(draft?.file).toEqual({
+				id: file.id,
+				name: 'launch-page.html',
+				mime_type: 'text/html',
+				size_bytes: 1200,
+			})
+			expect(draft?.label).toBe('launch-page.html')
+			expect(draft?.body).toBeUndefined()
+		})
+
+		it('uses the label the agent gave a file', async () => {
+			const file = await insertFileRow({ name: 'v3.png', mimeType: 'image/png' })
+			const draft = await cardWith({ file_id: file.id, label: 'New hero image' })
+			expect(draft?.label).toBe('New hero image')
+			expect(draft?.file?.mime_type).toBe('image/png')
+		})
+
+		it('does not show a file from another workspace', async () => {
+			const otherWorkspace = (await insertWorkspace(db, humanId)).id
+			const foreign = await insertFileRow({
+				workspaceId: otherWorkspace,
+				storageKey: `workspaces/${otherWorkspace}/files/test`,
+			})
+			const draft = await cardWith({ file_id: foreign.id })
+			expect(draft).toBeUndefined()
+		})
+
+		it('falls back to the stored text when the file is gone', async () => {
+			const draft = await cardWith({
+				file_id: '00000000-0000-4000-8000-000000000000',
+				body: 'The page is attached.',
+			})
+			expect(draft?.file).toBeUndefined()
+			expect(draft?.body).toBe('The page is attached.')
 		})
 	})
 })

@@ -1,4 +1,5 @@
 import { StatusSelect } from '@/components/objects/property-selects'
+import { FilePreview } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
@@ -45,14 +46,16 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
 	const properties = describeObjectProperties(object.metadata)
-	// A draft an integration can deliver (an email, a LinkedIn message) has a preview. Its card
-	// ends in an approval instead of the next phase: the person's yes to this exact text, after
-	// which the agent is told to send it. Which objects qualify, and how they are sent, is the
-	// integration's own declaration (`deliverables`), so this card knows nothing of LinkedIn.
+	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
+	// has a preview. Its card says what it is, shows where it goes and ends in an approval
+	// instead of the next phase: the person's yes to this exact text, after which the agent is
+	// told to send it. Which objects qualify, and how they are sent, is the integration's own
+	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
 	const delivery = preview?.delivery?.state
-	// What would go out. A draft that carries more than the message (a header above the text)
-	// previews the message alone, and that text is edited on the object page instead.
+	// What would go out. For most drafts that is the whole text; for one that carries a header
+	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
+	// what the card shows. Such a text is edited on the object page, where the header is.
 	const shown = preview ? preview.body : body
 	const editable = canAct && (!preview || preview.body.trim() === body)
 	// The phase after this one in the workspace's own order, if there is one.
@@ -89,7 +92,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				onSuccess: () => {
 					if (!conversationId || !agentId) return
 					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it with the integration's send tool, passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
+						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
 							.split('\n')
 							.map((line) => `> ${line}`)
 							.join('\n')}`,
@@ -111,7 +114,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					className={cn('flex items-center gap-2 px-3 py-2', expanded && 'border-b border-border')}
 				>
 					<span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
-						{typeLabel(object.type)}
+						{preview?.label ?? typeLabel(object.type)}
 					</span>
 					<span className="flex-1" />
 					{canAct && statuses.length > 0 ? (
@@ -245,21 +248,26 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 }
 
 /**
- * The cards for objects a message links to: what they say, what they are about, their status
- * (changeable from the card, with the writing agent told), a button for the next phase, and
- * the text editable in place. Works for any agent and any object type, because it reads the
- * link, not a tool call. The message places them: each card follows the paragraph that
- * links it (see `splitAtLinkedObjects`).
+ * The cards for the objects and files a message links to: what they say, what they are about,
+ * their status (changeable from the card, with the writing agent told), a button for the next
+ * phase, and the text editable in place; a draft an integration can deliver shows where it goes
+ * and is approved from the card. A linked file (an HTML page, a markdown document, a picture)
+ * shows as itself. Works for any agent and any object type, because it reads the link, not a
+ * tool call. The message places the object cards: each follows the paragraph that links it
+ * (see `splitAtLinkedObjects`).
  */
 export function LinkedObjectPreviews({
 	workspaceId,
 	objectIds,
+	fileIds = [],
 	conversationId,
 	agentId,
 	skipIds,
 }: {
 	workspaceId: string
 	objectIds: string[]
+	/** Files the message links to; their cards follow the objects'. */
+	fileIds?: string[]
 	conversationId?: string
 	agentId?: string
 	/** Objects whose card an earlier message in the chat already shows; the link
@@ -267,7 +275,7 @@ export function LinkedObjectPreviews({
 	skipIds?: ReadonlySet<string>
 }) {
 	const ids = objectIds.filter((id) => !skipIds?.has(id))
-	if (ids.length === 0) return null
+	if (ids.length === 0 && fileIds.length === 0) return null
 	return (
 		<>
 			{ids.map((id) => (
@@ -278,6 +286,9 @@ export function LinkedObjectPreviews({
 					conversationId={conversationId}
 					agentId={agentId}
 				/>
+			))}
+			{fileIds.map((id) => (
+				<FilePreview key={id} workspaceId={workspaceId} fileId={id} />
 			))}
 		</>
 	)

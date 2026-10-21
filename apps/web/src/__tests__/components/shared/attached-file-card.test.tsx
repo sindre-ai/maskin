@@ -12,6 +12,7 @@ vi.mock('@tanstack/react-router', async () => {
 const useFileMock = vi.fn()
 vi.mock('@/hooks/use-files', () => ({
 	useFile: (...args: unknown[]) => useFileMock(...args),
+	useFiles: () => ({ data: undefined }),
 }))
 
 function buildImageDetail(overrides: Partial<FileDetail> = {}): FileDetail {
@@ -46,14 +47,14 @@ describe('AttachedFileCard', () => {
 			<div className="bg-primary text-primary-foreground">
 				<AttachedFileCard
 					workspaceId="ws-1"
-					file={{ id: 'f1', name: 'Briefing.html', sizeBytes: 1200, mimeType: 'text/html' }}
+					file={{ id: 'f1', name: 'Briefing.zip', sizeBytes: 1200, mimeType: 'application/zip' }}
 				/>
 			</div>,
 			{ wrapper: TestWrapper },
 		)
 
 		// bg-card is only legible with its own foreground token, not the bubble's inherited one.
-		const card = screen.getByText('Briefing.html').closest('a')
+		const card = screen.getByText('Briefing.zip').closest('a')
 		expect(card).toHaveClass('bg-card', 'text-card-foreground')
 	})
 
@@ -166,5 +167,38 @@ describe('AttachedFileCard', () => {
 		// The mocked Link renders `to` as href — verify the viewer route is reached
 		// through the link wrapper rather than detached from it.
 		expect(link?.querySelector('img')).not.toBeNull()
+	})
+
+	it('draws an HTML attachment as a preview card that opens on a click', () => {
+		useFileMock.mockReturnValue({ data: undefined, isError: false })
+		render(
+			<AttachedFileCard
+				workspaceId="ws-1"
+				file={{ id: 'file-html-1', name: 'launch.html', sizeBytes: 900, mimeType: 'text/html' }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('HTML page')).toBeInTheDocument()
+		expect(
+			screen.getByRole('button', { name: /Expand preview of launch.html/ }),
+		).toBeInTheDocument()
+	})
+
+	it('keeps a file a card cannot draw as a plain link', () => {
+		useFileMock.mockReturnValue({ data: undefined, isError: false })
+		render(
+			<AttachedFileCard
+				workspaceId="ws-1"
+				file={{
+					id: 'file-pdf-1',
+					name: 'deck.pdf',
+					sizeBytes: 90_000,
+					mimeType: 'application/pdf',
+				}}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('deck.pdf')).toBeInTheDocument()
+		expect(screen.queryByText('HTML page')).not.toBeInTheDocument()
 	})
 })
