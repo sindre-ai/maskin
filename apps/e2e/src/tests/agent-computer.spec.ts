@@ -12,7 +12,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * WebSocket. What this spec proves is the wiring and layout: that opening the page never starts or wakes a computer on its own, the ticket
  * hand-off, error and retry states, the popup, and no horizontal overflow at the
  * ship-gate viewports. The live VNC picture is covered by the manual run in
- * docker/desktop-test/README.md.
+ * docker/desktop/README.md.
  */
 
 const CONNECT = /\/api\/desktop\/connect/

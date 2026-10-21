@@ -9,6 +9,7 @@ import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
 import { recordObjectApproval } from '../lib/object-delivery'
 import {
@@ -348,6 +349,12 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: []
 
+	// A person's answer to an email approval card pins the text they were looking at.
+	const approvedSendHash =
+		c.get('actorType') === 'human' && parentEventId !== undefined
+			? await approvedSendHashFor(db, workspaceId, parentEventId, body.content)
+			: undefined
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -361,6 +368,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			decision: body.decision,
 			attention: body.attention,
 			authorSessionId: c.get('maskinSessionId'),
+			approvedSendHash,
 		})
 	const { comment, unresolvedMentions } =
 		replyApprovals.length === 0

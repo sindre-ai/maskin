@@ -949,6 +949,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // the card lookup for a person's reply: no decision, nothing stamped
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
 					[{ driver: null }],
@@ -1039,6 +1040,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // the card lookup for a person's reply: no decision, nothing stamped
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
 					[{ driver: driverAgentId }],

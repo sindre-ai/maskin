@@ -358,6 +358,23 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
+	// run as the signed-in person and carry no workspace, like the invite calls below.
+	deviceAuth: {
+		preview: (userCode: string) =>
+			request<DeviceAuthPreview>(`/device-auth/preview?user_code=${encodeURIComponent(userCode)}`),
+		approve: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/approve', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
+		deny: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/deny', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
+	},
+
 	// Email invites. `preview` and `accept` are mounted outside the membership
 	// middleware (the invitee isn't a member yet), so neither passes a
 	// workspaceId: sending X-Workspace-Id on accept would trigger a membership
@@ -1064,6 +1081,19 @@ export const api = {
 
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+	},
+
+	webPush: {
+		// Per-actor, not per-workspace — no workspaceId. `public_key` is the VAPID application
+		// server key (public by design); `enabled` is false when the server has no VAPID keys.
+		config: () => request<{ enabled: boolean; public_key: string | null }>('/web-push/config'),
+		subscribe: (body: {
+			endpoint: string
+			keys: { p256dh: string; auth: string }
+			user_agent?: string
+		}) => request<{ id: string }>('/web-push/subscriptions', { method: 'POST', body }),
+		unsubscribe: (id: string) =>
+			request<{ deleted: boolean }>(`/web-push/subscriptions/${id}`, { method: 'DELETE' }),
 	},
 
 	featureFlags: {
@@ -1779,6 +1809,12 @@ export interface CreateInviteInput {
 export type CreateInviteResponse =
 	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
 	| { status: 'pending'; invite: InviteSummary }
+
+export interface DeviceAuthPreview {
+	client: 'tvos'
+	device_name: string | null
+	created_at: string
+}
 
 export interface InvitePreview {
 	status: 'pending'

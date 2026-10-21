@@ -1072,6 +1072,14 @@ async function enrichSessionActorName<T extends SessionRow>(
 // still running at the limit is left running and reported as not settled.
 const WAIT_POLL_MS = 5_000
 const WAIT_LIMIT_MS = 660_000
+
+// Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
+// still going backs off so a long one is not ~130 requests against the API.
+function waitPollDelayMs(attempt: number): number {
+	if (attempt < 6) return WAIT_POLL_MS
+	if (attempt < 12) return WAIT_POLL_MS * 2
+	return WAIT_POLL_MS * 4
+}
 // Consecutive failed status checks tolerated before the wait gives up. A blip
 // (deploy restart, 502, dropped socket) must not orphan a session that is
 // already running.
@@ -1120,8 +1128,10 @@ async function createSessionAndWait(
 	let settled = false
 	let pollFailures = 0
 	let pollError: string | undefined
+	let pollAttempt = 0
 	while (Date.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS))
+		const delay = Math.min(waitPollDelayMs(pollAttempt++), deadline - Date.now())
+		await new Promise((resolve) => setTimeout(resolve, delay))
 		try {
 			current = (await apiCall(
 				config,

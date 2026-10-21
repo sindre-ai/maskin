@@ -1,9 +1,10 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, integrations, objects, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { approvedSendHashFor } from '../../lib/integrations/providers/gmail/approval-hash'
 import {
 	insertActor,
 	insertAgentGrant,
@@ -184,10 +185,48 @@ async function insertApprovalCard(s: Setup, opts: CardOptions = {}) {
 			action: 'commented',
 			entityType: 'object',
 			entityId: anchor.id,
-			data: { content: a.content, parentEventId: card.id },
+			data: {
+				content: a.content,
+				parentEventId: card.id,
+				...(a.by === 'human'
+					? { approved_send_hash: await approvedHash(s, card.id, a.content) }
+					: {}),
+			},
 		})
 	}
 	return { card, draftObject }
+}
+
+/**
+ * What the comment route stamps on a person's reply: the fingerprint of the draft as the card
+ * shows it at that moment. Computed by the real function, so the tests and the route agree.
+ */
+async function approvedHash(s: Setup, cardId: number, content: string) {
+	return approvedSendHashFor(db, s.workspace.id, cardId, content)
+}
+
+/** The person answers again, now: their reply is stamped with the draft as it reads at this moment. */
+async function reanswer(s: Setup, cardId: number) {
+	const replies = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, s.workspace.id),
+				eq(events.action, 'commented'),
+				sql`${events.data}->>'parentEventId' = ${String(cardId)}`,
+				eq(events.actorId, s.human),
+			),
+		)
+	for (const r of replies) {
+		const content = (r.data as { content: string }).content
+		await db
+			.update(events)
+			.set({
+				data: { ...(r.data as object), approved_send_hash: await approvedHash(s, cardId, content) },
+			})
+			.where(eq(events.id, r.id))
+	}
 }
 
 const sendEvents = async (workspaceId: string, integrationId: string) =>
@@ -625,6 +664,7 @@ describe('gmail_send_email: an approved email', () => {
 				updatedAt: new Date(Date.now() - 60_000),
 			})
 			.where(eq(objects.id, draftObject?.id as string))
+		await reanswer(s, card.id)
 		fetchMock.mockResolvedValueOnce(gmailOk())
 
 		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
@@ -877,7 +917,13 @@ async function insertStackCard(
 			action: 'commented',
 			entityType: 'object',
 			entityId: anchor.id,
-			data: { content: r.content, parentEventId: card.id },
+			data: {
+				content: r.content,
+				parentEventId: card.id,
+				...(r.by === 'agent'
+					? {}
+					: { approved_send_hash: await approvedHash(s, card.id, r.content) }),
+			},
 		})
 	}
 	return { card, objectsById }
@@ -1100,5 +1146,87 @@ describe('gmail_send_email: a card with several emails', () => {
 
 		expect(res.status).toBe(400)
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('gmail_send_email: an approval covers the exact text the person saw', () => {
+	const TEXT_B = 'Subject: Something else\n\nText B, never shown to the person'
+
+	it('refuses text B swapped in for approved text A when nothing logged the change', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		// No event and an old updatedAt: the edit-after-tap check has nothing to see.
+		await db
+			.update(objects)
+			.set({ content: TEXT_B, updatedAt: new Date(Date.now() - 60_000) })
+			.where(eq(objects.id, draftObject?.id as string))
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('changed after the person approved')
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await gmailActions(s.workspace.id, s.gmail.id)).toEqual([])
+	})
+
+	it('refuses when the draft object is cleared and the card holds other text', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		// The card also carries a stored body; with the object empty the send would fall back to it.
+		const data = card.data as { decision: { draft: Record<string, unknown> } }
+		const draft = { ...data.decision.draft, body: TEXT_B }
+		await db
+			.update(events)
+			.set({ data: { ...data, decision: { ...data.decision, draft } } })
+			.where(eq(events.id, card.id))
+		await db
+			.update(objects)
+			.set({ content: '', updatedAt: new Date(Date.now() - 60_000) })
+			.where(eq(objects.id, draftObject?.id as string))
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await gmailActions(s.workspace.id, s.gmail.id)).toEqual([])
+	})
+
+	it('refuses when the draft object is cleared and nothing else is left to send', async () => {
+		const s = await setup()
+		const { card, draftObject } = await insertApprovalCard(s)
+		await db
+			.update(objects)
+			.set({ content: '', updatedAt: new Date(Date.now() - 60_000) })
+			.where(eq(objects.id, draftObject?.id as string))
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBeGreaterThanOrEqual(400)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses an answer that recorded nothing about what the person saw', async () => {
+		const s = await setup()
+		const { card } = await insertApprovalCard(s)
+		await db
+			.update(events)
+			.set({ data: sql`${events.data} - 'approved_send_hash'` })
+			.where(sql`${events.data}->>'parentEventId' = ${String(card.id)}`)
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('still sends the unchanged approved text', async () => {
+		const s = await setup()
+		const { card } = await insertApprovalCard(s)
+		fetchMock.mockResolvedValueOnce(gmailOk('sent-a'))
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(200)
+		expect(sentMime()).toContain('Subject: Approved subject')
 	})
 })
