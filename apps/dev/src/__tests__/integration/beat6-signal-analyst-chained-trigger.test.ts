@@ -22,8 +22,8 @@ import { db, getTestActorId } from './global-setup'
 //      `Deep-research brief validated → Signal Analyst clustering` trigger.
 //   2. Both are event triggers on knowledge status_changed → validated, wired
 //      to the Chief of Staff actor (the target agent that then dispatches
-//      Researcher via run_agent for deep research and Signal Analyst via
-//      run_agent for the chained Beat 6 clustering).
+//      Researcher via create_session (wait) for deep research and Signal Analyst via
+//      create_session (wait) for the chained Beat 6 clustering).
 //   3. When the first-pass brief validates, the deep-research trigger's
 //      Beat 2 gate dispatches immediately (Chief of Staff session is created
 //      for it) — this is action 1 of the extended trigger.

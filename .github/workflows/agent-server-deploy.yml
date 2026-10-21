@@ -57,8 +57,8 @@ jobs:
             # doing nothing until somebody remembers to ssh in and copy it.
             # That drift is silent and can persist for months.
             #
-            # (The agent-base / browser-sidecar images DO ship automatically,
-            # but those are the images sessions run inside — not this service.)
+            # (The agent-base image DOES ship automatically,
+            # but that is the image sessions run inside — not this service.)
             UNIT_SRC=apps/agent-server/systemd/maskin-agent-server.service
             UNIT_DST=/etc/systemd/system/maskin-agent-server.service
 

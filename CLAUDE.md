@@ -117,7 +117,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ### Public (no auth)
 - `GET /api/health` — health check
 - `GET /api/openapi.json` — OpenAPI spec
-- `POST /api/actors` — signup, returns API key
+- `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
 
 ### Actors (`/api/actors`)
 - `GET /api/actors` — list actors
@@ -175,6 +175,12 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `POST /api/integrations/:provider/connect` — start OAuth/connection flow
 - `GET /api/integrations/:provider/callback` — OAuth callback (no auth)
 - `DELETE /api/integrations/:id` — disconnect integration
+- `GET|PUT /api/integrations/:id/grants`, `PUT|DELETE /api/integrations/:id/grants/:actorId`, `PUT /api/integrations/:id/default-access` — which agents may use an integration, and how (see `docs/reference/agent-access.md`)
+- `POST|GET|DELETE /api/integrations/:provider/gateway` — gated gateway to a hosted MCP (Gmail, Google Calendar, Linear, PostHog)
+
+### Custom tool servers (`/api/custom-mcp-servers`) — a workspace's own MCP servers, shared with agents through grants
+- `POST /api/custom-mcp-servers` — add a server (humans only)
+- `GET|PUT /api/custom-mcp-servers/:id` — read (secrets masked) or change one; removal is `DELETE /api/integrations/:id`
 
 ### Webhooks (`/api/webhooks`) — no auth
 - `POST /api/webhooks/:provider` — incoming webhook handler

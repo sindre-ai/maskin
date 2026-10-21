@@ -25,6 +25,10 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-actors', () => ({
+	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
 }))
@@ -118,9 +122,14 @@ describe('GeneralPage', () => {
 		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
 	})
 
-	it('renders the three general sections as uppercase eyebrow labels in mockup order', () => {
+	it('renders the general sections as uppercase eyebrow labels in order', () => {
 		render(<GeneralPage />)
 		const headings = screen.getAllByRole('heading').map((h) => h.textContent)
-		expect(headings).toEqual(['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA'])
+		expect(headings).toEqual([
+			'WORKSPACE NAME',
+			'DEFAULT WORKSPACE',
+			'APPEARANCE',
+			'PRIVACY & DATA',
+		])
 	})
 })

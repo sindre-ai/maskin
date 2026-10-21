@@ -423,6 +423,9 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	delete_loop: 'loop_delete',
 	// Comments
 	create_comment: 'comment_create',
+	// Notifications
+	create_notification: 'notification_create',
+	update_notification: 'notification_update',
 	// Workspace skills
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',
@@ -438,12 +441,14 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
+	gmail_send_email: 'gmail_email_send',
+	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
+	ask_user_question: 'session_ask_user',
 	resume_session: 'session_resume',
-	run_agent: 'session_run',
 }
 
 /** Resets the warned flag — only used in tests. */

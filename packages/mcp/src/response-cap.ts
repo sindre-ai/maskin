@@ -343,16 +343,37 @@ function resumeAfterKept(
 	keptRows: unknown[],
 ): Record<string, unknown> {
 	const resume = rsp[RESUME_CURSOR] as ResumeCursorFn | undefined
+	if (typeof resume !== 'function') return structured
+	const synced = syncHeroCardRows(structured, keptRows)
 	const last = keptRows[keptRows.length - 1]
-	if (typeof resume !== 'function' || last === undefined) return structured
+	if (last === undefined) return synced
 	const cursor = resume(last)
-	if (!cursor) return structured
-	const out: Record<string, unknown> = { ...structured, next_cursor: cursor }
-	const page = structured.page
+	if (!cursor) return synced
+	const out: Record<string, unknown> = { ...synced, next_cursor: cursor }
+	const page = synced.page
 	if (page && typeof page === 'object') out.page = { ...page, next_cursor: cursor }
-	const heroCard = structured.heroCard as { page?: Record<string, unknown> } | undefined
+	const heroCard = synced.heroCard as { page?: Record<string, unknown> } | undefined
 	if (heroCard?.page) out.heroCard = { ...heroCard, page: { ...heroCard.page, hasMore: true } }
 	return out
+}
+
+/**
+ * The tool builds its heroCard before the cap runs, so it still names rows the
+ * trim dropped. Keep only the card objects whose id ships in the rows array and
+ * size the card page to match. The card's totalCount stays the real total.
+ */
+function syncHeroCardRows(
+	structured: Record<string, unknown>,
+	keptRows: unknown[],
+): Record<string, unknown> {
+	const heroCard = structured.heroCard as
+		| { objects?: Array<{ id?: unknown }>; page?: Record<string, unknown> }
+		| undefined
+	if (!heroCard || !Array.isArray(heroCard.objects)) return structured
+	const keptIds = new Set(extractIds(keptRows, 'id'))
+	const objects = heroCard.objects.filter((o) => typeof o?.id === 'string' && keptIds.has(o.id))
+	const page = heroCard.page && { ...heroCard.page, limit: objects.length }
+	return { ...structured, heroCard: { ...heroCard, objects, ...(page ? { page } : {}) } }
 }
 
 /**

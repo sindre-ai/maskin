@@ -446,10 +446,13 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'get_profile'),
 			{
 				description: scopedDescription(
-					'Fetch one LinkedIn profile by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id).',
+					'Fetch one LinkedIn profile by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id). Pass sections: ["experience"] to also get dated job history (company, title, start and end as ISO dates, current); it is off by default and only that value is supported. An experience pull is a heavier LinkedIn view that may be throttled: Unipile suggests staying under about 100 profile views per account per day. If the pull is throttled or rejected you still get the base profile plus experience_unavailable: true, never an empty list that looks like no jobs.',
 					cfg,
 				),
-				inputSchema: { identifier: z.string().min(1) },
+				inputSchema: {
+					identifier: z.string().min(1),
+					sections: z.array(z.enum(['experience'])).optional(),
+				},
 			},
 			async (args) => {
 				try {
@@ -473,8 +476,11 @@ export function registerLinkedInMcpInstance(
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,
 	instances: LinkedInMcpInstanceConfig[],
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
 ): McpServer {
 	const server = new McpServer({ name: 'maskin-linkedin', version: '0.2.0' })
+	onServer?.(server)
 	for (const cfg of instances) {
 		registerLinkedInMcpInstance(server, cfg, ctx)
 	}

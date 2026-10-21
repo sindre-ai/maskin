@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
+	type DecisionDraft,
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
@@ -114,7 +115,7 @@ const unreadItemSchema = z.object({
 			created_at: z.string(),
 			// The whole comment. For You is where the reader decides, so the card
 			// must not send them elsewhere to finish reading the ask; the body is
-			// bounded by createCommentSchema's 2000-character cap.
+			// bounded by createCommentSchema's COMMENT_MAX_LENGTH cap.
 			content: z.string(),
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
@@ -135,7 +136,7 @@ type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mentio
  * block that no longer parses degrades to `null`, and the card falls back to
  * rendering the comment body.
  */
-function toLatestMention(event: typeof events.$inferSelect): LatestMention {
+export function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	const data = (event.data ?? {}) as Record<string, unknown>
 	const rawContent = typeof data.content === 'string' ? data.content : ''
 	const attention = Number(data.attention)
@@ -149,6 +150,66 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 		content: rawContent,
 		attention: Number.isFinite(attention) ? attention : null,
 		decision,
+	}
+}
+
+/** Longest draft body the card is sent. The schema caps a stored body at the same length. */
+const DRAFT_BODY_MAX = 20_000
+
+/**
+ * Fills `decision.draft.body` from the draft object's CURRENT description, so the
+ * card shows what the object says now, not what it said when the comment was
+ * posted. Objects the feed already loaded for its cards are reused; the rest
+ * come in one keyed query, scoped to the workspace so a draft cannot point at a
+ * foreign object. A draft whose object is gone or empty falls back to a stored
+ * `body`, and with neither it is dropped rather than sent as an empty box.
+ */
+async function fillDraftBodies(
+	db: Database,
+	workspaceId: string,
+	mentions: LatestMention[],
+	loaded: Map<string, typeof objects.$inferSelect>,
+): Promise<void> {
+	const allDrafts = mentions.flatMap((m) => [
+		...(m.decision?.draft ? [m.decision.draft] : []),
+		...(m.decision?.drafts ?? []),
+	])
+	const missing = [
+		...new Set(
+			allDrafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
+		),
+	]
+	const fetched = new Map<string, string | null>()
+	if (missing.length > 0) {
+		const rows = await db
+			.select({ id: objects.id, content: objects.content })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, missing)))
+		for (const row of rows) fetched.set(row.id, row.content)
+	}
+
+	// One draft, filled from its object's live text, or null when there is nothing
+	// to show (object gone or empty, and no stored body).
+	const fill = (draft: DecisionDraft): DecisionDraft | null => {
+		const live = draft.object_id
+			? (loaded.get(draft.object_id)?.content ?? fetched.get(draft.object_id) ?? null)
+			: null
+		const body = (live?.trim() ? live : draft.body)?.slice(0, DRAFT_BODY_MAX)
+		return body ? { ...draft, label: draft.label ?? 'Draft', body } : null
+	}
+
+	for (const mention of mentions) {
+		const decision = mention.decision
+		if (!decision) continue
+		if (decision.draft) decision.draft = fill(decision.draft) ?? undefined
+		if (decision.drafts) {
+			// A message with nothing to show is left out, the rest of the stack stays.
+			const filled = decision.drafts.flatMap((d) => {
+				const f = fill(d)
+				return f ? [f] : []
+			})
+			decision.drafts = filled.length > 0 ? filled : undefined
+		}
 	}
 }
 
@@ -526,6 +587,10 @@ app.openapi(listUnreadRoute, (async (c) => {
 		for (const e of fetched) mentionsByEventId.set(Number(e.id), e)
 	}
 
+	const mentions = new Map<number, LatestMention>()
+	for (const [eventId, event] of mentionsByEventId) mentions.set(eventId, toLatestMention(event))
+	await fillDraftBodies(db, workspaceId, [...mentions.values()], objectsById)
+
 	const items = rows.map((r) => {
 		const obj = r.entityType === 'object' ? objectsById.get(r.entityId) : undefined
 		const mentionEvent =
@@ -540,7 +605,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			...(mentionEvent ? { latest_mention: toLatestMention(mentionEvent) } : {}),
+			...(mentionEvent ? { latest_mention: mentions.get(Number(mentionEvent.id)) } : {}),
 		}
 	})
 

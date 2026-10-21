@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { type events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
+import { mirrorCommentIntoChat } from '../services/object-chat-sync'
 import { recordEventReturning } from './events/record-event'
 
 export interface PostCommentInput {
@@ -21,6 +22,14 @@ export interface PostCommentInput {
 	 */
 	decision?: CommentDecision
 	attention?: number
+	/**
+	 * The session the author was running when it posted, from X-Maskin-Session-Id.
+	 * A claim, not proof: CommentDispatcher checks it against the author before it
+	 * links a session started by an @mention. Stored under its own key (not in the
+	 * client-supplied metadata) so a request body cannot write it. Leave unset for
+	 * the helper-return comment, which must not wake a session that has a link.
+	 */
+	authorSessionId?: string
 }
 
 export interface PostCommentResult {
@@ -66,6 +75,7 @@ export async function postComment(
 				metadata: input.metadata,
 				decision: input.decision,
 				attention: input.attention,
+				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
 			},
 		})
 
@@ -128,6 +138,17 @@ export async function postComment(
 						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
 					})
 			}
+		}
+
+		if (entityType === 'object') {
+			await mirrorCommentIntoChat(tx, {
+				id: comment.id,
+				actorId: comment.actorId,
+				createdAt: comment.createdAt,
+				data: comment.data,
+				workspaceId: input.workspaceId,
+				entityId: input.entityId,
+			})
 		}
 
 		return { comment, unresolvedMentions }

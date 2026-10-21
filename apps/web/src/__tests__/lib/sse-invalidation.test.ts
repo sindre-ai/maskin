@@ -192,6 +192,22 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'integration',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.integrations.all(workspaceId),
+		})
+		// The per-agent access query lives under that same key, so one invalidation covers it.
+		expect(queryKeys.integrations.agentAccess(workspaceId, 'agent-1').slice(0, 2)).toEqual(
+			queryKeys.integrations.all(workspaceId),
+		)
+	})
+
 	it('invalidates workspaces for workspace entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -419,13 +435,24 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.logs)).toBe(true)
 		expect(invalidated(keys.byActor)).toBe(true)
 		expect(invalidated(keys.byConversation)).toBe(true)
-		expect(invalidated(keys.paged)).toBe(true)
-		// The coalesced list and billing wait / are skipped.
+		// The coalesced lists and billing wait / are skipped.
 		expect(invalidated(keys.list)).toBe(false)
+		expect(invalidated(keys.paged)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
 	})
 
-	it.each(['session_credit_debited', 'session_budget_stopped'])(
+	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
+		const { qc, keys, invalidated } = seededClient()
+		for (let i = 0; i < 25; i++) {
+			invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		}
+		vi.advanceTimersByTime(5_000)
+		expect(invalidated(keys.paged)).toBe(false)
+		vi.advanceTimersByTime(25_000)
+		expect(invalidated(keys.paged)).toBe(true)
+	})
+
+	it.each(['session_credit_debited', 'session_budget_stopped', 'session_stopped'])(
 		'%s still refetches billing usage',
 		(action) => {
 			const { qc, keys, invalidated } = seededClient()
