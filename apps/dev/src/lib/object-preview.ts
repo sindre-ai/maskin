@@ -45,6 +45,20 @@ export function getDeliverableKind(kind: unknown): RegisteredKind | null {
 	return typeof kind === 'string' ? (kinds().get(kind) ?? null) : null
 }
 
+/**
+ * The kind an object is of: its `metadata.kind` when a provider declares it, otherwise the
+ * kind whose `alsoMatches` pairs all hold in its metadata. An explicit kind always wins.
+ */
+function kindOf(metadata: Record<string, unknown>): RegisteredKind | null {
+	const declared = getDeliverableKind(metadata[PREVIEW_KIND_KEY])
+	if (declared) return declared
+	for (const registered of kinds().values()) {
+		const pairs = registered.deliverable.alsoMatches
+		if (pairs?.length && pairs.every((p) => metadata[p.key] === p.value)) return registered
+	}
+	return null
+}
+
 // Older drafts keep the subject as the first line of the text ("Subject: Hello"),
 // because a decision card had no subject field. Read it from there when the
 // metadata has none, so nothing already written needs rewriting.
@@ -85,7 +99,7 @@ export function buildObjectPreview(object: {
 			? (object.metadata as Record<string, unknown>)
 			: null
 	if (!metadata) return null
-	const registered = getDeliverableKind(metadata[PREVIEW_KIND_KEY])
+	const registered = kindOf(metadata)
 	if (!registered) return null
 	const { provider, deliverable } = registered
 

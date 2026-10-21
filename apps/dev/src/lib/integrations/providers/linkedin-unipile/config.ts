@@ -62,5 +62,23 @@ export const config: ProviderConfig = {
 		},
 	},
 
+	// What agents can draft here for a person to read, edit and approve. The send tools are
+	// served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
+	deliverables: [
+		{
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			sendTool: 'send_message',
+			// Mirrors the limit in operations.ts.
+			bodyMaxLength: 8000,
+			// The sales loop files its replies as tasks with `channel: linkedin_dm`; they are
+			// drafts of a message without anyone having to add a kind.
+			alsoMatches: [{ key: 'channel', value: 'linkedin_dm' }],
+			// A reply goes into a conversation the agent already holds, so no recipient is
+			// required. When one is filed ("to"), it is shown; it is not checked as an address.
+			fields: [{ key: 'to', label: 'To', type: 'recipients', role: 'to' }],
+		},
+	],
+
 	externalIdDisplay: 'installation',
 }

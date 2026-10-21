@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const useObject = vi.fn()
 const updateMutate = vi.fn()
 const sendMutate = vi.fn()
+const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => useObject(id),
+	useApproveObject: () => ({ mutate: approveMutate, isPending: false, error: null }),
 	useUpdateObject: () => ({ mutate: updateMutate, mutateAsync: vi.fn(), error: null }),
 }))
 vi.mock('@/hooks/use-conversation', () => ({
@@ -89,6 +91,61 @@ describe('LinkedObjectPreviews', () => {
 		useObject.mockReset()
 		updateMutate.mockReset()
 		sendMutate.mockReset()
+		approveMutate.mockReset()
+	})
+
+	// What the server adds to an object an integration can deliver.
+	function previewOf(overrides: Record<string, unknown> = {}) {
+		return {
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			provider: 'linkedin-unipile',
+			recipients: [],
+			subject: null,
+			body: 'Hej Catja, tillykke med fusionen.',
+			maxLength: 8000,
+			missing: [],
+			warnings: [],
+			content_hash: 'hash-1',
+			delivery: { state: 'draft', at: null },
+			...overrides,
+		}
+	}
+
+	it('ends a draft in Approve and send, not the next phase, and tells the agent to send the text', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+		approveMutate.mockImplementation((_vars, options) => options.onSuccess())
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
+		expect(approveMutate).toHaveBeenCalledWith(
+			{ id: ID, contentHash: 'hash-1' },
+			expect.any(Object),
+		)
+		const message = sendMutate.mock.calls[0][0]
+		expect(message.metadata).toEqual({ mentions: [AGENT] })
+		expect(message.content).toContain('Send it exactly as it reads')
+		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+	})
+
+	it('cannot approve a draft that is missing something', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ missing: ['Message'] }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByRole('button', { name: /Approve and send/ })).toBeDisabled()
+	})
+
+	it('shows a sent draft as sent, with nothing left to approve', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ delivery: { state: 'sent', at: null } }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByText('Sent')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve and send/ })).not.toBeInTheDocument()
 	})
 
 	it('shows the title and text of an object the message links to', async () => {

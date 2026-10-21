@@ -210,6 +210,16 @@ export interface DeliverableField {
 }
 
 /**
+ * A second way for an object to be of a deliverable kind, for objects an agent already
+ * writes without `metadata.kind`: every pair must match the object's `metadata`.
+ * A sales task filed with `channel: "linkedin_dm"` is a LinkedIn message, not a kind.
+ */
+export interface DeliverableMatch {
+	key: string
+	value: string
+}
+
+/**
  * Something an agent can draft for a person to review and an integration can deliver
  * (an email, a LinkedIn message, a Slack post). Declared next to the provider's other
  * config so the preview a person sees, the validation an agent is held to and the send
@@ -221,6 +231,8 @@ export interface DeliverableKind {
 	/** Shown above the text: "Email". */
 	label: string
 	fields: DeliverableField[]
+	/** Also treat an object as this kind when all of these pairs match its metadata. An explicit `metadata.kind` always wins. */
+	alsoMatches?: DeliverableMatch[]
 	/** Longest body the channel takes, in characters. */
 	bodyMaxLength?: number
 	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */

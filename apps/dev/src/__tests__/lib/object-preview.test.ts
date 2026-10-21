@@ -11,6 +11,28 @@ describe('buildObjectPreview', () => {
 		expect(buildObjectPreview({ content: 'Hello', metadata: null })).toBeNull()
 	})
 
+	it('previews a sales task filed with channel linkedin_dm as a LinkedIn message', () => {
+		const preview = buildObjectPreview({
+			content: 'Thanks Liz, that is a fair answer.',
+			metadata: { source: 'sales_conversation', channel: 'linkedin_dm', priority: 'P1' },
+		})
+		expect(preview).toMatchObject({
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			provider: 'linkedin-unipile',
+			body: 'Thanks Liz, that is a fair answer.',
+			missing: [],
+		})
+	})
+
+	it('lets an explicit kind win over a channel match', () => {
+		const preview = buildObjectPreview({
+			content: 'Hi',
+			metadata: { kind: 'email', channel: 'linkedin_dm', to: 'a@b.dk', subject: 'Hello' },
+		})
+		expect(preview?.kind).toBe('email')
+	})
+
 	it('builds an email preview from metadata and content', () => {
 		const preview = buildObjectPreview({
 			content: 'Hi Mette,\n\nThursday works.',

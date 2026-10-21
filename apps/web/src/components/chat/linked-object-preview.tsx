@@ -4,13 +4,13 @@ import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
-import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ArrowUpRight, ChevronDown } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Check, ChevronDown } from 'lucide-react'
 import { useState } from 'react'
 
 interface PreviewProps {
@@ -27,6 +27,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
+	const approve = useApproveObject()
 	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
@@ -44,6 +45,16 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
 	const properties = describeObjectProperties(object.metadata)
+	// A draft an integration can deliver (an email, a LinkedIn message) has a preview. Its card
+	// ends in an approval instead of the next phase: the person's yes to this exact text, after
+	// which the agent is told to send it. Which objects qualify, and how they are sent, is the
+	// integration's own declaration (`deliverables`), so this card knows nothing of LinkedIn.
+	const preview = object.preview ?? null
+	const delivery = preview?.delivery?.state
+	// What would go out. A draft that carries more than the message (a header above the text)
+	// previews the message alone, and that text is edited on the object page instead.
+	const shown = preview ? preview.body : body
+	const editable = canAct && (!preview || preview.body.trim() === body)
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -58,6 +69,27 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					if (!conversationId || !agentId) return
 					sendMessage.mutate({
 						content: `Moved "${object.title || 'Untitled'}" to ${statusLabel(status)}. The text as it stands:\n\n${body
+							.split('\n')
+							.map((line) => `> ${line}`)
+							.join('\n')}`,
+						metadata: { mentions: [agentId] },
+					})
+				},
+			},
+		)
+	}
+
+	// The person's yes to this exact text. The agent is told with the text it can send, the same
+	// way a status change tells it, so it does not have to guess what was approved.
+	const approveDraft = () => {
+		if (!preview) return
+		approve.mutate(
+			{ id: object.id, contentHash: preview.content_hash },
+			{
+				onSuccess: () => {
+					if (!conversationId || !agentId) return
+					sendMessage.mutate({
+						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads:\n\n${shown
 							.split('\n')
 							.map((line) => `> ${line}`)
 							.join('\n')}`,
@@ -146,16 +178,42 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					    A very long text scrolls inside the card instead of being cut off. */}
 					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
 						<MarkdownContent
-							content={body}
+							content={shown}
 							size="sm"
-							editable={canAct}
+							editable={editable}
 							editorLabel="Edit the text"
 							onChange={async (value) => {
 								await update.mutateAsync({ id: object.id, data: { content: value } })
 							}}
 						/>
 					</div>
-					{canAct && nextStatus ? (
+					{preview ? (
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							{delivery === 'sent' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Sent
+								</span>
+							) : delivery === 'approved' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Approved
+								</span>
+							) : (
+								<Button
+									type="button"
+									size="sm"
+									disabled={
+										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+									}
+									onClick={approveDraft}
+								>
+									Approve and send
+									<ArrowRight size={14} aria-hidden />
+								</Button>
+							)}
+						</div>
+					) : canAct && nextStatus ? (
 						<div className="flex items-center justify-end px-3 pb-3 pt-1">
 							<Button
 								type="button"
@@ -175,6 +233,11 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			{update.error ? (
 				<p role="alert" className="px-3 pb-2 text-xs text-destructive">
 					Could not save: {update.error.message}
+				</p>
+			) : null}
+			{approve.error ? (
+				<p role="alert" className="px-3 pb-2 text-xs text-destructive">
+					Could not approve: {approve.error.message}
 				</p>
 			) : null}
 		</div>

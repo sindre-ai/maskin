@@ -28,6 +28,7 @@ vi.mock('@/hooks/use-objects', () => ({
 		isLoading: false,
 	}),
 	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), error: null }),
+	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
 const retryMutate = vi.fn()

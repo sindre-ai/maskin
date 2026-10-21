@@ -132,6 +132,19 @@ export function useCreateObject(workspaceId: string) {
 	})
 }
 
+// A person's yes to sending a drafted object exactly as it reads. The preview carries the
+// new delivery state, so the object is read again rather than patched by hand.
+export function useApproveObject() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, contentHash }: { id: string; contentHash?: string }) =>
+			api.objects.approve(id, contentHash),
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+		},
+	})
+}
+
 export function useUpdateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
