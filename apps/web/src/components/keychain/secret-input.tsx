@@ -9,6 +9,9 @@ interface SecretInputProps {
 	disabled?: boolean
 	/** Passed through so a browser's password manager can tell a login from a key. */
 	autoComplete?: 'new-password' | 'off'
+	/** False when leaving it blank is allowed, as when editing a saved credential. */
+	required?: boolean
+	placeholder?: string
 }
 
 /**
@@ -22,6 +25,8 @@ export function SecretInput({
 	onChange,
 	disabled,
 	autoComplete = 'new-password',
+	required = true,
+	placeholder,
 }: SecretInputProps) {
 	const [reveal, setReveal] = useState(false)
 	return (
@@ -35,7 +40,8 @@ export function SecretInput({
 				autoComplete={autoComplete}
 				spellCheck={false}
 				disabled={disabled}
-				required
+				required={required}
+				placeholder={placeholder}
 			/>
 			<Button
 				type="button"

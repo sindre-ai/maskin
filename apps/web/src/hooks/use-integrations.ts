@@ -214,6 +214,27 @@ export function useCreateByoLogin(workspaceId: string) {
 }
 
 /**
+ * Keychain: rename a saved key or login, replace its secret, or both. The dialog shows the failure
+ * inline (a taken name has a message a person can act on), so the global error toast is switched off.
+ */
+export function useUpdateCredential(workspaceId: string, integrationId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (body: {
+			displayName?: string
+			rawSecret?: string
+			username?: string
+			password?: string
+		}) => api.integrations.updateCredential(integrationId, workspaceId, body),
+		onSuccess: () => {
+			toast.success('Credential updated')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/**
  * Keychain: remove a saved key or login at any time. The secret is destroyed on the server,
  * so the credential drops out of the list. The page shows the failure inline in its dialog,
  * so the global error toast is switched off.

@@ -1,5 +1,6 @@
 import { AgentAccess } from '@/components/integrations/agent-access'
 import { ProviderCard } from '@/components/integrations/provider-card'
+import { CredentialEditDialog } from '@/components/keychain/credential-edit-dialog'
 import { credentialName, credentialTypeLabel } from '@/components/keychain/keychain-parts'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,6 +25,7 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 	const { workspace, workspaceId } = useWorkspace()
 	const remove = useRemoveCredential(workspaceId)
 	const [confirming, setConfirming] = useState(false)
+	const [editing, setEditing] = useState(false)
 
 	const name = credentialName(credential)
 	const isSavedSecret =
@@ -37,6 +39,8 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 		(credential.status === 'active' || credential.status === 'pending_undo') &&
 		me?.type === 'human' &&
 		(credential.createdBy === me.id || isOwnerOrAdmin)
+	// Only an active key or login can be edited: one in its undo window is not saved yet.
+	const canEdit = canRemove && credential.status === 'active'
 	// A key still in its undo window is scoped by the chat card, and an OAuth connection keeps
 	// its workspace grant, so only an active key or login has agents to assign here.
 	const assignable = isSavedSecret && credential.status === 'active'
@@ -56,18 +60,31 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 				tone={assigned ? 'connected' : 'available'}
 				actions={
 					canRemove ? (
-						<Button
-							variant="ghost"
-							size="sm"
-							className="shrink-0 text-muted-foreground hover:text-error"
-							aria-label={`Remove ${name}`}
-							onClick={() => {
-								remove.reset()
-								setConfirming(true)
-							}}
-						>
-							Remove
-						</Button>
+						<div className="flex shrink-0 items-center gap-1">
+							{canEdit && (
+								<Button
+									variant="ghost"
+									size="sm"
+									className="text-muted-foreground"
+									aria-label={`Edit ${name}`}
+									onClick={() => setEditing(true)}
+								>
+									Edit
+								</Button>
+							)}
+							<Button
+								variant="ghost"
+								size="sm"
+								className="shrink-0 text-muted-foreground hover:text-error"
+								aria-label={`Remove ${name}`}
+								onClick={() => {
+									remove.reset()
+									setConfirming(true)
+								}}
+							>
+								Remove
+							</Button>
+						</div>
 					) : null
 				}
 				footer={
@@ -76,6 +93,17 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 					) : undefined
 				}
 			/>
+
+			{canEdit && (
+				<CredentialEditDialog
+					open={editing}
+					onOpenChange={setEditing}
+					workspaceId={workspaceId}
+					integrationId={credential.id}
+					name={name}
+					kind={credential.providerMode === 'byo_login' ? 'login' : 'api_key'}
+				/>
+			)}
 
 			{canRemove && (
 				<ResponsiveDialog open={confirming} onOpenChange={setConfirming}>

@@ -100,6 +100,52 @@ test.describe('Keychain settings', () => {
 		})
 	}
 
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`rename a key and replace its secret from the card @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			await page.goto(`/${account.workspaceId}/settings/keychain/new`)
+			const name = `Stripe ${Date.now()}`
+			await page.getByLabel('Name').fill(name)
+			await page.getByLabel('Secret').fill(FAKE_SECRET)
+			await page.getByRole('button', { name: 'Save' }).click()
+			await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 15_000 })
+
+			await page.getByRole('button', { name: `Edit ${name}` }).click()
+			const dialog = page.getByRole('dialog')
+			await expect(dialog.getByLabel('Name')).toHaveValue(name)
+			// Nothing to save until something changes, and the current secret is never shown.
+			await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled()
+			await expect(dialog.getByLabel('New secret')).toHaveValue('')
+
+			const renamed = `${name} live`
+			await dialog.getByLabel('Name').fill(renamed)
+			await dialog.getByLabel('New secret').fill(`${FAKE_SECRET}-v2`)
+			await dialog.getByRole('button', { name: 'Save' }).click()
+			await expect(dialog).toHaveCount(0, { timeout: 15_000 })
+
+			await expect(page.getByText(renamed, { exact: true })).toBeVisible()
+			await expect(page.getByText(name, { exact: true })).toHaveCount(0)
+			// Neither value reaches the page or web storage.
+			const leaked = await page.evaluate((secret) => {
+				const dump = (st: Storage) =>
+					Object.keys(st).some((k) => (st.getItem(k) ?? '').includes(secret))
+				return {
+					storage: dump(localStorage) || dump(sessionStorage),
+					html: document.documentElement.innerHTML.includes(secret),
+				}
+			}, FAKE_SECRET)
+			expect(leaked).toEqual({ storage: false, html: false })
+			const overflow = await page.evaluate(
+				() => document.documentElement.scrollWidth > window.innerWidth,
+			)
+			expect(overflow).toBe(false)
+		})
+	}
+
 	test('renders the list in dark mode', async ({ page, account }) => {
 		await page.addInitScript(() => {
 			localStorage.setItem('maskin-theme', 'dark')

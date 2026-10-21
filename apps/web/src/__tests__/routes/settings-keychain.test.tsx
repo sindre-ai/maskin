@@ -42,6 +42,8 @@ const mockRemove = vi.fn()
 const mockRemoveReset = vi.fn()
 const removeState = vi.fn<() => Record<string, unknown>>(() => ({}))
 const mockSetGrant = vi.fn()
+const mockUpdate = vi.fn()
+const updateState = vi.fn<() => Record<string, unknown>>(() => ({}))
 const mockRemoveGrant = vi.fn()
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => mockUseIntegrations(),
@@ -53,6 +55,13 @@ vi.mock('@/hooks/use-integrations', () => ({
 		isPending: false,
 		isError: false,
 		...removeState(),
+	}),
+	useUpdateCredential: () => ({
+		mutate: mockUpdate,
+		isPending: false,
+		isError: false,
+		error: null,
+		...updateState(),
 	}),
 	useSetAgentGrant: () => ({ mutate: mockSetGrant, isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: mockRemoveGrant, isPending: false }),
@@ -112,6 +121,7 @@ beforeEach(() => {
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
 	removeState.mockReturnValue({})
+	updateState.mockReturnValue({})
 })
 
 describe('Keychain layout route', () => {
@@ -534,5 +544,120 @@ describe('KeychainPage: credential cards', () => {
 
 			expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove this credential')
 		})
+	})
+})
+
+describe('KeychainPage: edit a credential', () => {
+	const open = (over = {}) => {
+		mockUseIntegrations.mockReturnValue({ data: [pasted(over)], isLoading: false })
+		return render(<KeychainPage />)
+	}
+	const editButton = () => screen.queryByRole('button', { name: 'Edit Linear · Sindre AI' })
+	const dialog = async () => within(await screen.findByRole('dialog'))
+	const save = (d: ReturnType<typeof within>) => d.getByRole('button', { name: 'Save' })
+
+	it('is offered to the person who saved it and to an admin, and hidden from everyone else', () => {
+		const { unmount } = open()
+		expect(editButton()).toBeInTheDocument()
+		unmount()
+
+		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+		const plain = open()
+		expect(editButton()).not.toBeInTheDocument()
+		plain.unmount()
+
+		mockRole.mockReturnValue('admin')
+		open()
+		expect(editButton()).toBeInTheDocument()
+	})
+
+	it('is hidden for an OAuth connection and for a key still in its undo window', () => {
+		open({ providerMode: 'byo_oauth' })
+		expect(editButton()).not.toBeInTheDocument()
+		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
+		render(<KeychainPage />)
+		expect(screen.queryByRole('button', { name: 'Edit Cloudflare deploy' })).not.toBeInTheDocument()
+	})
+
+	it('starts on the saved name with an empty secret, and cannot save until something changes', async () => {
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		expect(d.getByLabelText('Name')).toHaveValue('Linear · Sindre AI')
+		expect(d.getByLabelText('New secret')).toHaveValue('')
+		expect(save(d)).toBeDisabled()
+	})
+
+	it('renames without sending a secret, and warns that agents using the old name need the new one', async () => {
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		const name = d.getByLabelText('Name')
+		await user.clear(name)
+		await user.type(name, 'Linear production')
+		expect(d.getByText(/use this by its old name need the new one/)).toBeInTheDocument()
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith(
+			{ displayName: 'Linear production' },
+			expect.any(Object),
+		)
+	})
+
+	it('replaces the key without renaming, and clears the field once saved', async () => {
+		mockUpdate.mockImplementation((_b: unknown, opts?: { onSuccess?: () => void }) =>
+			opts?.onSuccess?.(),
+		)
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New secret'), SECRET)
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith({ rawSecret: SECRET }, expect.any(Object))
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+		expect(JSON.stringify({ ...localStorage })).not.toContain(SECRET)
+	})
+
+	it('replaces a login as a whole: both fields together, never one alone', async () => {
+		const user = userEvent.setup()
+		open({ providerMode: 'byo_login' })
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New username or email'), 'me@example.test')
+		expect(save(d)).toBeDisabled()
+		expect(d.getByText(/together to replace the login/)).toBeInTheDocument()
+		await user.type(d.getByLabelText('New password'), 'p4ss"word')
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith(
+			{ username: 'me@example.test', password: 'p4ss"word' },
+			expect.any(Object),
+		)
+	})
+
+	it('refuses a name the server would refuse, before any request', async () => {
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		const name = d.getByLabelText('Name')
+		await user.clear(name)
+		await user.click(name)
+		await user.paste('bad [name]')
+		expect(
+			d.getByText("Names can't contain square brackets or control characters."),
+		).toBeInTheDocument()
+		expect(save(d)).toBeDisabled()
+	})
+
+	it('shows the server message when the name is taken, and keeps the dialog open', async () => {
+		const taken = new ApiError(409, 'Another key in this workspace already has this name.')
+		taken.code = 'NAME_TAKEN'
+		updateState.mockReturnValue({ isError: true, error: taken })
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		expect(await screen.findByRole('alert')).toHaveTextContent('already has this name')
 	})
 })
