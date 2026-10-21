@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
@@ -93,6 +93,8 @@ async function toolServer(
 		.values({
 			workspaceId,
 			provider: 'custom-mcp',
+			// One custom-mcp row per workspace and actor is allowed without an external id.
+			externalId: randomUUID(),
 			status: 'active',
 			displayName: name,
 			credentials: encrypt(JSON.stringify({ server })),
