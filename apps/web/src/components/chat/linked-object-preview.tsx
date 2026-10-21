@@ -179,13 +179,17 @@ export function LinkedObjectPreviews({
 	content,
 	conversationId,
 	agentId,
+	skipIds,
 }: {
 	workspaceId: string
 	content: string
 	conversationId?: string
 	agentId?: string
+	/** Objects whose card an earlier message in the chat already shows; the link
+	 *  in this message stays, the card is not repeated. */
+	skipIds?: ReadonlySet<string>
 }) {
-	const ids = extractLinkedObjectIds(content)
+	const ids = extractLinkedObjectIds(content).filter((id) => !skipIds?.has(id))
 	if (ids.length === 0) return null
 	return (
 		<>
