@@ -2182,6 +2182,15 @@ export const notificationPreferences = pgTable(
 		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
 		briefingTime: smallint('briefing_time').notNull().default(510),
 		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
+		// Local date (in `timezone`) of the last daily briefing push; the scheduler claims a day
+		// with one conditional UPDATE, so it is sent once across restarts and replicas. Migration 0105.
+		briefingLastSentOn: date('briefing_last_sent_on', { mode: 'string' }),
+		// One-time lifecycle pushes already sent: { first_task, activation, reminder_at,
+		// 'reminded:<notification id>' } -> ISO timestamp. Migration 0105.
+		lifecycleSent: jsonb('lifecycle_sent')
+			.$type<Record<string, string>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
