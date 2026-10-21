@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { notifyChatReply } from './chat-notifications'
 
 export type InsertConversationMessageArgs = {
 	conversationId: string
@@ -92,6 +93,20 @@ export async function insertConversationMessage(
 			messageId: created.id,
 		})
 	}
+
+	// The single hook for "an agent replied": every auto-posted final output
+	// (both InteractiveTurnFinalizer paths) lands here, and only a fresh insert
+	// reaches this line, so a replayed log line cannot notify twice.
+	await notifyChatReply(db, {
+		workspaceId: args.workspaceId,
+		authorId: args.actorId,
+		conversationId: args.conversationId,
+		messageId: created.id,
+		content: args.content,
+		kind: args.kind,
+		metadata: args.metadata,
+		sessionId: args.sessionId,
+	})
 
 	return created
 }
