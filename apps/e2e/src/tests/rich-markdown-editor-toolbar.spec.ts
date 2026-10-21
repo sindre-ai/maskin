@@ -101,36 +101,51 @@ test.describe('rich-markdown-editor — floating toolbar & shortcuts', () => {
 		account,
 	}) => {
 		const { bet, editor } = await openEditor(page, account, 'https://example.com')
-		await editor.press('ControlOrMeta+a')
-
 		const toolbar = page.locator('[data-editor-toolbar="floating"]')
-		await expect(toolbar).toBeVisible()
+		const linkInput = page.getByRole('textbox', { name: 'Link URL' })
+
+		// Committing a link hands focus back to the editor a frame after the popover
+		// closes, so a blur sent straight away is overtaken by it and the save-on-blur
+		// never runs. Wait for that focus to land, then blur.
+		const blurAfterCommit = async () => {
+			await expect(linkInput).toBeHidden()
+			await expect(editor).toBeFocused()
+			await editor.evaluate((el) => (el as HTMLElement).blur())
+		}
+		// A click right after a save can land before the editor takes the selection, so
+		// retry until the toolbar shows.
+		const selectAll = async () => {
+			await expect(async () => {
+				await editor.click()
+				await editor.press('ControlOrMeta+a')
+				await expect(toolbar).toBeVisible({ timeout: 1000 })
+			}).toPass({ timeout: 15000 })
+		}
+
+		await selectAll()
 		await toolbar.getByRole('button', { name: 'Link' }).click()
 
 		// The selection is a URL, so the popover opens pre-filled with it.
-		const linkInput = page.getByRole('textbox', { name: 'Link URL' })
 		await expect(linkInput).toHaveValue('https://example.com')
 		await linkInput.fill('https://maskin.io')
 		await linkInput.press('Enter')
-		await editor.evaluate((el) => (el as HTMLElement).blur())
+		await blurAfterCommit()
 		await expect.poll(() => savedContent(account, bet.id)).toContain('](https://maskin.io)')
 
 		// Edit the existing link.
-		await editor.click()
-		await editor.press('ControlOrMeta+a')
+		await selectAll()
 		await toolbar.getByRole('button', { name: 'Link' }).click()
 		await expect(linkInput).toHaveValue('https://maskin.io')
 		await linkInput.fill('https://example.org')
 		await linkInput.press('Enter')
-		await editor.evaluate((el) => (el as HTMLElement).blur())
+		await blurAfterCommit()
 		await expect.poll(() => savedContent(account, bet.id)).toContain('](https://example.org)')
 
 		// Remove it.
-		await editor.click()
-		await editor.press('ControlOrMeta+a')
+		await selectAll()
 		await toolbar.getByRole('button', { name: 'Link' }).click()
 		await page.getByRole('button', { name: 'Remove link' }).click()
-		await editor.evaluate((el) => (el as HTMLElement).blur())
+		await blurAfterCommit()
 		await expect.poll(() => savedContent(account, bet.id)).not.toContain('](https://example.org)')
 	})
 
