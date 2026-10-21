@@ -278,7 +278,8 @@ jobs:
         run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 has no ubuntu26.04 support, revisit when it does.
+    runs-on: ubuntu-24.04
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
