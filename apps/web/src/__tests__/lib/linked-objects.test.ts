@@ -1,4 +1,9 @@
-import { extractLinkedFileIds, extractLinkedObjectIds } from '@/lib/linked-objects'
+import {
+	extractLinkedFileIds,
+	extractLinkedObjectIds,
+	showsObjectCard,
+	targetOfHref,
+} from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -48,5 +53,53 @@ describe('extractLinkedFileIds', () => {
 
 	it('returns nothing for text without links', () => {
 		expect(extractLinkedFileIds('no links here')).toEqual([])
+	})
+})
+
+describe('showsObjectCard', () => {
+	const draft = { workspaceId: 'ws', content: 'Hej', preview: { body: 'Hej' } }
+
+	it('is true for a draft with text in this workspace', () => {
+		expect(showsObjectCard(draft, 'ws')).toBe(true)
+	})
+
+	it('is false for a plain task, another workspace, no text, or no object', () => {
+		expect(showsObjectCard({ ...draft, preview: null }, 'ws')).toBe(false)
+		expect(showsObjectCard(draft, 'other')).toBe(false)
+		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
+		expect(showsObjectCard(undefined, 'ws')).toBe(false)
+	})
+})
+
+describe('targetOfHref', () => {
+	const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+
+	it('reads an object or file id from an address', () => {
+		expect(targetOfHref(`https://x.io/ws/objects/${id.toUpperCase()}`)).toEqual({
+			kind: 'object',
+			id,
+		})
+		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
+	})
+
+	it('ignores any other address', () => {
+		expect(targetOfHref('https://x.io/ws/agents')).toBeNull()
+		expect(targetOfHref(undefined)).toBeNull()
+	})
+})
+
+describe('extractLinkedObjectIds / extractLinkedFileIds in code and with boundaries', () => {
+	it('ignores addresses in inline code and fenced blocks', () => {
+		const text = `Use \`/ws/objects/${A}\`.\n\n\`\`\`\n/ws/objects/${B}\n/ws/files/${C}\n\`\`\`\n\nReal: /ws/objects/${D}`
+		expect(extractLinkedObjectIds(text)).toEqual([D])
+		expect(extractLinkedFileIds(text)).toEqual([])
+	})
+
+	it('needs the id to end where an address ends', () => {
+		expect(extractLinkedObjectIds(`/ws/objects/${A}x`)).toEqual([])
+		expect(extractLinkedObjectIds(`/ws/objects/${A}-more`)).toEqual([])
+		expect(
+			extractLinkedObjectIds(`(/ws/objects/${A}), /ws/objects/${B}?x=1 /ws/objects/${C}/`),
+		).toEqual([A, B, C])
 	})
 })

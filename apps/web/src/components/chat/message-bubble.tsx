@@ -1,4 +1,4 @@
-import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
+import { renderLinkedCard } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -302,18 +302,22 @@ export function MessageBubble({
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
 						    parser backs object comments — no new payload, just the render
-						    path the chat surface was missing. */}
-						<MarkdownContent content={message.content} size="sm" renderVisuals />
+						    path the chat surface was missing. `linkedCards` draws a link to a
+						    draft or a page as its card, where the link stands, so it can be read
+						    (and a draft approved) without leaving the chat. */}
+						<MarkdownContent
+							content={message.content}
+							size="sm"
+							renderVisuals
+							linkedCards={{
+								workspaceId,
+								conversationId: message.conversationId,
+								agentId: message.actorId,
+								renderCard: renderLinkedCard,
+							}}
+						/>
 					</div>
 				) : null}
-				{/* What the objects this message links to say, so a draft or a page can be
-				    read without leaving the chat. */}
-				<LinkedObjectPreviews
-					workspaceId={workspaceId}
-					content={message.content}
-					conversationId={message.conversationId}
-					agentId={message.actorId}
-				/>
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
 				    message's own content already renders the questions as markdown
 				    above, so this adds the affordance rather than the information —

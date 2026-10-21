@@ -14,6 +14,12 @@ vi.mock('@/hooks/use-objects', () => ({
 }))
 vi.mock('@/components/shared/file-preview', () => ({
 	FilePreview: ({ fileId }: { fileId: string }) => <div data-testid="file-preview">{fileId}</div>,
+	isPreviewableFile: (mime: string) =>
+		/^(text\/|image\/(png|jpeg|gif|webp))/.test(mime) || mime === 'application/xhtml+xml',
+}))
+const useFiles = vi.fn()
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: (...args: unknown[]) => useFiles(...args),
 }))
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutate: sendMutate }),
@@ -61,13 +67,17 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
+import {
+	LinkedCardOrLink,
+	LinkedObjectCard,
+	LinkedObjectPreviews,
+} from '@/components/chat/linked-object-preview'
+import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
-const CONTENT = `Draft: /objects/${ID}`
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -82,7 +92,22 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 }
 
 function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
-	return render(<LinkedObjectPreviews workspaceId={WS} content={CONTENT} {...props} />)
+	return render(<LinkedObjectCard workspaceId={WS} objectId={ID} {...props} />)
+}
+
+const DRAFT_PREVIEW = {
+	kind: 'email',
+	label: 'Email',
+	provider: 'gmail',
+	recipients: [],
+	subject: 'Hello',
+	details: [],
+	body: 'Hej Catja, tillykke med fusionen.',
+	maxLength: null,
+	missing: [],
+	warnings: [],
+	content_hash: 'hash-0',
+	delivery: { state: 'draft', at: null },
 }
 
 // The card starts contracted; click its top to read the text.
@@ -90,7 +115,7 @@ async function expand() {
 	await userEvent.click(screen.getByText('LinkedIn note to Catja'))
 }
 
-describe('LinkedObjectPreviews', () => {
+describe('LinkedObjectCard', () => {
 	beforeEach(() => {
 		useObject.mockReset()
 		updateMutate.mockReset()
@@ -105,12 +130,6 @@ describe('LinkedObjectPreviews', () => {
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
 		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
-	})
-
-	it('shows nothing when the message links to no object', () => {
-		const { container } = render(<LinkedObjectPreviews workspaceId={WS} content="No links" />)
-		expect(container).toBeEmptyDOMElement()
-		expect(useObject).not.toHaveBeenCalled()
 	})
 
 	it('shows nothing for an object from another workspace', () => {
@@ -344,29 +363,138 @@ describe('LinkedObjectPreviews', () => {
 		})
 	})
 
-	describe('files the message links to', () => {
-		const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
-
-		it('shows a card for a linked file', () => {
-			render(
-				<LinkedObjectPreviews
-					workspaceId={WS}
-					content={`The page: https://x.io/${WS}/files/${FILE}`}
-				/>,
-			)
-			expect(screen.getByTestId('file-preview')).toHaveTextContent(FILE)
-		})
-
-		it('shows cards for the object and the file when a message links both', () => {
+	describe('Show in panel', () => {
+		it('is not offered without a panel to show it in', () => {
 			useObject.mockReturnValue({ data: objectRow() })
-			render(
-				<LinkedObjectPreviews
-					workspaceId={WS}
-					content={`Draft /objects/${ID} and page /files/${FILE}`}
-				/>,
-			)
-			expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
-			expect(screen.getByTestId('file-preview')).toBeInTheDocument()
+			renderCard()
+			expect(screen.queryByRole('button', { name: 'Show in panel' })).not.toBeInTheDocument()
 		})
+
+		it('asks the panel to show the object, without toggling the card', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			const openLinked = vi.fn()
+			render(
+				<LinkedPanelContext.Provider value={{ openLinked }}>
+					<LinkedObjectCard workspaceId={WS} objectId={ID} />
+				</LinkedPanelContext.Provider>,
+			)
+			await userEvent.click(screen.getByRole('button', { name: 'Show in panel' }))
+			expect(openLinked).toHaveBeenCalledWith({ kind: 'object', id: ID })
+			expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+		})
+	})
+})
+
+describe('LinkedObjectPreviews', () => {
+	const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
+	const fileRow = (mimeType: string) => ({ id: FILE, name: 'page.html', mimeType, sizeBytes: 10 })
+
+	beforeEach(() => {
+		useObject.mockReset()
+		useFiles.mockReset()
+		useFiles.mockReturnValue({ data: undefined })
+	})
+
+	it('shows nothing when the message links to nothing', () => {
+		const { container } = render(<LinkedObjectPreviews workspaceId={WS} content="No links" />)
+		expect(container).toBeEmptyDOMElement()
+		expect(useObject).not.toHaveBeenCalled()
+	})
+
+	it('shows a card for a draft the message links to', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		render(<LinkedObjectPreviews workspaceId={WS} content={`Draft: /objects/${ID}`} />)
+		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+	})
+
+	it('shows nothing for a plain task, which is a reference and stays a link', () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		const { container } = render(
+			<LinkedObjectPreviews workspaceId={WS} content={`Draft: /objects/${ID}`} />,
+		)
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('shows a card for a previewable linked file', () => {
+		useFiles.mockReturnValue({ data: [fileRow('text/html')] })
+		render(
+			<LinkedObjectPreviews
+				workspaceId={WS}
+				content={`The page: https://x.io/${WS}/files/${FILE}`}
+			/>,
+		)
+		expect(screen.getByTestId('file-preview')).toHaveTextContent(FILE)
+	})
+
+	it('shows nothing for a file that cannot be previewed', () => {
+		useFiles.mockReturnValue({ data: [fileRow('application/pdf')] })
+		const { container } = render(
+			<LinkedObjectPreviews workspaceId={WS} content={`/files/${FILE}`} />,
+		)
+		expect(container).toBeEmptyDOMElement()
+	})
+})
+
+describe('LinkedCardOrLink', () => {
+	const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
+	const link = <a href="/x">the original link</a>
+	const renderObject = () =>
+		render(
+			<LinkedCardOrLink workspaceId={WS} target={{ kind: 'object', id: ID }} fallback={link} />,
+		)
+
+	beforeEach(() => {
+		useObject.mockReset()
+		useFiles.mockReset()
+		useFiles.mockReturnValue({ data: undefined })
+	})
+
+	it('keeps the link while the object loads, is missing, or failed to load', () => {
+		for (const result of [{ data: undefined }, { data: undefined, isError: true }]) {
+			useObject.mockReturnValue(result)
+			const { unmount } = renderObject()
+			expect(screen.getByText('the original link')).toBeInTheDocument()
+			unmount()
+		}
+	})
+
+	it('keeps the link for an object in another workspace', () => {
+		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other', preview: DRAFT_PREVIEW }) })
+		renderObject()
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+	})
+
+	it('keeps the link for an object that is not a draft', () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderObject()
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+	})
+
+	it('replaces the link by the card for a draft', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+	})
+
+	it('keeps the link for a file that is loading or not previewable, and replaces it for a page', () => {
+		const file = (
+			<LinkedCardOrLink workspaceId={WS} target={{ kind: 'file', id: FILE }} fallback={link} />
+		)
+		for (const data of [
+			undefined,
+			[{ id: FILE, name: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 1 }],
+		]) {
+			useFiles.mockReturnValue({ data })
+			const { unmount } = render(file)
+			expect(screen.getByText('the original link')).toBeInTheDocument()
+			unmount()
+		}
+		useFiles.mockReturnValue({
+			data: [{ id: FILE, name: 'page.html', mimeType: 'text/html', sizeBytes: 1 }],
+		})
+		render(file)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByTestId('file-preview')).toBeInTheDocument()
 	})
 })
