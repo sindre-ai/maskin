@@ -293,8 +293,8 @@ describe('AddCredentialPage', () => {
 			)
 			expect(mockCreate).not.toHaveBeenCalled()
 			expect(mockNavigate).toHaveBeenCalledWith({
-				to: '/$workspaceId/settings/keychain/$integrationId',
-				params: { workspaceId: 'ws-1', integrationId: 'login-id' },
+				to: '/$workspaceId/settings/keychain',
+				params: { workspaceId: 'ws-1' },
 			})
 			expect(screen.getByLabelText('Password')).toHaveValue('')
 		})
@@ -410,7 +410,8 @@ describe('KeychainPage: credential cards', () => {
 			expect(screen.getByRole('combobox', { name: 'Access for Code Reviewer' })).toHaveTextContent(
 				'Full access',
 			)
-			expect(screen.getByRole('combobox', { name: 'Add an agent' })).toBeInTheDocument()
+			// Both agents already have an entry, so there is nobody left to add.
+			expect(screen.queryByRole('combobox', { name: 'Add an agent' })).not.toBeInTheDocument()
 			expect(
 				screen.getByText(
 					'Applies to new sessions. A session already running keeps the key until it ends.',
