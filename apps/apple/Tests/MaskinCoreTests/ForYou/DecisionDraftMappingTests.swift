@@ -29,7 +29,7 @@ struct DecisionDraftMappingTests {
 			(draft.map { #","draft":\#($0)"# } ?? "") + (drafts.map { #","drafts":\#($0)"# } ?? "")
 		return """
 			{"items":[{
-			  "notification_id":"11111111-1111-4111-8111-111111111111","rank":1,
+			  "notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,"latest_event_id":42,
 			  "headline":"Send the note to Hans?","rationale":null,"created_at":"2026-10-20T10:00:00.000Z",
 			  "entity_type":"object","entity_id":"task-1","session_id":null,
 			  "latest_mention":{
@@ -154,7 +154,7 @@ struct CuratedListMappingTests {
 		let entity = id.map { #""entity_type":"object","entity_id":"\#($0)""# }
 			?? #""entity_type":null,"entity_id":null"#
 		return """
-			{"notification_id":"11111111-1111-4111-8111-111111111111","rank":1,"headline":"\(headline)",
+			{"notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,"latest_event_id":42,"headline":"\(headline)",
 			 "rationale":null,"created_at":"2026-10-20T10:00:00.000Z",\(entity),"session_id":null}
 			"""
 	}
@@ -174,5 +174,37 @@ struct CuratedListMappingTests {
 		])
 		#expect(result.map(\.id) == ["b", "a"])
 		#expect(result.map(\.rank) == [0, 2])
+	}
+
+	@Test("maps a decision card that has no notification behind it")
+	func mapsDecisionCard() async throws {
+		let json = """
+			{"items":[{"notification_id":null,"source":"decision","rank":3,"latest_event_id":77,"headline":"Send the Hans exit message?",
+			 "rationale":null,"created_at":"2026-10-20T10:00:00.000Z","entity_type":"object",
+			 "entity_id":"task-9","session_id":null}]}
+			"""
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!, transport: FeedTransport(json))
+		let result = try await APIForYouBackend(client: client, workspaceId: { "ws-1" })
+			.fetchFeed(workspaceId: "ws-1")
+		#expect(result.map(\.id) == ["task-9"])
+		#expect(result.first?.rank == 0)
+	}
+
+	@Test("leads with the Chief of Staff's headline when there is no comment, and can be marked read")
+	func curatedItemWithoutComment() async throws {
+		let json = """
+			{"items":[{"notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,
+			 "latest_event_id":321,"headline":"Graduate 5 wiki pages","rationale":"Voice is your call.",
+			 "created_at":"2026-10-20T10:00:00.000Z","entity_type":"object","entity_id":"task-5","session_id":null}]}
+			"""
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!, transport: FeedTransport(json))
+		let card = try #require(
+			try await APIForYouBackend(client: client, workspaceId: { "ws-1" })
+				.fetchFeed(workspaceId: "ws-1").first)
+		#expect(card.headline == "Graduate 5 wiki pages")
+		#expect(card.body == "Voice is your call.")
+		#expect(card.latestEventId == 321)
 	}
 }

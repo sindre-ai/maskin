@@ -8094,7 +8094,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													},
@@ -8109,6 +8108,7 @@
 														"type": "string",
 														"enum": [
 															"read",
+															"read_write",
 															"none"
 														]
 													},
@@ -8154,6 +8154,13 @@
 													"has_access": {
 														"type": "boolean"
 													},
+													"default_access": {
+														"type": "string",
+														"enum": [
+															"read",
+															"none"
+														]
+													},
 													"scope": {
 														"type": [
 															"string",
@@ -8177,6 +8184,7 @@
 													"name",
 													"kind",
 													"has_access",
+													"default_access",
 													"scope",
 													"chat_count",
 													"created_by"
@@ -25349,6 +25357,292 @@
 				}
 			}
 		},
+		"/api/integrations/{id}/update": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Rename a saved API key or login, replace its secret, or both (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Saved. A running session keeps what it started with; the next one gets the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"renamed": {
+											"type": "boolean"
+										},
+										"secretReplaced": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"renamed",
+										"secretReplaced"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person, or neither its creator nor a workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "NAME_TAKEN, or not an active saved key or login",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/{id}/relaunch": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -26042,6 +26336,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -26059,7 +26354,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -26187,7 +26481,6 @@
 													"enum": [
 														"none",
 														"read",
-														"ask_first",
 														"read_write"
 													]
 												}
@@ -26230,7 +26523,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -26528,7 +26820,6 @@
 										"enum": [
 											"none",
 											"read",
-											"ask_first",
 											"read_write"
 										]
 									}
@@ -26558,7 +26849,6 @@
 											"enum": [
 												"none",
 												"read",
-												"ask_first",
 												"read_write"
 											]
 										}
@@ -27125,6 +27415,7 @@
 										"type": "string",
 										"enum": [
 											"read",
+											"read_write",
 											"none"
 										]
 									}
@@ -27149,6 +27440,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										}
@@ -27712,7 +28004,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. \"Read & write\" access sends directly; \"Ask first\" access, and any protected recipient, needs an approval card a person answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -27788,8 +28080,7 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft",
-												"direct"
+												"approved_draft"
 											]
 										}
 									},
@@ -28262,6 +28553,7 @@
 												"type": "string",
 												"enum": [
 													"read",
+													"read_write",
 													"none"
 												]
 											},
@@ -28279,7 +28571,6 @@
 															"enum": [
 																"none",
 																"read",
-																"ask_first",
 																"read_write"
 															]
 														}
@@ -28670,6 +28961,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -28687,7 +28979,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -29116,6 +29407,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -29133,7 +29425,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -29931,6 +30222,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -29948,7 +30240,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}

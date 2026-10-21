@@ -129,12 +129,17 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 	/// Position in the Chief of Staff's ranked list (0 is first). `nil` for a card that did not come
 	/// from that list, which is then ordered by the reader's sort setting instead.
 	public var rank: Int?
+	/// What the Chief of Staff said it needs from the person, for an item with no comment to
+	/// lead with. Optional so cards cached before this still decode.
+	public var curatedHeadline: String?
+	public var curatedRationale: String?
 
 	public init(
 		id: String, entityType: String = "object", objectTitle: String? = nil,
 		objectType: String? = nil, status: String? = nil, unreadCount: Int = 1,
 		maxAttention: Int? = nil, latestEventId: Int? = nil, latestActivityAt: Date? = nil,
-		mention: ForYouMention? = nil, rank: Int? = nil
+		mention: ForYouMention? = nil, rank: Int? = nil, curatedHeadline: String? = nil,
+		curatedRationale: String? = nil
 	) {
 		self.id = id
 		self.entityType = entityType
@@ -147,6 +152,8 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 		self.latestActivityAt = latestActivityAt
 		self.mention = mention
 		self.rank = rank
+		self.curatedHeadline = curatedHeadline
+		self.curatedRationale = curatedRationale
 	}
 
 	public enum Kind: Sendable, Equatable {
@@ -165,12 +172,15 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 		if let title = decision?.title.trimmed, !title.isEmpty { return title }
 		let parts = MentionText.parts(of: mention?.content)
 		if !parts.headline.isEmpty { return parts.headline }
+		if let curated = curatedHeadline?.trimmed.nonEmpty { return curated }
 		return objectTitle?.trimmed.nonEmpty ?? "Untitled"
 	}
 
 	/// Under the headline for a plain mention: whatever the headline did not already use.
 	public var body: String {
-		decision == nil ? MentionText.parts(of: mention?.content).body : ""
+		if decision != nil { return "" }
+		if mention == nil { return curatedRationale?.trimmed ?? "" }
+		return MentionText.parts(of: mention?.content).body
 	}
 
 	/// The object's name as context, hidden when the headline already fell back to it.
