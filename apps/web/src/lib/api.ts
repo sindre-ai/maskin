@@ -1318,7 +1318,7 @@ export const api = {
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
 			const { ids, ...rest } = params
@@ -2193,6 +2193,8 @@ export interface FileListItem {
 	workspaceId: string
 	name: string
 	description: string | null
+	/** What the file is for. `briefing` puts an HTML page in the For you row. */
+	kind?: 'briefing' | null
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
