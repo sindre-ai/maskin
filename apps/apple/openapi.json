@@ -62443,7 +62443,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-				"description": "Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"description": "Gated by the **voice-mode-v1** feature flag, switched on per person: it is what decides whether a call can start. Returns 404 when the flag is off for the calling actor. The target agent's own voice_enabled field is not checked. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 				"requestBody": {
 					"required": true,
 					"content": {
@@ -62466,7 +62466,7 @@
 						}
 					},
 					"400": {
-						"description": "Target agent is not voice-enabled",
+						"description": "Target actor is not an agent",
 						"content": {
 							"application/json": {
 								"schema": {

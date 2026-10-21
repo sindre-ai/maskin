@@ -179,7 +179,7 @@ const postVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
-		'Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
+		"Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 	request: {
 		body: {
 			content: { 'application/json': { schema: createVoiceSessionBody } },
@@ -192,7 +192,7 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: createVoiceSessionResponse } },
 		},
 		400: {
-			description: 'Target agent is not voice-enabled',
+			description: 'Target actor is not an agent',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
