@@ -127,11 +127,8 @@ vi.mock('@/components/layout/page-header', () => ({
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: () => null,
 }))
-vi.mock('@/components/foryou/brief-card', () => ({
-	BriefCard: () => null,
-}))
-vi.mock('@/components/foryou/release-card', () => ({
-	ReleaseCard: () => null,
+vi.mock('@/components/foryou/briefing-row', () => ({
+	BriefingRow: () => null,
 }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
