@@ -6385,14 +6385,26 @@ export function createMcpServer(config: McpConfig) {
 	//                                                   when the wait times out
 	//   config, poll_interval_seconds, timeout_seconds,
 	//   depends_on_session_ids                          no equivalent, dropped, names recorded
-	registerAppTool(
+	// The upstream signature types a schema OBJECT as either a raw shape or a
+	// schema it can infer, and rejects a passthrough object. Every other tool
+	// passes `.shape`, which the SDK rebuilds as a stripping object. This one must
+	// keep unknown keys until the handler runs, so it is registered through the
+	// same wrapper with the narrow type spelled out here.
+	const registerPassthroughTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: z.ZodTypeAny
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerPassthroughTool(
 		server,
 		'run_agent',
 		{
 			description: tools.run_agent.description,
-			// The schema object, not its .shape: the SDK rebuilds a raw shape as a
-			// stripping object, and the dropped key names would be gone before this
-			// handler runs.
 			inputSchema: tools.run_agent.inputSchema,
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
