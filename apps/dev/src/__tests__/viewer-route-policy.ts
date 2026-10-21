@@ -75,6 +75,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	// workspace data, and a read-only viewer still wants their own notifications.
 	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
 	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\u2019s own device'],
+	['PUT', '/api/notification-preferences', 'saves only the caller\u2019s own push preferences'],
 	[
 		'POST',
 		'/api/live-activities/tokens',
