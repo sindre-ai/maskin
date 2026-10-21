@@ -69,6 +69,10 @@ public final class ChatStore {
 	/// True once the read cursor this visit opened with is known (from the saved thread or the
 	/// server), so the thread can choose its opening position once instead of correcting it later.
 	public private(set) var openPositionKnown = false
+	/// True once the newest messages came from the server this visit. A saved thread knows its read
+	/// cursor but not what arrived since, so choosing the opening position from it alone opens on
+	/// the old bottom and the new messages then land below the fold.
+	public private(set) var serverConfirmed = false
 	/// The newest message the reader has scrolled past; read state advances to it while they are
 	/// still above the bottom. Only the thread view feeds it.
 	public private(set) var seenThrough = 0
@@ -684,6 +688,7 @@ public final class ChatStore {
 				openPositionKnown = true
 				readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
 			}
+			serverConfirmed = true
 			freshness.refreshed(at: cache?.now() ?? now())
 			writeCache()
 			// Independent reads: run together so the working indicator and trace don't wait on
