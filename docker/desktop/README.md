@@ -1,12 +1,24 @@
-# desktop-test
+# desktop
 
-Throwaway image to check that an msb microVM can show a live desktop in a
-browser: Xvfb, XFCE, Chromium, x11vnc and noVNC. Not built by CI and not used by the session launcher.
+The agent computer: an msb microVM image that shows a live desktop in a browser
+(Xvfb, XFCE, Chromium, x11vnc and noVNC).
 
-## Build and push (from a machine with Docker)
+## How it ships
 
-    docker build -t <registry>/desktop-test:latest docker/desktop-test
-    docker push <registry>/desktop-test:latest
+Merging a change under `docker/desktop/` to `main` runs
+`.github/workflows/desktop-docker.yml`, which builds the image and pushes it to
+Docker Hub as `latest` and `sha-<commit>` (repository in the `DESKTOP_IMAGE` GitHub
+Actions variable, default `magnusnoeddegaard/maskin-desktop`). The agent-server
+creates every new desktop with `--pull always`, so new desktops use the newest
+`latest` with no restart or redeploy. A desktop that already exists keeps the image
+it was created from until it is deleted (`DELETE /desktops/:id`) and re-opened.
+`DESKTOP_IMAGE` in the agent-server environment overrides the image (default
+`magnusnoeddegaard/maskin-desktop:latest`).
+
+## Build by hand (from a machine with Docker)
+
+    docker build -t <registry>/maskin-desktop:latest docker/desktop
+    docker push <registry>/maskin-desktop:latest
 
 ## Run on the msb server
 
@@ -14,7 +26,7 @@ browser: Xvfb, XFCE, Chromium, x11vnc and noVNC. Not built by CI and not used by
     msb create --name desktop-test --memory 2048M --cpus 2 --pull always \
       -p 10.0.1.1:16080:6080 --net-rule allow@public \
       --net-rule allow@any:udp:53 --net-rule allow@any:tcp:53 \
-      <registry>/desktop-test:latest
+      <registry>/maskin-desktop:latest
     msb exec desktop-test      # starts the entrypoint (create does not)
     msb exec desktop-test -- cat /tmp/vnc-password
 
