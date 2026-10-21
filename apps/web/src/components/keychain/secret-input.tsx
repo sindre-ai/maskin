@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/cn'
 import { useState } from 'react'
 
 interface SecretInputProps {
@@ -36,7 +37,8 @@ export function SecretInput({
 				type={reveal ? 'text' : 'password'}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
-				className="pr-16 font-mono"
+				// Monospace for the secret itself; the placeholder stays in the normal font like every other field.
+				className={cn('pr-16', value && 'font-mono')}
 				autoComplete={autoComplete}
 				spellCheck={false}
 				disabled={disabled}
