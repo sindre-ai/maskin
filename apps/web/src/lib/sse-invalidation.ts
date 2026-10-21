@@ -191,10 +191,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// (['sessions', ws, 'paged']), which walks every page sequentially. The prefix
 			// matches both, so exclude them here — invalidating the paged walk per event
 			// cancels and restarts it, so under steady session traffic it never finishes.
+			// A per-session query (detail, logs) is only stale when the event is about that
+			// session — otherwise every mounted `useSession` refetches on every event for
+			// every other session in the workspace.
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
 					const key = query.queryKey
+					if (key[1] === 'detail') return key[2] === event.entity_id
+					if (key[2] === 'logs') return key[1] === event.entity_id
 					if (key[1] !== workspaceId) return true
 					return !(key.length === 2 || (key.length === 3 && key[2] === 'paged'))
 				},
