@@ -16,7 +16,10 @@ const VAPID_PUBLIC_KEY = `B${'A'.repeat(86)}`
 async function installFakePushApi(page: Page, opts: { permission: NotificationPermission }) {
 	await page.addInitScript(
 		({ initialPermission }) => {
-			let permission = initialPermission
+			// A browser keeps its permission across a reload, like the subscription below.
+			const PERMISSION_KEY = 'e2e-fake-push-permission'
+			let permission = (sessionStorage.getItem(PERMISSION_KEY) ??
+				initialPermission) as NotificationPermission
 			const KEY = 'e2e-fake-push-subscription'
 			const read = () => sessionStorage.getItem(KEY)
 			const makeSub = (endpoint: string) => ({
@@ -63,6 +66,7 @@ async function installFakePushApi(page: Page, opts: { permission: NotificationPe
 			})
 			Notification.requestPermission = async () => {
 				if (permission === 'default') permission = 'granted'
+				sessionStorage.setItem(PERMISSION_KEY, permission)
 				return permission
 			}
 		},
@@ -136,7 +140,7 @@ test.describe('Browser notifications', () => {
 		)
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/profile`)
-		await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 })
+		await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible({ timeout: 10_000 })
 		await expect(toggle(page)).toHaveCount(0)
 		await expect(page.getByText('Notifications', { exact: true })).toHaveCount(0)
 	})

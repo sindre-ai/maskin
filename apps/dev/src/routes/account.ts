@@ -14,6 +14,7 @@ import {
 	starState,
 	subscriptions,
 	userDisplaySettings,
+	webPushSubscriptions,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
@@ -215,6 +216,8 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(liveActivityCards).where(eq(liveActivityCards.actorId, actorId))
 		await tx.delete(deviceTokens).where(eq(deviceTokens.actorId, actorId))
 		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
+		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.
+		await tx.delete(webPushSubscriptions).where(eq(webPushSubscriptions.actorId, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. The key
 		// is replaced with a random value nobody holds; null password and email mean no sign-in and
