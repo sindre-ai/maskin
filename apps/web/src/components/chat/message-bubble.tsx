@@ -12,7 +12,7 @@ import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { splitAtLinkedObjects } from '@/lib/linked-objects'
+import { extractLinkedFileIds, splitAtLinkedObjects } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
@@ -112,6 +112,7 @@ export function MessageBubble({
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
 	const linkedSegments = useMemo(() => splitAtLinkedObjects(message.content), [message.content])
+	const linkedFileIds = useMemo(() => extractLinkedFileIds(message.content), [message.content])
 	const isVoice = message.metadata?.source === 'voice'
 
 	if (message.kind === 'system') {
@@ -319,6 +320,8 @@ export function MessageBubble({
 								<LinkedObjectPreviews
 									workspaceId={workspaceId}
 									objectIds={segment.objectIds}
+									// File cards close the message, after the last paragraph.
+									fileIds={index === linkedSegments.length - 1 ? linkedFileIds : undefined}
 									conversationId={message.conversationId}
 									agentId={message.actorId}
 									skipIds={shownLinkedObjectIds}
