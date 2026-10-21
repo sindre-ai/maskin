@@ -233,6 +233,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 							<DraftGroup
 								drafts={draftsForFile}
 								activeId={activeCommentId}
+								orphanedIds={orphanedIds}
 								onActivate={onActivateComment}
 								onUpdateDraftBody={onUpdateDraftBody}
 								onRemoveDraft={onRemoveDraft}
@@ -242,12 +243,16 @@ export function ReviewPanel(props: ReviewPanelProps) {
 					</>
 				)}
 			</div>
-			<PanelFoot
-				unsentCount={draftsForFile.length + comments.filter((c) => c.roundId === null).length}
-				provenance={provenance}
-				sendState={sendState}
-				onSendRound={onSendRound}
-			/>
+			{/* Text comments are not handed to an agent in this bet, so the document
+			    editor has no Send round foot (its Sent state would imply they are). */}
+			{!textMode && (
+				<PanelFoot
+					unsentCount={draftsForFile.length + comments.filter((c) => c.roundId === null).length}
+					provenance={provenance}
+					sendState={sendState}
+					onSendRound={onSendRound}
+				/>
+			)}
 		</aside>
 	)
 }
@@ -590,6 +595,7 @@ function CommentQuote({
 function DraftGroup({
 	drafts,
 	activeId,
+	orphanedIds,
 	onActivate,
 	onUpdateDraftBody,
 	onRemoveDraft,
@@ -597,6 +603,7 @@ function DraftGroup({
 }: {
 	drafts: FileCommentDraft[]
 	activeId: string | null
+	orphanedIds?: ReadonlySet<string>
 	onActivate?: (id: string, options?: { focus?: boolean }) => void
 	onUpdateDraftBody: (tempId: string, body: string) => void
 	onRemoveDraft: (tempId: string) => void
@@ -619,6 +626,7 @@ function DraftGroup({
 						<DraftCard
 							draft={draft}
 							active={activeId === draft.tempId}
+							orphaned={orphanedIds?.has(draft.tempId) ?? false}
 							onActivate={onActivate}
 							onUpdateDraftBody={onUpdateDraftBody}
 							onRemoveDraft={onRemoveDraft}
@@ -634,6 +642,7 @@ function DraftGroup({
 function DraftCard({
 	draft,
 	active,
+	orphaned,
 	onActivate,
 	onUpdateDraftBody,
 	onRemoveDraft,
@@ -641,6 +650,7 @@ function DraftCard({
 }: {
 	draft: FileCommentDraft
 	active: boolean
+	orphaned: boolean
 	onActivate?: (id: string, options?: { focus?: boolean }) => void
 	onUpdateDraftBody: (tempId: string, body: string) => void
 	onRemoveDraft: (tempId: string) => void
@@ -657,7 +667,7 @@ function DraftCard({
 			data-active={active || undefined}
 			className={cn('flex flex-col gap-2', active && '-mx-3 bg-brand-subtle px-3 py-2')}
 			onClick={
-				textAnchor && onActivate
+				textAnchor && !orphaned && onActivate
 					? (event) => {
 							if ((event.target as HTMLElement).closest('button, a, textarea')) return
 							onActivate(draft.tempId)
@@ -679,7 +689,7 @@ function DraftCard({
 			{textAnchor && (
 				<CommentQuote
 					quote={textAnchor.quote}
-					orphaned={false}
+					orphaned={orphaned}
 					onGo={() => onActivate?.(draft.tempId, { focus: true })}
 				/>
 			)}
