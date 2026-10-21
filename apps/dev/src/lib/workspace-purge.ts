@@ -102,6 +102,7 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 /** Tables with ON DELETE CASCADE from a purged table; the database removes them. */
 export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
+	'api_keys',
 	'conversation_participants',
 	'conversation_pending_turns',
 	'credential_access_log',

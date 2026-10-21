@@ -9,6 +9,7 @@ import { sql } from './global-setup'
 
 /** Deleted by routes/account.ts. */
 const ERASED = new Set([
+	'api_keys',
 	'device_auth_codes',
 	'device_tokens',
 	'live_activity_cards',

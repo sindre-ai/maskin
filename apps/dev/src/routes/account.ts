@@ -1,8 +1,15 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, evictMembership, revokeActorKeys, verifyPassword } from '@maskin/auth'
+import {
+	evictActor,
+	evictApiKeyHash,
+	evictMembership,
+	revokeActorKeys,
+	verifyPassword,
+} from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	apiKeys,
 	deviceAuthCodes,
 	deviceTokens,
 	liveActivityCards,
@@ -224,9 +231,10 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. Every
-		// key is revoked and the legacy plaintext column is cleared; null password and email mean no
-		// sign-in and a free email.
-		await revokeActorKeys(tx, actorId)
+		// key is revoked, then its hash row erased, and the legacy plaintext column is cleared; null
+		// password and email mean no sign-in and a free email.
+		const revokedKeyHashes = await revokeActorKeys(tx, actorId)
+		await tx.delete(apiKeys).where(eq(apiKeys.actorId, actorId))
 		await tx
 			.update(actors)
 			.set({
@@ -248,6 +256,7 @@ app.openapi(deleteRoute, async (c) => {
 
 		return {
 			kind: 'deleted' as const,
+			revokedKeyHashes,
 			workspaceIds: memberships.map((m) => m.workspaceId).filter((id) => !purgedIds.has(id)),
 			purged,
 		}
@@ -267,6 +276,8 @@ app.openapi(deleteRoute, async (c) => {
 
 	// Takes effect on the very next request, not when the cached lookups expire.
 	evictActor(actorId)
+	// The eviction inside the transaction can be undone by a request that lands before the commit.
+	for (const keyHash of result.revokedKeyHashes) evictApiKeyHash(keyHash)
 	for (const workspaceId of result.workspaceIds) evictMembership(actorId, workspaceId)
 	for (const p of result.purged) {
 		evictPurgedWorkspace(p.workspaceId, p.result)
