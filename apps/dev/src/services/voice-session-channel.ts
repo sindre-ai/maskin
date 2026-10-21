@@ -191,13 +191,14 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				item: { type: 'function_call_output', call_id: msg.call_id, output },
 			},
 		})
+		const latencyMs = now() - startedAt
 		logger.info('Voice tool call', {
 			voice_session_id: session.id,
 			tool_name: msg.name,
 			ok,
 			error_code: errorCode,
 			output_chars: output.length,
-			latency_ms: now() - startedAt,
+			latency_ms: latencyMs,
 		})
 		if (output === '') {
 			logger.warn('Voice tool call returned an empty result', {
@@ -210,7 +211,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			voice_session_id: session.id,
 			tool_name: msg.name,
 			success: ok,
-			latency_ms: now() - startedAt,
+			latency_ms: latencyMs,
 			error_code: errorCode,
 		})
 	}
