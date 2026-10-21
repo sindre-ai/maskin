@@ -16,7 +16,9 @@ const DRAFTS: LatestMentionDecisionDraft[] = [
 
 function setup(onAction = vi.fn().mockResolvedValue(undefined)) {
 	const onAllDone = vi.fn()
-	render(<DraftStack drafts={DRAFTS} onAction={onAction} onAllDone={onAllDone} />)
+	render(
+		<DraftStack workspaceId="ws-1" drafts={DRAFTS} onAction={onAction} onAllDone={onAllDone} />,
+	)
 	return { onAction, onAllDone }
 }
 
