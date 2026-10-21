@@ -89,7 +89,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				onSuccess: () => {
 					if (!conversationId || !agentId) return
 					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads:\n\n${shown
+						content: `Approved "${object.title || 'Untitled'}". Send it with the integration's send tool, passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
 							.split('\n')
 							.map((line) => `> ${line}`)
 							.join('\n')}`,

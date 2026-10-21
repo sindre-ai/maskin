@@ -106,6 +106,7 @@ export function buildObjectPreview(object: {
 	let body = object.content ?? ''
 	const recipients: PreviewRecipient[] = []
 	let subject: string | null = null
+	let context: string | null = null
 	const missing: string[] = []
 	const warnings: string[] = []
 
@@ -123,6 +124,7 @@ export function buildObjectPreview(object: {
 		}
 		if (!value) {
 			if (field.required) missing.push(field.label)
+			else if (field.recommended) warnings.push(`${field.label} is not filed.`)
 			continue
 		}
 		if (field.maxLength && value.length > field.maxLength) {
@@ -138,6 +140,8 @@ export function buildObjectPreview(object: {
 			recipients.push(...parsed)
 		} else if (field.slot === 'subject') {
 			subject = value
+		} else if (field.slot === 'context') {
+			context = value
 		}
 	}
 
@@ -153,6 +157,7 @@ export function buildObjectPreview(object: {
 		provider,
 		recipients,
 		subject,
+		context,
 		body,
 		maxLength,
 		missing,

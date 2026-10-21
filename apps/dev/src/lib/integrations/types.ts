@@ -205,8 +205,14 @@ export interface DeliverableField {
 	role?: 'to' | 'cc'
 	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
 	address?: 'email'
-	/** Which part of the preview a `text` field fills. Only `subject` today. */
-	slot?: 'subject'
+	/**
+	 * Which part of the preview a `text` field fills: the `subject`, or the `context` (what
+	 * the draft answers, shown above the text and never sent). A `text` field with no slot is
+	 * not shown; it is for the send tool (a conversation id).
+	 */
+	slot?: 'subject' | 'context'
+	/** Not required to send, but worth a warning on the card when empty. */
+	recommended?: boolean
 }
 
 /**

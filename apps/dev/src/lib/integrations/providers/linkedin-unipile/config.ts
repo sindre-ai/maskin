@@ -68,15 +68,24 @@ export const config: ProviderConfig = {
 		{
 			kind: 'linkedin_message',
 			label: 'LinkedIn message',
-			sendTool: 'send_message',
+			// `reply` with the object's id sends the approved text; see send-object.ts.
+			sendTool: 'reply',
 			// Mirrors the limit in operations.ts.
 			bodyMaxLength: 8000,
 			// The sales loop files its replies as tasks with `channel: linkedin_dm`; they are
 			// drafts of a message without anyone having to add a kind.
 			alsoMatches: [{ key: 'channel', value: 'linkedin_dm' }],
-			// A reply goes into a conversation the agent already holds, so no recipient is
-			// required. When one is filed ("to"), it is shown; it is not checked as an address.
-			fields: [{ key: 'to', label: 'To', type: 'recipients', role: 'to' }],
+			fields: [
+				// A reply goes into a conversation the agent already holds, so a recipient is not
+				// required to send; it is recommended, so the card can say who it goes to. A
+				// name or profile link, not checked as an address.
+				{ key: 'to', label: 'To', type: 'recipients', role: 'to', recommended: true },
+				// The conversation a reply goes into. Not shown; `reply` reads it when it is
+				// given an object id instead of the text.
+				{ key: 'thread_id', label: 'Conversation', type: 'text' },
+				// The message being answered, shown above the draft so it is read in context.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+			],
 		},
 	],
 

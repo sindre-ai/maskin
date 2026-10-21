@@ -25,6 +25,41 @@ describe('buildObjectPreview', () => {
 		})
 	})
 
+	it('shows what a reply answers without sending it or approving it', () => {
+		const base = {
+			content: 'Thanks Liz.',
+			metadata: { channel: 'linkedin_dm', to: 'Liz Benison', thread_id: 't-1' },
+		}
+		const plain = buildObjectPreview(base)
+		const withContext = buildObjectPreview({
+			...base,
+			metadata: { ...base.metadata, reply_to: 'We have governance already.' },
+		})
+		expect(withContext?.context).toBe('We have governance already.')
+		expect(plain?.context).toBeNull()
+		// What it answers is not sent, so changing it must not withdraw an approval.
+		expect(withContext?.content_hash).toBe(plain?.content_hash)
+	})
+
+	it('warns, but does not block, when a recommended recipient is not filed', () => {
+		const preview = buildObjectPreview({
+			content: 'Thanks Liz.',
+			metadata: { channel: 'linkedin_dm' },
+		})
+		expect(preview?.warnings).toContain('To is not filed.')
+		expect(preview?.missing).toEqual([])
+	})
+
+	it('names who a reply goes to when it is filed, and keeps the conversation id out of the card', () => {
+		const preview = buildObjectPreview({
+			content: 'Thanks Liz.',
+			metadata: { channel: 'linkedin_dm', to: 'Liz Benison', thread_id: 't-1' },
+		})
+		expect(preview?.recipients).toEqual([{ role: 'to', name: null, address: 'Liz Benison' }])
+		expect(preview?.warnings).toEqual([])
+		expect(JSON.stringify(preview)).not.toContain('t-1')
+	})
+
 	it('lets an explicit kind win over a channel match', () => {
 		const preview = buildObjectPreview({
 			content: 'Hi',

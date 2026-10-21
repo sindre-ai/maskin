@@ -125,8 +125,35 @@ describe('LinkedObjectPreviews', () => {
 		)
 		const message = sendMutate.mock.calls[0][0]
 		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain('Send it exactly as it reads')
+		expect(message.content).toContain(`passing object_id ${ID}`)
 		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+	})
+
+	it('shows what the draft answers and who it goes to, above the text', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				preview: previewOf({
+					context: 'We already have governance and culture.',
+					recipients: [{ role: 'to', name: 'Liz Benison', address: null }],
+				}),
+			}),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		const quoted = screen.getByText('We already have governance and culture.')
+		expect(screen.getByText('In reply to')).toBeInTheDocument()
+		expect(screen.getByText('Liz Benison')).toBeInTheDocument()
+		const text = screen.getByText(/tillykke med fusionen/)
+		expect(quoted.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('says so when nobody is filed as the recipient', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ warnings: ['To is not filed.'] }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByRole('alert')).toHaveTextContent('To is not filed.')
 	})
 
 	it('cannot approve a draft that is missing something', async () => {
