@@ -87,8 +87,6 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'workspace_overage_usage',
 	'agent_chat_grants',
 	'agent_grants',
-	'credential_access_log',
-	'credential_chain_snapshots',
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
@@ -115,8 +113,10 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'files',
 	'google_meet_space_idempotency',
 	'live_activity_tokens',
+	'live_activity_cards',
 	'loop_active_days',
 	'mcp_telemetry',
+	'message_reactions',
 	'message_thread_reads',
 	'messages',
 	'message_thread_reads',
@@ -288,13 +288,6 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceCreditLedger).where(eq(workspaceCreditLedger.workspaceId, workspaceId))
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
-	// The audit trail dies with the workspace. The snapshot table is append-only by trigger; that
-	// trigger lets a DELETE through only while this transaction-local flag is set (migration 0097).
-	await tx.execute(sql`SELECT set_config('maskin.purging_workspace', 'on', true)`)
-	await tx
-		.delete(credentialChainSnapshots)
-		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
-	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
 	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
 	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
