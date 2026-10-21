@@ -1,12 +1,14 @@
+import { type LinkedFocus, LinkedPane } from '@/components/chat/linked-pane'
 import { ThreadsPane } from '@/components/chat/threads-pane'
 import { ProducedPane } from '@/components/objects/produced-pane'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { LinkedItem } from '@/hooks/use-conversation-linked'
 import type { ProducedFileItem, ProducedObjectItem } from '@/hooks/use-conversation-produced'
 import { cn } from '@/lib/cn'
-import { Hand, Layers, X } from 'lucide-react'
+import { Hand, Layers, Link2, X } from 'lucide-react'
 
-export type OverviewTab = 'threads' | 'produced'
+export type OverviewTab = 'threads' | 'produced' | 'linked'
 
 interface OverviewPaneProps {
 	workspaceId: string
@@ -23,6 +25,13 @@ interface OverviewPaneProps {
 	producedObjects: ProducedObjectItem[]
 	producedFiles: ProducedFileItem[]
 	producedLoading: boolean
+	linkedItems: LinkedItem[]
+	/** How many of them resolve to something the tab shows. */
+	linkedCount: number
+	/** The item a card asked the drawer to show; highlighted and expanded in the Linked tab. */
+	linkedFocus: LinkedFocus | null
+	onFocusConsumed: () => void
+	onJumpToMessage: (messageId: number) => void
 	onClose: () => void
 	className?: string
 }
@@ -36,9 +45,9 @@ function CountPill({ n }: { n: number }) {
 }
 
 /**
- * The chat's right rail: one pane, two tabs. Threads lists what the chat handed
+ * The chat's right rail: one pane, three tabs. Threads lists what the chat handed
  * off to other agents (and opens any of them as a thread); Produced lists the
- * objects and files those sessions made. A thread open in the Threads tab takes
+ * objects and files those sessions made; Linked lists what the chat's messages link to. A thread open in the Threads tab takes
  * over the whole pane with its own back / close header.
  */
 export function OverviewPane({
@@ -54,6 +63,11 @@ export function OverviewPane({
 	producedObjects,
 	producedFiles,
 	producedLoading,
+	linkedItems,
+	linkedCount,
+	linkedFocus,
+	onFocusConsumed,
+	onJumpToMessage,
 	onClose,
 	className,
 }: OverviewPaneProps) {
@@ -80,6 +94,11 @@ export function OverviewPane({
 									<CountPill n={producedCount} />
 								</TabsTrigger>
 							) : null}
+							<TabsTrigger value="linked" className="gap-1">
+								<Link2 size={13} aria-hidden />
+								Linked
+								<CountPill n={linkedCount} />
+							</TabsTrigger>
 						</TabsList>
 					</Tabs>
 					<Button
@@ -101,6 +120,16 @@ export function OverviewPane({
 					openSessionId={openSessionId}
 					onOpenSession={onOpenSession}
 					onClose={onClose}
+					className="min-h-0 flex-1"
+				/>
+			) : tab === 'linked' ? (
+				<LinkedPane
+					workspaceId={workspaceId}
+					conversationId={conversationId}
+					items={linkedItems}
+					focus={linkedFocus}
+					onFocusConsumed={onFocusConsumed}
+					onJumpToMessage={onJumpToMessage}
 					className="min-h-0 flex-1"
 				/>
 			) : (

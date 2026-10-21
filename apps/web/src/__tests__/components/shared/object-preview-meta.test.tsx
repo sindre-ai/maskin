@@ -13,6 +13,7 @@ function buildPreview(overrides: Partial<ObjectPreview> = {}): ObjectPreview {
 			{ role: 'cc', name: null, address: 'dan@northwind.dk' },
 		],
 		subject: 'Thursday',
+		details: [],
 		body: 'Hi Mette',
 		maxLength: null,
 		missing: [],
@@ -50,5 +51,30 @@ describe('ObjectPreviewMeta', () => {
 			<ObjectPreviewMeta preview={buildPreview({ recipients: [], subject: null })} />,
 		)
 		expect(container).toBeEmptyDOMElement()
+	})
+	it('shows the detail lines of a kind that is not an email', () => {
+		render(
+			<ObjectPreviewMeta
+				preview={buildPreview({
+					kind: 'linkedin_post',
+					label: 'LinkedIn post',
+					recipients: [],
+					subject: null,
+					details: [
+						{ label: 'Posting as', value: 'sebk_personal' },
+						{ label: 'Scheduled', value: '2026-10-27' },
+					],
+				})}
+			/>,
+		)
+		expect(screen.getByText('Posting as')).toBeInTheDocument()
+		expect(screen.getByText('sebk_personal')).toBeInTheDocument()
+		expect(screen.getByText('2026-10-27')).toBeInTheDocument()
+	})
+
+	it('reads a preview from an older response that has no detail lines', () => {
+		const { details: _omitted, ...older } = buildPreview()
+		render(<ObjectPreviewMeta preview={older as ObjectPreview} />)
+		expect(screen.getByText('Thursday')).toBeInTheDocument()
 	})
 })

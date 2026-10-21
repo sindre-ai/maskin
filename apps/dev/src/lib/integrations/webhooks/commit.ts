@@ -39,22 +39,30 @@ export async function commitWebhookDelivery(
 	args: {
 		eventRows: WebhookEventRow[]
 		claimRowId: string | null
+		/**
+		 * Further claims taken for the same delivery (a provider that dedupes on
+		 * more than one key). Marked processed in the same transaction and gated
+		 * the same way as claimRowId.
+		 */
+		additionalClaimRowIds?: string[]
 	},
 ): Promise<void> {
 	await db.transaction(async (tx) => {
 		if (args.eventRows.length > 0) {
 			await recordEvents(tx, args.eventRows)
 		}
-		if (args.claimRowId) {
+		const claimRowIds = [
+			...(args.claimRowId ? [args.claimRowId] : []),
+			...(args.additionalClaimRowIds ?? []),
+		]
+		for (const claimRowId of claimRowIds) {
 			const matched = await tx
 				.update(webhookDeliveries)
 				.set({ processedAt: new Date() })
-				.where(
-					and(eq(webhookDeliveries.id, args.claimRowId), isNull(webhookDeliveries.processedAt)),
-				)
+				.where(and(eq(webhookDeliveries.id, claimRowId), isNull(webhookDeliveries.processedAt)))
 				.returning({ id: webhookDeliveries.id })
 			if (matched.length === 0) {
-				throw new ClaimReleasedError(args.claimRowId)
+				throw new ClaimReleasedError(claimRowId)
 			}
 		}
 	})
