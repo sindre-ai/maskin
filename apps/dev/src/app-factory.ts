@@ -39,6 +39,7 @@ import conversationsRoutes from './routes/conversations'
 // import desktopTeachRoutes from './routes/desktop-teach'
 import customMcpServersRoutes from './routes/custom-mcp-servers'
 import desktopRoutes from './routes/desktop'
+import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -288,6 +289,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/device-auth/start and /token: a keyboard-less device (Apple TV) asking to be
+	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
+	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
+	//     DO go through auth).
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -308,6 +313,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (
+			method === 'POST' &&
+			(path === '/api/device-auth/start' || path === '/api/device-auth/token')
+		) {
+			return next()
+		}
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -399,6 +410,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
+	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)

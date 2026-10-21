@@ -86,8 +86,6 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
-	'agent_grants',
-	'agent_chat_grants',
 	'imports',
 	'integrations',
 	'events',
@@ -112,10 +110,10 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'live_activity_tokens',
 	'loop_active_days',
 	'mcp_telemetry',
+	'message_reactions',
 	'message_thread_reads',
 	'message_reactions',
 	'messages',
-	'message_thread_reads',
 	'session_dispatch_attempts',
 	'slack_user_links',
 	'trigger_cooldowns',
@@ -127,8 +125,6 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'workspace_onboarding_prompts',
 	'workspace_skills',
 	'workspace_suppressions',
-	'live_activity_tokens',
-	'voice_sessions',
 ] as const
 
 export interface WorkspacePurgeResult {
