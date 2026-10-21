@@ -2,6 +2,7 @@ import {
 	HUMAN_MESSAGE_STYLE_SHORT,
 	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
+	firstStepSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -614,7 +615,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. The person who asked you gets a "Meet {name}" chat from the new agent automatically, so do not send them a second hello. Pass first_steps with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent. Use action "send" only for a step that reads and reports (a tap sends it as written, so prompt must equal label) and "fill" for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes. Pass needed_integrations for the tools the agent cannot do the job without.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -658,6 +659,22 @@ export const tools = {
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job. To give the agent the tools of a connected integration, call list_integration_providers and copy the `mcp.server` of that provider in under the provider name; connecting the integration by itself does NOT expose any tools unless its `mcp.autoInject` is true. `type` is required on each entry ("stdio" or "http") — omitting it fails validation with a bare "Invalid input".',
 				),
 			llm_config: actorLlmConfigSchema,
+			first_steps: z
+				.array(firstStepSchema)
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. 2 to 3 steps specific to this agent\'s job, shown to the person as buttons in the new agent\'s intro chat. Each is { label (max 60), prompt (max 200), action }. action "send" sends the prompt as written when tapped, so prompt must equal label and not end in a space; use it only for steps that read and report. action "fill" puts the prompt in the message box for the person to finish; it may end in a space. Plain text, no line breaks. Nothing is stored on the agent.',
+				),
+			needed_integrations: z
+				.array(z.string().min(1).max(100))
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. Provider names of the integrations this agent cannot do its job without, for example "linear", "gmail", "slack", "github". The intro names up to 3 of them and points the person to Settings, Integrations. Names with no tools an agent could use are ignored.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
@@ -1574,7 +1591,7 @@ export const tools = {
 	},
 	ask_user_question: {
 		description:
-			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. Inside a chat session the answer comes back as your next turn. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, and the answer goes there too, so do not wait: decide for yourself, state the assumption you made, and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 options each; a person can always type something else.',
+			'Ask the person you are working with anything they can answer by tapping a button, and wait for their answer. Prefer this over a free-text question in your message whenever the reply fits in a few options: confirmations and approvals, timing, choosing between alternatives, picking a direction or a default, resolving ambiguity, and permission before something risky, expensive or hard to undo. Also use it for any detail only they can give when a sensible default would be a guess. Do not ask in prose when buttons would do, and do not ask when you can reasonably decide yourself. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. Inside a chat session the answer comes back as your next turn. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, and the answer goes there too, so do not wait: decide for yourself, state the assumption you made, and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 short options each (a one- or two-word label is ideal, with a description only when the label alone is unclear). Write options that fit the question; there is no fixed set. Common ones such as "Yes" / "No", "Proceed" / "Cancel", "Approve" / "Request changes" or "Now" / "Wait" / "Later" are only examples. A person can always type something else. For a simple yes/no, put the one-line question in `question` and a short `header` such as "Confirm" or "Proceed?". Set `multi_select` to let them pick several, and ask up to 4 related questions in one call instead of several calls.',
 		inputSchema: z.object({
 			questions: z
 				.array(
@@ -1785,7 +1802,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. What you may do depends on your Gmail access (Settings → Integrations): "Read" or none: you cannot send. "Ask first": every email needs a person\'s approval first. "Read & write": you send on your own. Two ways to call it. (1) Send directly with `to`, `subject` and `body`: only with "Read & write", and even then not to someone a person marked protected or who opted out of email in the CRM; for those the call is refused. (2) Send an email a person approved: post a comment with `decision` (create_comment, the person in `mentions`) whose `draft` holds the email, with `to` set to the real address ("Mette Holm <mette@northwind.dk>") and the draft text starting with a line "Subject: ..." followed by the body, so the person approves the actual recipient and subject. Mark the option that sends as destructive (exactly one). End your turn. When the person has chosen that option, call this tool with only `approval_comment_id`, the id of your comment. It sends exactly the draft as the card shows it, once, and only if a person chose the send option and the draft was not changed afterwards. For several emails on one card, put them in `decision.drafts` instead of `draft` (each with its own `id`, `to` and a Subject line); the person approves each message with its own Send, and you call this tool once per message with `approval_comment_id` and that message\'s `draft_id`. Use this way whenever a direct send is refused. Never pass `to`, `subject` or `body` together with `approval_comment_id`. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. What you may do depends on your Gmail access (Settings → Integrations): "Read" or none: you cannot send. "Ask first": every email needs a person\'s approval first. "Read & write": you send on your own. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it (or, with "Read & write", right away unless a recipient is protected). If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The older ways still work. Two ways to call it directly. (1) Send directly with `to`, `subject` and `body`: only with "Read & write", and even then not to someone a person marked protected or who opted out of email in the CRM; for those the call is refused. (2) Send an email a person approved: post a comment with `decision` (create_comment, the person in `mentions`) whose `draft` holds the email, with `to` set to the real address ("Mette Holm <mette@northwind.dk>") and the draft text starting with a line "Subject: ..." followed by the body, so the person approves the actual recipient and subject. Mark the option that sends as destructive (exactly one). End your turn. When the person has chosen that option, call this tool with only `approval_comment_id`, the id of your comment. It sends exactly the draft as the card shows it, once, and only if a person chose the send option and the draft was not changed afterwards. For several emails on one card, put them in `decision.drafts` instead of `draft` (each with its own `id`, `to` and a Subject line); the person approves each message with its own Send, and you call this tool once per message with `approval_comment_id` and that message\'s `draft_id`. Use this way whenever a direct send is refused. Never pass `to`, `subject` or `body` together with `approval_comment_id`. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -1803,6 +1820,13 @@ export const tools = {
 				.string()
 				.optional()
 				.describe('The email text, plain text. Not used with approval_comment_id.'),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now. Use alone; not with to, subject, body or approval_comment_id.',
+				),
 			approval_comment_id: z
 				.number()
 				.int()
@@ -1816,6 +1840,20 @@ export const tools = {
 				.optional()
 				.describe(
 					'Only with approval_comment_id, for a card whose `decision.drafts` carries several messages: the `id` of the one message to send. Each message is approved and sent on its own. Leave out for a card with a single `draft`.',
+				),
+		}),
+	},
+	approve_object_draft: {
+		description:
+			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The draft object.'),
+			content_hash: z
+				.string()
+				.optional()
+				.describe(
+					"The preview's content_hash, so a draft that changed since it was shown is refused.",
 				),
 		}),
 	},

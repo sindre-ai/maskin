@@ -69,6 +69,8 @@ import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-t
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { withDeliveryState } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -1346,6 +1348,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		}
 	}
 
+	const basePreview = buildObjectPreview(object)
+	const preview = basePreview
+		? await withDeliveryState(db, object.workspaceId, object.id, basePreview)
+		: null
+
 	return c.json(
 		{
 			object: {
@@ -1356,6 +1363,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
 				is_starred_by_me: starredIds.has(object.id),
+				preview,
 			},
 			relationships: rels.map((r) => ({
 				...serialize(r),
@@ -1718,6 +1726,7 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
+	const basePreview = buildObjectPreview(object)
 	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
@@ -1751,6 +1760,9 @@ app.openapi(getObjectRoute, async (c) => {
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
 			is_starred_by_me: starred,
+			preview: basePreview
+				? await withDeliveryState(db, object.workspaceId, id, basePreview)
+				: null,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)

@@ -57,6 +57,7 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
@@ -211,7 +212,8 @@ const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager
 commentDispatcher.start()
 
 const apnsSender = new ApnsSender(db)
-const notificationPush = new NotificationPushFanout(db, notifyBridge, apnsSender)
+const webPushSender = new WebPushSender(db)
+const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
 notificationPush.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {

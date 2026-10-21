@@ -66,6 +66,7 @@ import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationsRoutes from './routes/notifications'
+import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -78,6 +79,7 @@ import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
+import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -403,6 +405,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
@@ -467,6 +470,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
+	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
