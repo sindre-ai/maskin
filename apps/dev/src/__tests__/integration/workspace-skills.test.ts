@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
@@ -216,6 +217,119 @@ describe('Workspace Skills Integration', () => {
 				}),
 			)
 			expect(second.status).toBe(409)
+		})
+	})
+
+	describe('lookup by id or name', () => {
+		async function createSkill(
+			app: ReturnType<typeof createSkillsApp>,
+			wsId: string,
+			name: string,
+		) {
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/skills`, {
+					name,
+					content: `---\nname: ${name}\ndescription: Skill ${name}\n---\n\nBody of ${name}.`,
+				}),
+			)
+			expect(res.status).toBe(201)
+			return res.json()
+		}
+
+		it('returns the same skill for its id and for its name', async () => {
+			const app = createSkillsApp(storage)
+			const skill = await createSkill(app, workspaceId, 'deploy-prod')
+
+			const byId = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/${skill.id}`))
+			const byName = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/deploy-prod`))
+
+			expect(byId.status).toBe(200)
+			expect(byName.status).toBe(200)
+			expect(await byId.json()).toEqual(await byName.json())
+		})
+
+		it('still reaches a skill whose name is a UUID that is not any skill id', async () => {
+			const app = createSkillsApp(storage)
+			const uuidName = randomUUID()
+			const skill = await createSkill(app, workspaceId, uuidName)
+
+			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/${uuidName}`))
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).id).toBe(skill.id)
+		})
+
+		it('returns 404 for a skill id from another workspace the caller belongs to', async () => {
+			const app = createSkillsApp(storage)
+			const workspaceB = await insertWorkspace(db, getTestActorId())
+			const foreign = await createSkill(app, workspaceB.id, 'deploy-prod')
+
+			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/${foreign.id}`))
+
+			expect(res.status).toBe(404)
+			expect((await res.json()).error.message).toBe(
+				`No skill with id or name '${foreign.id}' in this workspace. Call list_workspace_skills for valid ids and names.`,
+			)
+		})
+
+		it('updates only the addressed skill, by id and by name', async () => {
+			const app = createSkillsApp(storage)
+			const first = await createSkill(app, workspaceId, 'first-skill')
+			const second = await createSkill(app, workspaceId, 'second-skill')
+
+			const byId = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/${first.id}`, {
+					content: '---\nname: first-skill\ndescription: By id\n---\n\nEdited by id.',
+				}),
+			)
+			expect(byId.status).toBe(200)
+			const byName = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/first-skill`, {
+					content: '---\nname: first-skill\ndescription: By name\n---\n\nEdited by name.',
+				}),
+			)
+			expect(byName.status).toBe(200)
+
+			const [firstRow] = await db
+				.select()
+				.from(workspaceSkills)
+				.where(eq(workspaceSkills.id, first.id))
+			const [secondRow] = await db
+				.select()
+				.from(workspaceSkills)
+				.where(eq(workspaceSkills.id, second.id))
+			expect(firstRow?.description).toBe('By name')
+			expect(secondRow?.content).toBe(second.content)
+		})
+
+		it('deletes by id, leaving other skills in place', async () => {
+			const app = createSkillsApp(storage)
+			const doomed = await createSkill(app, workspaceId, 'doomed-skill')
+			const kept = await createSkill(app, workspaceId, 'kept-skill')
+
+			const res = await app.request(
+				jsonRequest('DELETE', `/api/workspaces/${workspaceId}/skills/${doomed.id}`, undefined),
+			)
+
+			expect(res.status).toBe(200)
+			const remaining = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(eq(workspaceSkills.workspaceId, workspaceId))
+			expect(remaining.map((r) => r.id)).toEqual([kept.id])
+		})
+
+		it('returns 403 to a non-member before looking the skill up', async () => {
+			const owner = createSkillsApp(storage)
+			const skill = await createSkill(owner, workspaceId, 'deploy-prod')
+			const outsider = await insertActor(db, { type: 'human', name: 'Outsider' })
+			const outsiderApp = createSkillsApp(storage, outsider.id)
+
+			const res = await outsiderApp.request(
+				jsonGet(`/api/workspaces/${workspaceId}/skills/${skill.id}`),
+			)
+
+			expect(res.status).toBe(403)
 		})
 	})
 
