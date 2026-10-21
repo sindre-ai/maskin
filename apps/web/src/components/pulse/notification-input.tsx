@@ -202,7 +202,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 										onChange={setTextValue}
 										onChangeInternal={setTextValue}
 										onParseError={handleParseError}
-										className="[&_[contenteditable]]:min-h-[4.5rem] [&_[contenteditable]]:outline-none"
+										className="[&>[contenteditable]]:min-h-[4.5rem] [&>[contenteditable]]:outline-none"
 									/>
 								</Suspense>
 							</div>
