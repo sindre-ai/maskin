@@ -43813,7 +43813,7 @@
 						}
 					},
 					"404": {
-						"description": "Session not found, or computers are not available in this workspace",
+						"description": "Session not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -48039,6 +48039,331 @@
 					},
 					"404": {
 						"description": "Device not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/notification-preferences": {
+			"get": {
+				"tags": [
+					"Notification Preferences"
+				],
+				"summary": "Get the current actor’s push notification preferences",
+				"description": "Per-actor, not per-workspace. Returns defaults (updated_at null) when never saved.",
+				"responses": {
+					"200": {
+						"description": "Preferences",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"timezone": {
+											"type": [
+												"string",
+												"null"
+											],
+											"minLength": 1,
+											"maxLength": 64
+										},
+										"quiet_hours_start": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"quiet_hours_end": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips"
+											]
+										},
+										"briefing_enabled": {
+											"type": "boolean"
+										},
+										"briefing_time": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"muted_workspace_ids": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"updated_at": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"timezone",
+										"quiet_hours_start",
+										"quiet_hours_end",
+										"categories",
+										"briefing_enabled",
+										"briefing_time",
+										"muted_workspace_ids",
+										"updated_at"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"tags": [
+					"Notification Preferences"
+				],
+				"summary": "Upsert the current actor’s push notification preferences",
+				"description": "Idempotent upsert. Omitted fields keep their current value (or the default); null clears timezone / quiet hours; categories merges key by key.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"timezone": {
+										"type": [
+											"string",
+											"null"
+										],
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"quiet_hours_start": {
+										"type": [
+											"integer",
+											"null"
+										],
+										"minimum": 0,
+										"maximum": 1439
+									},
+									"quiet_hours_end": {
+										"type": [
+											"integer",
+											"null"
+										],
+										"minimum": 0,
+										"maximum": 1439
+									},
+									"categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											}
+										}
+									},
+									"briefing_enabled": {
+										"type": "boolean"
+									},
+									"briefing_time": {
+										"type": "integer",
+										"minimum": 0,
+										"maximum": 1439
+									},
+									"muted_workspace_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"maxItems": 200
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Preferences saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"timezone": {
+											"type": [
+												"string",
+												"null"
+											],
+											"minLength": 1,
+											"maxLength": 64
+										},
+										"quiet_hours_start": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"quiet_hours_end": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips"
+											]
+										},
+										"briefing_enabled": {
+											"type": "boolean"
+										},
+										"briefing_time": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 1439
+										},
+										"muted_workspace_ids": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"updated_at": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"timezone",
+										"quiet_hours_start",
+										"quiet_hours_end",
+										"categories",
+										"briefing_enabled",
+										"briefing_time",
+										"muted_workspace_ids",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
 						"content": {
 							"application/json": {
 								"schema": {

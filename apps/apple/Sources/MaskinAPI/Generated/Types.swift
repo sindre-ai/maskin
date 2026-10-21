@@ -528,6 +528,20 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
     func get_sol_api_sol_for_hyphen_you(_ input: Operations.get_sol_api_sol_for_hyphen_you.Input) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output
+    /// Get the current actor’s push notification preferences
+    ///
+    /// Per-actor, not per-workspace. Returns defaults (updated_at null) when never saved.
+    ///
+    /// - Remark: HTTP `GET /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/get`.
+    func get_sol_api_sol_notification_hyphen_preferences(_ input: Operations.get_sol_api_sol_notification_hyphen_preferences.Input) async throws -> Operations.get_sol_api_sol_notification_hyphen_preferences.Output
+    /// Upsert the current actor’s push notification preferences
+    ///
+    /// Idempotent upsert. Omitted fields keep their current value (or the default); null clears timezone / quiet hours; categories merges key by key.
+    ///
+    /// - Remark: HTTP `PUT /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/put`.
+    func put_sol_api_sol_notification_hyphen_preferences(_ input: Operations.put_sol_api_sol_notification_hyphen_preferences.Input) async throws -> Operations.put_sol_api_sol_notification_hyphen_preferences.Output
     /// Subscribe current actor to an entity
     ///
     /// - Remark: HTTP `POST /api/subscriptions`.
@@ -1959,6 +1973,30 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/for-you/get`.
     public func get_sol_api_sol_for_hyphen_you(headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
         try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(headers: headers))
+    }
+    /// Get the current actor’s push notification preferences
+    ///
+    /// Per-actor, not per-workspace. Returns defaults (updated_at null) when never saved.
+    ///
+    /// - Remark: HTTP `GET /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/get`.
+    public func get_sol_api_sol_notification_hyphen_preferences(headers: Operations.get_sol_api_sol_notification_hyphen_preferences.Input.Headers = .init()) async throws -> Operations.get_sol_api_sol_notification_hyphen_preferences.Output {
+        try await get_sol_api_sol_notification_hyphen_preferences(Operations.get_sol_api_sol_notification_hyphen_preferences.Input(headers: headers))
+    }
+    /// Upsert the current actor’s push notification preferences
+    ///
+    /// Idempotent upsert. Omitted fields keep their current value (or the default); null clears timezone / quiet hours; categories merges key by key.
+    ///
+    /// - Remark: HTTP `PUT /api/notification-preferences`.
+    /// - Remark: Generated from `#/paths//api/notification-preferences/put`.
+    public func put_sol_api_sol_notification_hyphen_preferences(
+        headers: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Headers = .init(),
+        body: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body? = nil
+    ) async throws -> Operations.put_sol_api_sol_notification_hyphen_preferences.Output {
+        try await put_sol_api_sol_notification_hyphen_preferences(Operations.put_sol_api_sol_notification_hyphen_preferences.Input(
+            headers: headers,
+            body: body
+        ))
     }
     /// Subscribe current actor to an entity
     ///

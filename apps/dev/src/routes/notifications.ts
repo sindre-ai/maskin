@@ -264,6 +264,8 @@ app.openapi(listNotificationsRoute, (async (c) => {
 	if (type) conditions.push(eq(notifications.type, type))
 	if (object_id) conditions.push(eq(notifications.objectId, object_id))
 	if (kind) conditions.push(sql`${notifications.metadata}->>'kind' = ${kind}`)
+	// Push-only rows (chat replies) exist to drive a push, not to be listed.
+	conditions.push(sql`coalesce(${notifications.metadata}->>'push_only', 'false') <> 'true'`)
 
 	const results = await db
 		.select()

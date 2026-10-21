@@ -34,9 +34,11 @@ import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -257,6 +259,14 @@ const sessionRetryScheduler = new SessionRetryScheduler(db)
 sessionRetryScheduler.start()
 logger.info('Session retry scheduler started')
 
+// Scheduled pushes. Both only create `notifications` rows; the push fan-out (policy: quiet
+// hours, category toggles, rate limits) delivers them. Briefing: killswitch
+// FEATURE_BRIEFING_PUSH=0. Lifecycle: off unless PUSH_LIFECYCLE_ENABLED=1.
+const briefingPushScheduler = new BriefingPushScheduler(db)
+briefingPushScheduler.start()
+const lifecyclePushScheduler = new LifecyclePushScheduler(db)
+lifecyclePushScheduler.start()
+
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
 const sessionSelfHealJob = new SessionSelfHealJob(db)
@@ -442,6 +452,8 @@ const shutdown = async (signal: string) => {
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
 	notificationPush.stop()
+	briefingPushScheduler.stop()
+	lifecyclePushScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.
