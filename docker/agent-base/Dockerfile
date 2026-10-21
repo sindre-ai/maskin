@@ -40,6 +40,7 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY mcp-scrub-env.jq /mcp-scrub-env.jq
 COPY strip-images-proxy.js /strip-images-proxy.js
 COPY input-stream.js /input-stream.js
 COPY output-stream.js /output-stream.js
