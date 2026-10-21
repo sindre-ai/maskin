@@ -3,6 +3,9 @@ export const queryKeys = {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
 	},
+	webPush: {
+		config: () => ['web-push', 'config'] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
