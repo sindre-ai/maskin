@@ -388,6 +388,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/conversations`.
     /// - Remark: Generated from `#/paths//api/conversations/post`.
     func post_sol_api_sol_conversations(_ input: Operations.post_sol_api_sol_conversations.Input) async throws -> Operations.post_sol_api_sol_conversations.Output
+    /// List threads the caller started or replied in, most recently active first
+    ///
+    /// - Remark: HTTP `GET /api/conversations/threads`.
+    /// - Remark: Generated from `#/paths//api/conversations/threads/get`.
+    func get_sol_api_sol_conversations_sol_threads(_ input: Operations.get_sol_api_sol_conversations_sol_threads.Input) async throws -> Operations.get_sol_api_sol_conversations_sol_threads.Output
+    /// Mark a thread read up to a reply (advance-only)
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/thread/read`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/thread/read/put`.
+    func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read(_ input: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Output
     /// Get a conversation (participants-only)
     ///
     /// - Remark: HTTP `GET /api/conversations/{id}`.
@@ -423,6 +433,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PATCH /api/conversations/{id}/messages/{messageId}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/patch`.
     func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output
+    /// React to a message with an emoji
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/reactions`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/reactions/put`.
+    func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(_ input: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Output
+    /// Remove your emoji reaction from a message
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}/reactions`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/reactions/delete`.
+    func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(_ input: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Output
     /// Re-run the agent responder for a message (force a reply)
     ///
     /// - Remark: HTTP `POST /api/conversations/{id}/messages/{messageId}/retry`.
@@ -1552,6 +1572,34 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// List threads the caller started or replied in, most recently active first
+    ///
+    /// - Remark: HTTP `GET /api/conversations/threads`.
+    /// - Remark: Generated from `#/paths//api/conversations/threads/get`.
+    public func get_sol_api_sol_conversations_sol_threads(
+        query: Operations.get_sol_api_sol_conversations_sol_threads.Input.Query = .init(),
+        headers: Operations.get_sol_api_sol_conversations_sol_threads.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_conversations_sol_threads.Output {
+        try await get_sol_api_sol_conversations_sol_threads(Operations.get_sol_api_sol_conversations_sol_threads.Input(
+            query: query,
+            headers: headers
+        ))
+    }
+    /// Mark a thread read up to a reply (advance-only)
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/thread/read`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/thread/read/put`.
+    public func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read(
+        path: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input.Path,
+        headers: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input.Headers,
+        body: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input.Body? = nil
+    ) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Output {
+        try await put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read(Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_thread_sol_read.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// Get a conversation (participants-only)
     ///
     /// - Remark: HTTP `GET /api/conversations/{id}`.
@@ -1651,6 +1699,36 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
+        ))
+    }
+    /// React to a message with an emoji
+    ///
+    /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/reactions`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/reactions/put`.
+    public func put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(
+        path: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Path,
+        headers: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Headers,
+        body: Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Body? = nil
+    ) async throws -> Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Output {
+        try await put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(Operations.put_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Remove your emoji reaction from a message
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}/reactions`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/reactions/delete`.
+    public func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(
+        path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Path,
+        query: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Query,
+        headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Output {
+        try await delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub__sol_reactions.Input(
+            path: path,
+            query: query,
+            headers: headers
         ))
     }
     /// Re-run the agent responder for a message (force a reply)

@@ -66,6 +66,7 @@ import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationsRoutes from './routes/notifications'
+import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -404,6 +405,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)

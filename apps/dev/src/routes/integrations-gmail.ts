@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
@@ -10,6 +9,7 @@ import { canActWithoutAsking, canWrite, resolveAgentAccess } from '../lib/integr
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { contentHash, shownDraftText } from '../lib/integrations/providers/gmail/approval-hash'
 import {
 	GmailSendError,
 	type OutgoingEmail,
@@ -29,6 +29,8 @@ import { readContextFor } from '../lib/integrations/read-context'
 import { getProvider } from '../lib/integrations/registry'
 import { accessDeniedMessage } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
+import { DELIVERED_ACTION, findCurrentApproval } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
@@ -75,15 +77,20 @@ const sendBodySchema = z
 		body: z.string().min(1).max(100_000).optional(),
 		approval_comment_id: z.number().int().positive().optional(),
 		draft_id: z.string().min(1).max(40).optional(),
+		object_id: z.string().uuid().optional(),
 	})
 	.refine(
-		(v) =>
-			v.approval_comment_id
+		(v) => {
+			if (v.object_id) {
+				return !v.approval_comment_id && !v.draft_id && !v.to && !v.cc && !v.subject && !v.body
+			}
+			return v.approval_comment_id
 				? !v.to && !v.cc && !v.subject && !v.body
-				: Boolean(v.to && v.subject && v.body),
+				: Boolean(v.to && v.subject && v.body)
+		},
 		{
 			message:
-				'Pass either approval_comment_id (to send an email a person approved) or to, subject and body (to send a new email), not both.',
+				'Pass object_id (to send the email an object holds), approval_comment_id (to send an email a person approved on a card) or to, subject and body (to send a new email). Not a mix.',
 		},
 	)
 	.refine((v) => !v.draft_id || v.approval_comment_id, {
@@ -143,18 +150,6 @@ const readGmailCredential = (db: Database, workspaceId: string, actorId: string)
 		ctx: readContextFor(actorId, 'gmail:send'),
 	})
 
-const contentHash = (to: Recipient[], cc: Recipient[], subject: string, body: string) =>
-	createHash('sha256')
-		.update(
-			JSON.stringify([
-				to.map((r) => r.address).sort(),
-				cc.map((r) => r.address).sort(),
-				subject,
-				body,
-			]),
-		)
-		.digest('hex')
-
 function sendFailureFor(err: GmailSendError): Fail {
 	switch (err.code) {
 		case 'INVALID_EMAIL':
@@ -206,6 +201,14 @@ async function textChangedAfter(
 	return later.length === 0 && !!updatedAt && !!answer.createdAt && updatedAt > answer.createdAt
 }
 
+const changedAfterApproval = () =>
+	fail(
+		409,
+		'CONFLICT',
+		'The draft was changed after the person approved it (or emptied, or their answer does not record what they saw), so this is not the text they approved. Do not send it.',
+		'Post a new approval card with the current text and wait for the person to approve it again.',
+	)
+
 /** The email an approval card asks about, once a person has chosen to send it. */
 async function loadApproval(
 	db: Database,
@@ -246,7 +249,12 @@ async function loadApproval(
 	}
 
 	let draft: DecisionDraft
-	let answer: { id: number; content: string | null; createdAt: Date | null }
+	let answer: {
+		id: number
+		content: string | null
+		createdAt: Date | null
+		approvedHash: string | null
+	}
 
 	if (stack?.length) {
 		// One card, several messages. Each message is approved on its own: the person's tap
@@ -279,6 +287,7 @@ async function loadApproval(
 				id: events.id,
 				content: sql<string | null>`${events.data}->>'content'`,
 				createdAt: events.createdAt,
+				approvedHash: sql<string | null>`${events.data}->>'approved_send_hash'`,
 			})
 			.from(events)
 			.innerJoin(actors, eq(actors.id, events.actorId))
@@ -347,6 +356,7 @@ async function loadApproval(
 				id: events.id,
 				content: sql<string | null>`${events.data}->>'content'`,
 				createdAt: events.createdAt,
+				approvedHash: sql<string | null>`${events.data}->>'approved_send_hash'`,
 			})
 			.from(events)
 			.innerJoin(actors, eq(actors.id, events.actorId))
@@ -384,29 +394,21 @@ async function loadApproval(
 	}
 
 	// The text is what the card shows: the draft object's current text, else the stored body.
-	let text: string | undefined
 	if (draft.object_id) {
 		const [object] = await db
 			.select({ content: objects.content, updatedAt: objects.updatedAt })
 			.from(objects)
 			.where(and(eq(objects.id, draft.object_id), eq(objects.workspaceId, workspaceId)))
 			.limit(1)
-		if (object?.content?.trim()) {
-			if (await textChangedAfter(db, workspaceId, draft.object_id, answer, object.updatedAt)) {
-				return {
-					failure: fail(
-						409,
-						'CONFLICT',
-						'The draft was changed after the person approved it, so they did not approve this text. Do not send it.',
-						'Post a new approval card with the current text.',
-					),
-				}
-			}
-			text = object.content
+		if (
+			object?.content?.trim() &&
+			(await textChangedAfter(db, workspaceId, draft.object_id, answer, object.updatedAt))
+		) {
+			return { failure: changedAfterApproval() }
 		}
 	}
-	text ??= draft.body
-	if (!text?.trim()) {
+	const text = await shownDraftText(db, workspaceId, draft)
+	if (!text) {
 		return { failure: fail(400, 'BAD_REQUEST', 'The approval card has no draft text.') }
 	}
 
@@ -434,7 +436,83 @@ async function loadApproval(
 			),
 		}
 	}
+
+	// What goes out must be exactly what the person saw when they answered. Always compared,
+	// also when the draft object was emptied or the answer carries no fingerprint: then there is
+	// nothing to show it is the approved text, so it is not sent.
+	if (
+		!answer.approvedHash ||
+		answer.approvedHash !== contentHash(to, [], parts.subject, parts.body)
+	) {
+		return { failure: changedAfterApproval() }
+	}
 	return { email: { to, subject: parts.subject, body: parts.body } }
+}
+
+/**
+ * The email an object holds (`metadata.kind = 'email'`), and whether a person approved exactly
+ * this text. The approval is the newest `approved` event a human wrote on the object, bound to
+ * the content hash, so any edit to the recipients, subject or text withdraws it.
+ */
+async function loadObjectEmail(
+	db: Database,
+	workspaceId: string,
+	objectId: string,
+): Promise<
+	| {
+			email: OutgoingEmail
+			contentHash: string
+			approvalEventId: number | null
+			objectType: string
+	  }
+	| { failure: Fail }
+> {
+	const [object] = await db
+		.select()
+		.from(objects)
+		.where(and(eq(objects.id, objectId), eq(objects.workspaceId, workspaceId)))
+		.limit(1)
+	if (!object) return { failure: fail(404, 'NOT_FOUND', 'That object does not exist.') }
+	const preview = buildObjectPreview(object)
+	if (!preview || preview.kind !== 'email') {
+		return {
+			failure: fail(
+				400,
+				'BAD_REQUEST',
+				'That object is not an email draft. Set metadata.kind to "email", with to and subject in metadata and the text as its content.',
+			),
+		}
+	}
+	if (preview.missing.length > 0) {
+		return {
+			failure: fail(
+				400,
+				'BAD_REQUEST',
+				`The draft is not complete. Missing: ${preview.missing.join(', ')}.`,
+			),
+		}
+	}
+	const metadata = (object.metadata ?? {}) as Record<string, unknown>
+	const raw = (key: string) => (typeof metadata[key] === 'string' ? (metadata[key] as string) : '')
+	let email: OutgoingEmail
+	try {
+		email = {
+			to: parseRecipients(raw('to'), 'to'),
+			cc: raw('cc') ? parseRecipients(raw('cc'), 'cc') : [],
+			subject: preview.subject ?? '',
+			body: preview.body,
+		}
+	} catch (err) {
+		if (!(err instanceof GmailSendError)) throw err
+		return { failure: sendFailureFor(err) }
+	}
+	const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
+	return {
+		email,
+		contentHash: preview.content_hash,
+		approvalEventId: approval?.id ?? null,
+		objectType: object.type,
+	}
 }
 
 app.openapi(sendRoute, async (c) => {
@@ -485,7 +563,7 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 	// "Ask first" may draft and send what a person approved, but not send on its own.
-	if (!input.approval_comment_id && !canActWithoutAsking(access)) {
+	if (!input.approval_comment_id && !input.object_id && !canActWithoutAsking(access)) {
 		const f = fail(
 			403,
 			'FORBIDDEN',
@@ -498,7 +576,50 @@ app.openapi(sendRoute, async (c) => {
 	// 2. Work out exactly what is being sent, and whether it may go without a person's yes.
 	let email: OutgoingEmail
 	let mode: 'approved_draft' | 'direct'
-	if (input.approval_comment_id) {
+	// For an object draft: the approval event that unlocks it, and the hash it was approved at.
+	let objectDraft: {
+		id: string
+		type: string
+		hash: string
+		approvalEventId: number | null
+	} | null = null
+	if (input.object_id) {
+		const loaded = await loadObjectEmail(db, workspaceId, input.object_id)
+		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
+		email = loaded.email
+		objectDraft = {
+			id: input.object_id,
+			type: loaded.objectType,
+			hash: loaded.contentHash,
+			approvalEventId: loaded.approvalEventId,
+		}
+		if (loaded.approvalEventId) {
+			mode = 'approved_draft'
+		} else {
+			// No person has approved this text. "Read & write" may send it on its own, unless a
+			// recipient is protected; "Ask first" waits for the person.
+			const blocked = canActWithoutAsking(access)
+				? await findBlockedRecipients(
+						db,
+						workspaceId,
+						[...email.to, ...(email.cc ?? [])].map((r) => r.address),
+					)
+				: []
+			if (!canActWithoutAsking(access) || blocked.length > 0) {
+				const why =
+					blocked.length > 0
+						? `${blocked.map((b) => `${b.address} ${b.reason}`).join('; ')}, so a person has to approve this email first.`
+						: 'Your access to Gmail is "Ask first": a person has to approve each email before it is sent.'
+				const f = fail(
+					403,
+					'FORBIDDEN',
+					`Not sent. ${why} The draft shows an Approve button in For You and in chat. End your turn; when they have approved it, call this tool again with the same object_id.`,
+				)
+				return c.json(f.body, f.status)
+			}
+			mode = 'direct'
+		}
+	} else if (input.approval_comment_id) {
 		const loaded = await loadApproval(
 			db,
 			workspaceId,
@@ -568,12 +689,15 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. One send per approval: claim it before calling Gmail, so two calls cannot both send.
-	const approval: ApprovalRef | null = input.approval_comment_id
+	const approvalId = input.approval_comment_id ?? objectDraft?.approvalEventId ?? null
+	const approval: ApprovalRef | null = approvalId
 		? {
 				workspaceId,
 				integrationId,
 				actorId,
-				approvalCommentId: input.approval_comment_id,
+				// For an object draft this is the id of the person's `approved` event: one approval,
+				// one send, the same claim a decision card uses.
+				approvalCommentId: approvalId,
 				...(input.draft_id ? { draftId: input.draft_id } : {}),
 			}
 		: null
@@ -630,10 +754,28 @@ app.openapi(sendRoute, async (c) => {
 						.join(', ')
 						.slice(0, 300),
 					recipients: email.to.length + (email.cc?.length ?? 0),
-					...(input.approval_comment_id ? { approval_comment_id: input.approval_comment_id } : {}),
+					...(approvalId ? { approval_comment_id: approvalId } : {}),
 					...(input.draft_id ? { approval_draft_id: input.draft_id } : {}),
+					...(objectDraft ? { object_id: objectDraft.id } : {}),
 				},
 			})
+			// The draft's own log says it went, so its card can turn into a receipt.
+			if (objectDraft) {
+				await recordEvent(db, {
+					workspaceId,
+					actorId,
+					action: DELIVERED_ACTION,
+					entityType: objectDraft.type,
+					entityId: objectDraft.id,
+					data: {
+						provider: 'gmail',
+						content_hash: objectDraft.hash,
+						message_id: sent.messageId,
+						thread_id: sent.threadId,
+						mode,
+					},
+				})
+			}
 		} catch (bookkeepingErr) {
 			// The email is gone. Bookkeeping must not turn that into an error the caller retries.
 			logger.error('Gmail email sent but the record of it failed', {

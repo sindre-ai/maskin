@@ -53,6 +53,7 @@ private struct ChatsContainer: View {
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var newChat: NewChatRequest?
+	@State private var showThreads = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Binding var requestedConversationId: String?
@@ -86,7 +87,8 @@ private struct ChatsContainer: View {
 				sendTick: sendTick,
 				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
 				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
-				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } }
+				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } },
+				onThreads: { showThreads = true }
 			)
 			.shellToolbar(
 				environment: environment, title: "Team",
@@ -138,6 +140,9 @@ private struct ChatsContainer: View {
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
+		.sheet(isPresented: $showThreads) {
+			ThreadsSheet(environment: environment, conversations: store)
+		}
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
@@ -262,6 +267,76 @@ private struct FlowRoomHost: View {
 }
 
 /// Builds the `ChatStore` for one conversation and hosts the thread plus its participants sheet.
+/// The Threads screen over the Team list: a row opens its thread, which lives in a chat of its
+/// own (loaded here for that one conversation, with the same stores the chat itself uses).
+private struct ThreadsSheet: View {
+	let environment: AppEnvironment
+	let conversations: ConversationsStore
+	@Environment(\.dismiss) private var dismiss
+	@State private var route: ThreadsRoute?
+
+	struct ThreadsRoute: Hashable {
+		let conversationID: String
+		let rootID: Int
+	}
+
+	var body: some View {
+		NavigationStack {
+			ThreadsListScreen(store: conversations) { item in
+				guard let rootID = item.root.serverID else { return }
+				route = ThreadsRoute(conversationID: item.conversationID, rootID: rootID)
+			}
+			.toolbar {
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+			}
+			.navigationDestination(item: $route) { route in
+				if let item = conversations.threads.first(where: {
+					$0.conversationID == route.conversationID && $0.root.serverID == route.rootID
+				}) {
+					ThreadHost(environment: environment, conversations: conversations, item: item)
+				}
+			}
+		}
+		.presentationDetents([.large])
+	}
+}
+
+/// One thread opened from the Threads list. Builds the chat store for the thread's conversation
+/// once and stops it when the thread closes.
+private struct ThreadHost: View {
+	let environment: AppEnvironment
+	let conversations: ConversationsStore
+	let item: ThreadListItem
+	@State private var holder = Holder()
+
+	@MainActor
+	private final class Holder { var chat: ChatStore? }
+
+	private func make() -> ChatStore {
+		let session = environment.auth.session
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let chat = ChatStore(
+			conversationID: item.conversationID, currentActorID: session?.actorId ?? "",
+			currentActorName: session?.name ?? "You", api: source,
+			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
+			cache: environment.snapshotCache,
+			knownLastMessageAt: conversations.conversation(id: item.conversationID)?.lastMessageAt)
+		// A thread open on screen has nothing to say about the chat's own read marker.
+		chat.isActive = false
+		return chat
+	}
+
+	var body: some View {
+		let chat = holder.chat ?? make()
+		let _ = { holder.chat = chat }()
+		ThreadScreen(store: chat, root: item.root)
+			.onDisappear {
+				chat.stop()
+				Task { await conversations.refreshThreads() }
+			}
+	}
+}
+
 private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
