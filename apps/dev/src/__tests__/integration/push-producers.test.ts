@@ -332,7 +332,7 @@ describe('push producers', () => {
 				metadata: {},
 			})
 
-		it('resolves only the replying person\'s question rows, and records the resolve', async () => {
+		it("resolves only the replying person's question rows, and records the resolve", async () => {
 			await ask(await askerSession())
 			await humanReply(humanId)
 
@@ -372,7 +372,7 @@ describe('push producers', () => {
 			expect(stillPending).toHaveLength(1)
 		})
 
-		it('an agent message never resolves a human\'s question', async () => {
+		it("an agent message never resolves a human's question", async () => {
 			await ask(await askerSession())
 			await finalReply('turn-1')
 			const pending = (await rowsFor()).filter(
@@ -381,5 +381,4 @@ describe('push producers', () => {
 			expect(pending).toHaveLength(2)
 		})
 	})
-
 })
