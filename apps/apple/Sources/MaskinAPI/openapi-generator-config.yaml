@@ -87,3 +87,4 @@ filter:
     - /api/billing/usage
     - /api/invites/preview
     - /api/invites/{token}/accept
+    - /api/notification-preferences

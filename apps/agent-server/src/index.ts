@@ -376,6 +376,10 @@ async function monitorSession(
 	// Best-effort — if the POST fails, sessions still complete.
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
+	// Last few lines the agent wrote (agent-run.sh merges stderr into this
+	// stream), kept so a non-zero exit can leave a tail in the host log.
+	const RECENT_LINES_KEPT = 20
+	const recentLines: string[] = []
 
 	// 6 attempts with exponential backoff (2s, 4s, 8s, 16s, 16s — capped) give a
 	// worst-case retry window of ~46s. This is deliberately longer than the flat
@@ -504,7 +508,10 @@ async function monitorSession(
 	// deliver lines into this session's log buffer.
 	if (sessionLogRouters && maskinBaseUrl) {
 		sessionLogRouters.set(sessionId, (line: string) => {
-			logBuffer.push({ stream: 'stdout', content: truncateLogLine(line) })
+			const truncated = truncateLogLine(line)
+			recentLines.push(truncated)
+			if (recentLines.length > RECENT_LINES_KEPT) recentLines.shift()
+			logBuffer.push({ stream: 'stdout', content: truncated })
 			if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
 				void flushLogs()
 			} else {
@@ -524,16 +531,25 @@ async function monitorSession(
 	await flushLogs()
 
 	// Read the exit code recorded by the /complete endpoint, then clean up the entry.
-	let exitCode = sessionExitCodes?.get(sessionId) ?? 0
+	const exitCode = sessionExitCodes?.get(sessionId) ?? 0
 	sessionExitCodes?.delete(sessionId)
 
-	// Push workspace BEFORE reporting completion so a push failure can be reflected
-	// in the exit code. Reporting first would mark the session completed even when
-	// the workspace was lost, giving the user a silently incorrect starting state on
-	// the next session. pushSessionWorkspace already retries transient storage
-	// errors (e.g. S3 `SlowDown` throttling) internally — only a failure that
-	// survives those retries reaches this catch, so this only overrides a genuine
-	// agent success (exitCode 0) when the workspace is truly lost, not on a blip.
+	if (exitCode !== 0) {
+		logger.warn('session exited non-zero, last output lines follow', {
+			sessionId,
+			exitCode,
+			lastLines: recentLines,
+		})
+	}
+
+	// Push workspace BEFORE reporting completion so a lost workspace is already on
+	// the session's log when it settles. A lost save does NOT change the exit code:
+	// the agent's own result stands, so a run that finished cleanly stays completed
+	// instead of reading as failed (and being re-run) because storage throttled us.
+	// The loss is recorded as its own [system] log line plus the Sentry error below.
+	// pushSessionWorkspace already retries transient storage errors (e.g. S3
+	// `SlowDown` throttling) internally — only a failure that survives those
+	// retries reaches this catch.
 	if (storage) {
 		try {
 			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir, {
@@ -545,7 +561,11 @@ async function monitorSession(
 				sessionId,
 				error: String(err),
 			})
-			if (exitCode === 0) exitCode = 1
+			logBuffer.push({
+				stream: 'stdout',
+				content: `[system] workspace lost: saving this session's workspace to storage failed after retries (${String(err)}). The run itself is unaffected; its files, memory and learnings were not stored.\n`,
+			})
+			await flushLogs()
 		}
 	}
 

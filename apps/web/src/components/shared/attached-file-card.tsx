@@ -38,7 +38,9 @@ export function AttachedFileCard({ workspaceId, file, className }: AttachedFileC
 	const { data: imageDetail } = useFile(workspaceId, canRenderImage ? (file.id ?? null) : null)
 
 	const baseClass = cn(
-		'flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors',
+		// `text-card-foreground` pairs with `bg-card`: without it the name inherits whatever the card
+		// sits in, and inside a dark chat bubble that is near-white text on this light card.
+		'flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition-colors',
 		className,
 	)
 
@@ -78,7 +80,7 @@ export function AttachedFileCard({ workspaceId, file, className }: AttachedFileC
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className={cn(baseClass, 'hover:bg-accent')}
+				className={cn(baseClass, 'hover:bg-accent hover:text-accent-foreground')}
 			>
 				{inner}
 			</Link>

@@ -9,7 +9,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateByoApiKey, useCreateByoLogin } from '@/hooks/use-integrations'
 import { ApiError } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import {
 	CREDENTIAL_NAME_MAX_LENGTH,
@@ -23,8 +22,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/ne
 	component: AddCredentialPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
-
-const CARD = 'rounded-lg border p-3 text-left'
 
 function AddCredentialPage() {
 	useDocumentTitle('Add a credential')
@@ -51,19 +48,21 @@ function AddCredentialPage() {
 		if (!canSave) return
 		setError(null)
 		try {
-			const { integrationId } = isLogin
-				? await createLogin.mutateAsync({
-						displayName: name.trim(),
-						username: username.trim(),
-						password,
-					})
-				: await createKey.mutateAsync({ displayName: name.trim(), rawSecret: secret })
+			if (isLogin) {
+				await createLogin.mutateAsync({
+					displayName: name.trim(),
+					username: username.trim(),
+					password,
+				})
+			} else {
+				await createKey.mutateAsync({ displayName: name.trim(), rawSecret: secret })
+			}
 			// The value is gone from the page the moment it is saved.
 			setSecret('')
 			setPassword('')
 			navigate({
-				to: '/$workspaceId/settings/keychain/$integrationId',
-				params: { workspaceId, integrationId },
+				to: '/$workspaceId/settings/keychain',
+				params: { workspaceId },
 			})
 		} catch (err) {
 			// A taken or secret-shaped name has a message a person can act on. Anything else
@@ -84,33 +83,8 @@ function AddCredentialPage() {
 			<KeychainBreadcrumb workspaceId={workspaceId} current="Add credential" />
 			<h2 className="text-sm font-bold text-foreground">Add a credential</h2>
 			<p className="mt-1 mb-4 text-xs text-muted-foreground">
-				Choose how you'll bring the credential into Maskin. Pick which agents can use it on the key
-				page.
+				Save a key or a login. Pick which agents can use it on the Keychain page.
 			</p>
-
-			<ul className="mb-4 grid gap-3 sm:grid-cols-2">
-				<li className={cn(CARD, 'border-primary ring-2 ring-ring')} aria-current="true">
-					<div aria-hidden>📋</div>
-					<div className="mt-1 text-sm font-semibold">Paste a secret</div>
-					<p className="mt-1 text-xs text-muted-foreground">
-						API key, Bearer token, or Basic Auth. Fastest for services you already have credentials
-						for.
-					</p>
-				</li>
-				<li>
-					<Link
-						to="/$workspaceId/chats"
-						params={{ workspaceId }}
-						className={cn(CARD, 'block h-full transition-colors hover:bg-muted')}
-					>
-						<div aria-hidden>💬</div>
-						<div className="mt-1 text-sm font-semibold">Capture from a chat</div>
-						<p className="mt-1 text-xs text-muted-foreground">
-							Open a chat session and paste the key inline — Maskin detects and vaults it.
-						</p>
-					</Link>
-				</li>
-			</ul>
 
 			<form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border p-4">
 				<Tabs value={kind} onValueChange={(v) => setKind(v as 'api_key' | 'login')}>
