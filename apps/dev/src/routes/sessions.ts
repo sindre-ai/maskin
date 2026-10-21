@@ -47,6 +47,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import {
 	canControlSession,
 	canReadSession,
+	canUpdateSessionActivity,
 	helperAskConversationId,
 	sessionListVisibility,
 } from '../lib/session-access'
@@ -702,6 +703,13 @@ app.openapi(patchSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (
+		body.current_activity !== undefined &&
+		!(await canUpdateSessionActivity(db, session, actorId))
+	) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	// Only whoever started the helper can ask for its result to come back.
 	if (body.notify_on_complete && session.createdBy !== actorId) {
