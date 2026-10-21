@@ -195,3 +195,76 @@ export async function mirrorCommentIntoChat(
 		})
 	}
 }
+
+/**
+ * The group chat for an object: the one that exists, or a new one that opens with the object's
+ * comments. Everyone in `participantIds` is in it afterwards, including people who had left.
+ * Two callers racing to make it end up in the same chat.
+ */
+export async function ensureObjectChat(
+	db: Database,
+	args: {
+		workspaceId: string
+		objectId: string
+		title: string
+		createdBy: string
+		participantIds: string[]
+	},
+): Promise<{ conversationId: string; created: boolean }> {
+	const find = async () => {
+		const [row] = await db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(
+				and(
+					eq(conversations.workspaceId, args.workspaceId),
+					eq(conversations.subjectType, 'object'),
+					eq(conversations.subjectId, args.objectId),
+				),
+			)
+			.limit(1)
+		return row?.id
+	}
+
+	let conversationId = await find()
+	let created = false
+	if (!conversationId) {
+		try {
+			const [row] = await db
+				.insert(conversations)
+				.values({
+					workspaceId: args.workspaceId,
+					title: args.title,
+					createdBy: args.createdBy,
+					subjectType: 'object',
+					subjectId: args.objectId,
+				})
+				.returning({ id: conversations.id })
+			conversationId = row?.id
+			created = conversationId !== undefined
+		} catch (err) {
+			// Lost the race to the unique index: use the winner's chat.
+			conversationId = await find()
+			if (!conversationId) throw err
+		}
+	}
+	if (!conversationId) throw new Error('Failed to open the object chat')
+
+	const people = Array.from(new Set([args.createdBy, ...args.participantIds]))
+	await db
+		.insert(conversationParticipants)
+		.values(people.map((actorId) => ({ conversationId, actorId, addedBy: args.createdBy })))
+		.onConflictDoUpdate({
+			target: [conversationParticipants.conversationId, conversationParticipants.actorId],
+			set: { leftAt: null, updatedAt: new Date() },
+		})
+	if (created) {
+		await importObjectComments(db, {
+			conversationId,
+			workspaceId: args.workspaceId,
+			objectId: args.objectId,
+			actorId: args.createdBy,
+		})
+	}
+	return { conversationId, created }
+}

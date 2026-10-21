@@ -1,6 +1,7 @@
 import {
 	HUMAN_MESSAGE_STYLE_SHORT,
 	MESSAGE_MAX_LENGTH,
+	commentDecisionSchema,
 	createCommentSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
@@ -1161,6 +1162,61 @@ export const tools = {
 				.describe(
 					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
 				),
+		}),
+	},
+
+	post_decision: {
+		description: `Ask a human to make a call, as a decision card in the group chat about an object. Solve it yourself first: use this only when the call truly belongs to a person (it sends something in their name or outside the company, spends money, deletes data, or needs a judgement you cannot make). The card must say what you already did, so the person is only deciding, not working. Name the people in \`for_actor_ids\` when you know who should answer; otherwise it goes to the object's driver, then whoever created it, then the humans following it. The answer comes back as a reply in the card's thread that mentions you, so read it with list_conversation_messages and carry on. Do not post the same question twice: the Chief of Staff merges duplicates. If the situation changes and the question is moot, take it back with curate_decision's withdraw via the Chief of Staff, or answer in the thread.`,
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the decision is about.'),
+			decision: commentDecisionSchema,
+			attention: z
+				.number()
+				.int()
+				.min(1)
+				.max(5)
+				.optional()
+				.describe('How urgent this is for the person, 1 (FYI) to 5 (blocking). Orders their list.'),
+			for_actor_ids: z
+				.array(z.string().uuid())
+				.min(1)
+				.max(20)
+				.optional()
+				.describe('Who can answer. Ids must come from a live list_actors call.'),
+			content: z
+				.string()
+				.min(1)
+				.max(MESSAGE_MAX_LENGTH)
+				.optional()
+				.describe('Text for places that do not draw cards. Defaults to the title and ask.'),
+		}),
+	},
+	list_decisions: {
+		description:
+			"List decisions. By default the ones addressed to you (state: open | answered | withdrawn). The Chief of Staff can pass scope: 'all' to see every decision in the workspace, which is how it finds duplicates and stale cards to curate. Each item has the conversation_id and message_id you need for curate_decision.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			state: z.enum(['open', 'answered', 'withdrawn']).optional(),
+			scope: z.enum(['mine', 'all']).optional(),
+			limit: z.number().int().min(1).max(100).optional(),
+		}),
+	},
+	curate_decision: {
+		description:
+			"Chief of Staff only: keep the decision list trustworthy. Change another agent's open decision: re-rank it (attention 1-5), hand it to other people (for_actor_ids), or withdraw it with a reason (withdraw: { reason, merged_into } where merged_into is the message_id of the open decision it duplicates). Every change is noted in the card's thread. Any other agent gets a 403.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			message_id: z.number().int().positive(),
+			attention: z.number().int().min(1).max(5).optional(),
+			for_actor_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
+			withdraw: z
+				.object({
+					reason: z.string().min(1).max(500),
+					merged_into: z.number().int().positive().optional(),
+				})
+				.optional(),
 		}),
 	},
 

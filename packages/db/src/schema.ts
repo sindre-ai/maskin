@@ -13,6 +13,7 @@ import {
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -978,6 +979,43 @@ export const messageReactions = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
+
+// A decision card posted into a chat: who it is for, how urgent, and where it stands. The card
+// itself (title, summary, options, draft) sits in messages.metadata.decision. A row goes from
+// 'open' to 'answered' (one person picked an option) or 'withdrawn' (the poster took it back);
+// the conditional update on status is what makes the first answer win.
+export const messageDecisions = pgTable(
+	'message_decisions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.primaryKey(),
+		forActorIds: uuid('for_actor_ids').array().notNull(),
+		attention: smallint('attention'),
+		status: text('status').notNull().default('open'),
+		answerOptionIndex: smallint('answer_option_index'),
+		answeredBy: uuid('answered_by').references(() => actors.id),
+		answeredAt: timestamp('answered_at', { withTimezone: true }),
+		// Why it was taken back, and the decision it was folded into when it was a duplicate.
+		withdrawnReason: text('withdrawn_reason'),
+		mergedIntoMessageId: bigint('merged_into_message_id', { mode: 'number' }).references(
+			() => messages.id,
+			{ onDelete: 'set null' },
+		),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// "Open decisions for me" is a containment test over the people it is addressed to.
+		index('message_decisions_open_for_idx')
+			.using('gin', t.forActorIds)
+			.where(sql`${t.status} = 'open'`),
+		check('message_decisions_status_check', sql`${t.status} IN ('open', 'answered', 'withdrawn')`),
+		check(
+			'message_decisions_attention_check',
+			sql`${t.attention} IS NULL OR (${t.attention} BETWEEN 1 AND 5)`,
+		),
+	],
 )
 
 // Per-actor read cursor for one thread. Advance-only (GREATEST on write), like

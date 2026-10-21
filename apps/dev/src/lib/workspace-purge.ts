@@ -114,6 +114,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'live_activity_tokens',
 	'loop_active_days',
 	'mcp_telemetry',
+	'message_decisions',
 	'message_reactions',
 	'message_thread_reads',
 	'messages',
