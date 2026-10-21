@@ -132,14 +132,14 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 	var buttonTitle: String {
 		switch phase {
 		case .idle: "Listen"
-		case .speaking: "Pause"
+		case .speaking: "Stop"
 		case .paused: "Resume"
 		}
 	}
 	var buttonSymbol: String {
 		switch phase {
 		case .idle: "waveform"
-		case .speaking: "pause.fill"
+		case .speaking: "stop.fill"
 		case .paused: "play.fill"
 		}
 	}
@@ -149,11 +149,11 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 		synthesizer.delegate = self
 	}
 
-	/// Listen starts, Pause pauses, Resume continues.
+	/// Listen starts, Stop ends it (the mockup's label); Now Playing still pauses and resumes.
 	func toggle(_ text: String) {
 		switch phase {
 		case .idle: speak(text)
-		case .speaking: pause()
+		case .speaking: stop()
 		case .paused: resume()
 		}
 	}

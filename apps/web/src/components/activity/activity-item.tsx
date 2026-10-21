@@ -21,6 +21,7 @@ const SESSION_ACTIONS = new Set([
 	'session_completed',
 	'session_failed',
 	'session_timeout',
+	'session_stopped',
 	'session_paused',
 ])
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	type CommentDecision,
+	type CommentDecisionOption,
 	commentDecisionSchema,
 	validateDecisionProse,
 } from '../schemas/comment-decision'
@@ -33,6 +34,23 @@ function violate(decision: CommentDecision) {
 }
 
 describe('commentDecisionSchema', () => {
+	it('accepts an optional destructive flag on an option and rejects a non-boolean', () => {
+		const [first, second] = buildDecision().options
+		const withFlag = buildDecision({
+			options: [
+				{ ...(first as CommentDecisionOption), destructive: true },
+				second as CommentDecisionOption,
+			],
+		})
+		const parsed = commentDecisionSchema.safeParse(withFlag)
+		expect(parsed.success && parsed.data.options[0]?.destructive).toBe(true)
+		const bad = {
+			...withFlag,
+			options: [{ ...withFlag.options[0], destructive: 'yes' }, second],
+		}
+		expect(commentDecisionSchema.safeParse(bad).success).toBe(false)
+	})
+
 	it('accepts a well-formed decision', () => {
 		expect(commentDecisionSchema.safeParse(buildDecision()).success).toBe(true)
 		expect(validateDecisionProse(buildDecision())).toEqual([])
@@ -215,5 +233,85 @@ describe('create_comment agent-facing docs', () => {
 		expect(shape.summary.description).toContain('Never restate the title')
 		expect(shape.ask.description).toContain('First person')
 		expect(shape.options.description).toContain('exactly one marked recommended')
+	})
+})
+
+describe('decision draft', () => {
+	const DRAFT = {
+		label: 'Email to Hans',
+		to: 'Hans Jensen, Netwerk',
+		body: 'Hej Hans,\n\nJeg så at du opsagde fakturering den 12. Må jeg ringe i morgen?\n\nMvh Seb',
+	}
+
+	it('accepts a draft with a label, a recipient and a body', () => {
+		const parsed = commentDecisionSchema.safeParse(buildDecision({ draft: DRAFT }))
+
+		expect(parsed.success && parsed.data.draft).toEqual(DRAFT)
+	})
+
+	it('accepts a draft that only points at the object holding it', () => {
+		const object_id = '33333333-3333-4333-8333-333333333333'
+
+		const parsed = commentDecisionSchema.safeParse(buildDecision({ draft: { object_id } }))
+
+		expect(parsed.success && parsed.data.draft).toEqual({ object_id })
+	})
+
+	it('rejects a draft with neither an object nor a body', () => {
+		const parsed = commentDecisionSchema.safeParse(
+			buildDecision({ draft: { label: 'Email to Hans' } }),
+		)
+
+		expect(parsed.success).toBe(false)
+	})
+
+	it('accepts a draft with no recipient, for a public post', () => {
+		const parsed = commentDecisionSchema.safeParse(
+			buildDecision({ draft: { label: 'LinkedIn post', body: 'We shipped it.' } }),
+		)
+
+		expect(parsed.success).toBe(true)
+	})
+
+	it('rejects an empty body, an empty label and a label over 30 characters', () => {
+		for (const draft of [
+			{ ...DRAFT, body: '' },
+			{ ...DRAFT, label: '' },
+			{ ...DRAFT, label: 'x'.repeat(31) },
+		]) {
+			expect(commentDecisionSchema.safeParse(buildDecision({ draft })).success).toBe(false)
+		}
+	})
+
+	it('does not run the prose rules over the draft, so a human can keep a dash, a hedge word and an emoji', () => {
+		const draft = {
+			label: 'Slack message',
+			body: 'Many thanks, this is great \u2014 really \u{1F680}. Several of us agree.',
+		}
+
+		expect(validateDecisionProse(buildDecision({ draft }))).toEqual([])
+	})
+
+	it('still checks the rest of the card when a draft is attached', () => {
+		const decision = buildDecision({ draft: DRAFT, ask: 'Should we send it now?' })
+
+		expect(violate(decision)).toContain('ask')
+	})
+
+	it('survives create_comment parsing end to end', () => {
+		const parsed = createCommentSchema.safeParse({
+			entity_id: '11111111-1111-4111-8111-111111111111',
+			content: 'Approve the Danish note to Hans.',
+			mentions: ['22222222-2222-4222-8222-222222222222'],
+			decision: buildDecision({ draft: DRAFT }),
+		})
+
+		expect(parsed.success && parsed.data.decision?.draft).toEqual(DRAFT)
+	})
+
+	it('leaves a decision without a draft exactly as it was', () => {
+		const parsed = commentDecisionSchema.safeParse(buildDecision())
+
+		expect(parsed.success && 'draft' in parsed.data).toBe(false)
 	})
 })

@@ -209,3 +209,8 @@ activity.
 - The chat overlay for a thread that was closed mid-turn lingers up to 10 minutes if nothing
   reports the turn finished; the feed cannot help because chat sessions read `running` while idle.
 - No background updates on this server (see above).
+
+## Sweep and topic
+
+- **Sweep** (`AgentsActivitySweep`, `AgentsActivityCoordinator.sweep()`): runs after the workspace feed loads at launch, on foreground (`AgentsActivityRuntime.refresh`) and after a thread's sessions refresh. It ends cards from another workspace, cards left over when the loaded feed says nobody is working (a push-to-start whose end push never came), and duplicates. Until the feed has loaded it only touches other workspaces' cards.
+- **Topic**: `WorkingAgent.topic` is the conversation title (optional, 60 characters); the expanded card appends it to the "Started …" line.

@@ -1,0 +1,226 @@
+import {
+	AgentAccess,
+	accessOrderFor,
+	startingAccess,
+	summarizeAgentAccess,
+} from '@/components/integrations/agent-access'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildIntegrationResponse } from '../../factories'
+
+const AGENTS = [
+	{ id: 'agent-1', name: 'Infra & DevOps', type: 'agent' },
+	{ id: 'agent-2', name: 'Code Reviewer', type: 'agent' },
+	{ id: 'agent-3', name: 'Writer', type: 'agent' },
+	{ id: 'human-1', name: 'Magnus', type: 'human' },
+]
+
+vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: AGENTS }) }))
+
+const setGrant = vi.fn()
+const removeGrant = vi.fn()
+const setDefault = vi.fn()
+vi.mock('@/hooks/use-integrations', () => ({
+	useSetAgentGrant: () => ({ mutate: setGrant, isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: removeGrant, isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: setDefault, isPending: false }),
+}))
+
+const mockRole = vi.fn(() => 'member')
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspace: { role: mockRole() }, workspaceId: 'ws-1' }),
+}))
+
+const mockActor = vi.fn<() => { id: string; type: string } | null>(() => ({
+	id: 'human-1',
+	type: 'human',
+}))
+vi.mock('@/lib/auth', () => ({ getStoredActor: () => mockActor() }))
+
+beforeEach(() => {
+	vi.clearAllMocks()
+	mockRole.mockReturnValue('member')
+	mockActor.mockReturnValue({ id: 'human-1', type: 'human' })
+})
+
+function renderOpen(over: Parameters<typeof buildIntegrationResponse>[0] = {}) {
+	const integration = buildIntegrationResponse({
+		id: 'int-1',
+		createdBy: 'human-1',
+		defaultAgentAccess: 'read',
+		agentGrants: [],
+		...over,
+	})
+	const user = userEvent.setup()
+	render(<AgentAccess integration={integration} workspaceId="ws-1" />)
+	return { user, open: () => user.click(screen.getByRole('button', { name: /Agent access/ })) }
+}
+
+describe('summarizeAgentAccess', () => {
+	it('says all agents can read when nobody has an override', () => {
+		expect(summarizeAgentAccess('read', [])).toBe('All agents can read')
+	})
+
+	it('counts the agents that can also write', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'read_write' }])).toBe(
+			'All agents can read · 1 can also write',
+		)
+		expect(summarizeAgentAccess('read', [{ access: 'read_write' }, { access: 'read_write' }])).toBe(
+			'All agents can read · 2 can also write',
+		)
+	})
+
+	it('does not count a read-only override as a writer', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'read' }])).toBe('All agents can read')
+	})
+
+	it('describes a restricted integration by how many agents have access', () => {
+		expect(summarizeAgentAccess('none', [])).toBe('No agents have access')
+		expect(summarizeAgentAccess('none', [{ access: 'read' }])).toBe('1 agent has access')
+		expect(summarizeAgentAccess('none', [{ access: 'read' }, { access: 'read_write' }])).toBe(
+			'2 agents have access',
+		)
+	})
+
+	it('says how many agents were taken off an integration the rest can read', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'none' }])).toBe(
+			'All agents can read · 1 has no access',
+		)
+		expect(
+			summarizeAgentAccess('read', [
+				{ access: 'none' },
+				{ access: 'none' },
+				{ access: 'read_write' },
+			]),
+		).toBe('All agents can read · 1 can also write · 2 have no access')
+	})
+
+	it('does not count a No access entry as having access when the default is none', () => {
+		expect(summarizeAgentAccess('none', [{ access: 'none' }])).toBe('No agents have access')
+	})
+})
+
+describe('startingAccess', () => {
+	it('starts a new agent one step above the default', () => {
+		expect(startingAccess('read')).toBe('read_write')
+		expect(startingAccess('none')).toBe('read')
+	})
+
+	it('starts an agent added to Gmail by asking first, never by sending on its own', () => {
+		expect(startingAccess('read', 'gmail')).toBe('ask_first')
+		expect(startingAccess('none', 'gmail')).toBe('ask_first')
+		expect(startingAccess('read', 'slack')).toBe('read_write')
+	})
+})
+
+describe('accessOrderFor', () => {
+	it('offers "Ask first" for Gmail and for no other provider', () => {
+		expect(accessOrderFor('gmail')).toEqual(['read', 'ask_first', 'read_write', 'none'])
+		expect(accessOrderFor('slack')).toEqual(['read', 'read_write', 'none'])
+	})
+})
+
+describe('summarizeAgentAccess with ask first', () => {
+	it('counts agents that write only after approval apart from those that write freely', () => {
+		expect(summarizeAgentAccess('read', [{ access: 'ask_first' }, { access: 'read_write' }])).toBe(
+			'All agents can read · 1 can also write · 1 can write after you approve',
+		)
+	})
+})
+
+describe('AgentAccess', () => {
+	it('is collapsed to one summary line until opened', async () => {
+		const { open } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		expect(screen.getByText('All agents can read · 1 can also write')).toBeInTheDocument()
+		expect(screen.queryByText('All other agents')).not.toBeInTheDocument()
+		await open()
+		expect(screen.getByText('All other agents')).toBeInTheDocument()
+		expect(screen.getByText('Infra & DevOps')).toBeInTheDocument()
+	})
+
+	it('lists only agents with an override, never people or the rest', async () => {
+		const { open } = renderOpen({
+			agentGrants: [
+				{ actorId: 'agent-1', access: 'read_write' },
+				{ actorId: 'human-1', access: 'read' },
+			],
+		})
+		await open()
+		expect(screen.getByText('Infra & DevOps')).toBeInTheDocument()
+		expect(screen.queryByText('Code Reviewer')).not.toBeInTheDocument()
+		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
+	})
+
+	it('removes an override', async () => {
+		const { open, user } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		await user.click(screen.getByRole('button', { name: 'Remove Infra & DevOps' }))
+		expect(removeGrant).toHaveBeenCalledWith('agent-1')
+	})
+
+	it('changes an override and the default', async () => {
+		const { open, user } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+		await user.click(await screen.findByRole('option', { name: 'Read' }))
+		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read' })
+
+		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
+		await user.click(await screen.findByRole('option', { name: 'No access' }))
+		expect(setDefault).toHaveBeenCalledWith('none')
+	})
+
+	it('adds an agent that has no override, starting at read & write when the default is read', async () => {
+		const { open, user } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Add an agent' }))
+		// The agent that already has an entry is not offered again.
+		expect(screen.queryByRole('option', { name: 'Infra & DevOps' })).not.toBeInTheDocument()
+		await user.click(await screen.findByRole('option', { name: 'Code Reviewer' }))
+		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-2', access: 'read_write' })
+	})
+
+	it('adds an agent at read when the default is no access', async () => {
+		const { open, user } = renderOpen({ defaultAgentAccess: 'none' })
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Add an agent' }))
+		await user.click(await screen.findByRole('option', { name: 'Writer' }))
+		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-3', access: 'read' })
+	})
+
+	it('is read-only for a member who did not connect it', async () => {
+		const { open } = renderOpen({
+			createdBy: 'someone-else',
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		expect(screen.getByRole('combobox', { name: 'Access for all other agents' })).toBeDisabled()
+		expect(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' })).toBeDisabled()
+		expect(screen.queryByRole('button', { name: 'Remove Infra & DevOps' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('combobox', { name: 'Add an agent' })).not.toBeInTheDocument()
+		expect(screen.getByText(/Only the person who connected this/)).toBeInTheDocument()
+	})
+
+	it('lets a workspace admin edit an integration someone else connected', async () => {
+		mockRole.mockReturnValue('admin')
+		const { open } = renderOpen({ createdBy: 'someone-else' })
+		await open()
+		expect(screen.getByRole('combobox', { name: 'Access for all other agents' })).toBeEnabled()
+	})
+
+	it('does not let an agent edit', async () => {
+		mockActor.mockReturnValue({ id: 'agent-1', type: 'agent' })
+		const { open } = renderOpen({ createdBy: 'agent-1' })
+		await open()
+		expect(screen.getByRole('combobox', { name: 'Access for all other agents' })).toBeDisabled()
+	})
+})

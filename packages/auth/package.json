@@ -12,6 +12,10 @@
 		"./middleware": {
 			"types": "./src/middleware.ts",
 			"default": "./dist/middleware.js"
+		},
+		"./kms": {
+			"types": "./src/kms.ts",
+			"default": "./dist/kms.js"
 		}
 	},
 	"scripts": {

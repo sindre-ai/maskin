@@ -38,15 +38,10 @@ const config = {
 }
 
 // Tools whose `registerAppTool` calls are intentionally commented out in
-// server.ts (notification MCP tools are temporarily hidden). Keep the tool
-// *definitions* in `tools.ts` so re-enabling stays a one-line change.
-const HIDDEN_TOOL_NAMES = new Set([
-	'create_notification',
-	'list_notifications',
-	'get_notification',
-	'update_notification',
-	'delete_notification',
-])
+// server.ts (get/delete notification stay hidden; create/list/update are live for
+// the Chief of Staff's For You list). Keep the tool *definitions* in `tools.ts`
+// so re-enabling stays a one-line change.
+const HIDDEN_TOOL_NAMES = new Set(['get_notification', 'delete_notification'])
 
 describe('createMcpServer', () => {
 	beforeEach(() => {
@@ -805,6 +800,42 @@ describe('tool handlers', () => {
 				.mocked(fetch)
 				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
 			expect(sessionsCall?.[0] as string).not.toContain('verbose=')
+		})
+	})
+
+	describe('get_session_activity handler', () => {
+		const sid = '11111111-1111-4111-8111-111111111111'
+		const payload = {
+			session_id: sid,
+			turns: [{ message_id: 7, steps: [{ id: '1-0', kind: 'tool_use', label: 'Using Read' }] }],
+			oldest_log_id: 1,
+			has_older: false,
+		}
+
+		it('forwards paging params and returns the same full payload on both channels', async () => {
+			mockFetchSuccess(payload)
+			const handler = getHandler('get_session_activity')
+			const result = (await handler({
+				id: sid,
+				limit_turns: 3,
+				message_id: 7,
+				before_log_id: 99,
+			})) as { content: Array<{ text: string }>; structuredContent: unknown }
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain(`/api/sessions/${sid}/activity?`)
+			expect(calledUrl).toContain('limit_turns=3')
+			expect(calledUrl).toContain('message_id=7')
+			expect(calledUrl).toContain('before_log_id=99')
+			expect(result.structuredContent).toEqual(payload)
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('states it is read-only and names its write counterparts', async () => {
+			const { tools } = await import('../tools')
+			const d = tools.get_session_activity.description
+			expect(d).toContain('read-only')
+			expect(d).toContain('stop_session')
 		})
 	})
 
@@ -2070,6 +2101,39 @@ describe('tool handlers', () => {
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
 			})
 
+			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { tags: ['Old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', tags: ['Sales', 'EMEA'] })
+				await handler({ id: 'loop-1', tags: [] })
+
+				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
+				expect(patches[1]?.metadata).toEqual({ tags: [] })
+			})
+
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
 				const relationshipDeletes: string[] = []
 				let patchBody: Record<string, unknown> | undefined
@@ -2298,10 +2362,20 @@ describe('tool handlers', () => {
 			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 
-		it('flag off: not in the body, so the create route sees what it saw before', async () => {
+		it('always on, so a caller that does not wait still hears back', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
-			expect(postedBody(vi.mocked(fetch))).not.toHaveProperty('notify_on_complete')
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
+		})
+
+		it('cannot be switched off: a caller passing false still hears back', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				notify_on_complete: false,
+			})
+			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
 		})
 	})
 
@@ -2414,6 +2488,21 @@ describe('tool handlers', () => {
 			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
 		})
 
+		it('unset and the wait times out: still asks for the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = neverFinishes('sess-n0')
+
+			const resultPromise = getHandler('create_session')({
+				wait: true,
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+			})
+			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
+
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
 		it('flag on and the helper finishes inside the wait: no PATCH, the caller has the result inline', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -2523,7 +2612,7 @@ describe('tool handlers', () => {
 			expect(parsed.logs_error).toEqual(expect.any(String))
 		})
 
-		it('flag off and the wait times out: no PATCH, as before', async () => {
+		it('passing false does not stop the return being registered when the wait times out', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
@@ -2531,12 +2620,12 @@ describe('tool handlers', () => {
 				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
+				notify_on_complete: false,
 			})
 			await vi.advanceTimersByTimeAsync(3_800_000)
+			await resultPromise
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('notify_on_complete')
-			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
 		})
 
 		it('a failed PATCH does not fail the call; it says the return was not registered', async () => {
@@ -2992,9 +3081,8 @@ describe('tool handlers', () => {
 		})
 	})
 
-	// Notification MCP tools are temporarily hidden — see server.ts. Skip the
-	// handler tests until the tools are re-enabled.
-	describe.skip('create_notification handler', () => {
+	// create_notification is registered again (the Chief of Staff writes the For You list).
+	describe('create_notification handler', () => {
 		it('passes native array metadata.actions through unchanged', async () => {
 			const mockResult = { id: 'notif-1' }
 			mockFetchSuccess(mockResult)
@@ -6465,5 +6553,37 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', hostSession)
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
+	})
+
+	it('post_conversation_message resolves mention_names to metadata.mentions and reports misses', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const isPost = String(input).endsWith('/messages')
+			return {
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve(
+						isPost
+							? { id: 'msg-1' }
+							: { participants: [{ actorId: 'actor-strategist', actorName: 'Strategist' }] },
+					),
+			} as Response
+		})
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		const result = await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'over to you',
+			mention_names: ['Strategist', 'Nobody'],
+		})
+		const post = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((post?.[1] as RequestInit).body as string)
+		expect(sent.metadata.mentions).toEqual(['actor-strategist'])
+		expect(sent.mention_names).toBeUndefined()
+		const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? ''
+		expect(JSON.parse(text).unresolved_mentions).toEqual([
+			{ name: 'Nobody', reason: 'not_in_conversation' },
+		])
 	})
 })
