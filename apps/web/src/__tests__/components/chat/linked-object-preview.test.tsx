@@ -62,7 +62,6 @@ const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
-const CONTENT = `Draft: /objects/${ID}`
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -77,7 +76,7 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 }
 
 function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
-	return render(<LinkedObjectPreviews workspaceId={WS} content={CONTENT} {...props} />)
+	return render(<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} {...props} />)
 }
 
 // The card starts contracted; click its top to read the text.
@@ -101,8 +100,18 @@ describe('LinkedObjectPreviews', () => {
 		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
 	})
 
+	it('says what the object is about, from its metadata, on the contracted card', () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				metadata: { source: 'sales_conversation', channel: 'linkedin_dm', priority: 'P1' },
+			}),
+		})
+		renderCard()
+		expect(screen.getByText('LinkedIn message · P1')).toBeInTheDocument()
+	})
+
 	it('shows nothing when the message links to no object', () => {
-		const { container } = render(<LinkedObjectPreviews workspaceId={WS} content="No links" />)
+		const { container } = render(<LinkedObjectPreviews workspaceId={WS} objectIds={[]} />)
 		expect(container).toBeEmptyDOMElement()
 		expect(useObject).not.toHaveBeenCalled()
 	})

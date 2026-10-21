@@ -7,7 +7,7 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, ChevronDown } from 'lucide-react'
@@ -43,6 +43,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
+	const properties = describeObjectProperties(object.metadata)
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -116,11 +117,23 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				<p
 					className={cn(
 						'px-3 text-sm font-semibold leading-snug text-foreground',
-						expanded ? 'pt-3' : 'truncate pb-3 pt-1',
+						expanded ? 'pt-3' : 'truncate pt-1',
+						!expanded && properties.length === 0 && 'pb-3',
 					)}
 				>
 					{object.title || 'Untitled'}
 				</p>
+				{/* What the object is about, from its metadata: "LinkedIn message · P1". */}
+				{properties.length > 0 ? (
+					<p
+						className={cn(
+							'truncate px-3 pt-0.5 text-xs text-muted-foreground',
+							!expanded && 'pb-3',
+						)}
+					>
+						{properties.join(' · ')}
+					</p>
+				) : null}
 			</div>
 			{expanded ? (
 				<>
@@ -169,27 +182,27 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 }
 
 /**
- * Shows the objects a message links to as cards: what they say, their status
- * (changeable from the card, with the writing agent told), a button for the
- * next phase, and the text editable in place. Works for any agent and any object
- * type, because it reads the link, not a tool call.
+ * The cards for objects a message links to: what they say, what they are about, their status
+ * (changeable from the card, with the writing agent told), a button for the next phase, and
+ * the text editable in place. Works for any agent and any object type, because it reads the
+ * link, not a tool call. The message places them: each card follows the paragraph that
+ * links it (see `splitAtLinkedObjects`).
  */
 export function LinkedObjectPreviews({
 	workspaceId,
-	content,
+	objectIds,
 	conversationId,
 	agentId,
 }: {
 	workspaceId: string
-	content: string
+	objectIds: string[]
 	conversationId?: string
 	agentId?: string
 }) {
-	const ids = extractLinkedObjectIds(content)
-	if (ids.length === 0) return null
+	if (objectIds.length === 0) return null
 	return (
 		<>
-			{ids.map((id) => (
+			{objectIds.map((id) => (
 				<LinkedObjectPreview
 					key={id}
 					workspaceId={workspaceId}
