@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StorageProvider } from '@maskin/storage'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	FORCED_STOP_EXIT_CODE,
@@ -1499,6 +1500,155 @@ describe('monitorSession — completion report retry and drop marker', () => {
 		expect(errorSpy).toHaveBeenCalledWith(
 			'session completion report failed after all retries — session may appear running until watchdog fires',
 			expect.objectContaining({ sessionId, exitCode: 0 }),
+		)
+	})
+})
+
+describe('monitorSession — exit code and lost workspace save', () => {
+	// Same reattach-via-reconcileOnBoot approach as the completion-report
+	// describe above, with the sandbox reported gone on the second `list`.
+	function makeCompletingRunner(sessionName: string) {
+		let listCalls = 0
+		return async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				listCalls++
+				return {
+					stdout: JSON.stringify(listCalls === 1 ? [{ name: sessionName, status: 'Running' }] : []),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+	}
+
+	// Storage whose upload is throttled for good, so the push gives up after
+	// its retries (the production "SlowDown" case).
+	const throttledStorage = {
+		put: async () => {
+			throw new Error('SlowDown: Please reduce your request rate.')
+		},
+	} as unknown as StorageProvider
+
+	type Posted = { url: string; body: Record<string, unknown> }
+
+	async function runSession(opts: {
+		sessionId: string
+		storage: StorageProvider | null
+		exitCode?: number
+		lines?: string[]
+	}): Promise<Posted[]> {
+		const { sessionId } = opts
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+
+		const posted: Posted[] = []
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init: RequestInit) => {
+				posted.push({ url, body: JSON.parse(init.body as string) })
+				return { ok: true, json: async () => ({}) }
+			}),
+		)
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		const sessionExitCodes = new Map<string, number>()
+		if (opts.exitCode !== undefined) sessionExitCodes.set(sessionId, opts.exitCode)
+
+		// The workspace archive is built by a real tar child process, so real time
+		// has to pass between fake-timer steps.
+		const realSetTimeout = globalThis.setTimeout
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: opts.storage,
+				msb: { msbBin: '/usr/local/bin/msb', run: makeCompletingRunner(sessionId) },
+				sessionLogRouters,
+				sessionExitCodes,
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+			for (const line of opts.lines ?? []) sessionLogRouters.get(sessionId)?.(line)
+
+			for (let i = 0; i < 100 && !posted.some((p) => p.url.endsWith('/complete')); i++) {
+				await vi.advanceTimersByTimeAsync(5_000)
+				await new Promise((resolve) => realSetTimeout(resolve, 10))
+			}
+		} finally {
+			vi.useRealTimers()
+		}
+		return posted
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+		vi.restoreAllMocks()
+	})
+
+	it('keeps a clean run completed and logs a lost workspace when only the save fails', async () => {
+		const sessionId = 'sess-save-lost'
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+		vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const posted = await runSession({ sessionId, storage: throttledStorage })
+
+		const complete = posted.find((p) => p.url.endsWith(`/sessions/${sessionId}/complete`))
+		expect(complete?.body).toEqual({ exitCode: 0 })
+		const logged = posted
+			.filter((p) => p.url.endsWith(`/sessions/${sessionId}/logs`))
+			.flatMap((p) => (p.body.logs as Array<{ content: string }>).map((l) => l.content))
+		expect(logged.some((l) => l.startsWith('[system] workspace lost:'))).toBe(true)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'session workspace push failed after retries',
+			expect.objectContaining({ sessionId }),
+		)
+	})
+
+	it('still reports a non-zero exit code as failed, with or without a lost save', async () => {
+		vi.spyOn(logger, 'error').mockImplementation(() => {})
+		vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const plain = await runSession({ sessionId: 'sess-exit-2', storage: null, exitCode: 2 })
+		const withLostSave = await runSession({
+			sessionId: 'sess-exit-3',
+			storage: throttledStorage,
+			exitCode: 3,
+		})
+
+		expect(plain.find((p) => p.url.endsWith('/complete'))?.body).toEqual({ exitCode: 2 })
+		expect(withLostSave.find((p) => p.url.endsWith('/complete'))?.body).toEqual({ exitCode: 3 })
+	})
+
+	it('writes the last output lines to the host log when the exit code is non-zero', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const lines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`)
+
+		await runSession({ sessionId: 'sess-tail', storage: null, exitCode: 1, lines })
+
+		expect(warnSpy).toHaveBeenCalledWith('session exited non-zero, last output lines follow', {
+			sessionId: 'sess-tail',
+			exitCode: 1,
+			lastLines: lines.slice(5),
+		})
+	})
+
+	it('does not log an output tail when the exit code is zero', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		await runSession({ sessionId: 'sess-clean', storage: null, lines: ['all good'] })
+
+		expect(warnSpy).not.toHaveBeenCalledWith(
+			'session exited non-zero, last output lines follow',
+			expect.anything(),
 		)
 	})
 })
