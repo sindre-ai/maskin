@@ -18,7 +18,7 @@ const keyOf = (draft: LatestMentionDecisionDraft, index: number) => draft.id ?? 
 
 /**
  * One card, several messages: each is its own preview with its own Send and Skip,
- * stacked so the reader decides them one at a time. Sending reaches a real person,
+ * stacked so the reader can decide them one at a time (the card's own bar decides them all). Sending reaches a real person,
  * so it asks for a second tap before it goes. A message that has been dealt with
  * folds down to a one-line receipt, and the card settles once the last one is.
  */
@@ -90,9 +90,12 @@ export function DraftStack({ drafts, onAction, onAllDone }: DraftStackProps) {
 								</>
 							) : (
 								<>
+									{/* Quiet on purpose: the card's own bar is the main action, this is
+									    for sending one reply on its own. */}
 									<Button
 										type="button"
 										size="sm"
+										variant="outline"
 										disabled={busy}
 										onClick={() => setConfirming(key)}
 									>
