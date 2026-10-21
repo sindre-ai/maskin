@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database, Transaction } from '@maskin/db'
-import { actors, agentGrants, events, integrations, workspaceMembers } from '@maskin/db/schema'
+import { events, actors, agentGrants, integrations, workspaceMembers } from '@maskin/db/schema'
 import { byoApiKeyEnvName } from '@maskin/shared'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { maskArgs } from '../actor-tools-redaction'

@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
+	events,
 	agentGrants,
 	credentialAccessLog,
-	events,
 	integrations,
 	sessions,
 	workspaceMembers,
@@ -335,6 +335,28 @@ describe('POST /api/keychain/lift', () => {
 				dekCiphertext: cloudflare?.dekCiphertext as string,
 			}),
 		).toBe(s.values.cf)
+	})
+
+	it('grants a deduped key to the union of the agents across the matching tool servers', async () => {
+		const s = await setup()
+		// Only one of the four Cloudflare tool servers is also granted to the watcher.
+		await db.insert(agentGrants).values({
+			workspaceId: s.ws.id,
+			integrationId: s.rows.cfBuilds,
+			actorId: s.ids.watcher,
+			access: 'read_write' as const,
+		})
+
+		const res = await lift(s.ws.id, { apply: true })
+
+		expect(res.status).toBe(200)
+		const keys = await keysIn(s.ws.id)
+		const cloudflareKeys = keys.filter((k) => k.displayName === 'Cloudflare')
+		expect(cloudflareKeys).toHaveLength(1)
+		expect(await grantsOf(cloudflareKeys[0]?.id as string)).toEqual(
+			[s.ids.infra, s.ids.watcher].sort(),
+		)
+		expect(await grantsOf(cloudflareKeys[0]?.id as string)).not.toContain(s.ids.outsider)
 	})
 
 	it('leaves only the reference in each tool server, keeping the scheme word and other fields', async () => {
