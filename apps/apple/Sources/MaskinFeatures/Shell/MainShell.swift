@@ -84,6 +84,23 @@ public struct MainShell: View {
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: runtime.isOnline)
 		}
+		// A decision is on screen: the moment to explain notifications (never at first launch).
+		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
+			if count > 0 { runtime.valueMomentSeen() }
+		}
+		.onChange(of: runtime.presentation) { _, presentation in
+			if presentation == nil, runtime.forYou.store.needsCount > 0 { runtime.valueMomentSeen() }
+		}
+		.background {
+			if let prompt = runtime.notificationPrompt {
+				Color.clear.sheet(
+					isPresented: Binding(get: { prompt.isPresented }, set: { if !$0 { prompt.notNow() } })
+				) {
+					NotificationPromptSheet(
+						onTurnOn: { Task { await prompt.accept() } }, onNotNow: { prompt.notNow() })
+				}
+			}
+		}
 		.sheet(item: $runtime.presentation) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)

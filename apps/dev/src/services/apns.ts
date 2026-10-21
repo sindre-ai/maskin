@@ -12,7 +12,7 @@
  *   maskin://<workspaceId>/objects/<objectId>        a notification about an object
  *   maskin://<workspaceId>/chats/<conversationId>    a notification about a chat
  *   maskin://<workspaceId>/notifications             fallback: open the inbox / For You
- * `aps.thread-id` groups pushes per chat (`chat:<id>`), per object
+ * `aps.thread-id` is `PushMessage.collapseKey` when set, else groups pushes per chat (`chat:<id>`), per object
  * (`object:<id>`) or per workspace (`workspace:<id>`). `aps.mutable-content = 1`
  * so a notification service extension may rewrite the alert. The notification
  * id travels as `notification_id` and as `apns-collapse-id`, so a duplicate
@@ -40,7 +40,7 @@
  * A 410 or a 400 BadDeviceToken / 410 Unregistered response deletes the token
  * row, so dead devices stop being targeted.
  */
-import { createPrivateKey, sign } from 'node:crypto'
+import { createHash, createPrivateKey, sign } from 'node:crypto'
 import { type ClientHttp2Session, connect } from 'node:http2'
 import type { Database } from '@maskin/db'
 import { deviceTokens } from '@maskin/db/schema'
@@ -172,12 +172,23 @@ function safeImageUrl(url: string | null | undefined): string | null {
 
 const byteLength = (payload: unknown) => Buffer.byteLength(JSON.stringify(payload), 'utf8')
 
+/** APNs rejects an `apns-collapse-id` over 64 bytes; longer keys are hashed (stable, so still collapsing). */
+export const APNS_COLLAPSE_ID_MAX_BYTES = 64
+
+export function apnsCollapseId(msg: PushMessage): string {
+	const key = msg.collapseKey?.trim() || msg.notificationId
+	if (Buffer.byteLength(key, 'utf8') <= APNS_COLLAPSE_ID_MAX_BYTES) return key
+	return `h:${createHash('sha256').update(key).digest('base64url')}`
+}
+
 export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
-	const threadId = msg.conversationId
-		? `chat:${msg.conversationId}`
-		: msg.objectId
-			? `object:${msg.objectId}`
-			: `workspace:${msg.workspaceId}`
+	const threadId = msg.collapseKey?.trim()
+		? msg.collapseKey.trim().slice(0, 200)
+		: msg.conversationId
+			? `chat:${msg.conversationId}`
+			: msg.objectId
+				? `object:${msg.objectId}`
+				: `workspace:${msg.workspaceId}`
 	const decision = msg.decision ? compactDecision(msg.decision) : null
 	const interruption = msg.interruption ?? (decision ? 'time-sensitive' : 'active')
 	const badge =
@@ -434,7 +445,7 @@ export class ApnsSender implements PushChannel {
 								'apns-topic': config.bundleId,
 								'apns-push-type': 'alert',
 								'apns-priority': msg.interruption === 'passive' ? '5' : '10',
-								'apns-collapse-id': msg.notificationId.slice(0, 64),
+								'apns-collapse-id': apnsCollapseId(msg),
 								'content-type': 'application/json',
 							},
 							body,

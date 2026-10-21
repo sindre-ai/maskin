@@ -117,6 +117,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
 		.task { runtime.updateBadge() }
+		.onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+			runtime.timeZoneDidChange()
+		}
 		.onChange(of: [auth.session?.actorId ?? "", auth.session?.workspaceId ?? ""]) {
 			widgetReloader.reload()
 		}
@@ -174,7 +177,9 @@ extension RootView {
 					isRetryingWorkspace = false
 				}
 			},
-			onEnableNotifications: { [runtime] in await runtime.requestPushPermission() })
+			// No notification step here: the system prompt waits for a moment of value, offered
+			// by `NotificationPromptCoordinator` (see `AppRuntime.valueMomentSeen()`).
+			onEnableNotifications: nil)
 	}
 
 	fileprivate func finishFirstUse(session: StoredSession) {
