@@ -32,6 +32,7 @@ import { logger } from '../lib/logger'
 import { DELIVERED_ACTION, findCurrentApproval } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { recordSendOutcome } from '../lib/send-closure'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -774,6 +775,14 @@ app.openapi(sendRoute, async (c) => {
 						thread_id: sent.threadId,
 						mode,
 					},
+				})
+				// The send ends the task it carried out, so nothing still says "to do" for it.
+				await recordSendOutcome(db, {
+					workspaceId,
+					actorId,
+					target: { id: objectDraft.id, type: objectDraft.type },
+					provider: 'gmail',
+					skipDeliveredEvent: true,
 				})
 			}
 		} catch (bookkeepingErr) {
