@@ -103,14 +103,18 @@ export interface VoiceChannel {
 function toolResultText(result: unknown): { text: string; isError: boolean } {
 	const r = result as {
 		content?: Array<{ type?: string; text?: string }>
+		structuredContent?: unknown
 		isError?: boolean
 	} | null
-	const text = Array.isArray(r?.content)
+	let text = Array.isArray(r?.content)
 		? r.content
 				.filter((part) => part?.type === 'text' && typeof part.text === 'string')
 				.map((part) => part.text)
 				.join('\n')
 		: JSON.stringify(result ?? null)
+	// list_actors answers in structuredContent only. The MCP client fills the
+	// missing content with [], so text alone would give the model an empty string.
+	if (text === '' && r?.structuredContent != null) text = JSON.stringify(r.structuredContent)
 	return { text, isError: r?.isError === true }
 }
 
@@ -187,6 +191,20 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				item: { type: 'function_call_output', call_id: msg.call_id, output },
 			},
 		})
+		logger.info('Voice tool call', {
+			voice_session_id: session.id,
+			tool_name: msg.name,
+			ok,
+			error_code: errorCode,
+			output_chars: output.length,
+			latency_ms: now() - startedAt,
+		})
+		if (output === '') {
+			logger.warn('Voice tool call returned an empty result', {
+				voice_session_id: session.id,
+				tool_name: msg.name,
+			})
+		}
 		recordVoiceToolCall(session.id)
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,

@@ -179,6 +179,16 @@ describe('voice channel — tool proxy', () => {
 		expect(JSON.parse(result.event.item.output).error).toContain('API 500: boom')
 	})
 
+	it('passes structuredContent to the model when a tool returns no text', async () => {
+		const structured = { heroCard: { kind: 'list', tool: 'list_actors', objects: [{ id: 'a1' }] } }
+		const invoke = vi.fn().mockResolvedValue({ content: [], structuredContent: structured })
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('list_actors', {})
+		const result = lastResult(sent)
+		expect(result.ok).toBe(true)
+		expect(JSON.parse(result.event.item.output)).toEqual(structured)
+	})
+
 	it('caps an oversized result so one read cannot flood a Realtime turn', async () => {
 		const invoke = vi.fn().mockResolvedValue(textResult('x'.repeat(50_000)))
 		const { sent, toolCall } = setup(invoke)
