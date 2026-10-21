@@ -14,6 +14,11 @@ import SwiftUI
 /// composer or search bar) pinned above the keyboard. The nav bar carries the chat's lead name with
 /// a live status line under it. Takes a ready `ChatStore` and `ChatComposerModel` so it previews
 /// and snapshots without a server.
+/// Which thread is open over a chat: the id of its root message.
+struct ThreadRoute: Hashable {
+	let rootID: Int
+}
+
 struct ChatThreadView: View {
 	let store: ChatStore
 	let composer: ChatComposerModel
@@ -55,6 +60,8 @@ struct ChatThreadView: View {
 	@State private var openedOnUnread = false
 	@State private var renaming = false
 	@State private var newTitle = ""
+	/// The thread open on top of this chat (a pushed screen).
+	@State private var threadRoute: ThreadRoute?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -186,6 +193,11 @@ struct ChatThreadView: View {
 					Button("OK", role: .cancel) {}
 				} message: {
 					Text(store.notice ?? "")
+				}
+				.navigationDestination(item: $threadRoute) { route in
+					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
+						ThreadScreen(store: store, root: root)
+					}
 				}
 				.alert("Rename conversation", isPresented: $renaming) {
 					TextField("Title", text: $newTitle)
@@ -398,7 +410,12 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), matchIDs: matchSet,
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			onOpenThread: { message in
+				guard let id = message.serverID else { return }
+				threadRoute = ThreadRoute(rootID: id)
+			},
+			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
 			.onAppear { if !usesGeometryTracking { reachedBottom() } }
@@ -825,6 +842,8 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// Opens the thread under a message (the pill, or Reply in thread).
+	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -927,6 +946,13 @@ struct ThreadTranscript: View {
 				MaskinHaptics.play(.selection)
 			}
 		}
+		if message.serverID != nil, message.kind == "message", !message.isFailed {
+			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
+			actions.onReact = { emoji in Task { await store.toggleReaction(emoji, on: message) } }
+		}
+		if message.serverID != nil, message.kind == "message", !message.isThreadReply, !message.isFailed {
+			actions.onThread = { onOpenThread(message) }
+		}
 		if message.serverID != nil {
 			actions.isPinned = store.isPinned(message)
 			actions.onPin = { if store.isPinned(message) { store.unpin() } else { store.pin(message) } }
@@ -969,7 +995,7 @@ struct ThreadTranscript: View {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now).uppercased())
 		case .system(let message):
-			ThreadDivider(label: message.content, ruled: false)
+			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
 		case .liveCall(let card):
@@ -997,6 +1023,9 @@ struct ThreadTranscript: View {
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				threadSummary: store.threadSummary(for: message),
+				onOpenThread: { onOpenThread(message) },
+				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onSelectVersion: { store.selectVersion($0, of: message.id) }
 			)
