@@ -798,3 +798,307 @@ describe('gmail_send_email: input', () => {
 		expect((await post(s.agent.id, s.workspace.id, { to: 'ada@example.com' })).status).toBe(400)
 	})
 })
+
+/**
+ * A card that carries several emails in `decision.drafts`, each approved with its own Send.
+ * The person's tap on a message is a reply `Send: <label> to <to> (<id>)`, the same words
+ * the web and iPhone cards post.
+ */
+interface StackMessage {
+	id: string
+	to: string
+	text: string
+}
+
+const ADA: StackMessage = {
+	id: 'ada',
+	to: 'Ada Lovelace <ada@example.com>',
+	text: 'Subject: For Ada\n\nHi Ada, it has been a while.',
+}
+const BOB: StackMessage = {
+	id: 'bob',
+	to: 'Bob Byte <bob@example.com>',
+	text: 'Subject: For Bob\n\nHi Bob, a quick note.',
+}
+
+const tap = (m: StackMessage, action: 'Send' | 'Skip' = 'Send') =>
+	`${action}: Email to ${m.to} (${m.id})`
+
+async function insertStackCard(
+	s: Setup,
+	messages: StackMessage[],
+	replies: Array<{ by?: 'human' | 'agent'; content: string }> = [],
+) {
+	const anchor = await insertObject(db, s.workspace.id, s.human, { type: 'task' })
+	const objectsById = new Map<string, { id: string }>()
+	for (const m of messages) {
+		const o = await insertObject(db, s.workspace.id, s.agent.id, {
+			type: 'task',
+			content: m.text,
+		})
+		objectsById.set(m.id, o)
+	}
+	const decision = {
+		title: 'Send these two emails',
+		summary: 'Two contacts have not heard from us in 14 days.',
+		ask: 'I will not send these to customers alone.',
+		options: [
+			{
+				label: 'Send all',
+				consequences: ['Goes out now', 'Cannot be recalled'],
+				destructive: true,
+				recommended: true,
+			},
+			{ label: 'Hold', consequences: ['Nothing goes out', 'Contacts keep waiting'] },
+		],
+		drafts: messages.map((m) => ({
+			id: m.id,
+			object_id: objectsById.get(m.id)?.id,
+			label: 'Email',
+			to: m.to,
+		})),
+	}
+	const [card] = await db
+		.insert(events)
+		.values({
+			workspaceId: s.workspace.id,
+			actorId: s.agent.id,
+			action: 'commented',
+			entityType: 'object',
+			entityId: anchor.id,
+			data: { content: 'Please approve.', mentions: [s.human], decision },
+		})
+		.returning()
+	if (!card) throw new Error('card was not inserted')
+	for (const r of replies) {
+		await db.insert(events).values({
+			workspaceId: s.workspace.id,
+			actorId: r.by === 'agent' ? s.agent.id : s.human,
+			action: 'commented',
+			entityType: 'object',
+			entityId: anchor.id,
+			data: { content: r.content, parentEventId: card.id },
+		})
+	}
+	return { card, objectsById }
+}
+
+describe('gmail_send_email: a card with several emails', () => {
+	it('sends the message the person approved, exactly as the card shows it', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA, BOB], [{ content: tap(ADA) }])
+		fetchMock.mockResolvedValueOnce(gmailOk('m-ada'))
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ mode: 'approved_draft', message_id: 'm-ada' })
+		const mime = sentMime()
+		expect(mime).toContain('ada@example.com')
+		expect(mime).toContain('Subject: For Ada')
+		expect(mime).toContain(Buffer.from('Hi Ada, it has been a while.').toString('base64'))
+		expect(mime).not.toContain('bob@example.com')
+		const rows = await sendEvents(s.workspace.id, s.gmail.id)
+		expect(
+			rows.some((e) => (e.data as { approval_draft_id?: string }).approval_draft_id === 'ada'),
+		).toBe(true)
+	})
+
+	it('does not send a message the person has not answered, even when another was approved', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA, BOB], [{ content: tap(ADA) }])
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'bob',
+		})
+
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('No person has answered that message')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses a message the person skipped', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA], [{ content: tap(ADA, 'Skip') }])
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('skipped')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('counts the latest answer for that message: Send then Skip is a Skip', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(
+			s,
+			[ADA],
+			[{ content: tap(ADA) }, { content: tap(ADA, 'Skip') }],
+		)
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('is not moved by what the person did with another message', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(
+			s,
+			[ADA, BOB],
+			[{ content: tap(ADA) }, { content: tap(BOB, 'Skip') }],
+		)
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(200)
+	})
+
+	it('never counts an agent saying "Send" for a message', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA], [{ by: 'agent', content: tap(ADA) }])
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('does not treat the card-level send option as approval for a message', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA, BOB], [{ content: 'Send all' }])
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('sends each message once, and each is claimed on its own', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(
+			s,
+			[ADA, BOB],
+			[{ content: tap(ADA) }, { content: tap(BOB) }],
+		)
+		fetchMock.mockResolvedValueOnce(gmailOk('m1')).mockResolvedValueOnce(gmailOk('m2'))
+
+		const ada = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+		const bob = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'bob',
+		})
+		const adaAgain = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect([ada.status, bob.status]).toEqual([200, 200])
+		expect(adaAgain.status).toBe(409)
+		expect(JSON.stringify(await adaAgain.json())).toContain('already used')
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('refuses one message whose text changed after approval and still sends the other', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card, objectsById } = await insertStackCard(
+			s,
+			[ADA, BOB],
+			[{ content: tap(ADA) }, { content: tap(BOB) }],
+		)
+		await db
+			.update(objects)
+			.set({
+				content: 'Subject: Changed\n\nNot what was approved',
+				updatedAt: new Date(Date.now() + 5000),
+			})
+			.where(eq(objects.id, objectsById.get('ada')?.id as string))
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const ada = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+		const bob = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'bob',
+		})
+
+		expect(ada.status).toBe(409)
+		expect(JSON.stringify(await ada.json())).toContain('changed after the person approved')
+		expect(bob.status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('asks which message when draft_id is missing, and names the ids', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA, BOB], [{ content: tap(ADA) }])
+
+		const res = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(409)
+		const text = JSON.stringify(await res.json())
+		expect(text).toContain('draft_id')
+		expect(text).toContain('ada, bob')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses a draft_id the card does not have', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertStackCard(s, [ADA], [{ content: tap(ADA) }])
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'nobody',
+		})
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses a draft_id on a card that carries a single draft', async () => {
+		const s = await setup({ agentAccess: 'ask_first' })
+		const { card } = await insertApprovalCard(s)
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			approval_comment_id: card.id,
+			draft_id: 'ada',
+		})
+
+		expect(res.status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('rejects a draft_id without an approval_comment_id', async () => {
+		const s = await setup()
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, draft_id: 'ada' })
+
+		expect(res.status).toBe(400)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
