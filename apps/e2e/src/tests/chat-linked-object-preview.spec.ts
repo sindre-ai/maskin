@@ -15,7 +15,7 @@ test.describe('Chat — a message that links to an object shows what the object 
 			const task = await account.api.createObject(account.workspaceId, {
 				type: 'task',
 				title: 'LinkedIn note to Catja',
-				status: 'in_review',
+				status: 'todo',
 				content: NOTE,
 			})
 
