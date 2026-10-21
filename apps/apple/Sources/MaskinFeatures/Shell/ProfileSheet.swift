@@ -160,7 +160,7 @@ struct ProfileSheet: View {
 		case .settings:
 			SettingsScreen(environment: environment)
 		case .notifications:
-			NotificationsPage(flows: loops?.loops ?? [])
+			NotificationsPage(flows: loops?.loops ?? [], workspaces: environment.workspaces.workspaces)
 		case .autonomy:
 			if let workspaceID = environment.workspaceId {
 				AutonomyView(

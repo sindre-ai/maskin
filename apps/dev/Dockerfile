@@ -68,9 +68,13 @@ ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 ARG VITE_FARO_URL=""
 ARG VITE_FARO_APP_KEY=""
 ARG VITE_MASKIN_COMMIT_SHA=""
+# Coolify's Dockerfile build pack passes SOURCE_COMMIT itself, so no variable has
+# to be set by hand: an explicit VITE_MASKIN_COMMIT_SHA still wins, otherwise the
+# commit Coolify is building is used.
+ARG SOURCE_COMMIT=""
 ENV VITE_FARO_URL=$VITE_FARO_URL
 ENV VITE_FARO_APP_KEY=$VITE_FARO_APP_KEY
-ENV VITE_MASKIN_COMMIT_SHA=$VITE_MASKIN_COMMIT_SHA
+ENV VITE_MASKIN_COMMIT_SHA=${VITE_MASKIN_COMMIT_SHA:-$SOURCE_COMMIT}
 # Source-map upload. FARO_API_KEY is a real secret (Grafana Cloud access policy
 # token with sourcemaps:write) and is build-time only — it is never VITE_-
 # prefixed, so it cannot reach the bundle. When any of these four is unset the
@@ -101,9 +105,15 @@ RUN --mount=type=cache,id=turbo,target=/app/.turbo \
 	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/web
 
 COPY docker/agent-base/ docker/agent-base/
-COPY docker/browser-sidecar/ docker/browser-sidecar/
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist
 EXPOSE 3000
-CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+# Coolify's rolling update (Dockerfile build pack) keeps the old container
+# serving until this reports healthy. start-period covers migrate + seed + boot.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
+	CMD node -e "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+# `exec` so node replaces sh as PID 1 and receives SIGTERM directly; otherwise
+# the graceful shutdown in apps/dev/src/index.ts never runs and docker SIGKILLs
+# after the stop timeout.
+CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && exec node apps/dev/dist/index.js"]

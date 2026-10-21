@@ -116,7 +116,6 @@ function expandMcpConfig(env: Record<string, string>) {
 	try {
 		const script = [
 			'set -e',
-			`eval "$(sed -n '/^setup_cdp_retry_proxy()/,/^}/p' "${AGENT_RUN}")"`,
 			`eval "$(sed -n '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
 			'setup_mcps',
 			'cat "$MCP_CONFIG_FILE"',
@@ -145,7 +144,8 @@ function expandMcpConfig(env: Record<string, string>) {
 /** Names of the servers in the session-level MCP config the container receives. */
 function sessionServers(env: Record<string, string>): string[] {
 	const json = JSON.parse(env.MCP_SERVERS_JSON ?? '{"mcpServers":{}}') as { mcpServers: object }
-	return Object.keys(json.mcpServers)
+	// The Maskin MCP server is attached to every session; these tests are about the other entries.
+	return Object.keys(json.mcpServers).filter((name) => name !== 'maskin')
 }
 
 /** The metadata of every warn call whose message contains the given text. */

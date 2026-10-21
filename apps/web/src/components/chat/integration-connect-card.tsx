@@ -1,6 +1,7 @@
 import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { useProviderVisibility } from '@/hooks/use-provider-visibility'
+import type { IntegrationToolState } from '@/lib/integration-tool-state'
 
 interface IntegrationConnectCardProps {
 	workspaceId: string
@@ -8,6 +9,8 @@ interface IntegrationConnectCardProps {
 	conversationId: string
 	/** Provider name the agent asked to connect, e.g. 'linear'. */
 	provider: string
+	/** Draws the quiet row of an agent intro instead of the full card. */
+	introState?: IntegrationToolState
 }
 
 /**
@@ -29,6 +32,7 @@ export function IntegrationConnectCard({
 	workspaceId,
 	conversationId,
 	provider,
+	introState,
 }: IntegrationConnectCardProps) {
 	const { data: providers } = useProviders()
 	const { data: integrations } = useIntegrations(workspaceId)
@@ -61,6 +65,7 @@ export function IntegrationConnectCard({
 				returnTo={`/${workspaceId}/chats/${conversationId}`}
 				variant="chat"
 				reconnect={reconnect}
+				introState={introState}
 			/>
 		</div>
 	)

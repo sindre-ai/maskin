@@ -244,55 +244,6 @@ build_context() {
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
 MCP_CONFIG_FILE=""
 
-CDP_RETRY_PROXY_PORT=9333
-
-# Start a local retry proxy in front of the real CDP endpoint and repoint
-# BROWSER_CDP_URL at it. @playwright/mcp's own CDP client gives up on a
-# single ECONNRESET (see cdp-retry-proxy.js for the full rationale); this
-# gives every CDP connection attempt from this session a few retries with
-# backoff instead of failing the whole browser tool call on one transient
-# guest<->host networking blip. Best-effort: if the proxy fails to start,
-# BROWSER_CDP_URL is left pointing at the real endpoint directly.
-setup_cdp_retry_proxy() {
-  [ -z "$BROWSER_CDP_URL" ] && return
-  local target_host target_port
-  target_host="${BROWSER_CDP_URL#http://}"
-  target_port="${target_host##*:}"
-  target_host="${target_host%%:*}"
-  if [ -z "$target_host" ] || [ -z "$target_port" ]; then
-    echo "[system] WARNING: could not parse BROWSER_CDP_URL ($BROWSER_CDP_URL), skipping retry proxy" >&2
-    return
-  fi
-  # tee, not a plain redirect: the startup poll below greps this log file,
-  # so the file must stay - but it lives in a VM that gets destroyed, so it
-  # is also mirrored to stderr, which `msb exec` carries back to the host
-  # and into agent-server logs as source='msb-exec' (guest-log-stream.ts).
-  # Process substitution (not a pipeline) keeps $! as node's own pid, which
-  # the kill -0 liveness check below depends on.
-  node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > >(tee "${TMPDIR:-/tmp}/cdp-retry-proxy.log" | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
-  local proxy_pid=$!
-  # Give it a moment to bind before handing out the local URL — a failed
-  # bind (port in use, node missing) means BROWSER_CDP_URL should still
-  # point at the real endpoint rather than a proxy that never came up.
-  local deadline=$(( $(date +%s) + 3 ))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    if ! kill -0 "$proxy_pid" 2>/dev/null; then
-      echo "[system] WARNING: cdp-retry-proxy exited immediately, using BROWSER_CDP_URL directly" >&2
-      cat "${TMPDIR:-/tmp}/cdp-retry-proxy.log" >&2 2>/dev/null || true
-      return
-    fi
-    grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null && break
-    sleep 0.2
-  done
-  if grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null; then
-    echo "[system] CDP retry proxy up, routing BROWSER_CDP_URL through 127.0.0.1:${CDP_RETRY_PROXY_PORT}"
-    BROWSER_CDP_URL="http://127.0.0.1:${CDP_RETRY_PROXY_PORT}"
-  else
-    echo "[system] WARNING: cdp-retry-proxy did not confirm startup, using BROWSER_CDP_URL directly" >&2
-  fi
-}
-
 STRIP_IMAGES_PROXY_PORT=9334
 
 # Start a local proxy in front of the model endpoint that replaces image blocks
@@ -329,12 +280,10 @@ setup_strip_images_proxy() {
 }
 
 setup_mcps() {
-  # Skip if no MCP config provided and no browser CDP endpoint
-  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
-    return
+  # Skip if no MCP config provided
+  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
+    return 0
   fi
-
-  setup_cdp_retry_proxy
 
   local mcp_config="${TMPDIR:-/tmp}/mcp-config.json"
   local empty='{}'
@@ -347,29 +296,13 @@ setup_mcps() {
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
 
-  # Handle the browser CDP endpoint.
-  #
-  # The actor's MCP config may reference ${BROWSER_CDP_URL} as a literal
-  # placeholder (e.g. Playwright MCP configured with --cdp-endpoint
-  # "${BROWSER_CDP_URL}"). envsubst at the end of this function expands it.
-  #
-  # Two cases:
-  #   1. BROWSER_CDP_URL is SET: if the merged config already references the
-  #      literal placeholder, envsubst handles it — no extra entry needed.
-  #      If no existing entry uses it, inject a default @playwright/mcp entry
-  #      so the browser is reachable even without a pre-configured actor MCP.
-  #   2. BROWSER_CDP_URL is UNSET: strip any entry that still contains the
-  #      literal ${BROWSER_CDP_URL} placeholder. Without this, envsubst would
-  #      expand it to an empty string, causing Playwright to try to launch
-  #      Chrome locally instead of connecting to the CDP endpoint.
-  if [ -n "$BROWSER_CDP_URL" ]; then
-    if ! echo "$merged" | jq -e '[.mcpServers | to_entries[] | .value | tostring] | any(contains("${BROWSER_CDP_URL}"))' > /dev/null 2>&1; then
-      local browser_entry
-      browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \
-        '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint",$url]}}}')
-      merged=$(echo "$merged" "$browser_entry" | jq -s '{ mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }')
-    fi
-  else
+  # Agents no longer get a browser sidecar (their computer replaces it), so
+  # nothing sets BROWSER_CDP_URL. Older agent configs may still carry a
+  # Playwright entry that references the literal ${BROWSER_CDP_URL} placeholder;
+  # envsubst would expand it to an empty string and Playwright would try to
+  # launch Chrome locally, so drop those entries. An operator who really did set
+  # BROWSER_CDP_URL on the agent keeps theirs.
+  if [ -z "$BROWSER_CDP_URL" ]; then
     merged=$(echo "$merged" | jq '
       .mcpServers = (.mcpServers | with_entries(
         select((.value | tostring | contains("${BROWSER_CDP_URL}")) | not)
@@ -458,25 +391,6 @@ setup_github_credential_helper() {
   git config --global --add credential."https://github.com".helper "/agent-github-credential-helper.sh"
 
   echo "[system] GitHub credential helper configured for github.com"
-}
-
-# Start the guest-side watcher that auto-relays dev-server ports the agent
-# starts on its own (see preview-port-watcher.js and POST
-# /sessions/:id/preview-ports in apps/agent-server). Only meaningful when
-# there's a browser sidecar to relay into (BROWSER_CDP_URL set) and a live
-# agent-server to call back into (AGENT_SERVER_URL resolved above,
-# SESSION_ID set) — a no-op session (local Docker path, no browser) skips
-# this entirely. Best-effort: failure to start just means auto-relay isn't
-# available this session, same posture as the CDP retry proxy above.
-start_preview_port_watcher() {
-  if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
-    return
-  fi
-  # Straight to stderr rather than a write-only /tmp file that dies with the
-  # VM - `msb exec` carries stderr back to agent-server's structured logs.
-  # Process substitution (not a pipeline) so $! stays node's own pid.
-  node /preview-port-watcher.js > >(sed -u 's/^/[preview-port-watcher] /' >&2) 2>&1 &
-  echo "[system] preview-port watcher started (pid $!)"
 }
 
 # Run the agent
@@ -704,6 +618,5 @@ setup_strip_images_proxy
 setup_claude_credentials
 setup_git_identity
 setup_github_credential_helper
-start_preview_port_watcher
 
 run_agent

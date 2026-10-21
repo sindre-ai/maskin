@@ -1,6 +1,11 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type AgentGrantAccess, api } from '../lib/api'
+import {
+	type AgentGrantAccess,
+	type CustomMcpServerSpec,
+	type DefaultAgentAccess,
+	api,
+} from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -214,27 +219,22 @@ export function useCreateByoLogin(workspaceId: string) {
 }
 
 /**
- * Keychain: replace which agents may use a saved key. The error stays on the mutation so
- * the access sheet can show it inline; only the success toast lives here. The list and the
- * audit log are refetched because the Agents block and the SCOPE CHANGED row both read them.
+ * Keychain: rename a saved key or login, replace its secret, or both. The dialog shows the failure
+ * inline (a taken name has a message a person can act on), so the global error toast is switched off.
  */
-export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
+export function useUpdateCredential(workspaceId: string, integrationId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		// The sheet shows the failure inline, so the global error toast would only cover Save.
 		meta: { handlesOwnErrors: true },
-		mutationFn: (agentIds: string[]) =>
-			api.integrations.replaceGrants(
-				integrationId,
-				workspaceId,
-				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
-			),
+		mutationFn: (body: {
+			displayName?: string
+			rawSecret?: string
+			username?: string
+			password?: string
+		}) => api.integrations.updateCredential(integrationId, workspaceId, body),
 		onSuccess: () => {
-			toast.success('Access updated')
+			toast.success('Credential updated')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
-			})
 		},
 	})
 }
@@ -253,18 +253,6 @@ export function useRemoveCredential(workspaceId: string) {
 			toast.success('Credential removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
-	})
-}
-
-/** Keychain: one credential's audit log, newest first, paged by the last row's id. */
-export function useCredentialAuditLog(workspaceId: string, integrationId: string) {
-	return useInfiniteQuery({
-		queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
-		queryFn: ({ pageParam }) =>
-			api.integrations.auditLog(integrationId, workspaceId, pageParam || undefined),
-		initialPageParam: '',
-		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
-		enabled: !!workspaceId && !!integrationId,
 	})
 }
 
@@ -316,8 +304,58 @@ export function useRemoveAgentGrant(workspaceId: string, integrationId: string) 
 export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
 	return useGrantMutation(
 		workspaceId,
-		(defaultAgentAccess: 'read' | 'none') =>
+		(defaultAgentAccess: DefaultAgentAccess) =>
 			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
 		'Default access updated',
 	)
+}
+
+/** A custom MCP server's definition, secrets masked. Fetched when its edit form opens. */
+export function useCustomMcpServer(workspaceId: string, id: string | null) {
+	return useQuery({
+		queryKey: [...queryKeys.integrations.all(workspaceId), 'custom-mcp', id] as const,
+		queryFn: () => api.customMcpServers.get(id as string, workspaceId),
+		enabled: !!workspaceId && !!id,
+		// A secret is never kept around: read it fresh each time the form opens.
+		gcTime: 0,
+	})
+}
+
+/** Add a custom MCP server. It reaches no agent until it is granted. */
+export function useCreateCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.create(workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server added')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+export function useUpdateCustomMcpServer(workspaceId: string, id: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		meta: { handlesOwnErrors: true },
+		mutationFn: (input: { name: string; server: CustomMcpServerSpec }) =>
+			api.customMcpServers.update(id, workspaceId, input),
+		onSuccess: () => {
+			toast.success('Tool server saved')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Remove a custom MCP server: it drops out of every agent's next session. */
+export function useRemoveCustomMcpServer(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.integrations.disconnect(id, workspaceId),
+		onSuccess: () => {
+			toast.success('Tool server removed')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
 }

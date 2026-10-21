@@ -41,7 +41,7 @@ test.describe('Loop detail page', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
-			await page.getByText('Customer feedback loop').click()
+			await page.getByText('Customer feedback loop', { exact: true }).click()
 
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`), {
 				timeout: 10000,

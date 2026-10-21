@@ -13,6 +13,7 @@ import {
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -319,8 +320,11 @@ export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' |
  */
 export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
-/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
-export type IntegrationDefaultAccess = 'read' | 'none'
+/**
+ * What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything
+ * else unless a person picked 'read_write' (every agent may write) or 'none'.
+ */
+export type IntegrationDefaultAccess = 'read' | 'read_write' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -356,7 +360,7 @@ export const integrations = pgTable(
 			.default('registered'),
 		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
 		displayName: text('display_name'),
-		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// What an agent with no agent_grants row may do: 'read' (default), 'read_write' or 'none'.
 		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
 		defaultAgentAccess: text('default_agent_access')
 			.$type<IntegrationDefaultAccess>()
@@ -397,7 +401,7 @@ export const integrations = pgTable(
 		),
 		check(
 			'integrations_default_agent_access_enum',
-			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+			sql`${t.defaultAgentAccess} IN ('read', 'read_write', 'none')`,
 		),
 		check(
 			'integrations_source_enum',
@@ -496,7 +500,7 @@ export const credentialAccessLog = pgTable(
 	{
 		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		// No FKs on integration_id and actor_id: the log is insert-only, so a reference
 		// would make the actor or integration undeletable (migration 0094).
@@ -528,7 +532,7 @@ export const credentialChainSnapshots = pgTable(
 	'credential_chain_snapshots',
 	{
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		snapshotDate: date('snapshot_date').notNull(),
 		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),
@@ -829,11 +833,24 @@ export const conversations = pgTable(
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
 		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		// What a group chat is about: an object (task/bet/insight) or an installed
+		// loop. Polymorphic, so no FK; the create route checks the target exists in
+		// the workspace. NULL for ordinary chats.
+		subjectType: text('subject_type'),
+		subjectId: uuid('subject_id'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One group chat per subject: asking for it again finds the existing one.
+		uniqueIndex('conversations_subject_uniq')
+			.on(t.workspaceId, t.subjectType, t.subjectId)
+			.where(sql`${t.subjectId} IS NOT NULL`),
+		check(
+			'conversations_subject_check',
+			sql`(${t.subjectType} IS NULL AND ${t.subjectId} IS NULL) OR (${t.subjectType} IN ('object', 'loop') AND ${t.subjectId} IS NOT NULL)`,
+		),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
@@ -933,6 +950,10 @@ export const messages = pgTable(
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
 		// re-post every past turn of every live chat. See migration 0061.
+		// A comment copied into an object's chat lands once, however often the copy runs.
+		uniqueIndex('messages_comment_event_uniq')
+			.on(t.conversationId, sql`((${t.metadata}->>'comment_event_id'))`)
+			.where(sql`(${t.metadata}->>'comment_event_id') IS NOT NULL`),
 		uniqueIndex('messages_final_output_dedupe_uniq')
 			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
 			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
@@ -942,6 +963,23 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// One emoji one actor put on one message. The primary key makes adding idempotent and lets
+// the same person use several different emoji on a message.
+export const messageReactions = pgTable(
+	'message_reactions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
 
 // Per-actor read cursor for one thread. Advance-only (GREATEST on write), like
 // conversation_participants.last_read_message_id. A missing row means the actor
@@ -2091,6 +2129,89 @@ export const deviceTokens = pgTable(
 	],
 )
 
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+//
+// One row per browser push subscription (RFC 8030 / 8291). Kept apart from `device_tokens`,
+// whose APNs token is a hex string used as a URL path segment toward Apple; a browser
+// subscription is an opaque endpoint URL plus an encryption key pair. `endpoint` is unique so
+// re-subscribing from the same browser upserts, and a browser that changes hands moves to the
+// new actor. The p256dh/auth keys are per-subscription secrets: never logged, never returned
+// by the API. Cascades with the actor.
+
+export const webPushSubscriptions = pgTable(
+	'web_push_subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		endpoint: text('endpoint').notNull(),
+		p256dh: text('p256dh').notNull(),
+		auth: text('auth').notNull(),
+		userAgent: text('user_agent'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('web_push_subscriptions_endpoint_uniq').on(t.endpoint),
+		index('web_push_subscriptions_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
+// ── Notification preferences ────────────────────────────────────────────────
+//
+// Per-actor push policy settings (quiet hours, categories, muted workspaces,
+// morning briefing). One row per actor; a missing row means all defaults.
+// quiet_hours_* are minutes from local midnight in `timezone` (null => UTC).
+
+export const notificationPreferences = pgTable(
+	'notification_preferences',
+	{
+		actorId: uuid('actor_id')
+			.primaryKey()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		timezone: text('timezone'),
+		quietHoursStart: smallint('quiet_hours_start'),
+		quietHoursEnd: smallint('quiet_hours_end'),
+		categories: jsonb('categories')
+			.$type<Record<string, boolean>>()
+			.notNull()
+			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
+		briefingTime: smallint('briefing_time').notNull().default(510),
+		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
+		// Local date (in `timezone`) of the last daily briefing push; the scheduler claims a day
+		// with one conditional UPDATE, so it is sent once across restarts and replicas. Migration 0105.
+		briefingLastSentOn: date('briefing_last_sent_on', { mode: 'string' }),
+		// One-time lifecycle pushes already sent: { first_task, activation, reminder_at,
+		// 'reminded:<notification id>' } -> ISO timestamp. Migration 0105.
+		lifecycleSent: jsonb('lifecycle_sent')
+			.$type<Record<string, string>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'notification_preferences_quiet_start_chk',
+			sql`${t.quietHoursStart} IS NULL OR (${t.quietHoursStart} >= 0 AND ${t.quietHoursStart} <= 1439)`,
+		),
+		check(
+			'notification_preferences_quiet_end_chk',
+			sql`${t.quietHoursEnd} IS NULL OR (${t.quietHoursEnd} >= 0 AND ${t.quietHoursEnd} <= 1439)`,
+		),
+		check(
+			'notification_preferences_briefing_time_chk',
+			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+	],
+)
+
+export type NotificationPreferencesRow = typeof notificationPreferences.$inferSelect
+
 // ── Live Activity tokens ────────────────────────────────────────────────────
 //
 // ActivityKit push tokens. Two kinds share one table:
@@ -2113,24 +2234,48 @@ export const liveActivityTokens = pgTable(
 		// 'push_to_start' | 'update' — validated by registerLiveActivityTokenSchema.
 		kind: text('kind').notNull(),
 		token: text('token').notNull(),
-		// Set for 'update' tokens only.
-		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		// Set for 'update' tokens only: the workspace of the aggregate "Agents working" activity
+		// the token belongs to (one activity per device and workspace).
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check(
-			'live_activity_tokens_kind_session_chk',
-			sql`(${t.kind} = 'push_to_start' AND ${t.sessionId} IS NULL) OR (${t.kind} = 'update' AND ${t.sessionId} IS NOT NULL)`,
+			'live_activity_tokens_kind_workspace_chk',
+			sql`(${t.kind} = 'push_to_start' AND ${t.workspaceId} IS NULL) OR (${t.kind} = 'update' AND ${t.workspaceId} IS NOT NULL)`,
 		),
 		uniqueIndex('live_activity_tokens_push_to_start_uniq')
 			.on(t.deviceId)
 			.where(sql`${t.kind} = 'push_to_start'`),
 		uniqueIndex('live_activity_tokens_update_uniq')
-			.on(t.deviceId, t.sessionId)
+			.on(t.deviceId, t.token)
 			.where(sql`${t.kind} = 'update'`),
-		index('live_activity_tokens_session_idx').on(t.sessionId),
+		index('live_activity_tokens_workspace_idx').on(t.workspaceId, t.actorId),
 		index('live_activity_tokens_actor_idx').on(t.actorId),
+	],
+)
+
+// The (actor, workspace) pairs the backend believes have an "Agents working" card outstanding.
+// `endPending`: the last agent stopped while no per-activity update token was registered, so the
+// end could not be addressed (ActivityKit ends a card only through that card's own token;
+// push-to-start tokens can only start). Flushed when the device registers the update token.
+export const liveActivityCards = pgTable(
+	'live_activity_cards',
+	{
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		endPending: boolean('end_pending').notNull().default(false),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceId] }),
+		index('live_activity_cards_workspace_idx').on(t.workspaceId),
 	],
 )
 
@@ -2272,3 +2417,42 @@ export const triggerEventQueue = pgTable(
 
 export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
 export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
+
+// A device (Apple TV) asking to be signed in by a person who is already signed in elsewhere:
+// the OAuth device-authorization pattern (RFC 8628). The device shows `user_code`; the person
+// types it into maskin.io/tv on a phone or laptop and approves; the device, polling with
+// `device_code`, then receives the actor's session exactly as `POST /api/auth/login` would give it.
+//
+// Both codes are stored only as SHA-256 hashes, so a database read cannot be replayed as a sign-in.
+// A row is single-use (`approved` -> `consumed` in one UPDATE) and short-lived (`expires_at`).
+export const deviceAuthCodes = pgTable(
+	'device_auth_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		deviceCodeHash: text('device_code_hash').notNull(),
+		userCodeHash: text('user_code_hash').notNull(),
+		// Which client is asking ('tvos'); the approver sees it so they know what they are signing in.
+		clientSource: text('client_source').notNull(),
+		deviceName: text('device_name'),
+		// pending -> approved -> consumed, or pending -> denied.
+		status: text('status').notNull().default('pending'),
+		// Who approved. Null until then.
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('device_auth_codes_device_code_hash_uniq').on(t.deviceCodeHash),
+		uniqueIndex('device_auth_codes_user_code_hash_uniq').on(t.userCodeHash),
+		index('device_auth_codes_expires_at_idx').on(t.expiresAt),
+		check(
+			'device_auth_codes_status_check',
+			sql`${t.status} IN ('pending','approved','denied','consumed')`,
+		),
+	],
+)
+
+export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
+export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert

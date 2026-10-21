@@ -104,6 +104,14 @@ import {
 } from '../lib/integrations/agent-access'
 import { decodeLogin } from '../lib/integrations/byo-login'
 import {
+	CUSTOM_MCP_PROVIDER,
+	customGatewayServerSpec,
+	customServerKey,
+	isGatedRow,
+	readCustomServer,
+} from '../lib/integrations/custom-mcp'
+import { credentialIndex, referencedVars } from '../lib/integrations/custom-mcp-keychain'
+import {
 	CredentialUndoneError,
 	ScopeDeniedError,
 	isAuthRevokedError,
@@ -163,7 +171,12 @@ import {
 	parseMcpInit,
 	registerMcpInit,
 } from '../lib/mcp-health'
-import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
+import {
+	MASKIN_MCP_SERVER,
+	MASKIN_MCP_SERVER_KEY,
+	hasMaskinMcpEntry,
+	stampMaskinSessionHeader,
+} from '../lib/mcp-session-header'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
@@ -556,8 +569,6 @@ export class SessionManager extends EventEmitter {
 		string,
 		{
 			tempDir: string
-			browserContainerId?: string
-			networkName?: string
 			/**
 			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
 			 * `handleCompletion` parse the final stream-json `result` event from
@@ -592,18 +603,8 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
-	/**
-	 * AC-T5: cap how long `cleanupBrowserSidecar` waits for Docker to actually
-	 * surface a 404 on the sidecar container after `remove({ force: true })`.
-	 * `remove -f` is normally synchronous, but a slow daemon can briefly keep
-	 * the container row visible — the SLA bounds how long we tolerate that.
-	 */
-	private static readonly SIDECAR_TEARDOWN_SLA_MS = 60_000
-	private static readonly SIDECAR_TEARDOWN_POLL_INTERVAL_MS = 500
 	private agentBaseBuildContext: string | null = null
-	private browserSidecarBuildContext: string | null = null
 	private agentBaseImageReady: Promise<void> | null = null
-	private browserSidecarImageReady: Promise<void> | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 	private dispatchQueue: SessionDispatchQueue | null = null
 	/**
@@ -695,14 +696,6 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
-	}
-
-	setBrowserSidecarBuildContext(buildContext: string) {
-		this.browserSidecarBuildContext = buildContext
-	}
-
-	warmBrowserSidecarImage(): Promise<void> {
-		return this.prepareBrowserSidecarImage()
 	}
 
 	warmAgentBaseImage(): Promise<void> {
@@ -1327,7 +1320,6 @@ export class SessionManager extends EventEmitter {
 
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -1818,7 +1810,6 @@ export class SessionManager extends EventEmitter {
 				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 			}
 
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 
 			logger.info(`Session paused: ${sessionId}`)
@@ -1925,7 +1916,6 @@ export class SessionManager extends EventEmitter {
 		await this.clearActiveSession(sessionId).catch(() => {})
 
 		this.containers.detachStdin(sessionId)
-		await this.cleanupBrowserSidecar(sessionId).catch(() => {})
 		await this.cleanupSession(sessionId).catch(() => {})
 
 		logger.warn('Session marked failed after container loss', { sessionId })
@@ -2067,7 +2057,6 @@ export class SessionManager extends EventEmitter {
 
 			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
-			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -2235,8 +2224,6 @@ export class SessionManager extends EventEmitter {
 		memoryMib: number
 		cpus: number
 		cpuShares: number
-		browserRequired: boolean
-		previewGuestPorts: number[]
 		/**
 		 * Workspace-skill manifest for the agent's attached skills. Passed
 		 * through to `StartSessionRequest.skills` for the remote-dispatch path;
@@ -2621,6 +2608,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		const customServers: Array<{
+			integration: typeof integrations.$inferSelect
+			server: NonNullable<ReturnType<typeof readCustomServer>>
+		}> = []
 		// Keys attached because the agent has access to the integration (not GitHub's per-org
 		// entries), so a duplicate of an entry the agent already carries can be dropped.
 		const attachedKeys = new Set<string>()
@@ -2678,6 +2669,16 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				)
 					? mcp.server
 					: null
+
+			// A custom tool server is one row, one server: attached when the agent has access, and
+			// it never has a provider token to load.
+			if (integration.provider === CUSTOM_MCP_PROVIDER) {
+				const server = access !== 'none' ? readCustomServer(integration) : null
+				// Attached after the Keychain env is built: a server that names a saved credential
+				// only works for an agent that has it.
+				if (server) customServers.push({ integration, server })
+				continue
+			}
 
 			// LinkedIn has one server per connected identity and no single spec: attach each.
 			if (integration.provider === 'linkedin-unipile' && !mcp?.server) {
@@ -2844,6 +2845,32 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		const keychainEnv = await this.buildKeychainEnv(session)
 		Object.assign(envVars, keychainEnv)
 
+		// Custom tool servers. One that Maskin fronts (gated) is reached through the gateway, which
+		// fills any saved credential in itself and tells the agent plainly if it may not. One that
+		// runs in the container gets its credentials from the env just built, so without them it
+		// would start with an empty key: leave it out and tell the agent why.
+		const unattached: string[] = []
+		if (customServers.length > 0) {
+			const index = await credentialIndex(this.db, session.workspaceId)
+			for (const { integration, server } of customServers) {
+				const key = customServerKey(integration)
+				const gated = isGatedRow(integration.config)
+				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
+				if (missing.length > 0) {
+					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
+					unattached.push(
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+					)
+					continue
+				}
+				autoInjectedMcpServers[key] = gated ? customGatewayServerSpec(integration.id) : server
+				attachedKeys.add(key)
+			}
+			if (unattached.length > 0 && envVars.SYSTEM_PROMPT !== undefined) {
+				envVars.SYSTEM_PROMPT = `${envVars.SYSTEM_PROMPT}\n\n## Tool servers not attached\nThese tool servers are not available because they use a saved credential you cannot use yet:\n${unattached.join('\n')}\nDo not bring this up unless the task needs one of them. If it does, call list_keychain_credentials and request_keychain_access so a person can allow it, then continue in a new session.`
+			}
+		}
+
 		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
 		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
@@ -2930,7 +2957,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
-			'BROWSER_CDP_URL',
 		])
 		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
 		// user-supplied PAT (no GitHub integration configured) must pass through.
@@ -2995,6 +3021,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					sessionMcpServers[`session-mcp-${i}`] = mcp
 				}
 			}
+		}
+
+		// The Maskin MCP server is on every agent, whether or not its own config lists it: without
+		// it the agent cannot do anything in Maskin. It is not a per-agent choice.
+		if (!hasMaskinMcpEntry(agentToolsMcpServers, sessionMcpServers)) {
+			sessionMcpServers[MASKIN_MCP_SERVER_KEY] = MASKIN_MCP_SERVER
 		}
 
 		// Startup preflight: live-validate every attached GitHub identity BEFORE the
@@ -3128,20 +3160,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: stampedSessionMcpServers })
 		}
 
-		const previewGuestPorts = Array.isArray(sessionConfig.previewGuestPorts)
-			? sessionConfig.previewGuestPorts.filter(
-					(p): p is number => typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535,
-				)
-			: []
-
-		// previewGuestPorts requires browserRequired on the agent-server's request
-		// schema (the browser sidecar is what the relayed ports actually serve) —
-		// requesting preview ports always implies a browser is required.
-		const browserRequired =
-			sessionConfig.browserRequired === true ||
-			this.needsBrowserSidecar(envVars) ||
-			previewGuestPorts.length > 0
-
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
 		// memory_mb / cpu_shares are the Docker-native units used historically;
@@ -3181,8 +3199,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			memoryMib,
 			cpus,
 			cpuShares,
-			browserRequired,
-			previewGuestPorts,
 			skillsManifest,
 			skillsAttached,
 		}
@@ -3238,11 +3254,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
 					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
-					// Explicit grant only: a Keychain credential has no default access. Written as
-					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
-					// from those renders unqualified (known-pitfalls.md).
+					// The same rule as effectiveAccess: the agent's own grant ('none' is off), else the
+					// credential's default ('none' unless a person set it to 'read', meaning every agent).
+					// Written as literal qualified SQL, not Drizzle column objects: a correlated subquery
+					// built from those renders unqualified (known-pitfalls.md).
 					// An Allow for this one chat counts too, but only for sessions in that conversation.
-					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId}) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
+					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId} AND agent_grants.access <> 'none') OR (integrations.default_agent_access = 'read' AND NOT EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId})) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))
@@ -3436,17 +3453,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			await this.prepareAgentBaseImage()
 		}
 
-		// Provision browser sidecar when the browserRequired flag is set
-		let networkMode: string | undefined
-		if (spec.browserRequired) {
-			const prefix = session.id.slice(0, 16)
-			const result = await this.provisionBrowserSidecar(session.id, prefix)
-			if (result) {
-				envVars.BROWSER_CDP_URL = `http://${result.browserIp}:9222`
-				networkMode = result.networkName
-			}
-		}
-
 		// entrypoint.sh waits for this file before running agent-run.sh (two-phase
 		// startup for microsandbox). The local Docker path must write it here so
 		// the container doesn't sleep forever.
@@ -3459,7 +3465,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			memoryMb: spec.memoryMib,
 			cpuShares: spec.cpuShares,
 			binds: [`${tempDir}:/agent:rw`],
-			networkMode,
 			interactive: session.interactive,
 		})
 
@@ -3499,17 +3504,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 
 		return containerId
-	}
-
-	/**
-	 * Existing seeded/template agents opt into browser access by referencing
-	 * ${BROWSER_CDP_URL} in their MCP config. Keep that contract while newer
-	 * callers can use config.browserRequired directly.
-	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
@@ -4193,7 +4187,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)
-		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
 			.catch((err) =>
@@ -4642,7 +4635,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		)
 
 		await this.clearActiveSession(session.id)
-		await this.cleanupBrowserSidecar(session.id)
 		await this.cleanupSession(session.id)
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
@@ -4738,7 +4730,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		)
 
 		await this.clearActiveSession(session.id)
-		await this.cleanupBrowserSidecar(session.id)
 		await this.cleanupSession(session.id)
 
 		await this.drainQueue(session.workspaceId).catch((err) =>
@@ -4966,7 +4957,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				)
 
 				await this.clearActiveSession(session.id)
-				await this.cleanupBrowserSidecar(session.id)
 				await this.cleanupSession(session.id)
 
 				// Start next queued session if capacity is available
@@ -5383,7 +5373,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					})
 				}
 
-				await this.cleanupBrowserSidecar(session.id).catch(() => {})
 				await this.clearActiveSession(session.id)
 				await this.cleanupSession(session.id)
 
@@ -5598,89 +5587,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 	}
 
-	/**
-	 * Provision a headless Chrome sidecar container on a per-session Docker network.
-	 * Returns the network name and browser container ID, or null if provisioning fails.
-	 * On failure, the agent session continues without browser capability.
-	 */
-	private async provisionBrowserSidecar(
-		sessionId: string,
-		prefix: string,
-	): Promise<{ networkName: string; browserIp: string } | null> {
-		const networkName = `anko-net-${prefix}`
-		const browserName = `anko-browser-${prefix}`
-		let browserContainerId: string | undefined
-		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
-
-		try {
-			await this.prepareBrowserSidecarImage()
-			await this.containers.createNetwork(networkName)
-
-			browserContainerId = await this.containers.create({
-				image,
-				name: browserName,
-				env: {},
-				memoryMb: 512,
-				cpuShares: 512,
-				binds: [],
-				networkMode: networkName,
-			})
-
-			await this.containers.start(browserContainerId)
-
-			// Brief wait for Chrome to initialize CDP listener
-			await new Promise((resolve) => setTimeout(resolve, 2000))
-
-			// Use the container's IP address on the session network so Chrome
-			// accepts the WebSocket connection — Chrome's CDP rejects Host headers
-			// that are hostnames, but accepts IP addresses and localhost.
-			const browserIp = await this.containers.getIpOnNetwork(browserContainerId, networkName)
-			if (!browserIp) {
-				throw new Error('Could not determine browser sidecar IP on session network')
-			}
-
-			// Track sidecar resources for cleanup
-			const sessionData = this.activeSessions.get(sessionId)
-			if (sessionData) {
-				sessionData.browserContainerId = browserContainerId
-				sessionData.networkName = networkName
-			}
-
-			logger.info('Browser sidecar started', { sessionId, browserName, networkName, browserIp })
-			await this.insertSystemLog(
-				sessionId,
-				'Browser sidecar started — Playwright MCP can connect via CDP',
-			)
-
-			return { networkName, browserIp }
-		} catch (err) {
-			logger.error('Browser sidecar failed — agent will run without browser', {
-				sessionId,
-				error: String(err),
-			})
-			await this.insertSystemLog(
-				sessionId,
-				`Browser sidecar failed to start: ${err instanceof Error ? err.message : String(err)}. Agent will continue without browser capability.`,
-			)
-
-			// Clean up partial resources
-			if (browserContainerId) {
-				await this.containers.stop(browserContainerId).catch(() => {})
-				await this.containers.remove(browserContainerId).catch(() => {})
-			}
-			await this.containers.removeNetwork(networkName).catch(() => {})
-
-			// Clear sidecar tracking
-			const sessionData = this.activeSessions.get(sessionId)
-			if (sessionData) {
-				sessionData.browserContainerId = undefined
-				sessionData.networkName = undefined
-			}
-
-			return null
-		}
-	}
-
 	private prepareAgentBaseImage(): Promise<void> {
 		if (!this.agentBaseBuildContext) return Promise.resolve()
 		if (!this.agentBaseImageReady) {
@@ -5692,121 +5598,6 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				})
 		}
 		return this.agentBaseImageReady
-	}
-
-	private prepareBrowserSidecarImage(): Promise<void> {
-		if (!this.browserSidecarImageReady) {
-			this.browserSidecarImageReady = this.buildOrPullBrowserSidecarImage().catch((err) => {
-				this.browserSidecarImageReady = null
-				throw err
-			})
-		}
-		return this.browserSidecarImageReady
-	}
-
-	private async buildOrPullBrowserSidecarImage(): Promise<void> {
-		const image = process.env.BROWSER_SIDECAR_IMAGE ?? 'browser-sidecar:latest'
-		if (image === 'browser-sidecar:latest' && this.browserSidecarBuildContext) {
-			await this.containers.ensureImage(image, this.browserSidecarBuildContext)
-			return
-		}
-		await this.containers.pullImage(image)
-	}
-
-	/**
-	 * Clean up browser sidecar container and its Docker network.
-	 * Called before cleanupSession() in all exit paths. After invoking
-	 * stop+remove this polls Docker until the container is actually gone so
-	 * the caller has a real teardown guarantee — `remove({ force: true })` is
-	 * normally synchronous but the Docker daemon can briefly keep the row
-	 * around, and an unrecoverable sidecar would otherwise leak a Chromium
-	 * process tree on the host (AC-T5: 60s SLA, container-count delta 0).
-	 */
-	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
-		const sessionData = this.activeSessions.get(sessionId)
-		if (!sessionData) return
-		if (!sessionData.browserContainerId && !sessionData.networkName) return
-
-		const start = Date.now()
-		const browserContainerId = sessionData.browserContainerId
-		const networkName = sessionData.networkName
-		let slaViolation = false
-
-		if (browserContainerId) {
-			await this.containers
-				.stop(browserContainerId)
-				.catch((err) =>
-					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
-				)
-			await this.containers
-				.remove(browserContainerId)
-				.catch((err) =>
-					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
-				)
-
-			const gone = await this.waitForContainerGone(
-				browserContainerId,
-				SessionManager.SIDECAR_TEARDOWN_SLA_MS,
-			)
-			if (!gone) {
-				slaViolation = true
-				logger.error('Browser sidecar still present after teardown SLA', {
-					sessionId,
-					browserContainerId,
-					slaMs: SessionManager.SIDECAR_TEARDOWN_SLA_MS,
-				})
-			}
-		}
-
-		if (networkName) {
-			await this.containers
-				.removeNetwork(networkName)
-				.catch((err) =>
-					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
-				)
-		}
-
-		// Idempotency: clear bookkeeping so a duplicate cleanup call is a no-op
-		// (the 7 session-end paths can fire close together — watchdog + handler).
-		sessionData.browserContainerId = undefined
-		sessionData.networkName = undefined
-
-		if (!slaViolation) {
-			logger.info('Browser sidecar teardown complete', {
-				sessionId,
-				elapsedMs: Date.now() - start,
-			})
-		}
-	}
-
-	/**
-	 * Poll `containers.inspect` until the container returns 404 (gone) or the
-	 * deadline elapses. Returns true if the container was confirmed gone.
-	 * Treats only 404 / "No such container" as gone — a stopped-but-present
-	 * container still counts as a leak for the AC-T5 delta check.
-	 */
-	private async waitForContainerGone(containerId: string, deadlineMs: number): Promise<boolean> {
-		const deadline = Date.now() + deadlineMs
-		while (Date.now() < deadline) {
-			if (await this.isContainerGone(containerId)) return true
-			await new Promise((r) => setTimeout(r, SessionManager.SIDECAR_TEARDOWN_POLL_INTERVAL_MS))
-		}
-		return this.isContainerGone(containerId)
-	}
-
-	private async isContainerGone(containerId: string): Promise<boolean> {
-		try {
-			await this.containers.inspect(containerId)
-			return false
-		} catch (err) {
-			const statusCode = (err as { statusCode?: unknown }).statusCode
-			if (statusCode === 404) return true
-			const message = (err as { message?: unknown }).message
-			if (typeof message === 'string' && /No such container|HTTP code 404/.test(message)) {
-				return true
-			}
-			return false
-		}
 	}
 
 	private async cleanupSession(sessionId: string): Promise<void> {

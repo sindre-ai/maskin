@@ -12,10 +12,12 @@ import {
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
+import { CUSTOM_MCP_PROVIDER, isGatedRow } from '../lib/integrations/custom-mcp'
 import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
 	agentGrantSchema,
+	defaultAgentAccessSchema,
 	errorSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
@@ -49,7 +51,7 @@ const grantsResponseSchema = z.object({
 	integrationId: z.string().uuid(),
 	// 'keychain': explicit-grant, on/off. 'standard': default plus overrides.
 	mode: z.enum(['keychain', 'standard']),
-	defaultAgentAccess: z.enum(['read', 'none']),
+	defaultAgentAccess: defaultAgentAccessSchema,
 	grants: z.array(agentGrantSchema),
 })
 
@@ -104,7 +106,7 @@ app.openapi(getGrantsRoute, (async (c) => {
 // ── shared: who may change grants, on what ───────────────────────────────
 
 type Editable =
-	| { ok: true; provider: string; providerMode: string; before: unknown }
+	| { ok: true; provider: string; providerMode: string; gated: boolean; before: unknown }
 	| { ok: false; reason: 'not_found' | 'forbidden' | 'not_editable' }
 
 /** Locks the row and checks the caller may change its grants. Humans only. */
@@ -120,6 +122,7 @@ async function loadEditable(
 			status: integrations.status,
 			provider: integrations.provider,
 			defaultAgentAccess: integrations.defaultAgentAccess,
+			config: integrations.config,
 		})
 		.from(integrations)
 		.where(and(eq(integrations.id, input.id), eq(integrations.workspaceId, input.workspaceId)))
@@ -137,8 +140,28 @@ async function loadEditable(
 		ok: true,
 		provider: row.provider,
 		providerMode: row.providerMode,
+		gated: isGatedRow(row.config),
 		before: row.defaultAgentAccess,
 	}
+}
+
+/**
+ * Whether this access level makes no sense for the integration. A saved key or login is on or
+ * off (read_write or no row). A custom tool server has the full levels only when Maskin can
+ * sit in front of it (an HTTP server at a public address, see isGatewayable); otherwise, like
+ * a stdio server that runs inside the container, it is on (read_write) or off (none).
+ */
+function levelNotAllowed(
+	target: { provider: string; providerMode: string; gated: boolean },
+	access: string,
+): 'keychain_access' | 'custom_access' | null {
+	if (isKeychainMode(target.providerMode as never)) {
+		return access !== 'read_write' && access !== 'none' ? 'keychain_access' : null
+	}
+	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
+		return 'custom_access'
+	}
+	return null
 }
 
 function failure(reason: string): {
@@ -166,11 +189,19 @@ function failure(reason: string): {
 				error: createApiError('BAD_REQUEST', 'That actor is not an agent in this workspace'),
 				status: 400,
 			}
+		case 'custom_access':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'This tool server runs inside the agent, so Maskin cannot limit it to reading: use read_write or none',
+				),
+				status: 400,
+			}
 		case 'keychain_access':
 			return {
 				error: createApiError(
 					'BAD_REQUEST',
-					'A saved key or login is on or off for an agent: use read_write',
+					'A saved key or login is on or off for an agent: use read_write or none',
 				),
 				status: 400,
 			}
@@ -234,8 +265,9 @@ app.openapi(replaceGrantsRoute, (async (c) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
 		const keychain = isKeychainMode(target.providerMode as never)
-		if (keychain && grants.some((g) => g.access !== 'read_write')) {
-			return 'keychain_access' as const
+		for (const g of grants) {
+			const bad = levelNotAllowed(target, g.access)
+			if (bad) return bad
 		}
 		if (
 			!(await actorsAreWorkspaceAgents(
@@ -328,9 +360,8 @@ app.openapi(putGrantRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		if (isKeychainMode(target.providerMode as never) && access !== 'read_write') {
-			return 'keychain_access' as const
-		}
+		const bad = levelNotAllowed(target, access)
+		if (bad) return bad
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [actorId]))) return 'outside' as const
 
 		const previous = await upsertAgentGrant(tx, {
@@ -462,7 +493,7 @@ const putDefaultRoute = createRoute({
 		body: {
 			content: {
 				'application/json': {
-					schema: z.object({ defaultAgentAccess: z.enum(['read', 'none']) }).strict(),
+					schema: z.object({ defaultAgentAccess: defaultAgentAccessSchema }).strict(),
 				},
 			},
 			required: true,
@@ -473,7 +504,7 @@ const putDefaultRoute = createRoute({
 			description: 'Saved. Applies to sessions started after this call',
 			content: {
 				'application/json': {
-					schema: z.object({ defaultAgentAccess: z.enum(['read', 'none']) }),
+					schema: z.object({ defaultAgentAccess: defaultAgentAccessSchema }),
 				},
 			},
 		},
@@ -496,12 +527,22 @@ app.openapi(putDefaultRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		// A saved key or login has no default: it is always explicit-grant.
-		if (isKeychainMode(target.providerMode as never)) return 'keychain_default' as const
 		await tx
 			.update(integrations)
 			.set({ defaultAgentAccess, updatedAt: new Date() })
 			.where(eq(integrations.id, id))
+		// A saved key's default decides which agents may read the secret, so it is audited
+		// the same way a per-agent change is.
+		if (isKeychainMode(target.providerMode as never)) {
+			await insertCredentialAccessLog(tx, {
+				workspaceId,
+				integrationId: id,
+				actorId: callerId,
+				action: 'scope_changed',
+				source: 'admin_ui',
+				requestId: `grant-change:${id}:${randomUUID()}`,
+			})
+		}
 		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
@@ -518,12 +559,6 @@ app.openapi(putDefaultRoute, (async (c) => {
 		return 'saved' as const
 	})
 
-	if (outcome === 'keychain_default') {
-		return c.json(
-			createApiError('BAD_REQUEST', 'A saved key or login has no default: grant agents one by one'),
-			400,
-		)
-	}
 	if (outcome !== 'saved') {
 		const f = failure(outcome)
 		return c.json(f.error, f.status)

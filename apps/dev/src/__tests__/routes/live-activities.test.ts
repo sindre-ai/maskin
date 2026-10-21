@@ -10,7 +10,6 @@ const token = 'ab'.repeat(40)
 
 describe('POST /api/live-activities/tokens validation', () => {
 	it.each([
-		['update without session_id', { kind: 'update', device_id: uuid, token }],
 		[
 			'push_to_start with session_id',
 			{ kind: 'push_to_start', device_id: uuid, session_id: sessionUuid, token },
@@ -22,6 +21,19 @@ describe('POST /api/live-activities/tokens validation', () => {
 	])('returns 400 for %s', async (_name, body) => {
 		const { app } = createTestApp(routes, '/api/live-activities')
 		const res = await app.request(jsonRequest('POST', '/api/live-activities/tokens', body))
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 for an update token without an X-Workspace-Id', async () => {
+		const { app, mockResults } = createTestApp(routes, '/api/live-activities')
+		mockResults.select = [{ id: uuid }]
+		const res = await app.request(
+			jsonRequest('POST', '/api/live-activities/tokens', {
+				kind: 'update',
+				device_id: uuid,
+				token,
+			}),
+		)
 		expect(res.status).toBe(400)
 	})
 

@@ -1,0 +1,18 @@
+{
+	"id": "evt_01JAXQ4W8N5ZB7K3R2T9M6C1VD",
+	"created_at": "2026-10-04T10:15:30.000Z",
+	"account_id": "acc_unipile_test_01",
+	"account_provider": "LINKEDIN",
+	"account_name": "Test Member",
+	"application_id": "app_test_01",
+	"application_production": false,
+	"type": "message.new",
+	"payload": {
+		"id": "msg_01JAXQ4W7ZV3H8D5E2F9G6A1BC",
+		"chat_id": "chat_01JAXQ4W6YT2G7C4D1E8F5Z0AB",
+		"timestamp": "2026-10-04T10:15:29.000Z",
+		"sender_id": "ACoAAExampleSenderProviderId",
+		"is_sender": false,
+		"text": "fixture text that must never reach an events row"
+	}
+}

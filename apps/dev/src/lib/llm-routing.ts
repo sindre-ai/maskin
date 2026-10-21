@@ -620,7 +620,7 @@ function buildMaskinPlanEnv(
  * pre-flight and the post-hoc "the OAuth route produced nothing" check below
  * go through here so the two can't drift apart.
  */
-function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
 	return isClaudeFailoverEnabled(env)
 		? Boolean(resolveActiveSlot(claudeOauth))
 		: Boolean(readSlots(claudeOauth).primary)

@@ -75,12 +75,25 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	// workspace data, and a read-only viewer still wants their own notifications.
 	['POST', '/api/devices', 'registers the caller\u2019s own device, no workspace data'],
 	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\u2019s own device'],
+	['PUT', '/api/notification-preferences', 'saves only the caller\u2019s own push preferences'],
 	[
 		'POST',
 		'/api/live-activities/tokens',
 		'registers a Live Activity token for the caller\u2019s own device',
 	],
 	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
+	// Device sign-in (Apple TV): start/token are public and write only the device's own code row;
+	// approve/deny act on a code, not on workspace data, so a read-only viewer can still sign in a TV.
+	['POST', '/api/device-auth/start', 'public, creates only the device\u2019s own sign-in code'],
+	['POST', '/api/device-auth/token', 'public, polls the device\u2019s own sign-in code'],
+	['POST', '/api/device-auth/approve', 'approves a sign-in code for the caller\u2019s own account'],
+	['POST', '/api/device-auth/deny', 'refuses a sign-in code, no workspace data'],
+	[
+		'POST',
+		'/api/web-push/subscriptions',
+		'registers the caller\u2019s own browser, no workspace data',
+	],
+	['DELETE', '/api/web-push/subscriptions/:id', 'removes only the caller\u2019s own subscription'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
@@ -158,6 +171,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP gateway, forwards tool calls with the provider token',
 	],
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
+	[
+		'POST',
+		'/api/custom-mcp-servers/:id/gateway',
+		'MCP gateway, forwards tool calls to a custom server with its stored headers',
+	],
+	[
+		'DELETE',
+		'/api/custom-mcp-servers/:id/gateway',
+		'MCP gateway, ends the custom server MCP session',
+	],
 	['POST', '/api/integrations/linkedin-unipile/mcp', 'MCP endpoint, tools act as the identity'],
 	[
 		'POST',

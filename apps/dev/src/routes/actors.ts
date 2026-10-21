@@ -32,6 +32,7 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
@@ -63,6 +64,7 @@ import {
 	isWorkspaceMember,
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
+import { introduceAgentToRecipient } from '../services/agent-intro'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
@@ -77,6 +79,7 @@ type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		workspaceRole?: string
+		maskinSessionId?: string
 	}
 }
 
@@ -389,6 +392,20 @@ app.openapi(createActorRoute, async (c) => {
 				creator_actor_type: creatorType,
 			})
 		}
+	}
+
+	// The new agent says hello to the person it was made for. Fire and forget,
+	// after the commit: the service never throws, so creation is unaffected.
+	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		void introduceAgentToRecipient({
+			db,
+			actor,
+			workspaceId: memberWorkspaceId,
+			creator: { id: creatorId, type: creatorType },
+			claimedSessionId: c.get('maskinSessionId'),
+			clientSource,
+			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+		})
 	}
 
 	// Auto-create personal workspace (default true for humans, false for agents)
@@ -895,7 +912,15 @@ app.openapi(getActorRoute, (async (c) => {
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
 	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
-	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...actor,
+			tools,
+			llm_config: maskLlmConfigSecrets(actor.llm_config),
+			skills,
+			role,
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // GET /:id/access - What this actor can use: integrations and saved credentials
@@ -923,7 +948,7 @@ const actorAccessRoute = createRoute({
 								name: z.string(),
 								access: z.enum(['none', 'read', 'read_write']),
 								source: z.enum(['grant', 'default']),
-								default_access: z.enum(['read', 'none']),
+								default_access: z.enum(['read', 'read_write', 'none']),
 								server_attached: z.boolean(),
 								created_by: z.string().uuid(),
 							}),
@@ -934,6 +959,7 @@ const actorAccessRoute = createRoute({
 								name: z.string(),
 								kind: z.enum(['api_key', 'login']),
 								has_access: z.boolean(),
+								default_access: z.enum(['read', 'none']),
 								scope: z.enum(['always', 'this_chat']).nullable(),
 								chat_count: z.number().int(),
 								created_by: z.string().uuid(),
@@ -1010,7 +1036,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type, tools: actors.tools })
+		.select({ type: actors.type, tools: actors.tools, llmConfig: actors.llmConfig })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -1110,6 +1136,26 @@ app.openapi(updateActorRoute, (async (c) => {
 		tools = restored.tools as typeof tools
 	}
 
+	// Same for llm_config: its api key is read back masked.
+	let llmConfig = body.llm_config
+	if (llmConfig !== undefined) {
+		const restored = restoreMaskedLlmConfig(llmConfig, existing.llmConfig)
+		if (restored.unresolved.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
+					restored.unresolved.map((field) => ({
+						field,
+						message: 'Masked value cannot be saved',
+					})),
+				),
+				400,
+			)
+		}
+		llmConfig = restored.llmConfig as typeof llmConfig
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1120,7 +1166,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
-			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(llmConfig !== undefined && { llmConfig }),
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
@@ -1152,6 +1198,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	}
 
 	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -1310,6 +1357,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		data: actorEventData(updated),
 	})
 
+	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof resetActorRoute, Env>)
 
@@ -1628,7 +1676,13 @@ app.openapi(pauseAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...updated,
+			tools,
+			llm_config: maskLlmConfigSecrets(updated.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1780,7 +1834,13 @@ app.openapi(runAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...updated,
+			tools,
+			llm_config: maskLlmConfigSecrets(updated.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app

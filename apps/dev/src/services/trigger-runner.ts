@@ -29,6 +29,7 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
@@ -1236,8 +1237,10 @@ export class TriggerRunner {
 		const expression = config.expression as string
 
 		try {
-			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				await this.fireCronTrigger(trigger)
+			const job = new Cron(expression, { timezone: 'UTC' }, async (self) => {
+				// The scheduled time, not the wall clock: two instances fire the same
+				// tick a few ms apart and must derive the same dedupe key.
+				await this.fireCronTrigger(trigger, self.currentRun() ?? new Date())
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -1249,7 +1252,7 @@ export class TriggerRunner {
 		}
 	}
 
-	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect, tick: Date): Promise<void> {
 		// Checked before the scope query and the `trigger_fired` event insert:
 		// a suppressed workspace should cost nothing per tick, and must not
 		// write an audit row claiming a trigger fired when no session follows.
@@ -1284,6 +1287,25 @@ export class TriggerRunner {
 				)
 				return
 			}
+		}
+
+		// Idempotency claim, same table and same reason as the event path: during a
+		// rolling deploy the old and new instance both hold this cron job, and the
+		// old one only stops once the new one is healthy. Every cron tick would
+		// otherwise start two sessions. A cron tick has no events row, so its key
+		// is the negative of the tick's unix seconds; real event ids are positive
+		// bigserials and can never collide with it. The 30-day purge covers these
+		// rows too.
+		const claimed = await this.db
+			.insert(triggerDispatches)
+			.values({ triggerId: trigger.id, eventId: -Math.floor(tick.getTime() / 1000) })
+			.onConflictDoNothing()
+			.returning({ triggerId: triggerDispatches.triggerId })
+		if (claimed.length === 0) {
+			logger.info(
+				`Cron trigger '${trigger.name}' tick ${tick.toISOString()} already fired by another process`,
+			)
+			return
 		}
 
 		logger.info(`Cron trigger '${trigger.name}' firing`)
@@ -2575,6 +2597,8 @@ export class CommentDispatcher {
 		// so its outcome can be sent back. A return never links: the session it wakes
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
+		let originConversationId: string | null = null
+		let notifyOnComplete = false
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2585,6 +2609,15 @@ export class CommentDispatcher {
 			if (link.linked) {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
+				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
 			}
 		}
 
@@ -2611,6 +2644,8 @@ export class CommentDispatcher {
 					...(isHelperReturn ? { helper_return: true } : {}),
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
+				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',

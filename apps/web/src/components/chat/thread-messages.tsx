@@ -4,6 +4,7 @@ import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -12,15 +13,19 @@ import {
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import type { SessionResponse } from '@/lib/api'
+import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
+import type { MessageMetadata, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
+import { NeededTools } from './needed-tools'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 
 // A thread nobody has touched in this long reads as history rather than as a
@@ -51,6 +56,12 @@ interface ThreadMessagesProps {
 	 *  route boundary on `graph-provenance-writes` so the sessions query fires
 	 *  only for tester actors. */
 	producedEnabled?: boolean
+	/** Fills the composer with a fill step's prompt. */
+	onPickStep?: (prompt: string) => void
+	/** Sends a send step's label as the person's message, with the intro step marker. */
+	onSendStep?: (content: string, metadata: MessageMetadata) => void
+	/** A step send is in flight. */
+	sendingStep?: boolean
 }
 
 export function ThreadMessages({
@@ -60,12 +71,18 @@ export function ThreadMessages({
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
 	producedEnabled = false,
+	onPickStep,
+	onSendStep,
+	sendingStep = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const threadsPane = useThreadsPane()
 	const messages = flattenMessagesOldestFirst(data)
+	// The step row is disabled only once the actor list has loaded and the intro's
+	// agent is not in it. While it loads, or when it fails, the row stays usable.
+	const actors = useActors(workspaceId)
 	const handoffs = useConversationThreads(workspaceId, conversationId)
 	// Each handoff is its own row in the timeline, at the moment its session was
 	// created: before the first message written after it, or at the foot of the
@@ -131,6 +148,18 @@ export function ThreadMessages({
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
 	})
 
+	// A linked object's card shows once, on the first message that links it; later
+	// messages keep the link but not another copy of the card.
+	const shownLinkedObjectIdsByMessage = useMemo(() => {
+		const seen = new Set<string>()
+		const byMessage = new Map<number, ReadonlySet<string>>()
+		for (const m of visibleMessages) {
+			byMessage.set(m.id, new Set(seen))
+			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
+		}
+		return byMessage
+	}, [visibleMessages])
+
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
 	const topSentinelRef = useRef<HTMLDivElement | null>(null)
@@ -140,7 +169,20 @@ export function ThreadMessages({
 	// grow the scroller upward. Cleared once applied.
 	const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
 	const pageCount = data?.pages.length ?? 0
-	const [isNearBottom, setIsNearBottom] = useState(true)
+	// A ref, not state: it only steers scrolling, and it has to be reset
+	// synchronously when the reader opens a different conversation.
+	const nearBottomRef = useRef(true)
+	const messagesContentRef = useRef<HTMLDivElement | null>(null)
+	const hasMessages = messages.length > 0
+
+	// Opening a conversation always starts at its newest message. This component
+	// is reused across conversations, so without a reset the previous thread's
+	// message count and scroll position leak into the next one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger — a different thread was opened — and its value is not read inside the effect.
+	useLayoutEffect(() => {
+		lastMessageCountRef.current = 0
+		nearBottomRef.current = true
+	}, [conversationId])
 
 	// Auto-scroll to the newest message on first load and whenever a new
 	// message arrives while the user is already near the bottom (own sends,
@@ -151,9 +193,24 @@ export function ThreadMessages({
 		const grew = messages.length > lastMessageCountRef.current
 		lastMessageCountRef.current = messages.length
 		if (!grew) return
-		if (!isNearBottom) return
+		if (!nearBottomRef.current) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
-	}, [messages.length, isNearBottom])
+	}, [messages.length])
+
+	// Rows keep growing after they mount (markdown, images, activity cards,
+	// session chips), which pushes the newest message below the fold of a view
+	// that was scrolled to the bottom a moment earlier. Follow that growth for as
+	// long as the reader hasn't scrolled away.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: hasMessages and conversationId only decide when the scroller element exists / is replaced, so the observer re-attaches to it; neither is read inside.
+	useEffect(() => {
+		const content = messagesContentRef.current
+		if (!content || typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(() => {
+			if (nearBottomRef.current) bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
+		})
+		observer.observe(content)
+		return () => observer.disconnect()
+	}, [hasMessages, conversationId])
 
 	// Auto-load older messages when the user scrolls to the top of the thread.
 	// The button below stays as an accessible fallback for keyboard users and
@@ -198,7 +255,7 @@ export function ThreadMessages({
 		const el = scrollerRef.current
 		if (!el) return
 		const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-		setIsNearBottom(distanceFromBottom < 120)
+		nearBottomRef.current = distanceFromBottom < 120
 	}
 
 	if (isLoading) {
@@ -306,7 +363,7 @@ export function ThreadMessages({
 					) : null}
 				</div>
 			) : null}
-			<div className="flex flex-col gap-4">
+			<div ref={messagesContentRef} className="flex flex-col gap-4">
 				{visibleMessages.map((message, index) => {
 					const prev = visibleMessages[index - 1]
 					const isLast = index === visibleMessages.length - 1
@@ -339,6 +396,19 @@ export function ThreadMessages({
 							</Fragment>
 						)
 					}
+					// An agent intro written with steps and tools: the buttons and rows replace
+					// the plain list and tools sentence at the end of its body.
+					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
+					const bubbleMessage = intro
+						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
+						: message
+					// The steps go once the person has written anything after the intro, an
+					// unsent-yet bubble included. The tool rows stay.
+					const showSteps =
+						intro?.steps != null &&
+						onPickStep != null &&
+						onSendStep != null &&
+						!messages.slice(messages.indexOf(message) + 1).some((m) => m.actorType === 'human')
 					return (
 						<Fragment key={message.id}>
 							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
@@ -360,10 +430,11 @@ export function ThreadMessages({
 							    own avatar. */}
 								<MessageBubble
 									workspaceId={workspaceId}
-									message={message}
+									message={bubbleMessage}
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
+									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
 									// Keyed by index as well as session: one session can put two
 									// turns under the same message (a result segment plus the
 									// live turn that follows it), so `sessionId` alone is not
@@ -377,6 +448,34 @@ export function ThreadMessages({
 										/>
 									))}
 								/>
+								{intro && (showSteps || intro.tools) ? (
+									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
+										{showSteps && intro.steps ? (
+											<SuggestedSteps
+												steps={intro.steps}
+												onPickStep={onPickStep}
+												onSendStep={(step, stepIndex) =>
+													onSendStep(step.prompt, {
+														from_suggested_step: { intro_message_id: message.id, index: stepIndex },
+													})
+												}
+												sending={sendingStep}
+												disabled={
+													actors.isSuccess && !actors.data.some((a) => a.id === message.actorId)
+												}
+											/>
+										) : null}
+										{intro.tools ? (
+											<NeededTools
+												workspaceId={workspaceId}
+												conversationId={conversationId}
+												agentId={message.actorId}
+												agentName={message.actorName}
+												tools={intro.tools}
+											/>
+										) : null}
+									</div>
+								) : null}
 								{turnsBelowHere.map((turn, turnIndex) => (
 									<MessageActivity
 										key={`${turn.sessionId}-below-${turnIndex}`}

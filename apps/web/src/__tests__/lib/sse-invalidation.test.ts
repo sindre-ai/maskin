@@ -441,6 +441,18 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.billing)).toBe(false)
 	})
 
+	it('leaves another session’s detail and logs alone', () => {
+		const { qc, keys, invalidated } = seededClient()
+		const other = queryKeys.sessions.detail('sess-2')
+		const otherLogs = queryKeys.sessions.logs('sess-2')
+		qc.setQueryData(other, {})
+		qc.setQueryData(otherLogs, [])
+		invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		expect(invalidated(keys.detail)).toBe(true)
+		expect(invalidated(other)).toBe(false)
+		expect(invalidated(otherLogs)).toBe(false)
+	})
+
 	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
 		const { qc, keys, invalidated } = seededClient()
 		for (let i = 0; i < 25; i++) {
