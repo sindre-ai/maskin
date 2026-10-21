@@ -72,10 +72,14 @@ const ALL_TOOL_NAMES = [
 	'create_session',
 	'list_sessions',
 	'get_session',
+	'get_session_activity',
 	'get_session_logs',
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'ask_user_question',
+	'gmail_send_email',
+	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
 	'get_notification',
@@ -86,11 +90,27 @@ const ALL_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
+	'request_keychain_credential',
+	'list_keychain_credentials',
+	'request_keychain_access',
+	'show_computer',
+	'update_integration_access',
 	'disconnect_integration',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'desktop_screenshot',
+	'desktop_click',
+	'desktop_move',
+	'desktop_drag',
+	'desktop_scroll',
+	'desktop_type',
+	'desktop_key',
+	'desktop_run',
+	'desktop_expose_port',
+	'desktop_list_ports',
+	'desktop_close_port',
 	// No linkedin__* entries: those three tools moved to the provider's own MCP
 	// server (apps/dev/src/lib/integrations/providers/linkedin-unipile/
 	// mcp-server.ts) so they appear only when LinkedIn is connected. Their
@@ -655,10 +675,8 @@ describe('create_session schema', () => {
 		}
 	})
 
-	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
-		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
-		expect(schema.parse(base).notify_on_complete).toBeUndefined()
-		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
+	it('has no notify_on_complete parameter: the return is always sent, with no opt-out', () => {
+		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
 	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
@@ -1457,6 +1475,11 @@ describe('workspace_id optional on most tools', () => {
 		'list_triggers',
 		'list_integrations',
 		'connect_integration',
+		'request_keychain_credential',
+		'list_keychain_credentials',
+		'request_keychain_access',
+		'show_computer',
+		'update_integration_access',
 		'disconnect_integration',
 		'get_actor',
 	]

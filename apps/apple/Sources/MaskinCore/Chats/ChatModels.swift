@@ -123,14 +123,28 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	public var idempotencyKey: String?
 	/// Sub-agent sessions this message handed work to; the thread shows a row for each.
 	public var spawnedSessions: [SpawnedSession]
+	/// The root message's server id when this is a reply inside a thread.
+	public var threadRootID: Int?
+	/// A thread reply the author also posted to the main timeline.
+	public var alsoInChannel: Bool
+	/// On a thread root that has replies: the server's summary of them.
+	public var thread: ThreadSummary?
+	/// Emoji on this message, in the order each was first used.
+	public var reactions: [MessageReaction]
 
 	public init(
 		id: String, serverID: Int? = nil, conversationID: String, actorID: String, actorName: String,
 		author: ChatParticipant.Kind, kind: String = "message", content: String, createdAt: Date? = nil,
 		editedAt: Date? = nil, metadata: JSONValue? = nil, status: Status = .sent,
-		idempotencyKey: String? = nil, spawnedSessions: [SpawnedSession] = []
+		idempotencyKey: String? = nil, spawnedSessions: [SpawnedSession] = [],
+		threadRootID: Int? = nil, alsoInChannel: Bool = false, thread: ThreadSummary? = nil,
+		reactions: [MessageReaction] = []
 	) {
+		self.reactions = reactions
 		self.spawnedSessions = spawnedSessions
+		self.threadRootID = threadRootID
+		self.alsoInChannel = alsoInChannel
+		self.thread = thread
 		self.id = id
 		self.serverID = serverID
 		self.conversationID = conversationID
@@ -150,21 +164,33 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	public static func confirmed(
 		serverID: Int, conversationID: String, actorID: String, actorName: String,
 		author: ChatParticipant.Kind, kind: String = "message", content: String, createdAt: Date? = nil,
-		editedAt: Date? = nil, metadata: JSONValue? = nil, spawnedSessions: [SpawnedSession] = []
+		editedAt: Date? = nil, metadata: JSONValue? = nil, spawnedSessions: [SpawnedSession] = [],
+		threadRootID: Int? = nil, alsoInChannel: Bool = false, thread: ThreadSummary? = nil,
+		reactions: [MessageReaction] = []
 	) -> ChatMessage {
 		ChatMessage(
 			id: "m\(serverID)", serverID: serverID, conversationID: conversationID, actorID: actorID,
 			actorName: actorName, author: author, kind: kind, content: content, createdAt: createdAt,
-			editedAt: editedAt, metadata: metadata, spawnedSessions: spawnedSessions)
+			editedAt: editedAt, metadata: metadata, spawnedSessions: spawnedSessions,
+			threadRootID: threadRootID, alsoInChannel: alsoInChannel, thread: thread, reactions: reactions)
 	}
 
 	public var isSystem: Bool { kind == "system" }
+	/// A reply inside a thread (it hangs under a root message).
+	public var isThreadReply: Bool { threadRootID != nil }
+	/// Replies stay out of the main timeline unless the author also sent them there.
+	public var showsInTimeline: Bool { threadRootID == nil || alsoInChannel }
 	public var isPending: Bool { serverID == nil }
 
 	/// An agent's end-of-turn reply that the backend marked as an error (model API failure,
 	/// credentials, …). The UI offers "Try again" on these.
 	public var isErrorReply: Bool {
 		metadata?["final_output"]?["is_error"]?.boolValue == true
+	}
+
+	/// The agent's end-of-turn reply (the web's `metadata.source == 'final_output'`).
+	public var isFinalOutput: Bool {
+		metadata?["source"]?.stringValue == "final_output" || metadata?["final_output"] != nil
 	}
 
 	/// One to three emoji and nothing else: shown large, without a bubble, as chat apps do.

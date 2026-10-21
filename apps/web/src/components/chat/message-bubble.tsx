@@ -1,3 +1,4 @@
+import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -11,14 +12,22 @@ import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { splitAtLinkedObjects } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
+import { HandoffCard } from './handoff-card'
+import { IntegrationConnectCard } from './integration-connect-card'
+import { KeychainAccessRequestCard } from './keychain-access-request-card'
+import { KeychainRequestCard } from './keychain-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { useThreadsPane } from './threads-context'
+import { VoiceMessageMetaTag } from './voice-call-boundary'
 
 function copyMessage(content: string) {
 	void navigator.clipboard?.writeText(content).then(
@@ -45,12 +54,8 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
-	/** Chat thread `HANDED OFF` sub-agent delegation strip
-	 *  (bet/444b-handed-off-strip). Threaded from the route boundary. When on,
-	 *  an agent message with a non-empty `spawned_sessions` embed renders the
-	 *  delegation strip beneath its content. Off suppresses the strip
-	 *  regardless of the embed. */
-	handedOffStripEnabled?: boolean
+	/** Linked objects an earlier message already shows a card for. */
+	shownLinkedObjectIds?: ReadonlySet<string>
 }
 
 /**
@@ -67,10 +72,13 @@ export function MessageBubble({
 	questionAnswered = false,
 	v4Polish = false,
 	spawnInfo,
-	handedOffStripEnabled = false,
+	shownLinkedObjectIds,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
+	// Present only under the chat route, which owns the Threads pane. Without
+	// it the handoff falls back to the strip, whose rows link out instead.
+	const threadsPane = useThreadsPane()
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const actorLookup = useMemo(() => {
 		const map = new Map<string, { id: string; name: string; type: string }>()
@@ -103,6 +111,8 @@ export function MessageBubble({
 	const mentions = message.metadata?.mentions ?? []
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
+	const linkedSegments = useMemo(() => splitAtLinkedObjects(message.content), [message.content])
+	const isVoice = message.metadata?.source === 'voice'
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -221,6 +231,7 @@ export function MessageBubble({
 						format="clock"
 						className="text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 					{canCopy && !editing ? (
 						<button
 							type="button"
@@ -286,6 +297,7 @@ export function MessageBubble({
 						format="clock"
 						className="shrink-0 text-[10px] text-muted-foreground"
 					/>
+					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
@@ -295,8 +307,24 @@ export function MessageBubble({
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
 						    parser backs object comments — no new payload, just the render
-						    path the chat surface was missing. */}
-						<MarkdownContent content={message.content} size="sm" renderVisuals />
+						    path the chat surface was missing. The card for an object the text
+						    links sits right after the paragraph that links it, so a draft is
+						    read in context and can be acted on without leaving the chat. */}
+						{linkedSegments.map((segment, index) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and only change with the text
+							<Fragment key={index}>
+								{segment.text ? (
+									<MarkdownContent content={segment.text} size="sm" renderVisuals />
+								) : null}
+								<LinkedObjectPreviews
+									workspaceId={workspaceId}
+									objectIds={segment.objectIds}
+									conversationId={message.conversationId}
+									agentId={message.actorId}
+									skipIds={shownLinkedObjectIds}
+								/>
+							</Fragment>
+						))}
 					</div>
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
@@ -312,22 +340,63 @@ export function MessageBubble({
 						answered={questionAnswered}
 					/>
 				) : null}
+				{/* An agent's connect_integration call, surfaced as a Connect card. Like
+				    the question chips, the message's markdown already says what to
+				    connect; the card adds the button / key input. */}
+				{message.metadata?.integration_connect ? (
+					<IntegrationConnectCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						provider={message.metadata.integration_connect.provider}
+					/>
+				) : null}
+				{/* An agent's request_keychain_credential call, surfaced as a Keychain card.
+				    The person types the credential into the card; it never reaches the agent. */}
+				{message.metadata?.keychain_request ? (
+					<KeychainRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_request}
+					/>
+				) : null}
+				{/* An agent's request_keychain_access call: Allow / Not now for a credential that
+				    already exists. Allowing grants the agent access on the server. */}
+				{message.metadata?.keychain_access_request ? (
+					<KeychainAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						askingAgentId={message.actorId}
+						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's show_computer call: a card that opens the agent's own computer so
+				    the person can act on it, then hands control back with Done. */}
+				{message.metadata?.computer_request ? (
+					<ComputerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						agentId={message.actorId}
+						agentName={message.actorName}
+						request={message.metadata.computer_request}
+					/>
+				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
 				    (bet/444b-handed-off-strip). Renders inside the agent branch under
 				    the message text and above the REFERENCED rail — the spec's
-				    `When to render` position. Feature-flag gate is deliberately here
-				    at the render site so the embed and SSE contract stay unflagged
-				    (Rail 3 — visual layer only) and the strip vanishes cleanly on
-				    a flag flip. HandedOffStrip itself no-ops when the embed is
-				    empty, so this is safe on non-spawning agent messages too. */}
-				{handedOffStripEnabled &&
-				message.spawned_sessions &&
-				message.spawned_sessions.length > 0 ? (
-					<HandedOffStrip
-						workspaceId={workspaceId}
-						messageId={message.id}
-						spawnedSessions={message.spawned_sessions}
-					/>
+				    `When to render` position. HandedOffStrip itself no-ops when the
+				    embed is empty, so this is safe on non-spawning agent messages too. */}
+				{message.spawned_sessions && message.spawned_sessions.length > 0 ? (
+					// With the Threads pane available, ThreadMessages draws each handoff as
+					// its own card in the timeline; the strip is the fallback without it.
+					threadsPane ? null : (
+						<HandedOffStrip
+							workspaceId={workspaceId}
+							messageId={message.id}
+							spawnedSessions={message.spawned_sessions}
+						/>
+					)
 				) : null}
 				{hasMentions ? (
 					<div className="mt-[7px] flex flex-wrap items-center gap-2">

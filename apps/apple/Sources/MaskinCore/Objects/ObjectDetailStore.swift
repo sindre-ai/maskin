@@ -92,7 +92,7 @@ public enum RelatedGrouping {
 		var order: [String] = []
 		var buckets: [String: [ObjectLink]] = [:]
 		for link in links where !excluding.contains(link.otherId) {
-			let label = link.otherType == flowType ? flowLabel : sentence(link.phrase)
+			let label = link.otherType == flowType ? flowLabel : heading(for: link)
 			if buckets[label] == nil { order.append(label) }
 			buckets[label, default: []].append(link)
 		}
@@ -101,6 +101,21 @@ public enum RelatedGrouping {
 			order.insert(flowLabel, at: 0)
 		}
 		return order.map { RelatedGroup(label: $0, links: buckets[$0] ?? []) }
+	}
+
+	/// What a group of links is called on the page, in plain words rather than the relation's
+	/// name: "Waiting on", "Belongs to", "Based on". Relations without a plain name keep their
+	/// phrase, sentence-cased.
+	static func heading(for link: ObjectLink) -> String {
+		switch (link.relation, link.isOutgoing) {
+		case ("blocks", true): "Blocking"
+		case ("blocks", false): "Waiting on"
+		case ("informs", true): "Feeds into"
+		case ("informs", false): "Based on"
+		case ("breaks_into", true): "Broken into"
+		case ("breaks_into", false): "Belongs to"
+		default: sentence(link.phrase)
+		}
 	}
 
 	static func sentence(_ phrase: String) -> String {

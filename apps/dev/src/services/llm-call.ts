@@ -1,4 +1,4 @@
-import { readFallbackConfig } from '../lib/llm-routing'
+import { buildProviderPrefs, readFallbackConfig } from '../lib/llm-routing'
 import { LlmNoEligibleHostError } from '../lib/llm/adapter'
 import { logger } from '../lib/logger'
 
@@ -75,7 +75,8 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 	}
 	if (input.jsonMode) body.response_format = { type: 'json_object' }
 	// Funded-key request: same zero-retention gate as resolveChatCredentials.
-	if (fallback.zdr) body.provider = { zdr: true }
+	const providerPrefs = buildProviderPrefs(fallback)
+	if (providerPrefs) body.provider = providerPrefs
 
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
@@ -92,7 +93,7 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 			if (!response.ok) {
 				// Same read as OpenAIAdapter: with provider preferences sent, a 404
 				// "no endpoints found" means no host passed the zdr filter.
-				if (fallback.zdr && response.status === 404) {
+				if (providerPrefs && response.status === 404) {
 					const errorBody = await response.text()
 					if (/no endpoints found/i.test(errorBody)) {
 						logger.error('chat_zdr_no_eligible_host', {
@@ -101,7 +102,7 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 							body: errorBody,
 						})
 						throw new LlmNoEligibleHostError(
-							`No OpenRouter host satisfies the provider preferences for ${model}. Unset MASKIN_FALLBACK_ZDR to stop sending them.`,
+							`No OpenRouter host satisfies the provider preferences for ${model}. Unset MASKIN_FALLBACK_ZDR and MASKIN_FALLBACK_PROVIDER_IGNORE, and set MASKIN_FALLBACK_PROVIDER_ONLY to none, to stop sending them.`,
 						)
 					}
 				}

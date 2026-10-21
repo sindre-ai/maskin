@@ -107,6 +107,24 @@ public final class WorkspaceStore {
 		freshness.hydrated(from: entry.savedAt)
 	}
 
+	/// The person just deleted their last workspace and has not yet answered "Delete your account
+	/// too?". The no-workspaces screen shows the prompt while this is set.
+	public private(set) var offersAccountDeletion = false
+
+	public func dismissAccountDeletionOffer() { offersAccountDeletion = false }
+
+	/// `id` is the only workspace this person has, so deleting it leaves them with none.
+	public func isLast(_ id: String) -> Bool {
+		workspaces.count == 1 && workspaces[0].id == id
+	}
+
+	/// The server has confirmed this signed-in person has no workspace at all. A list that is only
+	/// the on-disk cache, or a failed load, never counts: that must not flash this screen at someone
+	/// who does have workspaces.
+	public var hasNoWorkspaces: Bool {
+		auth.session != nil && phase == .loaded && workspaces.isEmpty && freshness.source == .network
+	}
+
 	public var selectedID: String? { auth.session?.workspaceId }
 
 	public var selected: WorkspaceSummary? {
@@ -150,11 +168,41 @@ public final class WorkspaceStore {
 		auth.selectWorkspace(id)
 	}
 
+	/// A workspace this person just created (they are its owner and only member): list it and
+	/// select it now, without waiting for a refresh that may fail, so the no-workspaces screen
+	/// goes away at once. A refresh afterwards reconciles with the server.
+	public func created(id: String, name: String) {
+		if !workspaces.contains(where: { $0.id == id }) {
+			workspaces.append(WorkspaceSummary(id: id, name: name, role: "owner", memberCount: 1))
+		}
+		phase = .loaded
+		freshness.refreshed(at: Date())
+		offersAccountDeletion = false
+		if let disk, let key = cacheKey { disk.write(workspaces, key: key, version: 1) }
+		auth.selectWorkspace(id)
+	}
+
+	/// A workspace was deleted: drop it now rather than waiting for a refresh that may fail, and
+	/// move the selection to the first one left, or to none.
+	public func removed(_ id: String) {
+		let wasListed = workspaces.contains { $0.id == id }
+		workspaces.removeAll { $0.id == id }
+		// The person just deleted what they had: the answer is known without a round trip.
+		phase = .loaded
+		freshness.refreshed(at: Date())
+		if wasListed, workspaces.isEmpty { offersAccountDeletion = true }
+		disk?.clear(workspaceId: id)
+		if let disk, let key = cacheKey { disk.write(workspaces, key: key, version: 1) }
+		guard selectedID == id else { return }
+		if let first = workspaces.first { auth.selectWorkspace(first.id) } else { auth.clearWorkspace() }
+	}
+
 	/// Forget everything (sign-out).
 	public func reset() {
 		generation += 1
 		workspaces = []
 		phase = .idle
+		offersAccountDeletion = false
 		freshness.reset()
 	}
 }

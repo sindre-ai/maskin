@@ -35,7 +35,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 			let output = try await client.get_sol_api_sol_objects(
 				.init(
 					query: .init(
-						_type: query.type, status: query.status, sort: query.sort.serverField,
+						_type: query.type, status: query.status, driver: query.driver, sort: query.sort.serverField,
 						order: query.sort.serverAscending ? .asc : .desc,
 						limit: min(query.limit, ServerLimits.maxPageSize), offset: query.offset),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
@@ -419,7 +419,7 @@ private struct GraphDTO: Decodable {
 				id: rel.id, relation: rel.type, isOutgoing: outgoing, otherId: otherId,
 				otherType: known?.type ?? (outgoing ? rel.targetType : rel.sourceType),
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
-				otherStatus: known?.status)
+				otherStatus: known?.status, otherDriver: known?.driver)
 		}
 		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
 	}

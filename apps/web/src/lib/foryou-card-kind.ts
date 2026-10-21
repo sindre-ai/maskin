@@ -82,6 +82,9 @@ export function cardHeadline(item: UnreadItem): string {
 	const { headline } = mentionParts(item.latest_mention)
 	if (headline) return headline
 
+	// A curated item with no source comment still says what is needed from the person.
+	if (item.curated?.headline.trim()) return item.curated.headline.trim()
+
 	return item.object?.title?.trim() || 'Untitled'
 }
 
@@ -92,6 +95,7 @@ export function cardHeadline(item: UnreadItem): string {
  */
 export function cardBody(item: UnreadItem): string {
 	if (decisionOf(item)) return ''
+	if (!item.latest_mention) return item.curated?.rationale?.trim() ?? ''
 	return mentionParts(item.latest_mention).body
 }
 

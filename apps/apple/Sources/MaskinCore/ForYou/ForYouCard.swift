@@ -34,12 +34,16 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 /// An outbound message the agent drafted and wants approved (an email, a post). Shown as a bordered
 /// preview inside the decision card. Nothing in the API sends this yet, so it is nil in practice.
 public struct DecisionDraft: Sendable, Equatable, Codable {
+	/// The agent's key for this message when one card carries several (`drafts`). Echoed back in
+	/// the reply so the agent can tell which message was sent or skipped.
+	public var id: String?
 	/// What kind of draft it is ("Draft email").
 	public var label: String
 	public var to: String?
 	public var body: String
 
-	public init(label: String, to: String? = nil, body: String) {
+	public init(id: String? = nil, label: String, to: String? = nil, body: String) {
+		self.id = id
 		self.label = label
 		self.to = to
 		self.body = body
@@ -54,16 +58,30 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var ask: String
 	public var options: [DecisionOption]
 	public var draft: DecisionDraft?
+	/// One card, several messages: each is shown as its own preview with its own Send and Skip.
+	public var drafts: [DecisionDraft]
 
 	public init(
 		title: String, summary: String, ask: String, options: [DecisionOption],
-		draft: DecisionDraft? = nil
+		draft: DecisionDraft? = nil, drafts: [DecisionDraft] = []
 	) {
 		self.title = title
 		self.summary = summary
 		self.ask = ask
 		self.options = options
 		self.draft = draft
+		self.drafts = drafts
+	}
+
+	// Hand-written so caches written before `drafts` existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		title = try c.decode(String.self, forKey: .title)
+		summary = try c.decode(String.self, forKey: .summary)
+		ask = try c.decode(String.self, forKey: .ask)
+		options = try c.decode([DecisionOption].self, forKey: .options)
+		draft = try c.decodeIfPresent(DecisionDraft.self, forKey: .draft)
+		drafts = try c.decodeIfPresent([DecisionDraft].self, forKey: .drafts) ?? []
 	}
 
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }
@@ -108,12 +126,15 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 	public var latestEventId: Int?
 	public var latestActivityAt: Date?
 	public var mention: ForYouMention?
+	/// Position in the Chief of Staff's ranked list (0 is first). `nil` for a card that did not come
+	/// from that list, which is then ordered by the reader's sort setting instead.
+	public var rank: Int?
 
 	public init(
 		id: String, entityType: String = "object", objectTitle: String? = nil,
 		objectType: String? = nil, status: String? = nil, unreadCount: Int = 1,
 		maxAttention: Int? = nil, latestEventId: Int? = nil, latestActivityAt: Date? = nil,
-		mention: ForYouMention? = nil
+		mention: ForYouMention? = nil, rank: Int? = nil
 	) {
 		self.id = id
 		self.entityType = entityType
@@ -125,6 +146,7 @@ public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 		self.latestEventId = latestEventId
 		self.latestActivityAt = latestActivityAt
 		self.mention = mention
+		self.rank = rank
 	}
 
 	public enum Kind: Sendable, Equatable {
@@ -219,18 +241,4 @@ enum MentionText {
 extension String {
 	var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 	var nonEmpty: String? { isEmpty ? nil : self }
-}
-
-// MARK: - Formatting
-
-public enum ForYouFormat {
-	/// The "held 3d" note: how long a card that still needs a person has sat in the
-	/// feed. Nothing is said until it has waited a full day.
-	public static func heldNote(since date: Date?, now: Date = Date()) -> String? {
-		guard let date else { return nil }
-		let days = Int(now.timeIntervalSince(date) / 86_400)
-		if days < 1 { return nil }
-		if days >= 7 { return "held 7d+" }
-		return "held \(days)d"
-	}
 }

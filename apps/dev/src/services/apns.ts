@@ -1,0 +1,490 @@
+/**
+ * APNs sender — token-based (p8) auth over HTTP/2, no third-party dependency.
+ *
+ * Config (all read from env; if any of the first three is missing the sender is
+ * DISABLED — it logs once and every send is a silent no-op, never a throw):
+ *   APNS_KEY_ID       10-char key id of the .p8 key
+ *   APNS_TEAM_ID      Apple developer team id
+ *   APNS_PRIVATE_KEY  contents of the .p8 file (literal "\n" escapes accepted)
+ *   APNS_BUNDLE_ID    apns-topic, default `io.maskin.app`
+ *
+ * Deep links (custom `deep_link` key in the payload root, consumed by the apps):
+ *   maskin://<workspaceId>/objects/<objectId>        a notification about an object
+ *   maskin://<workspaceId>/chats/<conversationId>    a notification about a chat
+ *   maskin://<workspaceId>/notifications             fallback: open the inbox / For You
+ * `aps.thread-id` is `PushMessage.collapseKey` when set, else groups pushes per chat (`chat:<id>`), per object
+ * (`object:<id>`) or per workspace (`workspace:<id>`). `aps.mutable-content = 1`
+ * so a notification service extension may rewrite the alert. The notification
+ * id travels as `notification_id` and as `apns-collapse-id`, so a duplicate
+ * delivery (e.g. two server replicas both fanning out one event) collapses on
+ * the device.
+ *
+ * Actionable decisions: a `PushMessage.decision` adds `aps.category = DECISION_CATEGORY`
+ * and a compact root `decision` object the app's notification service extension turns into
+ * per-notification action buttons (iOS only lets an app register fixed categories ahead of
+ * time, but option labels differ per notification):
+ *   decision: { eventId, parentEventId?, objectId?, options: [{ label, destructive? }], recommended? }
+ * `eventId` is the agent's decision comment (what the reply threads under and the high-water
+ * mark for mark-read); `recommended` is the zero-based index into `options`. Labels travel
+ * whole (never truncated: the app posts the label verbatim as the answer, so a decision with an
+ * over-long label travels without actions), at most `DECISION_OPTIONS_MAX` options travel, and nothing secret is ever in it.
+ * Rich pushes: `aps.interruption-level` (`time-sensitive` for decisions, `active` otherwise,
+ * `passive` when asked), `aps.badge` (the actor's pending-notification count) and an optional
+ * root `image_url` (https only) the extension downloads and attaches. `buildApnsPayload` is the
+ * single place that writes these keys; the extension reads exactly them.
+ * The whole payload is held under APNs' 4 KB limit (see `buildApnsPayload`).
+ *
+ * Live Activities: `buildLiveActivityPayload` + `ApnsSender.sendLiveActivity` push ActivityKit
+ * start/update/end with `apns-push-type: liveactivity` and topic `<bundle>.push-type.liveactivity`.
+ *
+ * A 410 or a 400 BadDeviceToken / 410 Unregistered response deletes the token
+ * row, so dead devices stop being targeted.
+ */
+import { createHash, createPrivateKey, sign } from 'node:crypto'
+import { type ClientHttp2Session, connect } from 'node:http2'
+import type { Database } from '@maskin/db'
+import { deviceTokens } from '@maskin/db/schema'
+import { and, eq } from 'drizzle-orm'
+import { logger } from '../lib/logger'
+import { type WorkingAgent, encodeAgentsState } from './live-activity-agents'
+import type { PushChannel, PushDecision, PushMessage } from './push-types'
+
+export interface ApnsConfig {
+	keyId: string
+	teamId: string
+	privateKey: string
+	bundleId: string
+}
+
+export interface ApnsRequest {
+	host: string
+	token: string
+	headers: Record<string, string>
+	body: string
+}
+
+export interface ApnsResponse {
+	status: number
+	body: string
+}
+
+export interface ApnsTransport {
+	send(req: ApnsRequest): Promise<ApnsResponse>
+}
+
+export type { PushDecision, PushInterruption, PushMessage } from './push-types'
+
+export const APNS_HOSTS = {
+	production: 'api.push.apple.com',
+	sandbox: 'api.sandbox.push.apple.com',
+} as const
+
+const JWT_TTL_MS = 50 * 60 * 1000
+const IMAGE_URL_MAX = 500
+const BODY_MAX = 200
+const TITLE_MAX = 100
+const REQUEST_TIMEOUT_MS = 10_000
+/** APNs rejects alert payloads over 4096 bytes; keep headroom for header-ish overhead. */
+export const APNS_PAYLOAD_MAX_BYTES = 3800
+/** Static category registered by the app as a fallback; the extension swaps in a per-push one. */
+export const DECISION_CATEGORY = 'maskin.decision'
+/** One banner shows at most four actions; one slot is the Reply field. */
+export const DECISION_OPTIONS_MAX = 3
+export const DECISION_LABEL_MAX = 120
+
+export function loadApnsConfig(env: NodeJS.ProcessEnv = process.env): ApnsConfig | null {
+	const keyId = env.APNS_KEY_ID?.trim()
+	const teamId = env.APNS_TEAM_ID?.trim()
+	const privateKey = env.APNS_PRIVATE_KEY?.replace(/\\n/g, '\n').trim()
+	if (!keyId || !teamId || !privateKey) return null
+	return { keyId, teamId, privateKey, bundleId: env.APNS_BUNDLE_ID?.trim() || 'io.maskin.app' }
+}
+
+function b64url(input: Buffer | string): string {
+	return Buffer.from(input).toString('base64url')
+}
+
+/** ES256 provider token. JOSE requires the raw r||s form, hence ieee-p1363. */
+export function signApnsJwt(config: ApnsConfig, issuedAtSeconds: number): string {
+	const header = b64url(JSON.stringify({ alg: 'ES256', kid: config.keyId }))
+	const claims = b64url(JSON.stringify({ iss: config.teamId, iat: issuedAtSeconds }))
+	const signingInput = `${header}.${claims}`
+	const signature = sign('sha256', Buffer.from(signingInput), {
+		key: createPrivateKey(config.privateKey),
+		dsaEncoding: 'ieee-p1363',
+	})
+	return `${signingInput}.${b64url(signature)}`
+}
+
+function truncate(s: string, max: number): string {
+	return s.length > max ? `${s.slice(0, max - 1)}…` : s
+}
+
+export function deepLinkFor(msg: PushMessage): string {
+	if (msg.conversationId) return `maskin://${msg.workspaceId}/chats/${msg.conversationId}`
+	if (msg.objectId) return `maskin://${msg.workspaceId}/objects/${msg.objectId}`
+	return `maskin://${msg.workspaceId}/notifications`
+}
+
+export function compactDecision(decision: PushDecision): Record<string, unknown> | null {
+	// Index-preserving: `recommended` points into the ORIGINAL list, so remap it after blank
+	// labels are filtered out rather than reusing the raw index.
+	const kept = decision.options
+		.map((o, originalIndex) => ({
+			originalIndex,
+			label: o.label.trim(),
+			destructive: o.destructive,
+		}))
+		.filter((o) => o.label.length > 0)
+		.slice(0, DECISION_OPTIONS_MAX)
+	// The app posts the label as the user's answer. A truncated label would post text the agent
+	// never offered, so an over-long label makes the whole decision non-actionable instead.
+	if (kept.some((o) => o.label.length > DECISION_LABEL_MAX)) return null
+	// A decision with no choices is just a notification; the Reply field alone needs no payload.
+	if (kept.length === 0 || !Number.isSafeInteger(decision.eventId)) return null
+	const options = kept.map((o) => ({
+		label: o.label,
+		...(o.destructive === true ? { destructive: true } : {}),
+	}))
+	const recommendedIndex =
+		typeof decision.recommended === 'number'
+			? kept.findIndex((o) => o.originalIndex === decision.recommended)
+			: -1
+	const recommended = recommendedIndex >= 0 ? recommendedIndex : undefined
+	return {
+		eventId: decision.eventId,
+		...(decision.parentEventId != null ? { parentEventId: decision.parentEventId } : {}),
+		...(decision.objectId ? { objectId: decision.objectId } : {}),
+		options,
+		...(recommended !== undefined ? { recommended } : {}),
+	}
+}
+
+/** Only https URLs of sane length travel; the extension refuses anything else anyway. */
+function safeImageUrl(url: string | null | undefined): string | null {
+	if (!url || url.length > IMAGE_URL_MAX) return null
+	try {
+		return new URL(url).protocol === 'https:' ? url : null
+	} catch {
+		return null
+	}
+}
+
+const byteLength = (payload: unknown) => Buffer.byteLength(JSON.stringify(payload), 'utf8')
+
+/** APNs rejects an `apns-collapse-id` over 64 bytes; longer keys are hashed (stable, so still collapsing). */
+export const APNS_COLLAPSE_ID_MAX_BYTES = 64
+
+export function apnsCollapseId(msg: PushMessage): string {
+	const key = msg.collapseKey?.trim() || msg.notificationId
+	if (Buffer.byteLength(key, 'utf8') <= APNS_COLLAPSE_ID_MAX_BYTES) return key
+	return `h:${createHash('sha256').update(key).digest('base64url')}`
+}
+
+export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
+	const threadId = msg.collapseKey?.trim()
+		? msg.collapseKey.trim().slice(0, 200)
+		: msg.conversationId
+			? `chat:${msg.conversationId}`
+			: msg.objectId
+				? `object:${msg.objectId}`
+				: `workspace:${msg.workspaceId}`
+	const decision = msg.decision ? compactDecision(msg.decision) : null
+	const interruption = msg.interruption ?? (decision ? 'time-sensitive' : 'active')
+	const badge =
+		typeof msg.badge === 'number' && Number.isSafeInteger(msg.badge) && msg.badge >= 0
+			? msg.badge
+			: undefined
+	const imageUrl = safeImageUrl(msg.imageUrl)
+	const build = (bodyMax: number, withDecision: boolean): Record<string, unknown> => ({
+		aps: {
+			alert: {
+				title: truncate(msg.title, TITLE_MAX),
+				...(msg.body ? { body: truncate(msg.body, bodyMax) } : {}),
+			},
+			'thread-id': threadId,
+			'mutable-content': 1,
+			...(interruption === 'passive' ? {} : { sound: 'default' }),
+			'interruption-level': interruption,
+			...(badge !== undefined ? { badge } : {}),
+			...(withDecision && decision ? { category: DECISION_CATEGORY } : {}),
+		},
+		deep_link: deepLinkFor(msg),
+		notification_id: msg.notificationId,
+		workspace_id: msg.workspaceId,
+		...(imageUrl ? { image_url: imageUrl } : {}),
+		...(withDecision && decision ? { decision } : {}),
+	})
+	// Multi-byte text can push even a capped payload over the limit: shrink the body, and as a
+	// last resort drop the decision (a plain, tappable notification beats a rejected push).
+	for (const bodyMax of [BODY_MAX, 100, 40, 0]) {
+		const payload = build(bodyMax, true)
+		if (byteLength(payload) <= APNS_PAYLOAD_MAX_BYTES) return payload
+	}
+	return build(BODY_MAX, false)
+}
+
+// ── Live Activities ──────────────────────────────────────────────────────
+
+/**
+ * The ONE aggregate "Agents working" activity per recipient and workspace. The Swift type name
+ * and its `workspaceId` property are part of the contract (apps/apple `MaskinAgentsAttributes`).
+ */
+export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'MaskinAgentsAttributes'
+/** How long the "Agents finished" card lingers on the Lock Screen after the last agent stops. */
+export const LIVE_ACTIVITY_END_DISMISS_S = 60
+/** Start/update: mark the card stale if updates stop arriving (server down). */
+export const LIVE_ACTIVITY_STALE_S = 15 * 60
+
+export type LiveActivityEvent = 'start' | 'update' | 'end'
+
+export interface LiveActivityPush {
+	event: LiveActivityEvent
+	workspaceId: string
+	/** Every agent working now (empty for an end); ranked, counted and clamped on encode. */
+	agents: WorkingAgent[]
+}
+
+export function buildLiveActivityPayload(
+	push: LiveActivityPush,
+	nowMs: number,
+): Record<string, unknown> {
+	const state = encodeAgentsState(push.agents, nowMs)
+	const timestamp = Math.floor(nowMs / 1000)
+	const aps: Record<string, unknown> = {
+		timestamp,
+		event: push.event,
+		'content-state': state,
+	}
+	if (push.event === 'start') {
+		aps['attributes-type'] = LIVE_ACTIVITY_ATTRIBUTES_TYPE
+		aps.attributes = { workspaceId: push.workspaceId }
+		// A start push must carry an alert (iOS shows it as the banner that begins the activity).
+		const first = state.agents[0]
+		aps.alert =
+			state.count > 1 || !first
+				? { title: `${state.count} agents working` }
+				: { title: truncate(first.name, TITLE_MAX), body: truncate(first.doing, BODY_MAX) }
+	}
+	// Never an alert for a decision waiting on the person: those are notifications and widgets.
+	if (push.event === 'end') {
+		aps['dismissal-date'] = timestamp + LIVE_ACTIVITY_END_DISMISS_S
+	} else {
+		aps['stale-date'] = timestamp + LIVE_ACTIVITY_STALE_S
+	}
+	return { aps }
+}
+
+export interface LiveActivityTarget {
+	token: string
+	environment: string
+}
+
+export type LiveActivityResult = 'sent' | 'dead' | 'failed' | 'disabled'
+
+/** Real transport: one pooled HTTP/2 session per APNs host. */
+export class Http2ApnsTransport implements ApnsTransport {
+	private sessions = new Map<string, ClientHttp2Session>()
+
+	private sessionFor(host: string): ClientHttp2Session {
+		const existing = this.sessions.get(host)
+		if (existing && !existing.closed && !existing.destroyed) return existing
+		const session = connect(`https://${host}`)
+		const drop = () => {
+			if (this.sessions.get(host) === session) this.sessions.delete(host)
+		}
+		session.on('error', drop)
+		session.on('close', drop)
+		session.on('goaway', drop)
+		session.unref()
+		this.sessions.set(host, session)
+		return session
+	}
+
+	send(req: ApnsRequest): Promise<ApnsResponse> {
+		return new Promise((resolve, reject) => {
+			let stream: ReturnType<ClientHttp2Session['request']>
+			try {
+				stream = this.sessionFor(req.host).request({
+					':method': 'POST',
+					':path': `/3/device/${req.token}`,
+					...req.headers,
+				})
+			} catch (err) {
+				reject(err)
+				return
+			}
+			let status = 0
+			let body = ''
+			stream.setEncoding('utf8')
+			stream.setTimeout(REQUEST_TIMEOUT_MS, () => {
+				stream.close()
+				reject(new Error('APNs request timed out'))
+			})
+			stream.on('response', (headers) => {
+				status = Number(headers[':status'] ?? 0)
+			})
+			stream.on('data', (chunk) => {
+				body += chunk
+			})
+			stream.on('end', () => resolve({ status, body }))
+			stream.on('error', reject)
+			stream.end(req.body)
+		})
+	}
+
+	close() {
+		for (const s of this.sessions.values()) s.close()
+		this.sessions.clear()
+	}
+}
+
+export interface ApnsSenderOptions {
+	/** Defaults to `loadApnsConfig()`. Pass `null` to force disabled. */
+	config?: ApnsConfig | null
+	transport?: ApnsTransport
+	now?: () => number
+}
+
+export class ApnsSender implements PushChannel {
+	private config: ApnsConfig | null
+	private transport: ApnsTransport
+	private now: () => number
+	private jwt: { token: string; issuedAtMs: number } | null = null
+	private warnedDisabled = false
+
+	constructor(
+		private db: Database,
+		opts: ApnsSenderOptions = {},
+	) {
+		this.config = opts.config === undefined ? loadApnsConfig() : opts.config
+		this.transport = opts.transport ?? new Http2ApnsTransport()
+		this.now = opts.now ?? Date.now
+	}
+
+	isEnabled(): boolean {
+		if (this.config) return true
+		if (!this.warnedDisabled) {
+			this.warnedDisabled = true
+			logger.info('APNs push disabled — APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY not set')
+		}
+		return false
+	}
+
+	private providerToken(config: ApnsConfig): string {
+		const nowMs = this.now()
+		if (!this.jwt || nowMs - this.jwt.issuedAtMs > JWT_TTL_MS) {
+			this.jwt = { token: signApnsJwt(config, Math.floor(nowMs / 1000)), issuedAtMs: nowMs }
+		}
+		return this.jwt.token
+	}
+
+	/** One Live Activity push to one ActivityKit token. Never throws; 'dead' = drop the token. */
+	async sendLiveActivity(
+		target: LiveActivityTarget,
+		push: LiveActivityPush,
+	): Promise<LiveActivityResult> {
+		const config = this.config
+		if (!this.isEnabled() || !config) return 'disabled'
+		try {
+			const res = await this.transport.send({
+				host: APNS_HOSTS[target.environment === 'production' ? 'production' : 'sandbox'],
+				token: target.token,
+				headers: {
+					authorization: `bearer ${this.providerToken(config)}`,
+					'apns-topic': `${config.bundleId}.push-type.liveactivity`,
+					'apns-push-type': 'liveactivity',
+					// Routine step updates are budgeted by iOS at low priority; start/end and
+					// anything that should buzz go out immediately.
+					'apns-priority': push.event === 'update' ? '5' : '10',
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify(buildLiveActivityPayload(push, this.now())),
+			})
+			if (res.status === 200) return 'sent'
+			const reason = parseReason(res.body)
+			if (isDeadToken(res.status, reason)) return 'dead'
+			logger.warn('APNs live activity push rejected', {
+				workspaceId: push.workspaceId,
+				event: push.event,
+				status: res.status,
+				reason,
+			})
+			return 'failed'
+		} catch (err) {
+			logger.warn('APNs live activity push failed', {
+				workspaceId: push.workspaceId,
+				error: String(err),
+			})
+			return 'failed'
+		}
+	}
+
+	/** Push to every registered device of an actor. Never throws. */
+	async sendToActor(actorId: string, msg: PushMessage): Promise<void> {
+		const config = this.config
+		if (!this.isEnabled() || !config) return
+		try {
+			const devices = await this.db
+				.select()
+				.from(deviceTokens)
+				.where(eq(deviceTokens.actorId, actorId))
+			if (devices.length === 0) return
+
+			const body = JSON.stringify(buildApnsPayload(msg))
+			const authorization = `bearer ${this.providerToken(config)}`
+
+			await Promise.all(
+				devices.map(async (device) => {
+					try {
+						const res = await this.transport.send({
+							host: APNS_HOSTS[device.environment === 'production' ? 'production' : 'sandbox'],
+							token: device.apnsToken,
+							headers: {
+								authorization,
+								'apns-topic': config.bundleId,
+								'apns-push-type': 'alert',
+								'apns-priority': msg.interruption === 'passive' ? '5' : '10',
+								'apns-collapse-id': apnsCollapseId(msg),
+								'content-type': 'application/json',
+							},
+							body,
+						})
+						if (res.status === 200) return
+						const reason = parseReason(res.body)
+						if (isDeadToken(res.status, reason)) {
+							await this.db
+								.delete(deviceTokens)
+								.where(
+									and(
+										eq(deviceTokens.apnsToken, device.apnsToken),
+										eq(deviceTokens.environment, device.environment),
+									),
+								)
+							logger.info('APNs token unregistered, removed', { deviceId: device.id, reason })
+							return
+						}
+						logger.warn('APNs push rejected', { deviceId: device.id, status: res.status, reason })
+					} catch (err) {
+						logger.warn('APNs push failed', { deviceId: device.id, error: String(err) })
+					}
+				}),
+			)
+		} catch (err) {
+			logger.warn('APNs sendToActor failed', { actorId, error: String(err) })
+		}
+	}
+}
+
+function parseReason(body: string): string | undefined {
+	try {
+		const parsed = JSON.parse(body) as { reason?: unknown }
+		return typeof parsed.reason === 'string' ? parsed.reason : undefined
+	} catch {
+		return undefined
+	}
+}
+
+function isDeadToken(status: number, reason: string | undefined): boolean {
+	return status === 410 || reason === 'Unregistered' || reason === 'BadDeviceToken'
+}

@@ -140,18 +140,6 @@ export const FLAGS = {
 	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
 	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
 	/**
-	 * Chat thread `HANDED OFF` sub-agent delegation strip
-	 * (bet/444b-handed-off-strip). When on, an agent message with ≥1
-	 * **spawned_sessions** row renders the delegation strip beneath its
-	 * content: one row per sub-agent with a live-updating QUEUED / WORKING /
-	 * DONE / FAILED pill, deps clause, elapsed timer, current activity and
-	 * row-click through to the sub-agent's own thread. Visual-layer only —
-	 * the embed and SSE contract ship to everyone regardless of this flag,
-	 * so a flag flip toggles the strip on or off without affecting how sub-
-	 * sessions run or how their state propagates.
-	 */
-	HANDED_OFF_STRIP: 'handed-off-strip',
-	/**
 	 * Chat composer `/` picker v2 — unified search-and-create surface.
 	 * When off, typing `/` opens the create-only "Turn this into an object"
 	 * dropdown (today's behaviour). When on, `/` opens the unified picker with
@@ -181,6 +169,20 @@ export const FLAGS = {
 	 * the edges being present.
 	 */
 	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
+	/**
+	 * Voice v1 — 1:1 in-app click-to-talk to a voice-enabled agent. Gates the
+	 * **POST /api/voice-sessions** session-mint route (404 when off), the
+	 * Call button on `/agents/:id`, and the VoiceCallDialog. Per-actor: a
+	 * workspace tester with this flag on sees the button; every other member
+	 * of the same workspace sees nothing. See parent bet
+	 * [Voice with Maskin agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
+	 *
+	 * Boot-time invariant: when this flag id appears in `FF_TESTER_FEATURES`,
+	 * `MASKIN_VOICE_OPENAI_API_KEY` must be set. `apps/dev/src/lib/voice-boot-guard.ts`
+	 * asserts it at startup so a mis-configured deploy fails fast instead of
+	 * 500-ing on the first mint call.
+	 */
+	VOICE_MODE_V1: 'voice-mode-v1',
 	/**
 	 * Gates the trigger-engine v2 rollout (bet
 	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).

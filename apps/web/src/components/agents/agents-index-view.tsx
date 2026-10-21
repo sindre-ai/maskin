@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
@@ -8,6 +9,7 @@ import {
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
+import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import {
@@ -19,6 +21,7 @@ import {
 	deriveAgentStatus,
 	getLatestSession,
 	groupSessionsByAgent,
+	summarizeAgentSessions,
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -36,6 +39,7 @@ const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'kind', label: 'Kind', canHide: true },
 	{ id: 'activity', label: 'Activity', canHide: true },
 	{ id: 'sessions', label: 'Sessions', canHide: true },
+	{ id: 'cost', label: 'Cost', canHide: true },
 	{ id: 'status', label: 'Status', canHide: true },
 ]
 
@@ -64,6 +68,9 @@ interface AgentRow {
 	portrait: PortraitStatus
 	latestSession?: SessionResponse
 	sessionCount: number
+	activeCount: number
+	totalCostUsd: number
+	last30dCostUsd: number
 }
 
 export function AgentsIndexView({
@@ -124,11 +131,15 @@ export function AgentsIndexView({
 		() =>
 			agents.map((agent) => {
 				const sessionStatus = deriveAgentStatus(agent.id, sessionsByAgent)
+				const stats = summarizeAgentSessions(sessionsByAgent.get(agent.id))
 				return {
 					agent,
 					portrait: getPortraitStatus(agent, sessionStatus),
 					latestSession: getLatestSession(agent.id, sessionsByAgent),
-					sessionCount: sessionsByAgent.get(agent.id)?.length ?? 0,
+					sessionCount: stats.total,
+					activeCount: stats.active,
+					totalCostUsd: stats.totalCostUsd,
+					last30dCostUsd: stats.last30dCostUsd,
 				}
 			}),
 		[agents, sessionsByAgent],
@@ -139,13 +150,22 @@ export function AgentsIndexView({
 		[statusFilter],
 	)
 
+	// `voice` was a filter chip until every agent became callable; a persisted
+	// or bookmarked `voice` must not empty the list. Other unknown values still
+	// fail closed (empty state), by design.
+	const statusOnlyFilters = useMemo(
+		() => activeStatuses.filter((s) => s !== 'voice'),
+		[activeStatuses],
+	)
+
 	const visibleRows = useMemo(
 		() =>
 			rows.filter((row) => {
 				const bucket = portraitStatusToFilter(row.portrait)
-				return activeStatuses.length === 0 || activeStatuses.includes(bucket)
+				const statusMatches = statusOnlyFilters.length === 0 || statusOnlyFilters.includes(bucket)
+				return statusMatches
 			}),
-		[rows, activeStatuses],
+		[rows, statusOnlyFilters],
 	)
 
 	const sortedRows = useMemo(() => {
@@ -171,6 +191,12 @@ export function AgentsIndexView({
 					return dir * (byCount || byName(a, b))
 				})
 				break
+			case 'cost':
+				arr.sort((a, b) => {
+					const byCost = a.totalCostUsd - b.totalCostUsd
+					return dir * (byCost || byName(a, b))
+				})
+				break
 			default:
 				arr.sort((a, b) => dir * byName(a, b))
 		}
@@ -183,7 +209,7 @@ export function AgentsIndexView({
 			// casting: a stale persisted filter can't crash the group render
 			// via an undefined STATUS_GROUP_META entry.
 			const buckets: StatusBucket[] = [...AGENT_STATUSES].filter((b) =>
-				activeStatuses.length === 0 ? true : activeStatuses.includes(b),
+				statusOnlyFilters.length === 0 ? true : statusOnlyFilters.includes(b),
 			)
 			return buckets.map((bucket) => {
 				const meta = STATUS_GROUP_META[bucket]
@@ -213,11 +239,12 @@ export function AgentsIndexView({
 				}))
 		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
-	}, [groupBy, activeStatuses, sortedRows])
+	}, [groupBy, statusOnlyFilters, sortedRows])
 
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
 	const showSessions = columnVisibility.sessions !== false
+	const showCost = columnVisibility.cost !== false
 	const showStatus = columnVisibility.status !== false
 
 	// Counts come off the pre-filter `rows` so a chip's number stays stable while
@@ -260,8 +287,8 @@ export function AgentsIndexView({
 		[activeStatuses, statusCounts],
 	)
 
-	const statusTabs = useMemo(
-		() => [
+	const statusTabs = useMemo(() => {
+		const base: Array<{ label: string; value: string | undefined; count: number; dot?: string }> = [
 			{ label: 'All', value: undefined, count: rows.length },
 			...AGENT_STATUSES.map((bucket) => ({
 				label: STATUS_GROUP_META[bucket].label,
@@ -269,9 +296,9 @@ export function AgentsIndexView({
 				count: statusCounts[bucket],
 				dot: STATUS_DOT[bucket],
 			})),
-		],
-		[rows.length, statusCounts],
-	)
+		]
+		return base
+	}, [rows.length, statusCounts])
 
 	return (
 		<div>
@@ -336,6 +363,7 @@ export function AgentsIndexView({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 						/>
 					))}
@@ -351,6 +379,7 @@ function AgentGroupSection({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 }: {
 	workspaceId: string
@@ -358,6 +387,7 @@ function AgentGroupSection({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 }) {
 	if (group.label === undefined) {
@@ -371,6 +401,7 @@ function AgentGroupSection({
 						showKind={showKind}
 						showActivity={showActivity}
 						showSessions={showSessions}
+						showCost={showCost}
 						showStatus={showStatus}
 					/>
 				))}
@@ -408,6 +439,7 @@ function AgentGroupSection({
 							showKind={showKind}
 							showActivity={showActivity}
 							showSessions={showSessions}
+							showCost={showCost}
 							showStatus={showStatus}
 						/>
 					))
@@ -429,6 +461,7 @@ function AgentRowItem({
 	showKind,
 	showActivity,
 	showSessions,
+	showCost,
 	showStatus,
 }: {
 	workspaceId: string
@@ -436,6 +469,7 @@ function AgentRowItem({
 	showKind: boolean
 	showActivity: boolean
 	showSessions: boolean
+	showCost: boolean
 	showStatus: boolean
 }) {
 	const { agent, portrait, latestSession } = row
@@ -451,12 +485,12 @@ function AgentRowItem({
 		// A hairline under every row, including the last — the group below butts
 		// straight onto it, so the list reads as one unbroken column of rows rather
 		// than a stack of framed cards (mockup 2327).
-		<li className="border-b border-border-subtle">
+		<li className="group/row flex items-center border-b border-border-subtle">
 			{/* The whole row is the click target (mockup 2327), not just the name. */}
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
@@ -488,13 +522,24 @@ function AgentRowItem({
 					// "What it's doing now" (mockup 2333) shares the sessions column's
 					// breakpoint — at 768px the row otherwise carried a name and a status
 					// and nothing about the work.
-					<span className="hidden w-[140px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
+					<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
 						{describeFocus(portrait, latestSession)}
 					</span>
 				)}
 				{showSessions && (
-					<span className="hidden w-[74px] shrink-0 text-[11.5px] tabular-nums text-muted-foreground md:block">
-						{sessionsLabel}
+					<span className="hidden w-[74px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
+						<span>{sessionsLabel}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">{row.activeCount} active</span>
+					</span>
+				)}
+				{showCost && (
+					// Cost waits for `lg`: at 768px the content box is ~450px, and with it
+					// the fixed columns left the name column 0px wide and overflowing.
+					<span className="hidden w-[84px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground lg:flex">
+						<span>{formatUsd(row.totalCostUsd)}</span>
+						<span className="text-[10.5px] text-muted-foreground/70">
+							{formatUsd(row.last30dCostUsd)} · 30d
+						</span>
 					</span>
 				)}
 				{showStatus && (
@@ -509,6 +554,11 @@ function AgentRowItem({
 					aria-hidden
 				/>
 			</Link>
+			{/* Row-level Call. A sibling of the row link, not a child: a button
+			    inside an anchor is invalid nesting and would navigate on click. The
+			    button itself is hover-revealed on md+ and always inline below that.
+			    Renders nothing when the voice-mode-v1 flag is off. */}
+			<AgentCallButton agent={agent} variant="row" shortcut={false} />
 		</li>
 	)
 }

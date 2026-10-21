@@ -1,0 +1,363 @@
+import type { Database } from '@maskin/db'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const captureToolCall = vi.fn()
+const captureTurnCompleted = vi.fn()
+vi.mock('../../lib/analytics/voice-events', () => ({
+	captureVoiceToolCall: (...args: unknown[]) => captureToolCall(...args),
+	captureVoiceTurnCompleted: (...args: unknown[]) => captureTurnCompleted(...args),
+}))
+
+const writeLine = vi.fn()
+const persistenceEnabled = vi.fn()
+vi.mock('../../services/voice-transcript', () => ({
+	writeVoiceTranscriptLine: (...args: unknown[]) => writeLine(...args),
+	isTranscriptPersistenceEnabled: (...args: unknown[]) => persistenceEnabled(...args),
+}))
+
+const endSession = vi.fn()
+const recordTurn = vi.fn()
+const recordToolCall = vi.fn()
+vi.mock('../../services/voice-session-lifecycle', () => ({
+	endVoiceSession: (...args: unknown[]) => endSession(...args),
+	recordVoiceTurn: (...args: unknown[]) => recordTurn(...args),
+	recordVoiceToolCall: (...args: unknown[]) => recordToolCall(...args),
+}))
+
+const captureException = vi.fn()
+vi.mock('../../lib/sentry-voice', () => ({
+	captureVoiceException: (...args: unknown[]) => captureException(...args),
+}))
+
+const { createVoiceChannel } = await import('../../services/voice-session-channel')
+type Channel = ReturnType<typeof createVoiceChannel>
+
+const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
+const OTHER_WORKSPACE = 'd2e3f4a5-b6c7-4d8e-9f0a-1b2c3d4e5f60'
+const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
+const AGENT = '4a8d2f3b-ac5e-4032-9d7f-6b1e8c02f553'
+const SESSION_ID = '5b9e3a4c-bd6f-4143-8e80-7c2f9d13a664'
+const ENTITY = '6cae4b5d-ce70-4254-9f91-8d3a0e24b775'
+
+const session = {
+	id: SESSION_ID,
+	workspaceId: WORKSPACE,
+	agentActorId: AGENT,
+	humanActorId: HUMAN,
+	conversationId: null,
+} as never
+
+function setup(invokeTool = vi.fn()) {
+	const sent: Array<Record<string, unknown>> = []
+	const channel: Channel = createVoiceChannel({
+		db: {} as Database,
+		session,
+		agentName: 'Chief of Staff',
+		invokeTool,
+		send: (m) => sent.push(m as Record<string, unknown>),
+		now: (() => {
+			let t = 1_000
+			return () => {
+				t += 25
+				return t
+			}
+		})(),
+	})
+	const toolCall = (name: string, args: unknown, callId = 'call_1') =>
+		channel.onMessage(
+			JSON.stringify({
+				type: 'tool_call',
+				call_id: callId,
+				name,
+				arguments: typeof args === 'string' ? args : JSON.stringify(args),
+			}),
+		)
+	return { channel, sent, invokeTool, toolCall }
+}
+
+const textResult = (text: string) => ({ content: [{ type: 'text', text }] })
+const lastResult = (sent: Array<Record<string, unknown>>) =>
+	sent.find((m) => m.type === 'tool_result') as {
+		ok: boolean
+		error_code: string | null
+		call_id: string
+		event: { type: string; item: { type: string; call_id: string; output: string } }
+	}
+
+beforeEach(() => {
+	captureToolCall.mockReset()
+	captureTurnCompleted.mockReset()
+	endSession.mockReset().mockResolvedValue({})
+	recordTurn.mockReset()
+	recordToolCall.mockReset()
+	captureException.mockReset()
+	writeLine.mockReset()
+	persistenceEnabled.mockReset().mockResolvedValue(true)
+})
+
+describe('voice channel — open', () => {
+	it('announces whether transcripts persist and any existing conversation', async () => {
+		persistenceEnabled.mockResolvedValue(false)
+		const { channel, sent } = setup()
+		await channel.onOpen()
+		expect(sent).toEqual([{ type: 'ready', persist_transcripts: false, conversation_id: null }])
+	})
+})
+
+describe('voice channel — tool proxy', () => {
+	it('runs a read through invokeTool as the agent and returns a function_call_output', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValue(textResult('{"results":[{"title":"Loops v4 polish"}]}'))
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('search_objects', { q: 'loops v4 bet' })
+
+		expect(invoke).toHaveBeenCalledTimes(1)
+		const [name, args, ctx] = invoke.mock.calls[0] as [string, Record<string, unknown>, unknown]
+		expect(name).toBe('search_objects')
+		expect(args).toMatchObject({ q: 'loops v4 bet', workspace_id: WORKSPACE })
+		expect(ctx).toEqual({ actorId: AGENT, workspaceId: WORKSPACE })
+
+		const result = lastResult(sent)
+		expect(result).toMatchObject({ ok: true, error_code: null, call_id: 'call_1' })
+		expect(result.event).toEqual({
+			type: 'conversation.item.create',
+			item: {
+				type: 'function_call_output',
+				call_id: 'call_1',
+				output: '{"results":[{"title":"Loops v4 polish"}]}',
+			},
+		})
+	})
+
+	it('fills in workspace_id when the model leaves it out, and keeps one it passes', async () => {
+		const invoke = vi.fn().mockResolvedValue(textResult('ok'))
+		const { toolCall } = setup(invoke)
+		await toolCall('list_objects', { type: 'bet', cursor: 'abc' })
+		await toolCall('list_objects', { workspace_id: OTHER_WORKSPACE }, 'call_2')
+		expect(invoke.mock.calls[0]?.[1]).toEqual({
+			workspace_id: WORKSPACE,
+			type: 'bet',
+			cursor: 'abc',
+		})
+		expect(invoke.mock.calls[1]?.[1]).toMatchObject({ workspace_id: OTHER_WORKSPACE })
+	})
+
+	it('runs any tool the model asks for, with no allow-list in front of it', async () => {
+		const invoke = vi.fn().mockResolvedValue(textResult('{}'))
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('create_objects', { nodes: [{ $id: 'n', type: 'bet', title: 'x' }] })
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(lastResult(sent).ok).toBe(true)
+	})
+
+	it('answers unparseable arguments without calling the tool', async () => {
+		const invoke = vi.fn()
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('search_objects', '{not json')
+		expect(invoke).not.toHaveBeenCalled()
+		expect(lastResult(sent)).toMatchObject({ ok: false, error_code: 'voice_tool_failed' })
+	})
+
+	it('reports a tool that returns isError as a failed call', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValue({ isError: true, content: [{ type: 'text', text: 'bad status' }] })
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('create_objects', {
+			nodes: [{ $id: 'n', type: 'task', title: 'x', status: 'nope' }],
+		})
+		expect(lastResult(sent)).toMatchObject({ ok: false, error_code: 'voice_tool_failed' })
+	})
+
+	it('survives a thrown tool error and tells the model, without dropping the socket', async () => {
+		const invoke = vi.fn().mockRejectedValue(new Error('API 500: boom'))
+		const { sent, toolCall } = setup(invoke)
+		await expect(toolCall('search_objects', { q: 'x' })).resolves.toBeUndefined()
+		const result = lastResult(sent)
+		expect(result).toMatchObject({ ok: false, error_code: 'voice_tool_failed' })
+		expect(JSON.parse(result.event.item.output).error).toContain('API 500: boom')
+	})
+
+	it('caps an oversized result so one read cannot flood a Realtime turn', async () => {
+		const invoke = vi.fn().mockResolvedValue(textResult('x'.repeat(50_000)))
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('get_objects', { ids: [ENTITY] })
+		const output = lastResult(sent).event.item.output
+		expect(output.length).toBeLessThan(21_000)
+		expect(output.endsWith('[truncated]')).toBe(true)
+	})
+
+	it('fires voice_tool_call once per invocation with the spec properties, success and refusal', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValueOnce(textResult('ok'))
+			.mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'nope' }] })
+		const { toolCall } = setup(invoke)
+		await toolCall('search_objects', { q: 'x' })
+		await toolCall('create_comment', { entity_id: ENTITY, content: 'hi' }, 'call_2')
+
+		expect(captureToolCall).toHaveBeenCalledTimes(2)
+		expect(captureToolCall).toHaveBeenNthCalledWith(1, HUMAN, {
+			voice_session_id: SESSION_ID,
+			tool_name: 'search_objects',
+			success: true,
+			latency_ms: 25,
+			error_code: null,
+		})
+		expect(captureToolCall).toHaveBeenNthCalledWith(2, HUMAN, {
+			voice_session_id: SESSION_ID,
+			tool_name: 'create_comment',
+			success: false,
+			latency_ms: expect.any(Number),
+			error_code: 'voice_tool_failed',
+		})
+	})
+})
+
+describe('voice channel — transcript', () => {
+	const line = (role: string, text: string) => JSON.stringify({ type: 'transcript', role, text })
+
+	it('writes lines one at a time in arrival order', async () => {
+		const order: string[] = []
+		writeLine.mockImplementation(async (_db, args: { text: string }) => {
+			// The first write is slower; a concurrent writer would finish it last.
+			await new Promise((r) => setTimeout(r, args.text === 'first' ? 20 : 0))
+			order.push(args.text)
+			return { conversationId: 'conv-1', messageId: order.length }
+		})
+		const { channel } = setup()
+		await channel.onMessage(line('user', 'first'))
+		await channel.onMessage(line('assistant', 'second'))
+		await channel.onMessage(line('user', 'third'))
+		await channel.idle()
+		expect(order).toEqual(['first', 'second', 'third'])
+	})
+
+	it('passes the role, agent name and session through, and announces the conversation once', async () => {
+		writeLine.mockResolvedValue({ conversationId: 'conv-1', messageId: 1 })
+		const { channel, sent } = setup()
+		await channel.onMessage(line('user', 'hello'))
+		await channel.onMessage(line('assistant', 'hi there'))
+		await channel.idle()
+
+		expect(writeLine.mock.calls[0]?.[1]).toMatchObject({
+			role: 'user',
+			text: 'hello',
+			agentName: 'Chief of Staff',
+			session: { id: SESSION_ID },
+		})
+		expect(writeLine.mock.calls[1]?.[1]).toMatchObject({ role: 'assistant', text: 'hi there' })
+		expect(sent.filter((m) => m.type === 'conversation')).toEqual([
+			{ type: 'conversation', conversation_id: 'conv-1' },
+		])
+	})
+
+	it('announces nothing when the writer wrote nothing (workspace opted out)', async () => {
+		writeLine.mockResolvedValue(null)
+		const { channel, sent } = setup()
+		await channel.onMessage(line('user', 'hello'))
+		await channel.idle()
+		expect(sent.filter((m) => m.type === 'conversation')).toEqual([])
+		expect(sent.filter((m) => m.type === 'error')).toEqual([])
+	})
+
+	it('reports a failed write and keeps writing later lines', async () => {
+		writeLine
+			.mockRejectedValueOnce(new Error('db down'))
+			.mockResolvedValueOnce({ conversationId: 'conv-1', messageId: 2 })
+		const { channel, sent } = setup()
+		await channel.onMessage(line('user', 'one'))
+		await channel.onMessage(line('user', 'two'))
+		await channel.idle()
+		expect(sent.filter((m) => m.type === 'error')).toEqual([
+			{ type: 'error', code: 'voice_transcript_failed' },
+		])
+		expect(sent.filter((m) => m.type === 'conversation')).toHaveLength(1)
+	})
+})
+
+describe('voice channel — turn telemetry and frame handling', () => {
+	it('fires voice_turn_completed with barge_in propagated', async () => {
+		const { channel } = setup()
+		await channel.onMessage(
+			JSON.stringify({
+				type: 'turn_completed',
+				turn_index: 4,
+				user_audio_ms: 800,
+				agent_audio_ms: 210,
+				barge_in: true,
+			}),
+		)
+		expect(captureTurnCompleted).toHaveBeenCalledWith(HUMAN, {
+			voice_session_id: SESSION_ID,
+			turn_index: 4,
+			user_audio_ms: 800,
+			agent_audio_ms: 210,
+			barge_in: true,
+		})
+	})
+
+	it('answers junk frames with an error instead of throwing', async () => {
+		const { channel, sent } = setup()
+		for (const raw of [
+			'not json',
+			'{}',
+			JSON.stringify({ type: 'unknown' }),
+			JSON.stringify({ type: 'transcript', role: 'system', text: 'x' }),
+			JSON.stringify({ type: 'turn_completed', turn_index: -1 }),
+			new ArrayBuffer(4),
+			'x'.repeat(300_000),
+		]) {
+			await expect(channel.onMessage(raw)).resolves.toBeUndefined()
+		}
+		expect(sent.every((m) => m.type === 'error' && m.code === 'voice_invalid_message')).toBe(true)
+		expect(sent).toHaveLength(7)
+		expect(writeLine).not.toHaveBeenCalled()
+	})
+})
+
+describe('voice channel — session lifecycle hooks', () => {
+	it('records each turn and each tool call against the session counters', async () => {
+		const { channel, toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		await channel.onMessage(
+			JSON.stringify({
+				type: 'turn_completed',
+				turn_index: 0,
+				user_audio_ms: 4_000,
+				agent_audio_ms: 9_000,
+				barge_in: false,
+			}),
+		)
+		await toolCall('search_objects', { query: 'loops', workspace_id: WORKSPACE })
+		expect(recordTurn).toHaveBeenCalledWith(SESSION_ID, { userAudioMs: 4_000, agentAudioMs: 9_000 })
+		expect(recordToolCall).toHaveBeenCalledWith(SESSION_ID)
+	})
+
+	it('ends the call as vendor_error, tags Sentry with the session id, and tells the browser', async () => {
+		const { channel, sent } = setup()
+		await channel.onMessage(
+			JSON.stringify({ type: 'vendor_error', code: 'server_error', message: 'upstream blew up' }),
+		)
+		expect(endSession).toHaveBeenCalledWith(expect.anything(), {
+			id: SESSION_ID,
+			reason: 'vendor_error',
+			vendorErrorCode: 'server_error',
+		})
+		expect(captureException).toHaveBeenCalledWith(SESSION_ID, expect.any(Error))
+		expect(sent).toContainEqual({ type: 'ended', reason: 'vendor_error' })
+	})
+
+	it('stays silent to the browser when the call had already ended', async () => {
+		endSession.mockResolvedValue(null)
+		const { channel, sent } = setup()
+		await channel.onMessage(JSON.stringify({ type: 'vendor_error', code: 'x', message: 'y' }))
+		expect(sent).toEqual([])
+	})
+
+	it('tags a tool-proxy exception with the session id', async () => {
+		const { toolCall } = setup(vi.fn().mockRejectedValue(new Error('db down')))
+		await toolCall('search_objects', { q: 'x' })
+		expect(captureException).toHaveBeenCalledWith(SESSION_ID, expect.any(Error))
+	})
+})

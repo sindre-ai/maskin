@@ -24,13 +24,24 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 
 /**
  * Every session on the Claude-subscription route runs this model at this
- * effort, whatever the agent's own `llm_config.model` says. Other routes (the
- * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
- * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
- * turned into `--effort`.
+ * effort, whatever the agent's own `llm_config.model` says. Other routes
+ * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
+ * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
+ * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
  */
 export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
 export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
+/**
+ * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
+ * of a session's output was hidden reasoning (Claude: about 30%), one think
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
+ */
+export const MASKIN_PLAN_EFFORT = 'low'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -91,16 +102,112 @@ export interface FallbackConfig {
 	model?: string
 	smallModel?: string
 	/**
+	 * Lower-case substrings of model ids that cannot read images. Unset means
+	 * DEFAULT_TEXT_ONLY_MODEL_PATTERNS; an empty list turns image stripping off.
+	 */
+	textOnlyModels?: string[]
+	/**
 	 * Ask OpenRouter to route in-process chat calls to zero-data-retention
 	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
 	 */
 	zdr: boolean
+	/**
+	 * The only OpenRouter providers allowed to serve a funded request, sent as
+	 * provider.only. From MASKIN_FALLBACK_PROVIDER_ONLY (comma separated); unset
+	 * uses DEFAULT_ONLY_PROVIDERS, empty or "none" lifts the restriction.
+	 */
+	onlyProviders: string[]
+	/**
+	 * OpenRouter provider names that must never serve a funded request, sent as
+	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
+	 */
+	ignoreProviders: string[]
+	/**
+	 * Cancel and retry a funded streamed request whose first token takes longer
+	 * than this many milliseconds (strip-images-proxy.js, in the agent container).
+	 * From MASKIN_FALLBACK_TTFT_TIMEOUT_MS; unset uses DEFAULT_TTFT_TIMEOUT_MS,
+	 * 0 or "none" turns the guard off. Undefined here means off.
+	 */
+	ttftTimeoutMs?: number
+}
+
+/** The subset of OpenRouter's request-body "provider" object Maskin sends. */
+export interface ProviderPrefs {
+	zdr?: true
+	only?: string[]
+	ignore?: string[]
+}
+
+/** Undefined when no preference is configured, so callers send no "provider" at all. */
+export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
+	const prefs: ProviderPrefs = {}
+	if (fallback.zdr) prefs.zdr = true
+	if (fallback.onlyProviders?.length) prefs.only = fallback.onlyProviders
+	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
+	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
 
 export interface AgentLlmConfig {
 	provider?: string | null
 	apiKey?: string | null
 	model?: string | null
+}
+
+/**
+ * Model ids containing any of these (case-insensitive) get image blocks swapped
+ * for a text note by the strip-images proxy in the agent container. Hardcoded
+ * list, no capability table: a new text-only model is a code change.
+ * MASKIN_TEXT_ONLY_MODELS (comma separated) overrides it when set; empty or
+ * "none" is the kill switch that turns stripping off.
+ */
+export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+/**
+ * OpenRouter providers (slugs, as OpenRouter spells them in provider.only) that
+ * may serve a funded request. Chosen on measured time to first token and tok/s:
+ * most other hosts of the fallback model were 10-30s to first token at 5-25
+ * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
+ * "none" lifts the restriction. A model neither host serves fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host.
+ */
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+
+/**
+ * A funded request that has produced no token after this long is cancelled and
+ * retried once, then sent to the other allowed provider (two tries there). The
+ * last try has no timeout, so a request that is slow everywhere is still served.
+ * Measured first tokens on the allowed providers:
+ * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
+ * 8s leaves headroom for both and still catches the stalls.
+ */
+export const DEFAULT_TTFT_TIMEOUT_MS = 8000
+
+function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
+	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()
+	if (raw === undefined || raw === '') return DEFAULT_TTFT_TIMEOUT_MS
+	if (raw.toLowerCase() === 'none') return 0
+	const ms = Number(raw)
+	return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0
+}
+
+function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
+	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim())
+		.filter(Boolean)
+}
+
+function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_TEXT_ONLY_MODELS
+	if (raw === undefined) return DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim().toLowerCase())
+		.filter(Boolean)
 }
 
 /**
@@ -117,7 +224,14 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
 			'deepseek/deepseek-v4.1-flash',
+		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		onlyProviders: readOnlyProviders(env),
+		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter(Boolean),
+		ttftTimeoutMs: readTtftTimeoutMs(env),
 	}
 }
 
@@ -431,14 +545,39 @@ function buildMaskinPlanEnv(
 	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
-	return {
+	const model = fallback.model ?? 'deepseek/deepseek-v4.1-flash'
+	const env: Record<string, string> = {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
-		ANTHROPIC_SMALL_FAST_MODEL:
-			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		ANTHROPIC_MODEL: model,
+		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
+		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
+		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
+		// does not run: the call dies with "search was cut off" and the turn ends
+		// with no visible output. Without it the model uses WebFetch or the browser.
+		MASKIN_DISABLE_WEB_SEARCH: '1',
 	}
+	// Decided on the main model only: the small-fast model can differ, and the
+	// proxy strips for the whole session either way.
+	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
+		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	// The Claude CLI builds its own request body, so the agent-container proxy
+	// injects these into each /v1/messages call (strip-images-proxy.js). Only
+	// routing (allow and block lists) goes here: zdr stays chat-only, as it was
+	// before.
+	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
+	if (only || ignore) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
+	}
+	// The same proxy cancels and retries a request whose first token is slow.
+	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
+		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
+	}
+	return env
 }
 
 /**
@@ -481,7 +620,7 @@ function buildMaskinPlanEnv(
  * pre-flight and the post-hoc "the OAuth route produced nothing" check below
  * go through here so the two can't drift apart.
  */
-function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
 	return isClaudeFailoverEnabled(env)
 		? Boolean(resolveActiveSlot(claudeOauth))
 		: Boolean(readSlots(claudeOauth).primary)
@@ -861,7 +1000,7 @@ export interface ChatCredentials {
 	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
 	 * can reject unknown body fields with a 400.
 	 */
-	providerPrefs?: { zdr: true }
+	providerPrefs?: ProviderPrefs
 }
 
 /**
@@ -950,6 +1089,7 @@ export function resolveChatCredentials(params: {
 	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
 	return {
 		provider: 'openai',
 		apiKey: fallback.apiKey,
@@ -959,6 +1099,23 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
-		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
+		...(providerPrefs && { providerPrefs }),
 	}
+}
+
+/**
+ * OpenAI Realtime (gpt-realtime) audio rates for Voice v1, in USD per second of
+ * audio. Anchors from the tech spec §Cost pipeline: $0.06/min in, $0.24/min
+ * out. Voice is billed to the operator's MASKIN_VOICE_OPENAI_API_KEY, not to a
+ * workspace route, so these sit beside the model pricing rather than in it.
+ */
+export const VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND = 0.001
+export const VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND = 0.004
+
+/** Dollar cost of one voice call, rounded to the 6 decimals voice_sessions.total_cost_usd stores. */
+export function computeVoiceCostUsd(inputAudioSeconds: number, outputAudioSeconds: number): number {
+	const usd =
+		inputAudioSeconds * VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND +
+		outputAudioSeconds * VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND
+	return Math.round(usd * 1e6) / 1e6
 }

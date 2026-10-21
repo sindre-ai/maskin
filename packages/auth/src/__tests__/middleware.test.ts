@@ -82,7 +82,7 @@ describe('authMiddleware', () => {
 	it('passes through when valid key + workspace header + actor is member', async () => {
 		const db = createMockDb([
 			[{ id: 'actor-1', type: 'agent' }], // validateApiKey finds actor
-			[{ actorId: 'actor-1' }], // workspace membership check passes
+			[{ role: 'member' }], // workspace membership check passes
 		])
 		const app = createTestApp(db)
 		const res = await app.request('/test', {

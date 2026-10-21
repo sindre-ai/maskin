@@ -25,7 +25,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // vi.mock is hoisted to the top of the file — do not move.
 vi.mock('../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: vi.fn(),
+	findIntegrationRow: vi.fn(),
+	getCredential: vi.fn(),
 }))
 
 // Swap `delay` for a resolved-immediately promise so the RETRY_POLICY-driven
@@ -47,6 +48,7 @@ vi.mock('../../lib/crypto', () => ({
 
 vi.mock('../../lib/workspace-auth', () => ({
 	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	assertWorkspaceWriterRole: vi.fn(),
 }))
 
 vi.mock('../../lib/logger', () => ({
@@ -54,7 +56,7 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 import { decrypt } from '../../lib/crypto'
-import { getIntegrationCredential } from '../../lib/integrations/lookup'
+import { findIntegrationRow, getCredential } from '../../lib/integrations/lookup'
 import { isWorkspaceMember } from '../../lib/workspace-auth'
 import integrationsLinkedinRoutes, {
 	__setLinkedInClientForTests,
@@ -170,7 +172,16 @@ const ACTOR_A = 'actor-a'
 const ACTOR_B = 'actor-b'
 
 beforeEach(() => {
-	vi.mocked(getIntegrationCredential).mockReset()
+	vi.mocked(findIntegrationRow).mockReset()
+	// The row resolver is mocked, so the read serves the value of whichever row it
+	// resolved: getCredential(db, ws, id) returns that row's decrypted credentials.
+	vi.mocked(getCredential).mockImplementation((async (_db: unknown, _ws: unknown, id: string) => {
+		const rows = await Promise.all(vi.mocked(findIntegrationRow).mock.results.map((r) => r.value))
+		const row = rows.find((r) => (r as { id?: string } | null)?.id === id) as
+			| { credentials: string }
+			| undefined
+		return { value: decrypt(row?.credentials ?? '') }
+	}) as never)
 	vi.mocked(isWorkspaceMember).mockResolvedValue(true)
 	__setLinkedInClientForTests(null)
 })
@@ -180,26 +191,24 @@ afterEach(() => {
 })
 
 function stubCredential(actorId: string, accountId: string, accountStatus?: string) {
-	vi.mocked(getIntegrationCredential).mockImplementation(
-		async (_db, _ws, provider, requestedActor) => {
-			if (provider !== 'linkedin-unipile') return null
-			if (requestedActor !== actorId) return null
-			return {
-				id: `int-${actorId}`,
-				workspaceId: WORKSPACE_ID,
-				provider: 'linkedin-unipile',
-				status: 'active',
-				credentials: JSON.stringify({ account_id: accountId, account_status: accountStatus }),
-				externalId: null,
-				config: {},
-				metadata: null,
-				actorId,
-				createdBy: actorId,
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			} as never
-		},
-	)
+	vi.mocked(findIntegrationRow).mockImplementation(async (_db, _ws, provider, requestedActor) => {
+		if (provider !== 'linkedin-unipile') return null
+		if (requestedActor !== actorId) return null
+		return {
+			id: `int-${actorId}`,
+			workspaceId: WORKSPACE_ID,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: JSON.stringify({ account_id: accountId, account_status: accountStatus }),
+			externalId: null,
+			config: {},
+			metadata: null,
+			actorId,
+			createdBy: actorId,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		} as never
+	})
 }
 
 function fakeLinkedIn(
@@ -258,7 +267,7 @@ function req(app: Hono, method: 'GET' | 'POST', path: string, body?: unknown, ac
 
 describe('POST /send-message — six error classes', () => {
 	it('CREDENTIAL_NOT_CONNECTED — no credential row', async () => {
-		vi.mocked(getIntegrationCredential).mockResolvedValue(null)
+		vi.mocked(findIntegrationRow).mockResolvedValue(null)
 		fakeLinkedIn({})
 		const db = buildFakeDb()
 		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
@@ -754,7 +763,7 @@ describe('POST /send-message — idempotency dedup', () => {
 describe('two-actor lookup isolation', () => {
 	it("routes actor A's send to A's LinkedIn account_id, never B's", async () => {
 		let seenAccountId: string | null = null
-		vi.mocked(getIntegrationCredential).mockImplementation(async (_db, _ws, _provider, actorId) => {
+		vi.mocked(findIntegrationRow).mockImplementation(async (_db, _ws, _provider, actorId) => {
 			if (actorId === ACTOR_A) {
 				return {
 					id: 'int-A',

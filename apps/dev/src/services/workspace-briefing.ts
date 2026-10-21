@@ -25,7 +25,9 @@ Don't promise later work you haven't scheduled. If you say you'll check or do so
 
 Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.
 
-Ask a person first before you do anything outside the company or that costs money, or delete anything. For everything else that's reversible, go ahead and note what you did.`
+Anything you can easily put back, and that your own instructions don't already cover, do now and report with how to undo it. That includes handing work to another agent, re-running a session, editing statuses and drafts, pausing or enabling a trigger, and archiving something that can be restored. Don't ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.
+
+Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist. If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted. Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.`
 
 /**
  * Wording for runs nobody is watching (triggers, loops, background). Approved
@@ -48,10 +50,12 @@ export function buildWorkspaceStartupBlock(args: {
 	frontendUrl: string
 	interactive?: boolean
 }): string {
-	const exampleUrl = buildWebAppHref(stripTrailingSlash(args.frontendUrl), args.workspaceId, {
-		kind: 'object',
-		id: '<id>',
-	})
+	const base = stripTrailingSlash(args.frontendUrl)
+	const exampleUrl = buildWebAppHref(base, args.workspaceId, { kind: 'object', id: '<id>' })
+	const agentUrl = buildWebAppHref(base, args.workspaceId, { kind: 'agent', id: '<id>' })
+	const triggerUrl = buildWebAppHref(base, args.workspaceId, { kind: 'trigger', id: '<id>' })
+	const fileUrl = buildWebAppHref(base, args.workspaceId, { kind: 'file', id: '<id>' })
+	const settingsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings' })
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
@@ -60,9 +64,13 @@ This workspace works through bets — shaped, time-boxed outcomes.
 - Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 
-When you reference an object in a comment, notification, or description, emit a markdown link with this exact format — do not guess the host or drop the workspace segment:
+Whenever you mention something in Maskin, link it inline as a markdown link. The title or name is usually the best link text, but short wording that reads naturally, like \`[here]\`, is fine too. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these URL formats (the link text is up to you) — do not guess the host, drop the workspace segment, or paste bare ids:
 
-\`[title](${exampleUrl})\`
+- Object (bet, task, insight, document, and so on): \`[title](${exampleUrl})\`
+- Agent: \`[name](${agentUrl})\`
+- Trigger: \`[name](${triggerUrl})\`
+- File: \`[name](${fileUrl})\`
+- Settings: \`[Settings](${settingsUrl})\`
 
 ${EVERY_SESSION_GUIDANCE}
 
