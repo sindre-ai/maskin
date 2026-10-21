@@ -88,6 +88,45 @@ test.describe('Chat — drafts a message links to', () => {
 			await assertNoHorizontalOverflow(page, vp.label)
 		})
 
+		test(`a link that stands alone is replaced by its card, in the message @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const draft = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: 'DM to Torben Hertel',
+				status: 'todo',
+				content: 'Hej Torben, har du set vores oplaeg?',
+				metadata: { kind: 'linkedin_message', to: 'Torben Hertel' },
+			})
+			const conversation = await chatWithAgentMessage(
+				account,
+				(ws) =>
+					`Ready for you.\n\nDraft: [Message to Torben](/${ws}/objects/${draft.id})\n\nTell me if it needs changes.`,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.getByText('DM to Torben Hertel')).toBeVisible({ timeout: 10_000 })
+
+			// The text link is gone: the card took its place, between the two paragraphs.
+			await expect(thread.getByRole('link', { name: 'Message to Torben' })).toHaveCount(0)
+			await expect(thread.getByText('Draft:', { exact: false })).toHaveCount(0)
+			const order = await thread.evaluate((el) => {
+				const text = (node: Element) => node.textContent ?? ''
+				const parts = Array.from(el.querySelectorAll('p, [aria-expanded]'))
+				const at = (needle: string) => parts.findIndex((node) => text(node).includes(needle))
+				return [at('Ready for you.'), at('DM to Torben Hertel'), at('Tell me if it needs changes.')]
+			})
+			expect(order[0]).toBeGreaterThanOrEqual(0)
+			expect(order[1]).toBeGreaterThan(order[0])
+			expect(order[2]).toBeGreaterThan(order[1])
+			// Drawn once: the card is not repeated under the message.
+			await expect(thread.getByText('DM to Torben Hertel')).toHaveCount(1)
+			await assertNoHorizontalOverflow(page, vp.label)
+		})
+
 		test(`a LinkedIn post shows only the post and where it is published @ ${vp.label}`, async ({
 			page,
 			account,
@@ -162,7 +201,7 @@ test.describe('Chat — files a message links to', () => {
 			await expect(thread.getByRole('img', { name: 'hero.png' })).toBeVisible({ timeout: 10_000 })
 
 			// The page and the document are folded until the header is clicked.
-			await expect(thread.getByText('HTML page', { exact: true })).toBeVisible()
+			await expect(thread.getByText(/^HTML( page)?$/).filter({ visible: true })).toBeVisible()
 			await expect(thread.getByText('Markdown', { exact: true })).toBeVisible()
 			await expect(thread.getByTitle('Preview of launch-page.html')).toHaveCount(0)
 

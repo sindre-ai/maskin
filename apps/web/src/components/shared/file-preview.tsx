@@ -1,3 +1,4 @@
+import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from '@/components/files/file-body'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
@@ -7,7 +8,7 @@ import { cn } from '@/lib/cn'
 import { decodeBase64Utf8, formatSize } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, ChevronDown } from 'lucide-react'
+import { ArrowUpRight, ChevronDown, PanelRight } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 export interface FilePreviewMeta {
@@ -67,6 +68,7 @@ export function FilePreview({
 	className,
 }: FilePreviewProps) {
 	const [open, setOpen] = useState(defaultExpanded)
+	const linkedPanel = useLinkedPanel()
 	// Without metadata from the caller, look the file up by id first: a list row is a few
 	// hundred bytes, the file itself may be megabytes. An empty id list is a disabled query.
 	const lookup = useFiles(workspaceId, { ids: meta ? [] : [fileId] })
@@ -89,8 +91,9 @@ export function FilePreview({
 
 	return (
 		<div
+			data-linked-card=""
 			className={cn(
-				'mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card',
+				'@container not-prose mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card',
 				className,
 			)}
 		>
@@ -126,9 +129,23 @@ export function FilePreview({
 						</span>
 					</div>
 				)}
-				<span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
+				<span className="hidden shrink-0 font-mono text-xs text-muted-foreground @sm:inline">
 					{formatSize(sizeBytes)}
 				</span>
+				{linkedPanel ? (
+					<button
+						type="button"
+						aria-label="Show in panel"
+						title="Show in panel"
+						onClick={(e) => {
+							e.stopPropagation()
+							linkedPanel.openLinked({ kind: 'file', id: fileId })
+						}}
+						className="inline-flex shrink-0 items-center rounded p-1 text-muted-foreground hover:text-foreground"
+					>
+						<PanelRight size={14} aria-hidden />
+					</button>
+				) : null}
 				<Link
 					to="/$workspaceId/files/$fileId"
 					params={{ workspaceId, fileId }}
@@ -136,7 +153,7 @@ export function FilePreview({
 					rel="noopener noreferrer"
 					className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
 				>
-					Open
+					<span className="sr-only @sm:not-sr-only">Open</span>
 					<ArrowUpRight size={13} aria-hidden />
 				</Link>
 			</div>
@@ -154,9 +171,18 @@ export function FilePreview({
 }
 
 function TypeChip({ label }: { label: string }) {
+	// A narrow card keeps the type as its first word ("HTML page" becomes "HTML").
+	const [first, ...rest] = label.split(' ')
 	return (
-		<span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
-			{label}
+		<span className="min-w-0 truncate rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
+			{rest.length > 0 ? (
+				<>
+					<span className="@xs:hidden">{first}</span>
+					<span className="hidden @xs:inline">{label}</span>
+				</>
+			) : (
+				label
+			)}
 		</span>
 	)
 }
