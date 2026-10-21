@@ -12,7 +12,7 @@
  *   maskin://<workspaceId>/objects/<objectId>        a notification about an object
  *   maskin://<workspaceId>/chats/<conversationId>    a notification about a chat
  *   maskin://<workspaceId>/notifications             fallback: open the inbox / For You
- * `aps.thread-id` groups pushes per chat (`chat:<id>`), per object
+ * `aps.thread-id` is `PushMessage.collapseKey` when set, else groups pushes per chat (`chat:<id>`), per object
  * (`object:<id>`) or per workspace (`workspace:<id>`). `aps.mutable-content = 1`
  * so a notification service extension may rewrite the alert. The notification
  * id travels as `notification_id` and as `apns-collapse-id`, so a duplicate
@@ -40,12 +40,14 @@
  * A 410 or a 400 BadDeviceToken / 410 Unregistered response deletes the token
  * row, so dead devices stop being targeted.
  */
-import { createPrivateKey, sign } from 'node:crypto'
+import { createHash, createPrivateKey, sign } from 'node:crypto'
 import { type ClientHttp2Session, connect } from 'node:http2'
 import type { Database } from '@maskin/db'
 import { deviceTokens } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { type WorkingAgent, encodeAgentsState } from './live-activity-agents'
+import type { PushChannel, PushDecision, PushMessage } from './push-types'
 
 export interface ApnsConfig {
 	keyId: string
@@ -70,34 +72,7 @@ export interface ApnsTransport {
 	send(req: ApnsRequest): Promise<ApnsResponse>
 }
 
-export interface PushDecision {
-	/** The agent's decision comment (events.id). */
-	eventId: number
-	/** The comment's own parent, when the decision was posted as a reply. */
-	parentEventId?: number | null
-	objectId?: string | null
-	options: { label: string; destructive?: boolean }[]
-	/** Zero-based index into `options` of the recommended choice. */
-	recommended?: number | null
-}
-
-export interface PushMessage {
-	title: string
-	body?: string | null
-	workspaceId: string
-	notificationId: string
-	objectId?: string | null
-	conversationId?: string | null
-	decision?: PushDecision | null
-	/** Banner behaviour: `time-sensitive` breaks through Focus (decisions), `passive` is silent. */
-	interruption?: PushInterruption
-	/** App-icon badge to show (the actor's pending notifications); omitted leaves it untouched. */
-	badge?: number | null
-	/** https image the notification service extension downloads and attaches to the banner. */
-	imageUrl?: string | null
-}
-
-export type PushInterruption = 'time-sensitive' | 'active' | 'passive'
+export type { PushDecision, PushInterruption, PushMessage } from './push-types'
 
 export const APNS_HOSTS = {
 	production: 'api.push.apple.com',
@@ -197,12 +172,23 @@ function safeImageUrl(url: string | null | undefined): string | null {
 
 const byteLength = (payload: unknown) => Buffer.byteLength(JSON.stringify(payload), 'utf8')
 
+/** APNs rejects an `apns-collapse-id` over 64 bytes; longer keys are hashed (stable, so still collapsing). */
+export const APNS_COLLAPSE_ID_MAX_BYTES = 64
+
+export function apnsCollapseId(msg: PushMessage): string {
+	const key = msg.collapseKey?.trim() || msg.notificationId
+	if (Buffer.byteLength(key, 'utf8') <= APNS_COLLAPSE_ID_MAX_BYTES) return key
+	return `h:${createHash('sha256').update(key).digest('base64url')}`
+}
+
 export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
-	const threadId = msg.conversationId
-		? `chat:${msg.conversationId}`
-		: msg.objectId
-			? `object:${msg.objectId}`
-			: `workspace:${msg.workspaceId}`
+	const threadId = msg.collapseKey?.trim()
+		? msg.collapseKey.trim().slice(0, 200)
+		: msg.conversationId
+			? `chat:${msg.conversationId}`
+			: msg.objectId
+				? `object:${msg.objectId}`
+				: `workspace:${msg.workspaceId}`
 	const decision = msg.decision ? compactDecision(msg.decision) : null
 	const interruption = msg.interruption ?? (decision ? 'time-sensitive' : 'active')
 	const badge =
@@ -240,95 +226,51 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 
 // ── Live Activities ──────────────────────────────────────────────────────
 
-/** The Swift `ActivityAttributes` type the push-to-start payload instantiates. */
-export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'MaskinTurnAttributes'
-export const LIVE_ACTIVITY_STEP_MAX = 80
-export const LIVE_ACTIVITY_AGENT_NAME_MAX = 40
-/** Seconds between the Unix epoch and Swift's reference date (2001-01-01T00:00:00Z). */
-const SWIFT_REFERENCE_DATE_OFFSET_S = 978_307_200
+/**
+ * The ONE aggregate "Agents working" activity per recipient and workspace. The Swift type name
+ * and its `workspaceId` property are part of the contract (apps/apple `MaskinAgentsAttributes`).
+ */
+export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'MaskinAgentsAttributes'
+/** How long the "Agents finished" card lingers on the Lock Screen after the last agent stops. */
+export const LIVE_ACTIVITY_END_DISMISS_S = 60
+/** Start/update: mark the card stale if updates stop arriving (server down). */
+export const LIVE_ACTIVITY_STALE_S = 15 * 60
 
-export type LiveActivityStatus = 'running' | 'needsYou' | 'done' | 'failed'
 export type LiveActivityEvent = 'start' | 'update' | 'end'
-
-export interface LiveActivityContentState {
-	sessionId: string
-	agentName: string
-	step: string
-	/** Seconds since 2001-01-01T00:00:00Z — Swift's default `Date` Codable encoding. */
-	startedAt: number
-	status: LiveActivityStatus
-}
 
 export interface LiveActivityPush {
 	event: LiveActivityEvent
-	sessionId: string
 	workspaceId: string
-	conversationId?: string | null
-	agentName: string
-	step?: string | null
-	startedAt: Date
-	status: LiveActivityStatus
-	/** Optional alert shown with the update so it buzzes (needsYou). */
-	alert?: { title: string; body?: string | null } | null
-}
-
-export const toSwiftReferenceSeconds = (d: Date): number =>
-	d.getTime() / 1000 - SWIFT_REFERENCE_DATE_OFFSET_S
-
-function defaultStep(status: LiveActivityStatus): string {
-	switch (status) {
-		case 'needsYou':
-			return 'Needs you'
-		case 'done':
-			return 'Done'
-		case 'failed':
-			return 'Failed'
-		default:
-			return 'Working'
-	}
+	/** Every agent working now (empty for an end); ranked, counted and clamped on encode. */
+	agents: WorkingAgent[]
 }
 
 export function buildLiveActivityPayload(
 	push: LiveActivityPush,
 	nowMs: number,
 ): Record<string, unknown> {
-	const contentState: LiveActivityContentState = {
-		sessionId: push.sessionId,
-		agentName: truncate(push.agentName, LIVE_ACTIVITY_AGENT_NAME_MAX),
-		step: truncate((push.step ?? '').trim() || defaultStep(push.status), LIVE_ACTIVITY_STEP_MAX),
-		startedAt: toSwiftReferenceSeconds(push.startedAt),
-		status: push.status,
-	}
+	const state = encodeAgentsState(push.agents, nowMs)
 	const timestamp = Math.floor(nowMs / 1000)
 	const aps: Record<string, unknown> = {
 		timestamp,
 		event: push.event,
-		'content-state': contentState,
+		'content-state': state,
 	}
 	if (push.event === 'start') {
 		aps['attributes-type'] = LIVE_ACTIVITY_ATTRIBUTES_TYPE
-		aps.attributes = {
-			sessionId: push.sessionId,
-			workspaceId: push.workspaceId,
-			...(push.conversationId ? { conversationId: push.conversationId } : {}),
-		}
+		aps.attributes = { workspaceId: push.workspaceId }
 		// A start push must carry an alert (iOS shows it as the banner that begins the activity).
-		aps.alert = {
-			title: truncate(push.agentName, TITLE_MAX),
-			body: truncate(contentState.step, BODY_MAX),
-		}
-	} else if (push.alert) {
-		aps.alert = {
-			title: truncate(push.alert.title, TITLE_MAX),
-			...(push.alert.body ? { body: truncate(push.alert.body, BODY_MAX) } : {}),
-		}
+		const first = state.agents[0]
+		aps.alert =
+			state.count > 1 || !first
+				? { title: `${state.count} agents working` }
+				: { title: truncate(first.name, TITLE_MAX), body: truncate(first.doing, BODY_MAX) }
 	}
+	// Never an alert for a decision waiting on the person: those are notifications and widgets.
 	if (push.event === 'end') {
-		// Leave the final state visible briefly, then dismiss.
-		aps['dismissal-date'] = timestamp + (push.status === 'failed' ? 600 : 120)
+		aps['dismissal-date'] = timestamp + LIVE_ACTIVITY_END_DISMISS_S
 	} else {
-		// If updates stop arriving (server down), mark the activity stale after 15 minutes.
-		aps['stale-date'] = timestamp + 15 * 60
+		aps['stale-date'] = timestamp + LIVE_ACTIVITY_STALE_S
 	}
 	return { aps }
 }
@@ -404,7 +346,7 @@ export interface ApnsSenderOptions {
 	now?: () => number
 }
 
-export class ApnsSender {
+export class ApnsSender implements PushChannel {
 	private config: ApnsConfig | null
 	private transport: ApnsTransport
 	private now: () => number
@@ -454,7 +396,7 @@ export class ApnsSender {
 					'apns-push-type': 'liveactivity',
 					// Routine step updates are budgeted by iOS at low priority; start/end and
 					// anything that should buzz go out immediately.
-					'apns-priority': push.event === 'update' && !push.alert ? '5' : '10',
+					'apns-priority': push.event === 'update' ? '5' : '10',
 					'content-type': 'application/json',
 				},
 				body: JSON.stringify(buildLiveActivityPayload(push, this.now())),
@@ -463,7 +405,7 @@ export class ApnsSender {
 			const reason = parseReason(res.body)
 			if (isDeadToken(res.status, reason)) return 'dead'
 			logger.warn('APNs live activity push rejected', {
-				sessionId: push.sessionId,
+				workspaceId: push.workspaceId,
 				event: push.event,
 				status: res.status,
 				reason,
@@ -471,7 +413,7 @@ export class ApnsSender {
 			return 'failed'
 		} catch (err) {
 			logger.warn('APNs live activity push failed', {
-				sessionId: push.sessionId,
+				workspaceId: push.workspaceId,
 				error: String(err),
 			})
 			return 'failed'
@@ -503,7 +445,7 @@ export class ApnsSender {
 								'apns-topic': config.bundleId,
 								'apns-push-type': 'alert',
 								'apns-priority': msg.interruption === 'passive' ? '5' : '10',
-								'apns-collapse-id': msg.notificationId.slice(0, 64),
+								'apns-collapse-id': apnsCollapseId(msg),
 								'content-type': 'application/json',
 							},
 							body,

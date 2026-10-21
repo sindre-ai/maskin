@@ -63,6 +63,7 @@ import {
 	isWorkspaceMember,
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
+import { introduceAgentToRecipient } from '../services/agent-intro'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
@@ -77,6 +78,7 @@ type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		workspaceRole?: string
+		maskinSessionId?: string
 	}
 }
 
@@ -395,6 +397,20 @@ app.openapi(createActorRoute, async (c) => {
 				creator_actor_type: creatorType,
 			})
 		}
+	}
+
+	// The new agent says hello to the person it was made for. Fire and forget,
+	// after the commit: the service never throws, so creation is unaffected.
+	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		void introduceAgentToRecipient({
+			db,
+			actor,
+			workspaceId: memberWorkspaceId,
+			creator: { id: creatorId, type: creatorType },
+			claimedSessionId: c.get('maskinSessionId'),
+			clientSource,
+			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+		})
 	}
 
 	// Auto-create personal workspace (default true for humans, false for agents)
@@ -929,7 +945,7 @@ const actorAccessRoute = createRoute({
 								name: z.string(),
 								access: z.enum(['none', 'read', 'read_write']),
 								source: z.enum(['grant', 'default']),
-								default_access: z.enum(['read', 'none']),
+								default_access: z.enum(['read', 'read_write', 'none']),
 								server_attached: z.boolean(),
 								created_by: z.string().uuid(),
 							}),
@@ -940,6 +956,7 @@ const actorAccessRoute = createRoute({
 								name: z.string(),
 								kind: z.enum(['api_key', 'login']),
 								has_access: z.boolean(),
+								default_access: z.enum(['read', 'none']),
 								scope: z.enum(['always', 'this_chat']).nullable(),
 								chat_count: z.number().int(),
 								created_by: z.string().uuid(),

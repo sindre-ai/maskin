@@ -1,5 +1,6 @@
-import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS } from '@maskin/shared'
+import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
 import type { ActorIntegrationAccess, AgentAccess } from './agent-access'
+import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
 import { getProvider } from './registry'
 
 const LEVEL_TEXT: Record<AgentAccess, string> = {
@@ -10,6 +11,9 @@ const LEVEL_TEXT: Record<AgentAccess, string> = {
 
 // Strongest first, so a mixed provider lists its best level first.
 const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
+
+/** Read & write where an irreversible action still waits for a person (sending an email). */
+const APPROVAL_GATED_WRITE = `${AGENT_ACCESS_LABELS.read_write} (all tools, but a person has to approve each email before you send it)`
 
 export function providerLabel(provider: string): string {
 	try {
@@ -29,6 +33,8 @@ export function buildAccessPreamble(rows: ActorIntegrationAccess[]): string {
 	const byProvider = new Map<string, Set<AgentAccess>>()
 	for (const row of rows) {
 		if (row.providerMode !== 'registered') continue
+		// A custom tool server is simply there or not; it has no levels to explain.
+		if (row.provider === CUSTOM_MCP_PROVIDER) continue
 		const levels = byProvider.get(row.provider) ?? new Set<AgentAccess>()
 		levels.add(row.access)
 		byProvider.set(row.provider, levels)
@@ -36,10 +42,14 @@ export function buildAccessPreamble(rows: ActorIntegrationAccess[]): string {
 	if (byProvider.size === 0) return ''
 
 	const lines = [...byProvider.entries()]
-		.map(([provider, levels]) => ({ label: providerLabel(provider), levels }))
+		.map(([provider, levels]) => ({ provider, label: providerLabel(provider), levels }))
 		.sort((a, b) => a.label.localeCompare(b.label))
-		.map(({ label, levels }) => {
-			const ordered = LEVEL_ORDER.filter((l) => levels.has(l)).map((l) => LEVEL_TEXT[l])
+		.map(({ provider, label, levels }) => {
+			const ordered = LEVEL_ORDER.filter((l) => levels.has(l)).map((l) =>
+				l === 'read_write' && requiresApprovalToAct(provider)
+					? APPROVAL_GATED_WRITE
+					: LEVEL_TEXT[l],
+			)
 			const text =
 				ordered.length === 1
 					? ordered[0]

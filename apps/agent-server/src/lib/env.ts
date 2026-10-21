@@ -114,15 +114,47 @@ const envSchema = z.object({
 	// Image to keep present in libkrun's host cache so session spawns can skip
 	// the network pull. Unset disables warming entirely.
 	WARM_POOL_IMAGE: z.string().optional(),
-	// Chromium sidecar image used for browser-enabled sessions. Set this to the
-	// same repository/tag published by the browser-sidecar Docker workflow.
-	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
-	// Path to the persistent SSH keypair agent-server uses to open SSH-relay
-	// tunnels (`msb ssh serve` + `ssh -L`) into session/sidecar microVMs — the
-	// replacement for the old allow@private / bridge-gateway networking. The
-	// private key is generated on first boot if absent; the public half is
-	// (re-)registered with `msb ssh authorize` on every boot.
+	// Desktop image for per-workspace noVNC desktops (docker/desktop). Built and pushed
+	// by .github/workflows/desktop-docker.yml. Desktops are created with `--pull always`,
+	// so a new desktop picks up the newest `latest` without restarting the agent-server.
+	// Never default this to a bare name like `desktop:latest`: msb resolves it as
+	// docker.io/library/desktop, every provision then fails with "Not authorized".
+	DESKTOP_IMAGE: z.string().optional().default('magnusnoeddegaard/maskin-desktop:latest'),
+	// Suspend idle desktops to a full memory snapshot and restore them on demand,
+	// so windows, browser tabs and unsaved input come back exactly as left. Needs
+	// msb >= 0.7 (`msb snapshot create --full`); on older msb leave it off and a
+	// desktop is created and started the way it always was.
+	DESKTOP_SNAPSHOTS: z
+		.string()
+		.optional()
+		.default('0')
+		.transform((v) => v === '1' || v.toLowerCase() === 'true'),
+	// Minutes with no viewer and no agent call before a desktop is suspended.
+	// Only read when DESKTOP_SNAPSHOTS is on. 0 never suspends automatically.
+	DESKTOP_IDLE_MINUTES: z
+		.string()
+		.optional()
+		.default('10')
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 0 || n > 1440) {
+				throw new Error(`Invalid DESKTOP_IDLE_MINUTES: ${v} (expected integer 0..1440)`)
+			}
+			return n
+		}),
+	// Path to the persistent SSH keypair agent-server uses to open the tunnels that
+	// let an agent's computer reach a dev server in its session sandbox
+	// (`msb ssh serve` + `ssh -L`). The private key is generated on first boot if
+	// absent; the public half is (re-)registered with `msb ssh authorize` on every boot.
 	AGENT_SERVER_SSH_KEY_PATH: z.string().optional().default('/root/.agent-server/ssh/relay_key'),
+	// Host-loopback ports reserved for those tunnels. Each computer is handed its
+	// own non-overlapping block of DESKTOP_RELAY_BLOCK_SIZE ports out of
+	// [DESKTOP_RELAY_PORT_START, DESKTOP_RELAY_PORT_END] when it is created, and its
+	// firewall allows only that block. Firewall rules can't be changed on a running
+	// VM, so the block size is the most ports one agent can expose at once.
+	DESKTOP_RELAY_PORT_START: z.coerce.number().int().min(1024).max(65535).optional().default(20000),
+	DESKTOP_RELAY_PORT_END: z.coerce.number().int().min(1024).max(65535).optional().default(21999),
+	DESKTOP_RELAY_BLOCK_SIZE: z.coerce.number().int().min(1).max(64).optional().default(8),
 	// Minutes between cache re-warms. 0 warms once at startup only (zero ongoing
 	// overhead); a positive value lets a moving `:latest` reach sessions without
 	// a restart. Bounded so a typo can't schedule a sub-second pull loop.

@@ -349,6 +349,7 @@ export class TestAPI {
 	async updateActor(
 		id: string,
 		data: {
+			name?: string
 			system_prompt?: string | null
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
@@ -437,6 +438,21 @@ export class TestAPI {
 			body: JSON.stringify({ type: 'agent', name, workspace_id: targetWorkspaceId }),
 		})
 		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Adds a custom MCP server to the workspace. It reaches no agent until it is granted. */
+	async createCustomMcpServer(
+		workspaceId: string,
+		name: string,
+		server: Record<string, unknown>,
+	): Promise<{ id: string; name: string }> {
+		const res = await fetch(`${this.baseURL}/api/custom-mcp-servers`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ name, server }),
+		})
+		if (!res.ok) throw new Error(`createCustomMcpServer failed: ${res.status}`)
 		return res.json()
 	}
 

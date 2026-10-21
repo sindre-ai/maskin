@@ -376,6 +376,21 @@ public final class ForYouStore {
 		widgetReloader.reload()
 	}
 
+	/// Send or skip one message of a card that carries several. The card stays on screen: it
+	/// settles when the view has seen every message dealt with (then it calls `dismiss`).
+	/// Returns false when the reply could not be queued.
+	@discardableResult
+	public func actOnDraft(
+		_ draft: DecisionDraft, action: DecisionService.DraftAction, on card: ForYouCard
+	) -> Bool {
+		retain(card)
+		later.clear(card.id)
+		let queued = decisions.actOnDraft(
+			action, label: draft.label, to: draft.to, id: draft.id, on: DecisionTarget(card))
+		if queued { widgetReloader.reload() }
+		return queued
+	}
+
 	public func reply(_ text: String, on card: ForYouCard) {
 		retain(card)
 		later.clear(card.id)
@@ -512,7 +527,8 @@ public final class ForYouStore {
 			let entry = FeedEntry(
 				card: card, bucket: bucket, record: record,
 				backFromLater: record == nil && later.isBackFromLater(card.id), urgency: urgency)
-			return (entry, bucket, bucket == .needs ? ForYouUrgency.rank(of: urgency) : 0)
+			// A card from the Chief of Staff's list keeps that order; urgency only orders the rest.
+			return (entry, bucket, bucket == .needs && card.rank == nil ? ForYouUrgency.rank(of: urgency) : 0)
 		}
 		.enumerated()
 		.sorted { ($0.element.slot, $0.element.rank, $0.offset) < ($1.element.slot, $1.element.rank, $1.offset) }
@@ -531,6 +547,11 @@ public final class ForYouStore {
 	}
 
 	private func sorted(_ list: [ForYouCard]) -> [ForYouCard] {
+		// The Chief of Staff's ranking wins over the reader's sort setting; cards without a rank
+		// (none come from the server today, but a cached card might) follow it.
+		if list.contains(where: { $0.rank != nil }) {
+			return list.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) }
+		}
 		let latest: (ForYouCard, ForYouCard) -> Bool = {
 			($0.latestActivityAt ?? .distantPast) > ($1.latestActivityAt ?? .distantPast)
 		}

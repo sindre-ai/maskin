@@ -30,7 +30,7 @@ const MIGRATION = join(
 	'packages',
 	'db',
 	'drizzle',
-	'0097_api_keys.sql',
+	'0108_api_keys.sql',
 )
 
 const PASSWORD = 'correct horse battery'
@@ -43,7 +43,7 @@ async function liveKeys(actorId: string, kind: ApiKeyKind) {
 }
 
 describe('API keys stored hashed (real Postgres)', () => {
-	describe('migration 0097 backfill', () => {
+	describe('migration 0108 backfill', () => {
 		const backfill = splitStatements(readFileSync(MIGRATION, 'utf-8')).find((s) =>
 			s.startsWith('INSERT INTO "api_keys"'),
 		)
@@ -107,6 +107,21 @@ describe('API keys stored hashed (real Postgres)', () => {
 			expect(await validateApiKey(db, revoked.key)).toBeNull()
 			expect(await validateApiKey(db, expired.key)).toBeNull()
 			expect(await validateApiKey(db, 'ank_unknown')).toBeNull()
+		})
+
+		it('stamps last_used_at on the key that authenticated, and only that one', async () => {
+			const agent = await insertActor(db, { type: 'agent', apiKey: null })
+			const used = await issueApiKey(db, { actorId: agent.id, kind: 'primary' })
+			const idle = await issueApiKey(db, { actorId: agent.id, kind: 'primary' })
+			const lastUsed = async (keyHash: string) =>
+				(await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)))[0].lastUsedAt
+
+			expect(await lastUsed(used.keyHash)).toBeNull()
+			await validateApiKey(db, used.key)
+			await validateApiKey(db, 'ank_unknown')
+
+			expect(await lastUsed(used.keyHash)).toBeInstanceOf(Date)
+			expect(await lastUsed(idle.keyHash)).toBeNull()
 		})
 
 		it('does not store the plaintext key anywhere in api_keys', async () => {

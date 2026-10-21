@@ -22,7 +22,7 @@ public struct ForYouBrief: Sendable, Equatable {
 
 /// What `ForYouStore` reads. A protocol so the store tests without a server.
 public protocol ForYouSource: Sendable {
-	/// `GET /api/subscriptions/unread?include_recently_read=…`
+	/// `GET /api/for-you`: the Chief of Staff's ranked list, already checked against live state.
 	func fetchFeed(workspaceId: String) async throws -> [ForYouCard]
 	/// `GET /api/actors`
 	func fetchActors(workspaceId: String) async throws -> [ForYouActor]
@@ -53,11 +53,14 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 	// MARK: ForYouSource
 
 	public func fetchFeed(workspaceId ws: String) async throws -> [ForYouCard] {
-		let output = try await client.get_sol_api_sol_subscriptions_sol_unread(
-			query: .init(entity_type: .object, include_recently_read: ._false),
+		let output = try await client.get_sol_api_sol_for_hyphen_you(
 			headers: .init(x_hyphen_workspace_hyphen_id: ws))
 		guard case .ok(let ok) = output else { throw ForYouLoadError("Couldn't load your feed.") }
-		return try ok.body.json.items.map { item in
+		// The list arrives in the order the Chief of Staff ranked it, so the position is the rank.
+		// An item with no object to act on cannot be answered or dismissed, so it is skipped,
+		// as on the web.
+		return try ok.body.json.items.enumerated().compactMap { position, item in
+			guard let entityId = item.entity_id, let entityType = item.entity_type else { return nil }
 			let mention = item.latest_mention.map { m in
 				ForYouMention(
 					eventId: Int(m.event_id), actorId: m.actor_id,
@@ -77,16 +80,24 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 							draft: d.draft.flatMap { draft in
 								guard let body = draft.body, !body.isEmpty else { return nil }
 								return DecisionDraft(label: draft.label ?? "Draft", to: draft.to, body: body)
+							},
+							// One card, several messages. A message without text is left out and the rest stay.
+							drafts: (d.drafts ?? []).compactMap { draft in
+								guard let body = draft.body, !body.isEmpty else { return nil }
+								return DecisionDraft(
+									id: draft.id, label: draft.label ?? "Draft", to: draft.to, body: body)
 							})
 					})
 			}
 			return ForYouCard(
-				id: item.entity_id, entityType: item.entity_type,
+				id: entityId, entityType: entityType.rawValue,
 				objectTitle: item.object?.title, objectType: item.object?._type,
-				status: item.object?.status, unreadCount: Int(item.unread_count),
-				maxAttention: item.max_unread_attention.map { Int($0) },
-				latestEventId: item.latest_event_id.map { Int($0) },
-				latestActivityAt: item.latest_activity_at.flatMap(Self.date), mention: mention)
+				status: item.object?.status, unreadCount: 1,
+				maxAttention: item.latest_mention?.attention.map { Int($0) },
+				latestEventId: item.latest_mention.map { Int($0.event_id) },
+				latestActivityAt: item.latest_mention.flatMap { Self.date($0.created_at) }
+					?? item.created_at.flatMap(Self.date),
+				mention: mention, rank: position)
 		}
 	}
 

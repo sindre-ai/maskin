@@ -44,9 +44,35 @@ describe('generateApiKey', () => {
 
 describe('validateApiKey', () => {
 	it('returns actorId and type when actor is found', async () => {
-		const db = createMockDb([[{ id: 'actor-123', type: 'human' }]])
+		const db = createMockDb([[{ id: 'actor-123', type: 'human', keyId: 'key-1' }]])
 		const result = await validateApiKey(db, 'ank_testkey')
 		expect(result).toEqual({ actorId: 'actor-123', type: 'human' })
+	})
+
+	it('stamps last_used_at on the key row that matched', async () => {
+		const { db, updates } = createWriteDb({
+			selectRows: [{ id: 'actor-123', type: 'human', keyId: 'key-1' }],
+		})
+		await validateApiKey(db, 'ank_testkey')
+		expect(updates).toHaveLength(1)
+		expect(updates[0].lastUsedAt).toBeInstanceOf(Date)
+	})
+
+	it('does not stamp when no key matches', async () => {
+		const { db, updates } = createWriteDb({ selectRows: [] })
+		expect(await validateApiKey(db, 'ank_nope')).toBeNull()
+		expect(updates).toHaveLength(0)
+	})
+
+	it('still authenticates when the stamp fails', async () => {
+		const { db } = createWriteDb({
+			selectRows: [{ id: 'actor-123', type: 'human', keyId: 'key-1' }],
+			failUpdate: true,
+		})
+		expect(await validateApiKey(db, 'ank_testkey')).toEqual({
+			actorId: 'actor-123',
+			type: 'human',
+		})
 	})
 
 	it('returns null when no actor matches', async () => {
@@ -77,11 +103,13 @@ describe('hashApiKey', () => {
 })
 
 /** A db double that records inserts and updates and answers each query chain with canned rows. */
-function createWriteDb(opts: { updateRows?: unknown[]; selectRows?: unknown[] } = {}) {
+function createWriteDb(
+	opts: { updateRows?: unknown[]; selectRows?: unknown[]; failUpdate?: boolean } = {},
+) {
 	const inserted: Record<string, unknown>[] = []
 	const updates: Record<string, unknown>[] = []
 	const selectChain: Record<string, unknown> = {}
-	for (const m of ['from', 'where', 'orderBy', 'offset']) selectChain[m] = () => selectChain
+	for (const m of ['from', 'innerJoin', 'where', 'orderBy', 'offset', 'limit']) selectChain[m] = () => selectChain
 	// biome-ignore lint/suspicious/noThenProperty: the mock must be awaitable like a Drizzle query
 	selectChain.then = (resolve: (v: unknown) => void) => resolve(opts.selectRows ?? [])
 	const db = {
@@ -92,6 +120,7 @@ function createWriteDb(opts: { updateRows?: unknown[]; selectRows?: unknown[] } 
 		}),
 		update: () => ({
 			set: (patch: Record<string, unknown>) => {
+				if (opts.failUpdate) throw new Error('write failed')
 				updates.push(patch)
 				return {
 					where: () => ({

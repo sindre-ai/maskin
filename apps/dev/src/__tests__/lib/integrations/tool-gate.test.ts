@@ -79,7 +79,11 @@ describe('access levels', () => {
 		expect(effectiveAccess(reg, null)).toBe('read')
 		expect(effectiveAccess({ ...reg, defaultAgentAccess: 'none' }, null)).toBe('none')
 		expect(effectiveAccess(reg, 'read_write')).toBe('read_write')
-		expect(effectiveAccess({ ...reg, providerMode: 'byo_login' }, null)).toBe('none')
+		// A saved key or login is on or off: its own entry, else its default (none unless set to read).
+		const login = { ...reg, providerMode: 'byo_login' as const }
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'none' }, null)).toBe('none')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, null)).toBe('read_write')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, 'none')).toBe('none')
 	})
 })
 
@@ -238,6 +242,13 @@ describe('buildAccessPreamble', () => {
 		expect(text).toMatch(/- gmail: No access/i)
 		expect(text).toContain('do not retry')
 		expect(text.endsWith('\n\n')).toBe(true)
+	})
+
+	it('tells the agent that Gmail still needs a person to approve each email', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')])
+		expect(text).toMatch(
+			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
+		)
 	})
 
 	it('folds several accounts of one provider into one line when they differ', () => {

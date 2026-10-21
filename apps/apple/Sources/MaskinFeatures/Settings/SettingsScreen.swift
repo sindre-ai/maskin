@@ -46,6 +46,10 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
 					}
+					NavigationLink(value: SettingsRoute.deleteAccount) {
+						SettingsRow(
+							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
+					}
 				}
 				if services.workspaceId != nil {
 					Section {
@@ -63,6 +67,9 @@ public struct SettingsScreen: View {
 							if let url = services.webURL("extensions") { openURL(url) }
 						} label: {
 							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
+						}
+						NavigationLink(value: SettingsRoute.deleteWorkspace) {
+							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
 						}
 					} header: {
 						Text("Setup")
@@ -83,6 +90,17 @@ public struct SettingsScreen: View {
 					}
 				}
 				Section("About") {
+					// Signed in, privacy choices are the workspace's own settings on the web app.
+					if let url = services.webSettingsURL {
+						Button("Privacy & data") { openURL(url) }
+					}
+					// The public pages; a link only appears when its Info.plist key is set.
+					if let url = AuthConfig.current.privacyURL {
+						Button("Privacy policy") { openURL(url) }
+					}
+					if let url = AuthConfig.current.termsURL {
+						Button("Terms of Service") { openURL(url) }
+					}
 					LabeledContent("Version", value: Self.versionString)
 				}
 				// Its own centred red card, as the mockup draws it.
@@ -110,6 +128,14 @@ public struct SettingsScreen: View {
 						currentName: services.workspace?.name ?? "", role: services.role)
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .deleteAccount:
+					DeleteAccountView(
+						store: services.accountDeletionStore { [environment, runtime] in
+							if let runtime { await runtime.signOut() } else { environment.signOut() }
+						})
+				case .deleteWorkspace:
+					DeleteWorkspaceView(
+						store: services.workspaceDeletionStore(workspaceId: services.workspaceId ?? ""))
 				}
 			}
 			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {

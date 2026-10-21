@@ -6,7 +6,7 @@
 | `aps-environment` (`development` Debug / `production` Release, via `MASKIN_APS_ENVIRONMENT`) | iOS: `Apps/Maskin/Maskin.entitlements`; macOS: `com.apple.developer.aps-environment` in `Apps/Maskin/Maskin-macOS.entitlements` |
 | `UIBackgroundModes: remote-notification` | `project.yml` (Maskin Info) |
 | `maskin://` URL scheme | `CFBundleURLTypes` in `project.yml` |
-| Universal links `applinks:maskin.io`, `applinks:www.maskin.io` | both entitlements files |
+| Universal links `applinks:maskin.io` | both entitlements files |
 | Cleartext `localhost` ATS exception | Debug only; `scripts/strip-dev-ats.sh` removes it from Release for Maskin, MaskinWatch, MaskinTV |
 | macOS entitlements | Release only by default (restricted entitlements kill unsigned/ad-hoc builds). Debug: set `MASKIN_MACOS_ENTITLEMENTS=Apps/Maskin/Maskin-macOS.entitlements` + `DEVELOPMENT_TEAM` for a signed local build |
 
@@ -36,7 +36,13 @@ watchOS and tvOS have no push/URL entitlements here: the backend's single APNs t
 | root `image_url` | https image (<= 5 MB, 12 s timeout) attached to the banner. No producer yet: `PushMessage.imageUrl` exists, nothing sets it | extension |
 
 Failure behaviour: a bad payload, a failed or slow download, or the ~30 s budget expiring all still deliver the notification with whatever was ready (the decision category is set synchronously, the image is best effort).
-Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app (enable the capability on the App ID); without it iOS silently treats those pushes as `active`. It is not in `Maskin.entitlements` yet because it needs the portal change first.
+Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app and the "Time Sensitive Notifications" capability on App ID `io.maskin.app` (enabled 2026-10). It is in the iOS `Maskin.entitlements`; with automatic signing Xcode refreshes the provisioning profile on the next build. If a signed build fails with "profile doesn't include the time-sensitive entitlement", open Xcode > Settings > Accounts > Download Manual Profiles (or toggle automatic signing) once. Without the entitlement iOS silently treats those pushes as `active`. It is not in `Maskin-macOS.entitlements`: that file is Release-only and restricted, and nothing here needs it on macOS.
+
+## Notification preferences, timezone, permission timing (client)
+- Settings > Notifications (`NotificationPreferencesSection`) edits `GET/PUT /api/notification-preferences`: Needs you is shown as "Always on" (not a switch; a workspace mute is the only way to quiet it, and even then decisions still arrive without breaking through Focus), Chat replies / Digests / Tips toggles, quiet hours (off by default), the daily briefing and its time, and a mute list of workspace names. Changes are optimistic with rollback and carry an `Idempotency-Key`. The PUT is hand-encoded (`NotificationPreferencesPatch.jsonBody`) because the generated payload cannot send `null`, which is how quiet hours and the timezone are cleared.
+- Timezone: `AppRuntime.syncTimezone()` reads the server value once, and PUTs `TimeZone.current.identifier` only when it differs. It runs at sign-in, every foreground and on `NSSystemTimeZoneDidChange`, never blocks, never shows an error, and simply retries on the next trigger.
+- Permission timing: nothing prompts at first launch or on opening Chats. After the first moment of value (a decision card in For you, or an agent reply in a chat) `NotificationPromptCoordinator` shows the in-app sheet "Get told when an agent needs a decision"; only "Turn on notifications" calls `requestAuthorization`. "Not now" (or swiping it away) is remembered for 7 days (`NotificationPromptPolicy`). Devices already authorized see nothing new and keep registering for remote notifications at launch.
+- Chat pushes: `aps.thread-id` (`chat:<id>`) groups them in Notification Center (iOS does this itself) and `deep_link` `maskin://<ws>/chats/<id>` opens the chat through `PushAppDelegate.receiveTap` > `DeepLinkRouter` (tested in `ServerPushContractTests`).
 
 ## Share extension and the offline queue
 `Apps/MaskinShare` sends a link, text, image or file into Maskin as a new object, files only, or a chat message, in a workspace of the user's choosing. When the network is down it parks the share in the App Group container (`ShareQueue`, `group.io.maskin.app`, at most 20 shares / 14 days) and the app sends it on the next foreground (`AppRuntime.scenePhaseChanged`, `ShareQueueDrainer`). Each share keeps its Idempotency-Key base, so a retry never duplicates anything the extension already created.
@@ -45,8 +51,8 @@ Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and 
 ## Apple App Site Association
 Serve at `https://maskin.io/.well-known/apple-app-site-association`: HTTPS, **no redirect**,
 `Content-Type: application/json`, no file extension. The web host's SPA catch-all must not shadow it.
-Replace `TEAMID` with the Apple Team ID. Serve the same file on `www.maskin.io`
-(the app declares both hosts; Apple does not follow redirects, so `www` must serve it directly, not 301 to the apex). The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
+Replace `TEAMID` with the Apple Team ID. The app declares only `maskin.io`: `www.maskin.io` 301s to the apex and
+Apple does not follow redirects, and `app.maskin.io` has no DNS record. The backend builds it in `apps/dev/src/lib/apple-app-site-association.ts`;
 the JSON below is what that serves. Paths come from the web routes
 `/{workspaceId}/objects/{objectId}`, `/{workspaceId}/chats/{id}` and the workspace inbox
 `/{workspaceId}/notifications` (see `DeepLink.swift`), plus workspace invitations,
@@ -76,7 +82,7 @@ then on a device `xcrun simctl openurl booted https://maskin.io/<workspaceId>/ob
 needs `applinks:maskin.io?mode=developer` or a real install). `xcrun simctl openurl booted maskin://<workspaceId>/objects/<id>` tests the custom scheme with no hosting.
 
 ## Invitation links
-`https://maskin.io/invite?token=<raw>` (also `www.` and `app.`) and `maskin://invite?token=<raw>` open the invite screen
+`https://maskin.io/invite?token=<raw>` and `maskin://invite?token=<raw>` open the invite screen
 (`MaskinFeatures/Invites/InviteView.swift`). `InviteCoordinator` keeps the token in `UserDefaults` (`invite.pending.v1`, at most 7 days)
 so it survives sign-in and a cold launch; it is forgotten on Accept, Decline, a dead invite, or closing the screen while signed in.
 Signed in, Accept posts `POST /api/invites/{token}/accept` with the stored key and no `X-Workspace-Id`, then switches to the returned

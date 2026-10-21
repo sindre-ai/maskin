@@ -1,5 +1,4 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { Button } from '@/components/ui/button'
 import {
 	Select,
 	SelectContent,
@@ -13,15 +12,23 @@ import {
 	useSetAgentGrant,
 	useSetDefaultAgentAccess,
 } from '@/hooks/use-integrations'
-import type { AgentGrant, AgentGrantAccess, IntegrationResponse } from '@/lib/api'
+import type {
+	AgentGrant,
+	AgentGrantAccess,
+	DefaultAgentAccess,
+	IntegrationResponse,
+} from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS } from '@maskin/shared'
-import { ChevronRight, X } from 'lucide-react'
+import { AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
+import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
-const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
+/** The levels offered for one agent, and for "All other agents". */
+export const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
+export const DEFAULT_ACCESS_ORDER: DefaultAgentAccess[] = ['read', 'read_write', 'none']
 
 /**
  * The one-line reading of who can do what, shown while the section is collapsed. The
@@ -29,11 +36,18 @@ const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
  * agents can read, two can also write") never needs a list.
  */
 export function summarizeAgentAccess(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	grants: Pick<AgentGrant, 'access'>[],
 ): string {
 	const writers = grants.filter((g) => g.access === 'read_write').length
 	const blocked = grants.filter((g) => g.access === 'none').length
+	if (defaultAccess === 'read_write') {
+		const parts = ['All agents can read & write']
+		const readers = grants.filter((g) => g.access === 'read').length
+		if (readers > 0) parts.push(`${readers} can only read`)
+		if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? 'has' : 'have'} no access`)
+		return parts.join(' · ')
+	}
 	if (defaultAccess === 'read') {
 		const parts = ['All agents can read']
 		if (writers > 0) parts.push(`${writers} can also write`)
@@ -46,22 +60,62 @@ export function summarizeAgentAccess(
 }
 
 /** What a newly added agent starts with: the step up from the default. */
-export function startingAccess(defaultAccess: 'read' | 'none'): AgentGrantAccess {
+export function startingAccess(defaultAccess: DefaultAgentAccess): AgentGrantAccess {
+	// When every agent already writes, an entry of its own can only hold one back.
 	return defaultAccess === 'read' ? 'read_write' : 'read'
+}
+
+/**
+ * Whether an agent's access is what every agent without an entry already gets. For a key,
+ * the default's 'read' means Full access, which is `read_write` on an entry.
+ */
+export function matchesDefault(
+	defaultAccess: DefaultAgentAccess,
+	access: AgentGrantAccess,
+	isKey = false,
+): boolean {
+	if (isKey) return (defaultAccess === 'read') === (access !== 'none')
+	return access === defaultAccess
+}
+
+/** A saved key is on or off per agent, so these two are its only levels. */
+const KEY_ACCESS_LABELS = { read_write: 'Full access', none: 'No access' } as const
+const KEY_ACCESS_ORDER: AgentGrantAccess[] = ['read_write', 'none']
+const KEY_DEFAULT_ORDER: DefaultAgentAccess[] = ['read', 'none']
+
+/** The collapsed line for a saved key: who has it, in words. */
+export function summarizeKeyAccess(
+	defaultAccess: DefaultAgentAccess,
+	grants: Pick<AgentGrant, 'access'>[],
+): string {
+	const blocked = grants.filter((g) => g.access === 'none').length
+	if (defaultAccess === 'read') {
+		const base = 'All agents have access'
+		return blocked > 0 ? `${base} · ${blocked} ${blocked === 1 ? 'has' : 'have'} no access` : base
+	}
+	const withAccess = grants.length - blocked
+	if (withAccess === 0) return 'No agents have access'
+	return `${withAccess} ${withAccess === 1 ? 'agent has' : 'agents have'} access`
 }
 
 /**
  * Agent access for one integration: a default for every agent without an entry, and
  * per-agent overrides. Collapsed by default so a workspace with many agents does not
  * turn the page into a wall of rows; only agents that differ from the default are listed.
+ *
+ * `kind="key"` is the same panel for a saved Keychain credential, whose only levels are
+ * Full access and No access. It starts at No access for every agent.
  */
 export function AgentAccess({
 	integration,
 	workspaceId,
+	kind = 'integration',
 }: {
 	integration: IntegrationResponse
 	workspaceId: string
+	kind?: 'integration' | 'key'
 }) {
+	const isKey = kind === 'key'
 	const [open, setOpen] = useState(false)
 	const { workspace } = useWorkspace()
 	const { data: actors } = useActors(workspaceId)
@@ -69,12 +123,13 @@ export function AgentAccess({
 	const removeGrant = useRemoveAgentGrant(workspaceId, integration.id)
 	const setDefault = useSetDefaultAgentAccess(workspaceId, integration.id)
 
-	const defaultAccess = integration.defaultAgentAccess ?? 'read'
+	const defaultAccess = integration.defaultAgentAccess ?? (isKey ? 'none' : 'read')
 	const grants = integration.agentGrants ?? []
-	const agents = (actors ?? []).filter((a) => a.type === 'agent')
-	const listed = grants.flatMap((g) => {
-		const agent = agents.find((a) => a.id === g.actorId)
-		return agent ? [{ agent, access: g.access }] : []
+	const agents = sortByName((actors ?? []).filter((a) => a.type === 'agent'))
+	// Walk the sorted agents (not the grants) so the listed rows are alphabetical too.
+	const listed = agents.flatMap((agent) => {
+		const grant = grants.find((g) => g.actorId === agent.id)
+		return grant ? [{ agent, access: grant.access }] : []
 	})
 	const addable = agents.filter((a) => !grants.some((g) => g.actorId === a.id))
 
@@ -83,6 +138,13 @@ export function AgentAccess({
 		me?.type === 'human' &&
 		(integration.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const busy = setGrant.isPending || removeGrant.isPending || setDefault.isPending
+
+	// An agent set to what "All other agents" already get has nothing of its own to keep: its entry
+	// goes and it falls back into that group. For a key, Full access is the default's 'read'.
+	const changeAgent = (actorId: string, access: AgentGrantAccess) => {
+		if (matchesDefault(defaultAccess, access, isKey)) removeGrant.mutate(actorId)
+		else setGrant.mutate({ actorId, access })
+	}
 
 	return (
 		<div className="mt-1 border-t border-border pt-2">
@@ -97,7 +159,9 @@ export function AgentAccess({
 				/>
 				<span className="settings-label shrink-0">Agent access</span>
 				<span className="min-w-0 text-muted-foreground">
-					{summarizeAgentAccess(defaultAccess, grants)}
+					{isKey
+						? summarizeKeyAccess(defaultAccess, grants)
+						: summarizeAgentAccess(defaultAccess, grants)}
 				</span>
 			</button>
 
@@ -110,15 +174,18 @@ export function AgentAccess({
 						</div>
 						<Select
 							value={defaultAccess}
-							onValueChange={(v) => setDefault.mutate(v as 'read' | 'none')}
+							onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
 							disabled={!canEdit || busy}
 						>
 							<SelectTrigger aria-label="Access for all other agents" className="w-full sm:w-36">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="read">{AGENT_ACCESS_LABELS.read}</SelectItem>
-								<SelectItem value="none">{AGENT_ACCESS_LABELS.none}</SelectItem>
+								{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
+									<SelectItem key={a} value={a}>
+										{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
+									</SelectItem>
+								))}
 							</SelectContent>
 						</Select>
 					</div>
@@ -134,35 +201,23 @@ export function AgentAccess({
 							</div>
 							<div className="flex items-center gap-1">
 								<Select
-									value={access}
-									onValueChange={(v) =>
-										setGrant.mutate({ actorId: agent.id, access: v as AgentGrantAccess })
-									}
+									value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
+									onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
 									disabled={!canEdit || busy}
 								>
 									<SelectTrigger aria-label={`Access for ${agent.name}`} className="w-full sm:w-36">
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										{ACCESS_ORDER.map((a) => (
+										{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
 											<SelectItem key={a} value={a}>
-												{AGENT_ACCESS_LABELS[a]}
+												{isKey && (a === 'read_write' || a === 'none')
+													? KEY_ACCESS_LABELS[a]
+													: AGENT_ACCESS_LABELS[a]}
 											</SelectItem>
 										))}
 									</SelectContent>
 								</Select>
-								{canEdit && (
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-8 w-8 shrink-0 text-muted-foreground hover:text-error"
-										aria-label={`Remove ${agent.name}`}
-										onClick={() => removeGrant.mutate(agent.id)}
-										disabled={busy}
-									>
-										<X className="h-4 w-4" />
-									</Button>
-								)}
 							</div>
 						</div>
 					))}
@@ -171,7 +226,14 @@ export function AgentAccess({
 						<Select
 							value=""
 							onValueChange={(actorId) =>
-								setGrant.mutate({ actorId, access: startingAccess(defaultAccess) })
+								setGrant.mutate({
+									actorId,
+									access: isKey
+										? defaultAccess === 'read'
+											? 'none'
+											: 'read_write'
+										: startingAccess(defaultAccess),
+								})
 							}
 							disabled={busy}
 						>
@@ -188,10 +250,21 @@ export function AgentAccess({
 						</Select>
 					)}
 
+					{requiresApprovalToAct(integration.provider) && (
+						<p className="text-xs text-muted-foreground">
+							Read & write lets an agent write drafts. Each email still waits for your approval in
+							the chat before it is sent.
+						</p>
+					)}
+
 					<p className="text-xs text-muted-foreground">
 						{canEdit
-							? 'Applies to new sessions. A session already running keeps the access it started with.'
-							: 'Only the person who connected this or a workspace admin can change agent access.'}
+							? isKey
+								? 'Applies to new sessions. A session already running keeps the key until it ends.'
+								: 'Applies to new sessions. A session already running keeps the access it started with.'
+							: isKey
+								? 'Only the person who saved this key or a workspace admin can change who can use it.'
+								: 'Only the person who connected this or a workspace admin can change agent access.'}
 					</p>
 				</div>
 			)}

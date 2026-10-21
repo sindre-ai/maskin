@@ -96,6 +96,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend data fetching: TanStack Query hooks in `apps/web/src/hooks/`, API client in `apps/web/src/lib/api.ts`
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
+- **Lists are alphabetical by default**: every list, dropdown, picker and filter option list sorts A→Z by its visible label (locale-aware, case-insensitive, numeric-aware) — never by `createdAt`/`updatedAt` or API order unless the user picks that order or the order is inherent to the data (statuses, timelines, chat/log feeds, wizard steps). Sort a copy with a stable tiebreaker, once in the shared hook/helper that feeds the list
 - **Frontend responsiveness is non-negotiable**: every UI surface must work at 375px (mobile), 768px (iPad portrait), and 1024px (iPad landscape). Use Tailwind breakpoints (`md:`, `lg:`) — never hardcode widths or skip mobile collapse. Full guidelines in `apps/web/CLAUDE.md` under "Responsive (mobile + iPad)".
 - All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
 - PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers
@@ -118,6 +119,11 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `GET /api/health` — health check
 - `GET /api/openapi.json` — OpenAPI spec
 - `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
+- `POST /api/device-auth/start`, `POST /api/device-auth/token` — device sign-in for a keyboard-less client (Apple TV): the device gets a short code, a signed-in person approves it at `/tv`, the device then receives the session once
+
+### Device sign-in approval (`/api/device-auth`, signed-in humans only)
+- `GET /api/device-auth/preview` — which device is asking, for a code
+- `POST /api/device-auth/approve` / `POST /api/device-auth/deny` — approve or refuse a code
 
 ### Actors (`/api/actors`)
 - `GET /api/actors` — list actors
@@ -177,6 +183,10 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `DELETE /api/integrations/:id` — disconnect integration
 - `GET|PUT /api/integrations/:id/grants`, `PUT|DELETE /api/integrations/:id/grants/:actorId`, `PUT /api/integrations/:id/default-access` — which agents may use an integration, and how (see `docs/reference/agent-access.md`)
 - `POST|GET|DELETE /api/integrations/:provider/gateway` — gated gateway to a hosted MCP (Gmail, Google Calendar, Linear, PostHog)
+
+### Custom tool servers (`/api/custom-mcp-servers`) — a workspace's own MCP servers, shared with agents through grants
+- `POST /api/custom-mcp-servers` — add a server (humans only)
+- `GET|PUT /api/custom-mcp-servers/:id` — read (secrets masked) or change one; removal is `DELETE /api/integrations/:id`
 
 ### Webhooks (`/api/webhooks`) — no auth
 - `POST /api/webhooks/:provider` — incoming webhook handler

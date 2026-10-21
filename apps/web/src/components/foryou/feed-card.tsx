@@ -13,7 +13,12 @@ import {
 	trackForyouCardMarkedRead,
 	trackForyouCardShown,
 } from '@/lib/analytics'
-import type { ActorListItem, EventResponse, UnreadItem } from '@/lib/api'
+import type {
+	ActorListItem,
+	EventResponse,
+	LatestMentionDecisionDraft,
+	UnreadItem,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	type CardAction,
@@ -29,6 +34,8 @@ import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DraftPreview } from './draft-preview'
+import { type DraftAction, DraftStack } from './draft-stack'
 
 export interface DecidedOption {
 	id: string
@@ -44,6 +51,10 @@ interface FeedCardProps {
 	onToggleExpanded?: () => void
 	decided: DecidedOption | null
 	onDecide: (option: DecidedOption) => void
+	/** Send or skip one message of a stacked card; rejects when the reply was not sent. */
+	onDraftAction?: (draft: LatestMentionDecisionDraft, action: DraftAction) => Promise<unknown>
+	/** Every stacked message has been dealt with, so the card settles. */
+	onDraftsDone?: () => void
 	/** The reader answered in this sitting — the card flips to "Waiting on …". */
 	replied: boolean
 	onReplied: () => void
@@ -69,6 +80,8 @@ export function FeedCard({
 	replied,
 	onReplied,
 	onMarkRead,
+	onDraftAction,
+	onDraftsDone,
 }: FeedCardProps) {
 	const objectId = item.entity_id
 	const object = item.object
@@ -274,6 +287,14 @@ export function FeedCard({
 						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
 							{decision.ask}
 						</p>
+						{decision.draft ? <DraftPreview draft={decision.draft} /> : null}
+						{decision.drafts?.length && onDraftAction && onDraftsDone ? (
+							<DraftStack
+								drafts={decision.drafts}
+								onAction={onDraftAction}
+								onAllDone={onDraftsDone}
+							/>
+						) : null}
 					</div>
 				) : (
 					mentionBody && (

@@ -3,12 +3,18 @@ import { evictActor, evictMembership, revokeActorKeys, verifyPassword } from '@m
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	deviceAuthCodes,
+	deviceTokens,
+	liveActivityCards,
+	liveActivityTokens,
+	notificationPreferences,
 	notifications,
 	readState,
 	slackUserLinks,
 	starState,
 	subscriptions,
 	userDisplaySettings,
+	webPushSubscriptions,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
@@ -201,8 +207,21 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(readState).where(eq(readState.actorId, actorId))
 		await tx.delete(starState).where(eq(starState.actorId, actorId))
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
+		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
+		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 		await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.actorId, actorId))
 		await tx.delete(slackUserLinks).where(eq(slackUserLinks.actorId, actorId))
+		// The actor row is kept, so its ON DELETE CASCADE never fires. These hold APNs tokens and
+		// device sign-ins of the person: left behind, a Live Activity or push could still reach their
+		// phone. Tokens go before devices so nothing depends on the device cascade.
+		await tx.delete(liveActivityTokens).where(eq(liveActivityTokens.actorId, actorId))
+		await tx.delete(liveActivityCards).where(eq(liveActivityCards.actorId, actorId))
+		await tx.delete(deviceTokens).where(eq(deviceTokens.actorId, actorId))
+		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
+		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.
+		await tx.delete(webPushSubscriptions).where(eq(webPushSubscriptions.actorId, actorId))
+		// Timezone, quiet hours and mute choices of the person; the scheduled pushes read them.
+		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. Every
 		// key is revoked and the legacy plaintext column is cleared; null password and email mean no

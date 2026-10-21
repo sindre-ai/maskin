@@ -5,12 +5,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * For You — the v4 feed (`Maskin For You - Feed v4`).
  *
- * One scrolling column: today's brief, then a card per unread thread. Cards
+ * One scrolling column: the briefing cards, then a card per curated item. Cards
  * view expands them all, List view collapses them to rows, and an option taken
  * posts the reply and leaves a green receipt in the card's place.
  *
- * The unread feed is mocked so the surface is deterministic; display settings
- * and the briefing hit the real backend.
+ * The curated For You list and the briefing files are mocked so the surface is deterministic; display settings
+ * hit the real backend.
  */
 
 interface FeedItemInput {
@@ -126,13 +126,94 @@ function feed(workspaceId: string) {
 	]
 }
 
+// The page reads the Chief of Staff's curated list; each fixture card is one
+// of its items, in the order given.
+function curated(items: ReturnType<typeof feed>) {
+	return items.map((item, index) => ({
+		notification_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+		rank: index + 1,
+		headline: item.latest_mention.content.split('\n')[0],
+		rationale: null,
+		created_at: item.latest_activity_at,
+		entity_type: item.entity_type,
+		entity_id: item.entity_id,
+		session_id: null,
+		object: item.object,
+		latest_mention: item.latest_mention,
+	}))
+}
+
+// Two HTML briefings, as the Chief of Staff and a loop would file them. The list
+// carries no content; each card's title is read from its page.
+const BRIEFING_PAGES = [
+	{
+		id: '0b1f6c1e-0000-4000-8000-000000000001',
+		name: 'Briefing 2026-10-21.html',
+		title: 'Two bets stalled; one needs your call',
+	},
+	{
+		id: '0b1f6c1e-0000-4000-8000-000000000002',
+		name: 'Pipeline 2026-10-20.html',
+		title: 'Pipeline grew by four qualified leads',
+	},
+] as const
+
+function briefingFile(workspaceId: string, page: (typeof BRIEFING_PAGES)[number], index: number) {
+	const stamp = new Date(Date.UTC(2026, 9, 21 - index, 5)).toISOString()
+	return {
+		id: page.id,
+		workspaceId,
+		name: page.name,
+		description: null,
+		kind: 'briefing',
+		mimeType: 'text/html',
+		sizeBytes: 200,
+		storageKey: `files/${page.id}`,
+		createdBy: '00000000-0000-4000-8000-0000000000aa',
+		createdAt: stamp,
+		updatedAt: stamp,
+	}
+}
+
+async function mockBriefings(page: Page, workspaceId: string) {
+	// `**` at the end: a single `*` would not match `/api/files/<id>`, so each page's detail
+	// request would skip this mock and 404 against the real server.
+	await page.route('**/api/files**', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		const url = new URL(route.request().url())
+		if (url.pathname.endsWith('/api/files')) {
+			if (url.searchParams.get('kind') !== 'briefing') return route.fallback()
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(BRIEFING_PAGES.map((p, i) => briefingFile(workspaceId, p, i))),
+			})
+		}
+		const index = BRIEFING_PAGES.findIndex((p) => url.pathname.endsWith(`/api/files/${p.id}`))
+		if (index === -1) return route.fallback()
+		const found = BRIEFING_PAGES[index]
+		if (!found) return route.fallback()
+		return route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				...briefingFile(workspaceId, found, index),
+				content: `<!doctype html><html><head><title>${found.title}</title></head><body><h1>${found.title}</h1><p>All quiet otherwise.</p></body></html>`,
+				encoding: 'utf8',
+				url: '',
+			}),
+		})
+	})
+}
+
 async function mockFeed(page: Page, workspaceId: string, items = feed(workspaceId)) {
-	await page.route('**/api/subscriptions/unread*', async (route) => {
+	await mockBriefings(page, workspaceId)
+	await page.route('**/api/for-you*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({ items }),
+			body: JSON.stringify({ items: curated(items) }),
 		})
 	})
 }
@@ -166,10 +247,11 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			await mockFeed(page, account.workspaceId)
 			await page.goto(`/${account.workspaceId}`)
 
-			// Today's brief leads the column, collapsed.
-			const brief = page.getByTestId('brief-card')
-			await expect(brief).toBeVisible()
-			await expect(brief.getByText("Today's brief")).toBeVisible()
+			// The briefing cards lead the column.
+			const row = page.getByTestId('briefing-row')
+			await expect(row).toBeVisible()
+			await expect(row.getByTestId('briefing-card')).toHaveCount(BRIEFING_PAGES.length)
+			await expect(row.getByText('Two bets stalled; one needs your call')).toBeVisible()
 
 			// Cards view expands every card: the ask, the why and the composer.
 			const cards = page.getByTestId('foryou-feed-card')
@@ -206,7 +288,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 })
 
 test.describe('For You v4 — cards, options and the receipt', () => {
-	test('renders one standalone card per unread thread', async ({ page, account }) => {
+	test('renders one standalone card per curated item', async ({ page, account }) => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
@@ -215,11 +297,22 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await expect(page.getByTestId('foryou-feed-group')).toHaveCount(0)
 	})
 
+	test('the sidebar badge counts the curated items, not every unread mention', async ({
+		page,
+		account,
+	}) => {
+		await mockFeed(page, account.workspaceId)
+		await page.goto(`/${account.workspaceId}`)
+
+		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(5)
+		await expect(page.getByLabel('5 unread')).toBeVisible()
+	})
+
 	test('taking an option posts it and leaves a receipt', async ({ page, account }) => {
 		// The reply marks the thread read, so the server drops it from the unread
 		// feed straight away — the receipt has to survive that refetch.
 		let dropped = false
-		await page.route('**/api/subscriptions/unread*', async (route) => {
+		await page.route('**/api/for-you*', async (route) => {
 			if (route.request().method() !== 'GET') return route.fallback()
 			const items = feed(account.workspaceId).filter(
 				(entry) => !dropped || entry.entity_id !== 'task-decision',
@@ -227,7 +320,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ items }),
+				body: JSON.stringify({ items: curated(items) }),
 			})
 		})
 		let posted: { entity_id?: string; content?: string } | null = null
@@ -289,7 +382,8 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await page.getByRole('button', { name: 'Feed actions' }).click()
-		await expect(page.getByRole('menuitem', { name: /Dismiss all FYIs/ })).toBeVisible()
+		// There are no FYIs on a curated list, so there is nothing to bulk-dismiss as one.
+		await expect(page.getByRole('menuitem', { name: /Dismiss all FYIs/ })).toHaveCount(0)
 		await expect(page.getByRole('menuitem', { name: /Take every suggested option/ })).toBeVisible()
 		await expect(page.getByRole('menuitem', { name: /Dismiss all/ }).last()).toBeVisible()
 	})
@@ -409,64 +503,75 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 	})
 })
 
-test.describe("For You v4 — today's brief", () => {
-	test('opens on the player with the transcript folded away', async ({ page, account }) => {
+test.describe('For You v4 — the briefing cards', () => {
+	test('opens a briefing as a page, and an opened card turns seen', async ({ page, account }) => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
-		const brief = page.getByTestId('brief-card')
-		await expect(brief.getByTestId('brief-player')).toHaveCount(0)
+		const cards = page.getByTestId('briefing-card')
+		await expect(cards).toHaveCount(BRIEFING_PAGES.length)
+		await expect(cards.first()).toHaveAttribute('data-seen', 'false')
 
-		await brief.getByRole('button', { name: "Today's brief" }).click()
-		// The brief is made to be listened to: player first, prose behind a link.
-		await expect(brief.getByTestId('brief-player')).toBeVisible()
-		const show = brief.getByRole('button', { name: 'Prefer to read? Show the transcript' })
-		await expect(show).toBeVisible()
+		await cards.first().click()
+		const viewer = page.getByTestId('briefing-viewer')
+		await expect(viewer).toBeVisible()
+		await expect(viewer.locator('iframe')).toBeVisible()
+		await expect(
+			viewer
+				.frameLocator('iframe')
+				.getByRole('heading', { name: 'Two bets stalled; one needs your call' }),
+		).toBeVisible()
 
-		await show.click()
-		await expect(brief.getByRole('button', { name: 'Hide the transcript' })).toBeVisible()
-	})
-})
+		// The side buttons sit outside the frame: they must be on screen and hit-testable (an
+		// ancestor with overflow:hidden would clip them while Playwright still calls them visible).
+		const next = viewer.getByRole('button', { name: 'Next briefing' })
+		await expect(next).toBeVisible()
+		const reachable = await next.evaluate((el) => {
+			const r = el.getBoundingClientRect()
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+			return el.contains(hit)
+		})
+		expect(reachable).toBe(true)
+		await next.click()
+		await expect(viewer.getByText(/2 of 2/)).toBeVisible()
 
-test.describe('For You v4 — the release note', () => {
-	test('announces the update above the cards and stays dismissed', async ({ page, account }) => {
-		await mockFeed(page, account.workspaceId)
-		await page.goto(`/${account.workspaceId}`)
+		await viewer.getByRole('button', { name: 'Previous briefing' }).click()
+		await expect(viewer.getByText(/1 of 2/)).toBeVisible()
+		await viewer.getByRole('button', { name: 'Next briefing' }).click()
 
-		const release = page.getByTestId('foryou-release-card')
-		await expect(release).toBeVisible()
-		await expect(release.getByText('Update')).toBeVisible()
+		// Clicking the scrim beside the frame closes it, like the X.
+		await page.mouse.click(8, 8)
+		await expect(viewer).toHaveCount(0)
 
-		await release.getByRole('button', { name: 'Dismiss the release note' }).click()
-		await expect(page.getByTestId('foryou-release-card')).toHaveCount(0)
-
-		// Dismissal is per version and persisted, so a reload keeps it away.
+		// Both were opened, so both are seen, and that survives a reload.
 		await page.reload()
+		await expect(cards.first()).toHaveAttribute('data-seen', 'true')
+	})
+
+	test('draws nothing when there are no briefings', async ({ page, account }) => {
+		await mockFeed(page, account.workspaceId)
+		await page.route('**/api/files*', async (route) => {
+			const url = new URL(route.request().url())
+			if (url.searchParams.get('kind') !== 'briefing') return route.fallback()
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+		})
+		await page.goto(`/${account.workspaceId}`)
+
 		await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
-		await expect(page.getByTestId('foryou-release-card')).toHaveCount(0)
+		await expect(page.getByTestId('briefing-row')).toHaveCount(0)
 	})
 })
 
 test.describe('For You v4 — light and dark', () => {
 	for (const scheme of ['light', 'dark'] as const) {
-		test(`the brief card and the feed read in ${scheme} mode`, async ({ page, account }) => {
+		test(`the briefing cards and the feed read in ${scheme} mode`, async ({ page, account }) => {
 			await page.addInitScript((value) => {
 				localStorage.setItem('maskin-theme', value)
 			}, scheme)
 			await mockFeed(page, account.workspaceId)
 			await page.goto(`/${account.workspaceId}`)
 
-			const brief = page.getByTestId('brief-card')
-			await expect(brief).toBeVisible()
-			await expect(brief.getByText("Today's brief")).toBeVisible()
-
-			// The brief's surface is its own token pair, and it must stay distinct
-			// from the page behind it in both themes.
-			const [briefBg, pageBg] = await Promise.all([
-				brief.evaluate((el) => getComputedStyle(el).backgroundColor),
-				page.evaluate(() => getComputedStyle(document.body).backgroundColor),
-			])
-			expect(briefBg).not.toBe(pageBg)
+			await expect(page.getByTestId('briefing-card').first()).toBeVisible()
 
 			await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Merge now' }).first()).toBeVisible()

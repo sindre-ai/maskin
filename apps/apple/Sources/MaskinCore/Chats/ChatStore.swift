@@ -69,6 +69,10 @@ public final class ChatStore {
 	/// True once the read cursor this visit opened with is known (from the saved thread or the
 	/// server), so the thread can choose its opening position once instead of correcting it later.
 	public private(set) var openPositionKnown = false
+	/// True once the newest messages came from the server this visit. A saved thread knows its read
+	/// cursor but not what arrived since, so choosing the opening position from it alone opens on
+	/// the old bottom and the new messages then land below the fold.
+	public private(set) var serverConfirmed = false
 	/// The newest message the reader has scrolled past; read state advances to it while they are
 	/// still above the bottom. Only the thread view feeds it.
 	public private(set) var seenThrough = 0
@@ -186,9 +190,13 @@ public final class ChatStore {
 	public var title: String { detail?.title ?? "Chat" }
 	public var lastServerID: Int? { confirmed.last?.serverID }
 
-	/// Server rows, then unconfirmed sends. Failed sends always show; a queued one is hidden once
-	/// its confirmed twin is in the list.
-	public var messages: [ChatMessage] {
+	/// The main timeline: server rows then unconfirmed sends, without thread replies (those live
+	/// in their thread) unless the author also sent them to the chat.
+	public var messages: [ChatMessage] { allMessages.filter(\.showsInTimeline) }
+
+	/// Server rows, then unconfirmed sends, thread replies included. Failed sends always show; a
+	/// queued one is hidden once its confirmed twin is in the list.
+	public var allMessages: [ChatMessage] {
 		var rows = queue.pending(in: conversationID)
 		let queued = Set(rows.map(\.id))
 		let current = now()
@@ -684,6 +692,7 @@ public final class ChatStore {
 				openPositionKnown = true
 				readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
 			}
+			serverConfirmed = true
 			freshness.refreshed(at: cache?.now() ?? now())
 			writeCache()
 			// Independent reads: run together so the working indicator and trace don't wait on
@@ -806,13 +815,15 @@ public final class ChatStore {
 	/// Queue a message. The bubble appears at once (it is read from the queue, which is on disk),
 	/// and the outbox delivers it exactly once, now or when the network is back.
 	@discardableResult
-	public func send(_ text: String, metadata: ChatSendMetadata? = nil) -> String? {
+	public func send(
+		_ text: String, metadata: ChatSendMetadata? = nil, thread: ChatSendThread? = nil
+	) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !content.isEmpty else { return nil }
 		do {
 			let pending = try queue.send(
 				conversationID: conversationID, content: content, metadata: metadata,
-				afterServerID: lastServerID)
+				afterServerID: lastServerID, thread: thread)
 			sentRows[pending.id] = pending
 			awaitingReplySince = now()
 			// Asking again lifts the "Stopped" marker: a new answer is on its way.
@@ -1035,6 +1046,79 @@ public final class ChatStore {
 			if Task.isCancelled { return }
 			await self?.markReadIfNeeded()
 		}
+	}
+
+	// MARK: - Reactions
+
+	/// Add or take back your `emoji` on a message. The chip changes at once; if the server refuses,
+	/// it goes back and the notice says why.
+	public func toggleReaction(_ emoji: String, on message: ChatMessage) async {
+		guard let serverID = message.serverID,
+			let index = confirmed.firstIndex(where: { $0.serverID == serverID })
+		else { return }
+		let before = confirmed[index].reactions
+		let adding = !(before.first { $0.emoji == emoji }?.reactedByMe ?? false)
+		confirmed[index].reactions = MessageReaction.toggling(
+			emoji, in: before, me: ChatParticipant(id: currentActorID, name: currentActorName, kind: .human))
+		do {
+			try await api.react(conversationID: conversationID, messageID: serverID, emoji: emoji, add: adding)
+		} catch {
+			// Roll back only if nothing newer replaced the row meanwhile.
+			if let now = confirmed.firstIndex(where: { $0.serverID == serverID }) {
+				confirmed[now].reactions = before
+			}
+			notice = Self.message(error)
+		}
+	}
+
+	// MARK: - Threads
+
+	/// The highest reply id the reader has opened each thread past, so a pill reads "read" the
+	/// moment the thread is opened rather than after the server round trip.
+	public private(set) var threadReadThrough: [Int: Int] = [:]
+
+	/// The replies of one thread, oldest first, unconfirmed ones last.
+	public func replies(to rootID: Int) -> [ChatMessage] {
+		allMessages.filter { $0.threadRootID == rootID }
+	}
+
+	/// What the pill under a root says: the server's summary plus replies that arrived since.
+	public func threadSummary(for root: ChatMessage) -> ThreadSummary? {
+		guard let rootID = root.serverID else { return nil }
+		return ThreadSummary.current(
+			base: root.thread, rootAuthor: participant(for: root.actorID),
+			replies: confirmed.filter { $0.threadRootID == rootID }, currentActorID: currentActorID,
+			readThrough: threadReadThrough[rootID])
+	}
+
+	/// Fetch every reply of a thread and fold them in (a root opened from the Threads list, or one
+	/// whose replies are older than the page held).
+	public func loadThread(_ rootID: Int) async {
+		do {
+			merge(try await api.threadReplies(conversationID: conversationID, rootID: rootID))
+		} catch {
+			notice = Self.message(error)
+		}
+	}
+
+	/// Reply inside a thread. `to` is who the reply is for: they are mentioned, which is what makes
+	/// an agent answer. Returns the local row id, nil when the text is empty.
+	@discardableResult
+	public func reply(
+		_ text: String, in rootID: Int, to recipient: ChatParticipant?, alsoInChannel: Bool
+	) -> String? {
+		let metadata = recipient.map { ChatSendMetadata(mentions: [$0.id]) }
+		return send(
+			text, metadata: metadata, thread: ChatSendThread(rootID: rootID, alsoInChannel: alsoInChannel))
+	}
+
+	/// The reader has the thread open: everything in it counts as read.
+	public func markThreadRead(_ rootID: Int) async {
+		guard let newest = confirmed.last(where: { $0.threadRootID == rootID })?.serverID,
+			newest > (threadReadThrough[rootID] ?? 0)
+		else { return }
+		threadReadThrough[rootID] = newest
+		try? await api.markThreadRead(conversationID: conversationID, rootID: rootID, lastMessageID: newest)
 	}
 
 	// MARK: - Merging

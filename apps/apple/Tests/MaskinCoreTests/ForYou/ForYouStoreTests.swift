@@ -148,6 +148,21 @@ struct ForYouStoreTests {
 		#expect(store.entries.map(\.id) == ["none", "low", "high", "fyi"])
 	}
 
+	@Test func keepsTheChiefOfStaffsRankingOverAttentionAndTheSortSetting() async {
+		let (store, source, _, _) = make()
+		var first = decisionCard("first", attention: 1, age: 900)
+		first.rank = 0
+		var second = decisionCard("second", attention: 5, age: 5)
+		second.rank = 1
+		var third = decisionCard("third", attention: 3, age: 100)
+		third.rank = 2
+		source.feed = .success([third, second, first])
+		await store.load()
+		#expect(store.entries.map(\.id) == ["first", "second", "third"])
+		store.options.sort = .latest
+		#expect(store.entries.map(\.id) == ["first", "second", "third"])
+	}
+
 	@Test func intentFilterAndPersistedOptions() async {
 		let defaults = UserDefaults(suiteName: "foryou-tests-\(UUID().uuidString)")!
 		let (store, source, _, _) = make(defaults: defaults)
@@ -171,6 +186,21 @@ struct ForYouStoreTests {
 		let options = try JSONDecoder().decode(ForYouDisplayOptions.self, from: Data(old.utf8))
 		#expect(options == ForYouDisplayOptions(mode: .list, sort: .latest))
 		#expect(options.showsHandled)
+	}
+
+	@Test func actingOnOneMessageOfAStackSendsItsReplyAndLeavesTheCardOpen() async {
+		let (store, source, backend, _) = make()
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		let card = store.entries[0].card
+		let draft = DecisionDraft(id: "kenneth", label: "DM", to: "Kenneth", body: "Hej.")
+
+		#expect(store.actOnDraft(draft, action: .send, on: card))
+
+		#expect(await eventually { backend.calls.count == 1 })
+		#expect(backend.calls == ["comment:a:Send: DM to Kenneth (kenneth):7"])
+		#expect(store.entries.first(where: { $0.id == "a" })?.bucket == .needs)  // still open
+		#expect(store.entries.first(where: { $0.id == "a" })?.record == nil)
 	}
 
 	@Test func decidedCardStaysAsAReceiptAfterTheServerDropsIt() async {
