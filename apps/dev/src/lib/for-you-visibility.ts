@@ -1,0 +1,165 @@
+import type { Database } from '@maskin/db'
+import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
+import { FOR_YOU_KIND, parseForYouMetadata } from '@maskin/shared'
+import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { TERMINAL_STATUSES } from '../services/session-lifecycle'
+
+/**
+ * Object statuses after which an ask about the object no longer needs anyone.
+ * Workspace statuses are configurable, so this is the union of the closed
+ * states the built-in object types use.
+ */
+const CLOSED_OBJECT_STATUSES = [
+	'done',
+	'completed',
+	'succeeded',
+	'failed',
+	'cancelled',
+	'canceled',
+	'closed',
+	'archived',
+	'shipped',
+	'dismissed',
+]
+
+export type ForYouCard = {
+	row: typeof notifications.$inferSelect
+	meta: NonNullable<ReturnType<typeof parseForYouMetadata>>
+}
+
+export type VisibleForYou = {
+	/** Cards that are still live, in the order the For You list shows them. */
+	cards: ForYouCard[]
+	objectById: Map<string, typeof objects.$inferSelect>
+	sourceById: Map<number, typeof events.$inferSelect>
+}
+
+/**
+ * The For You cards `GET /api/for-you` shows for one actor in one workspace: pending/seen
+ * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended, whose object is
+ * closed or moved on, or that the viewer already read or answered. Shared with the briefing and
+ * lifecycle pushes so a push never counts something the app does not show.
+ */
+export async function loadVisibleForYou(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+): Promise<VisibleForYou> {
+	const rows = await db
+		.select()
+		.from(notifications)
+		.where(
+			and(
+				eq(notifications.workspaceId, workspaceId),
+				eq(notifications.targetActorId, actorId),
+				eq(notifications.type, 'needs_input'),
+				inArray(notifications.status, ['pending', 'seen']),
+				sql`${notifications.metadata}->>'kind' = ${FOR_YOU_KIND}`,
+			),
+		)
+
+	const candidates = rows.flatMap((row) => {
+		const meta = parseForYouMetadata(row.metadata)
+		return meta ? [{ row, meta }] : []
+	})
+	if (candidates.length === 0) {
+		return { cards: [], objectById: new Map(), sourceById: new Map() }
+	}
+
+	const objectIds = [
+		...new Set(candidates.flatMap((x) => (x.row.objectId ? [x.row.objectId] : []))),
+	]
+	const sessionIds = [
+		...new Set(candidates.flatMap((x) => (x.row.sessionId ? [x.row.sessionId] : []))),
+	]
+
+	const [objectRows, sessionRows, readRows] = await Promise.all([
+		objectIds.length
+			? db
+					.select()
+					.from(objects)
+					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, objectIds)))
+			: [],
+		sessionIds.length
+			? db
+					.select({ id: sessions.id, status: sessions.status })
+					.from(sessions)
+					.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.id, sessionIds)))
+			: [],
+		objectIds.length
+			? db
+					.select({ entityId: readState.entityId, lastReadEventId: readState.lastReadEventId })
+					.from(readState)
+					.where(
+						and(
+							eq(readState.workspaceId, workspaceId),
+							eq(readState.actorId, actorId),
+							eq(readState.entityType, 'object'),
+							inArray(readState.entityId, objectIds),
+						),
+					)
+			: [],
+	])
+	const objectById = new Map(objectRows.map((o) => [o.id, o]))
+	const sessionStatusById = new Map(sessionRows.map((s) => [s.id, s.status]))
+	const lastReadByEntity = new Map(readRows.map((r) => [r.entityId, r.lastReadEventId]))
+
+	// Source comments, and any reply by the viewer after them, in two queries.
+	const sourceIds = candidates.flatMap((x) =>
+		x.meta.source_comment_id !== undefined ? [x.meta.source_comment_id] : [],
+	)
+	const sourceRows = sourceIds.length
+		? await db
+				.select()
+				.from(events)
+				.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, sourceIds)))
+		: []
+	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
+
+	const replyRows = objectIds.length
+		? await db
+				.select({ entityId: events.entityId, id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.action, 'commented'),
+						eq(events.actorId, actorId),
+						inArray(events.entityId, objectIds),
+						gt(events.id, Math.min(...sourceIds, Number.MAX_SAFE_INTEGER)),
+					),
+				)
+		: []
+
+	const cards = candidates
+		.filter(({ row, meta }) => {
+			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
+			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
+				return false
+			}
+			if (row.objectId) {
+				const obj = objectById.get(row.objectId)
+				// Deleted (FK set null would have cleared it) or closed: nothing left to decide.
+				if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
+				// The ask names the state it assumed ("move to active" assumes "proposed").
+				// Once the object is anywhere else, the ask is already moot.
+				if (meta.only_while_status && !meta.only_while_status.includes(obj.status ?? '')) {
+					return false
+				}
+				const sourceId = meta.source_comment_id
+				if (sourceId !== undefined) {
+					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
+					if (lastRead >= sourceId) return false
+					if (replyRows.some((r) => r.entityId === row.objectId && r.id > sourceId)) return false
+				}
+			}
+			return true
+		})
+		.sort(
+			(a, b) =>
+				a.meta.rank - b.meta.rank ||
+				(b.row.createdAt?.getTime() ?? 0) - (a.row.createdAt?.getTime() ?? 0),
+		)
+
+	return { cards, objectById, sourceById }
+}
