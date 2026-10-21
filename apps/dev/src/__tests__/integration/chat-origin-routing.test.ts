@@ -12,7 +12,6 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { planCommentRouting } from '../../services/chat-origin-routing'
 import { returnToSender } from '../../services/helper-return'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -44,7 +43,6 @@ const { default: subscriptionsRoutes } = await import('../../routes/subscription
 const { default: conversationsRoutes } = await import('../../routes/conversations')
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const FLAG = 'chat-origin-output-routing'
 
 type Env = {
 	Variables: {
@@ -66,12 +64,6 @@ function stubStorage(): StorageProvider {
 		exists: async () => false,
 		ensureBucket: async () => {},
 	}
-}
-
-function setFlagFor(...actorIds: string[]) {
-	process.env.FF_TESTER_ACTOR_IDS = actorIds.join(',')
-	process.env.FF_TESTER_FEATURES = actorIds.length > 0 ? FLAG : ''
-	_resetFeatureFlagConfig()
 }
 
 // A decision block that passes validateDecisionProse.
@@ -124,7 +116,6 @@ beforeAll(() => {
 
 afterAll(async () => {
 	await manager.stop()
-	setFlagFor()
 })
 
 type Fixture = Awaited<ReturnType<typeof seed>>
@@ -293,7 +284,6 @@ beforeEach(() => {
 	configureSessionLifecycle({ db, sessionManager: sm as unknown as SessionManager })
 	dispatcher = new CommentDispatcher(db, bridge, sm as unknown as SessionManager)
 	dispatcher.start()
-	setFlagFor()
 })
 
 afterEach(() => dispatcher.stop())
@@ -323,7 +313,7 @@ describe('origin stamp on spawned sessions', () => {
 		return (row?.config ?? {}) as { origin_conversation_id?: string }
 	}
 
-	it('a helper started through create_session from a chat session carries the chat, with the routing flag off', async () => {
+	it('a helper started through create_session from a chat session carries the chat', async () => {
 		const f = await seed()
 		const config = await spawn(f, f.agent.id, f.chatSession.id)
 		expect(config.origin_conversation_id).toBe(f.chat.id)
@@ -374,7 +364,6 @@ describe('helper return default for work started from a chat', () => {
 	beforeEach(() => {
 		configureSessionLifecycle({ db, sessionManager: manager })
 	})
-	afterEach(() => setFlagFor())
 
 	async function spawnHelper(
 		f: Fixture,
@@ -406,9 +395,8 @@ describe('helper return default for work started from a chat', () => {
 		return { id: body.id, notify: config.notify_on_complete }
 	}
 
-	it('flag on: a helper started from a chat session that sets nothing returns into the chat, not the object', async () => {
+	it('a helper started from a chat session that sets nothing returns into the chat, not the object', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const helper = await spawnHelper(f, f.chatSession.id)
 		expect(helper.notify).toBe(true)
 
@@ -425,44 +413,28 @@ describe('helper return default for work started from a chat', () => {
 		expect(onObject).toHaveLength(0)
 	})
 
-	it('flag on: an explicit notify_on_complete false from the caller is kept', async () => {
+	it('an explicit notify_on_complete false from the caller is kept', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const helper = await spawnHelper(f, f.chatSession.id, { notify_on_complete: false })
 		expect(helper.notify).toBeUndefined()
 	})
 
-	it('flag on: an explicit notify_on_complete true still works from a sender with no chat', async () => {
+	it('an explicit notify_on_complete true still works from a sender with no chat', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const helper = await spawnHelper(f, f.cronSession.id, { notify_on_complete: true })
 		expect(helper.notify).toBe(true)
 	})
 
-	it('flag on: a sender with no chat of its own (cron, header-less, helper) keeps today’s default', async () => {
+	it('a sender with no chat of its own (cron, header-less, helper) keeps today’s default', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		expect((await spawnHelper(f, f.cronSession.id)).notify).toBeUndefined()
 		expect((await spawnHelper(f, null)).notify).toBeUndefined()
 		// A helper carries the chat only as a stamp, not as its own conversation.
 		expect((await spawnHelper(f, f.helperSession.id)).notify).toBeUndefined()
 	})
 
-	it('flag off: a helper started from a chat session is unchanged', async () => {
+	it('a group chat gets no default', async () => {
 		const f = await seed()
-		setFlagFor()
-		expect((await spawnHelper(f, f.chatSession.id)).notify).toBeUndefined()
-	})
-
-	it('flag on for someone else only: unchanged for this chat’s person', async () => {
-		const f = await seed()
-		setFlagFor(f.other.id)
-		expect((await spawnHelper(f, f.chatSession.id)).notify).toBeUndefined()
-	})
-
-	it('flag on: a group chat gets no default', async () => {
-		const f = await seed()
-		setFlagFor(f.human.id)
 		const second = await insertActor(db, { type: 'human', name: 'Second Person' })
 		await db
 			.insert(conversationParticipants)
@@ -504,7 +476,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 
 	it('routes when all six rules hold, and drops only that human from the mentions', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const plan = await planCommentRouting(db, base(f, { mentions: [f.human.id, f.other.id] }))
 		expect(plan.delivery).toEqual({
 			humanId: f.human.id,
@@ -519,11 +490,9 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 	const keeps: Array<{
 		name: string
 		reason: string
-		flagOn?: boolean
 		over: (f: KeepCtx) => Partial<Parameters<typeof planCommentRouting>[1]>
 		prep?: (f: Fixture) => Promise<void>
 	}> = [
-		{ name: 'rule 1: flag off for the human', reason: 'flag_off', flagOn: false, over: () => ({}) },
 		{
 			name: 'rule 2: a decision block',
 			reason: 'kept_decision',
@@ -603,7 +572,7 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 		},
 	]
 
-	it.each(keeps)('keeps the mention: $name', async ({ reason, flagOn, over, prep }) => {
+	it.each(keeps)('keeps the mention: $name', async ({ reason, over, prep }) => {
 		const f = await seed()
 		const otherSession = await insertSession(db, f.ws.id, f.other.id, f.other.id, {
 			status: 'running',
@@ -629,7 +598,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 			elsewhereSessionId: elsewhere.id,
 			foreignChatSessionId: foreignChatSession.id,
 		}
-		setFlagFor(...(flagOn === false ? [] : [f.human.id]))
 		await prep?.(f)
 
 		const plan = await planCommentRouting(db, base(f, over(fx)))
@@ -642,7 +610,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 
 	it('attention 3 routes and a missing attention routes', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		expect((await planCommentRouting(db, base(f, { attention: 3 }))).delivery).not.toBeNull()
 		expect(
 			(await planCommentRouting(db, base(f, { attention: undefined }))).delivery,
@@ -651,7 +618,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 
 	it('a human commenter is never routed', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const plan = await planCommentRouting(db, base(f, { commenterType: 'human' }))
 		expect(plan.delivery).toBeNull()
 		expect(plan.storedMentions).toEqual([f.human.id])
@@ -660,7 +626,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 	it('two humans mentioned, one in the origin chat: only that one is routed', async () => {
 		const f = await seed()
 		const stranger = await insertActor(db, { type: 'human', name: 'Stranger' })
-		setFlagFor(f.human.id, stranger.id)
 		const plan = await planCommentRouting(db, base(f, { mentions: [stranger.id, f.human.id] }))
 		expect(plan.delivery?.humanId).toBe(f.human.id)
 		expect(plan.storedMentions).toEqual([stranger.id])
@@ -669,7 +634,6 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 
 	it('a helper that carries only ask_conversation_id still routes to its chat', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const plan = await planCommentRouting(db, base(f, { sessionId: f.askOnlySession.id }))
 		expect(plan.delivery?.conversationId).toBe(f.chat.id)
 		expect(plan.sessionOrigin).toBe('chat_helper')
@@ -684,15 +648,13 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 			addedBy: f.human.id,
 			leftAt: new Date(),
 		})
-		setFlagFor(f.human.id)
 		expect((await planCommentRouting(db, base(f))).delivery).not.toBeNull()
 	})
 })
 
-describe('POST /api/events from a chat-started helper (flag on)', () => {
+describe('POST /api/events from a chat-started helper', () => {
 	it('leaves no For You item, one chat message with the pill, unread 1, and no needs_input row', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 
 		const { id, data } = await postComment(f, {
 			session: f.helperSession.id,
@@ -718,7 +680,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('starts no session', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const before = (await db.select().from(sessions)).length
 		await postComment(f, { session: f.helperSession.id })
 		expect((await db.select().from(sessions)).length).toBe(before)
@@ -726,7 +687,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('cuts a long comment and ends the chat message with a link to the rest', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const paragraphs = Array.from({ length: 6 }, (_, i) => `Part ${i} ${'y'.repeat(500)}`)
 		await postComment(f, { session: f.helperSession.id, content: paragraphs.join('\n\n') })
 		const [msg] = await chatMessages(f.chat.id)
@@ -737,7 +697,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('posts a one-line pointer when the commenting session is the chat session', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		await postComment(f, { session: f.chatSession.id, content: 'Long update. '.repeat(50) })
 		const [msg] = await chatMessages(f.chat.id)
 		expect(msg?.content).toMatch(/^I posted an update on \[Backfill report\]\(.+\)\.$/)
@@ -745,7 +704,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('keeps the For You card and the notification for a decision block (zero-miss guard)', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 
 		const { id, data } = await postComment(f, {
 			session: f.helperSession.id,
@@ -766,7 +724,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('keeps the For You card for attention 4', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const { data } = await postComment(f, { session: f.helperSession.id, attention: 4 })
 		expect(data.mentions).toEqual([f.human.id])
 		expect(await forYouEntityIds(f)).toContain(f.object.id)
@@ -775,7 +732,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('keeps the card for the same helper started by cron', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const { data } = await postComment(f, { session: f.cronSession.id })
 		expect(data.mentions).toEqual([f.human.id])
 		expect(await forYouEntityIds(f)).toContain(f.object.id)
@@ -784,7 +740,6 @@ describe('POST /api/events from a chat-started helper (flag on)', () => {
 
 	it('a header naming another agent session cannot route a comment', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		const theirs = await insertSession(db, f.ws.id, f.other.id, f.other.id, {
 			status: 'running',
 			config: { origin_conversation_id: f.chat.id },
@@ -805,65 +760,54 @@ describe('agent_comment_posted: session_origin, has_decision_block, routed_to', 
 		name: string
 		pick: (f: Fixture) => PostOver
 		on: [string, boolean, string]
-		off: [string, boolean, string]
 	}
 	const cases: Case[] = [
 		{
 			name: 'chat session, plain comment',
 			pick: (f) => ({ session: f.chatSession.id }),
 			on: ['chat', false, 'chat'],
-			off: ['chat', false, 'for_you'],
 		},
 		{
 			name: 'chat session, decision block',
 			pick: (f) => ({ session: f.chatSession.id, decision: DECISION }),
 			on: ['chat', true, 'for_you'],
-			off: ['chat', true, 'for_you'],
 		},
 		{
 			name: 'chat-spawned helper, plain comment',
 			pick: (f) => ({ session: f.helperSession.id }),
 			on: ['chat_helper', false, 'chat'],
-			off: ['chat_helper', false, 'for_you'],
 		},
 		{
 			name: 'cron session',
 			pick: (f) => ({ session: f.cronSession.id }),
 			on: ['none', false, 'for_you'],
-			off: ['none', false, 'for_you'],
 		},
 		{
 			name: 'no header',
 			pick: () => ({ session: null }),
 			on: ['no_session', false, 'for_you'],
-			off: ['no_session', false, 'for_you'],
 		},
 		{
 			name: 'no human mention',
 			pick: (f) => ({ session: f.chatSession.id, mentions: [f.other.id] }),
 			on: ['chat', false, 'none'],
-			off: ['chat', false, 'none'],
 		},
 	]
 
-	for (const flagOn of [true, false]) {
-		it.each(cases)(`$name (routing flag ${flagOn ? 'on' : 'off'})`, async (c) => {
-			const f = await seed()
-			setFlagFor(...(flagOn ? [f.human.id] : []))
-			await postComment(f, c.pick(f))
-			await vi.waitFor(() => expect(lastCommentProps().session_origin).toBeDefined())
-			const [origin, decision, routedTo] = flagOn ? c.on : c.off
-			expect(lastCommentProps()).toMatchObject({
-				session_origin: origin,
-				has_decision_block: decision,
-				routed_to: routedTo,
-			})
+	it.each(cases)('$name', async (c) => {
+		const f = await seed()
+		await postComment(f, c.pick(f))
+		await vi.waitFor(() => expect(lastCommentProps().session_origin).toBeDefined())
+		const [origin, decision, routedTo] = c.on
+		expect(lastCommentProps()).toMatchObject({
+			session_origin: origin,
+			has_decision_block: decision,
+			routed_to: routedTo,
 		})
-	}
+	})
 
 	it('carries a reason for the split', async () => {
 		const f = await seed()
-		setFlagFor(f.human.id)
 		await postComment(f, { session: f.helperSession.id })
 		await vi.waitFor(() => expect(lastCommentProps().route_reason).toBe('routed'))
 	})

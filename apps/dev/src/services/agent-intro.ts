@@ -3,9 +3,9 @@ import { actors, messages, workspaceMembers, workspaces } from '@maskin/db/schem
 import type { FirstStep, MessageMetadata } from '@maskin/shared'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
+import { isEnterprise } from '../lib/enterprise'
 import { listProviders } from '../lib/integrations/registry'
-import { resolveChatCredentials } from '../lib/llm-routing'
+import { hasConfiguredOAuthSlot, resolveChatCredentials } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import {
@@ -65,10 +65,6 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 	try {
 		const recipient = await resolveRecipient(args)
 		if (!recipient.ok) return skip(args, recipient.reason)
-
-		// Read once, for the person who gets the hello. Off means today's behaviour:
-		// no intro and no event.
-		if (!isFlagEnabled(recipient.humanId, FLAGS.AGENT_INTRO_ONE_TO_ONE)) return
 
 		if (!(await bothAreMembers(args.db, args.workspaceId, recipient.humanId, actor.id))) {
 			return skip(args, 'not_member')
@@ -309,7 +305,15 @@ async function renderIntro(
 				model: (llmConfig.model as string | undefined)?.trim() || null,
 			},
 		})
-		input.canRun = credentials !== null
+		// resolveChatCredentials skips Claude OAuth on purpose (it feeds a small chat
+		// heuristic), so null there does not mean the workspace cannot run an agent.
+		// A BYO Claude subscription is what real sessions launch on for an entitled
+		// workspace: existence only, never a token refresh or a probe.
+		const hasClaudeSubscription =
+			ws !== undefined &&
+			isEnterprise(ws) &&
+			hasConfiguredOAuthSlot((ws.settings as WorkspaceSettings)?.claude_oauth)
+		input.canRun = credentials !== null || hasClaudeSubscription
 		return renderAgentIntro(input)
 	} catch (err) {
 		// A failure here must not cost the person their hello: fall back to name and

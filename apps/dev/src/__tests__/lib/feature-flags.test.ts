@@ -72,24 +72,6 @@ describe('resolveFlags', () => {
 		expect(resolveFlags(NON_TESTER, c)['loops-v4-polish.step_flow']).toBe(false)
 	})
 
-	it('registers the agent-intro and chat-routing flags, off until a tester is listed', () => {
-		expect(FLAGS.AGENT_INTRO_ONE_TO_ONE).toBe('agent-intro-1-1')
-		expect(FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING).toBe('chat-origin-output-routing')
-
-		const off = resolveFlags(TESTER, config({}))
-		expect(off[FLAGS.AGENT_INTRO_ONE_TO_ONE]).toBe(false)
-		expect(off[FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING]).toBe(false)
-
-		const on = config({
-			FF_TESTER_FEATURES: `${FLAGS.AGENT_INTRO_ONE_TO_ONE},${FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING}`,
-			FF_TESTER_ACTOR_IDS: TESTER,
-		})
-		for (const flag of [FLAGS.AGENT_INTRO_ONE_TO_ONE, FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING]) {
-			expect(resolveFlags(TESTER, on)[flag]).toBe(true)
-			expect(resolveFlags(NON_TESTER, on)[flag]).toBe(false)
-		}
-	})
-
 	it('is false for every flag when the env is empty', () => {
 		expect(resolveFlags(TESTER, config({}), REGISTRY)).toEqual({ [FLAG]: false })
 	})

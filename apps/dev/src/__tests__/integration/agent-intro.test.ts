@@ -12,7 +12,6 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import type { SessionManager } from '../../services/session-manager'
 import {
 	insertActor,
@@ -89,24 +88,16 @@ function createConversationsAppAs(actorId: string) {
 	return app
 }
 
-function setFlagFor(...actorIds: string[]) {
-	process.env.FF_TESTER_ACTOR_IDS = actorIds.join(',')
-	process.env.FF_TESTER_FEATURES = actorIds.length > 0 ? 'agent-intro-1-1' : ''
-	_resetFeatureFlagConfig()
-}
-
 const bearer = (key: string) => ({ Authorization: `Bearer ${key}` })
 
 /**
- * A workspace with a fresh human in it, the intro flag on for that human, and
- * the human's own key. Fresh per test so the 10-minute intro cap never counts
+ * A workspace with a fresh human in it and the human's own key. Fresh per test so the 10-minute intro cap never counts
  * another test's intros.
  */
 async function setup() {
 	const key = `ank_human${randomUUID()}`
 	const human = await insertActor(db, { type: 'human', name: 'Sam Rivers', apiKey: key })
 	const ws = await insertWorkspace(db, human.id)
-	setFlagFor(human.id)
 	return { ws, human, key }
 }
 
@@ -260,23 +251,6 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 			resolved_via: 'creator',
 			origin_hops: 0,
 		})
-	})
-
-	it('does nothing when the flag is off for the creator', async () => {
-		const { ws, key } = await setup()
-		setFlagFor()
-
-		const res = await createAgent(
-			{ name: `Quiet ${randomUUID()}`, workspace_id: ws.id },
-			bearer(key),
-		)
-		expect(res.status).toBe(201)
-		const created = (await res.json()) as { id: string }
-		await settle()
-
-		expect(await introChatsFor(created.id)).toHaveLength(0)
-		expect(capturesOf('agent_intro_sent')).toHaveLength(0)
-		expect(capturesOf('agent_intro_skipped')).toHaveLength(0)
 	})
 
 	it('returns 409 for a repeated body id and keeps one intro', async () => {
@@ -458,27 +432,13 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		expect(capturesOf('agent_intro_sent')).toHaveLength(0)
 	})
 
-	it('reads the flag for the person, not for the creating agent', async () => {
+	it('sends the intro to the person behind the creating session, not to the creating agent', async () => {
 		const { ws, human } = await setup()
 		const cos = await insertCreatorAgent(ws.id)
 		const session = await insertChatSession(ws.id, cos.agent.id, human.id)
 
-		// On for the creating agent only: the person gets nothing.
-		setFlagFor(cos.agent.id)
-		const off = await createAgent(
-			{ name: `FlagOff ${randomUUID()}`, workspace_id: ws.id },
-			bearer(cos.key),
-			session.id,
-		)
-		const offAgent = (await off.json()) as { id: string }
-		await settle()
-		expect(await introChatsFor(offAgent.id)).toHaveLength(0)
-		expect(capturesOf('agent_intro_sent')).toHaveLength(0)
-
-		// On for the person only: they get the intro.
-		setFlagFor(human.id)
 		const on = await createAgent(
-			{ name: `FlagOn ${randomUUID()}`, workspace_id: ws.id },
+			{ name: `Intro ${randomUUID()}`, workspace_id: ws.id },
 			bearer(cos.key),
 			session.id,
 		)
@@ -493,7 +453,6 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 	it('caps intros at 5 per person in 10 minutes and counts each person separately', async () => {
 		const { ws, human } = await setup()
 		const second = await insertMember(ws.id, { type: 'human', name: 'Second Person' })
-		setFlagFor(human.id, second.id)
 		const cos = await insertCreatorAgent(ws.id)
 		const firstSession = await insertChatSession(ws.id, cos.agent.id, human.id)
 		const secondSession = await insertChatSession(ws.id, cos.agent.id, second.id)
@@ -557,8 +516,30 @@ describe('Agent intro — render', () => {
 
 		const text = await introTextFor(ws, `Keyed ${randomUUID()}`, bearer(key))
 
-		expect(text).toContain('Start with one of these, or tell me what you need.')
+		expect(text).toContain('How can I help? Start with one of these, or tell me what you need.')
 		expect(text).toContain('1. What can you help me with?\n2. Give me a first task')
+		expect(text).not.toContain("I can't run yet.")
+	})
+
+	it('invites a first job when the workspace has only a connected Claude subscription', async () => {
+		const { ws, key } = await setup()
+		// The shape of a real import: an entitled workspace with one OAuth slot and
+		// no API key. Real sessions launch on it, so the intro must not say it can't run.
+		await db
+			.update(workspaces)
+			.set({
+				enterpriseGranted: true,
+				settings: {
+					claude_oauth: {
+						primary: { encryptedAccessToken: 'enc-access', encryptedRefreshToken: 'enc-refresh' },
+					},
+				},
+			})
+			.where(eq(workspaces.id, ws.id))
+
+		const text = await introTextFor(ws, `Oauth ${randomUUID()}`, bearer(key))
+
+		expect(text).toContain('How can I help? Start with one of these, or tell me what you need.')
 		expect(text).not.toContain("I can't run yet.")
 	})
 
@@ -808,7 +789,6 @@ describe('Agent intro — hints from the creator', () => {
 			name: 'Plain Member',
 			apiKey: memberKey,
 		})
-		setFlagFor(member.id)
 
 		const withHints = await createAgent(
 			{

@@ -93,7 +93,6 @@ function renderThread(props: Partial<React.ComponentProps<typeof ThreadMessages>
 		<ThreadMessages
 			workspaceId="ws-1"
 			conversationId="conv-1"
-			suggestedStepsEnabled
 			onPickStep={onPickStep}
 			onSendStep={onSendStep}
 			{...props}
@@ -137,15 +136,6 @@ describe('ThreadMessages — agent intro steps and tools', () => {
 		expect(onSendStep).toHaveBeenCalledWith('Read my inbox', {
 			from_suggested_step: { intro_message_id: 1, index: 0 },
 		})
-	})
-
-	it('shows the intro as plain text when the flag is off', async () => {
-		mockMessages(intro())
-		renderThread({ suggestedStepsEnabled: false })
-
-		expect(await screen.findByText(/For this job I use Gmail/)).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Read my inbox/ })).not.toBeInTheDocument()
-		expect(screen.queryByTestId('needed-tools')).not.toBeInTheDocument()
 	})
 
 	it('shows the whole body and draws nothing when the steps do not parse', async () => {

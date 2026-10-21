@@ -17,7 +17,7 @@ const base: AgentIntroInput = {
 }
 
 const PROMISE = "I'll reply here. Only things that need your decision go to For You."
-const STEPS_LINE = 'Start with one of these, or tell me what you need.'
+const STEPS_LINE = 'How can I help? Start with one of these, or tell me what you need.'
 const NO_KEY_LINE =
 	"I can't run yet. Connect your Claude subscription or API key under Settings, Keys, then reply here."
 const CLOSING = "Reply here whenever you're ready."

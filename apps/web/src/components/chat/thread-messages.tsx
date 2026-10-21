@@ -55,10 +55,6 @@ interface ThreadMessagesProps {
 	 *  route boundary on `graph-provenance-writes` so the sessions query fires
 	 *  only for tester actors. */
 	producedEnabled?: boolean
-	/** The agent-intro-1-1 flag, read once at the route. When on, an agent intro
-	 *  that carries suggested steps and needed tools is drawn as buttons and
-	 *  tool rows, and the plain-text version of those is dropped. */
-	suggestedStepsEnabled?: boolean
 	/** Fills the composer with a fill step's prompt. */
 	onPickStep?: (prompt: string) => void
 	/** Sends a send step's label as the person's message, with the intro step marker. */
@@ -74,7 +70,6 @@ export function ThreadMessages({
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
 	producedEnabled = false,
-	suggestedStepsEnabled = false,
 	onPickStep,
 	onSendStep,
 	sendingStep = false,
@@ -86,7 +81,7 @@ export function ThreadMessages({
 	const messages = flattenMessagesOldestFirst(data)
 	// The step row is disabled only once the actor list has loaded and the intro's
 	// agent is not in it. While it loads, or when it fails, the row stays usable.
-	const actors = useActors(workspaceId, { enabled: suggestedStepsEnabled })
+	const actors = useActors(workspaceId)
 	const handoffs = useConversationThreads(workspaceId, conversationId)
 	// Each handoff is its own row in the timeline, at the moment its session was
 	// created: before the first message written after it, or at the foot of the
@@ -362,10 +357,7 @@ export function ThreadMessages({
 					}
 					// An agent intro written with steps and tools: the buttons and rows replace
 					// the plain list and tools sentence at the end of its body.
-					const intro =
-						suggestedStepsEnabled && message.actorType === 'agent'
-							? parseIntroView(message.metadata)
-							: null
+					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
 					const bubbleMessage = intro
 						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
 						: message

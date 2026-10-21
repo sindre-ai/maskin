@@ -2,7 +2,6 @@ import type { Database, Transaction } from '@maskin/db'
 import { actors, conversationParticipants, conversations, sessions } from '@maskin/db/schema'
 import { buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
 import { originConversationOf, resolveHumanBehindSession } from './session-origin'
@@ -30,7 +29,6 @@ export type RouteReason =
 	| 'kept_attention'
 	| 'kept_group'
 	| 'no_origin'
-	| 'flag_off'
 	| 'no_human_mention'
 
 export interface CommentRoutingInput {
@@ -123,11 +121,9 @@ async function directChatState(
 /**
  * Decides, for one agent comment, which human mentions go to a chat instead of
  * For You, and classifies the comment for agent_comment_posted. The
- * classification (session_origin, routed_to) is computed whatever the routing
- * flag says, so the weeks before the flag turns on give a baseline.
+ * classification (session_origin, routed_to) is recorded for every comment.
  *
- * A human H is routed only when all hold: the flag is on for H; the commenter
- * is an agent and the comment has no decision block; attention is absent or
+ * A human H is routed only when all hold: the commenter is an agent and the comment has no decision block; attention is absent or
  * below 4; the header session is the commenter's own in this workspace; that
  * session has a chat origin in this workspace; and the chat has exactly two
  * active participants, H and an agent.
@@ -168,8 +164,7 @@ export async function planCommentRouting(
 	for (const humanId of mentioned) {
 		if (!humanIds.has(humanId)) continue
 		let kept: RouteReason | null = null
-		if (!isFlagEnabled(humanId, FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING)) kept = 'flag_off'
-		else if (input.hasDecision) kept = 'kept_decision'
+		if (input.hasDecision) kept = 'kept_decision'
 		else if (input.attention !== undefined && input.attention >= 4) kept = 'kept_attention'
 		else if (!origin) kept = 'no_origin'
 		else {
@@ -207,7 +202,7 @@ export async function planCommentRouting(
  * Whether a helper started by `senderSessionId` returns to the sender's chat
  * without being asked to (notify_on_complete defaults on). Only when the sender
  * is itself a chat session, the chat is a 1-1 between one person and one agent,
- * and the routing flag is on for that person. A sender with no
+ * and the chat is with that person. A sender with no
  * chat of its own (cron, loop, object-started, a helper) keeps today's default.
  */
 export async function returnsToChatByDefault(
@@ -225,7 +220,7 @@ export async function returnsToChatByDefault(
 		creatorId: args.creatorId,
 		workspaceId: args.workspaceId,
 	})
-	if (!human.ok || !isFlagEnabled(human.humanId, FLAGS.CHAT_ORIGIN_OUTPUT_ROUTING)) return false
+	if (!human.ok) return false
 	// Group chats are untouched, as for comments: the walk above names the person
 	// who woke the session even in a group, so the chat itself is checked too.
 	const chat = await directChatState(db, {

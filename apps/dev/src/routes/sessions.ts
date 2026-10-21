@@ -146,7 +146,7 @@ app.openapi(createSessionRoute, (async (c) => {
 			? await resolveAskConversationId(db, link.spawnedBySessionId)
 			: null
 	// A helper started from a chat returns into that chat unless the caller said
-	// otherwise: with the routing flag on for the person in the sender's 1-1,
+	// otherwise: when the sender is in a 1-1 chat,
 	// notify_on_complete defaults on (helper-return.ts then prefers the chat to the
 	// object). An explicit true or false from the caller always wins.
 	const notifyOnComplete =
@@ -165,8 +165,8 @@ app.openapi(createSessionRoute, (async (c) => {
 					? { interactive: true, stop_on_result: true, ask_conversation_id: askConversationId }
 					: {}),
 				hop_depth: link.hopDepth,
-				// The chat this work belongs to, written whatever the routing flag says so
-				// the pre-ship baseline by session_origin exists (chat-origin-routing.ts).
+				// The chat this work belongs to, read by the chat-origin routing
+				// and by session_origin (chat-origin-routing.ts).
 				...(link.originConversationId ? { origin_conversation_id: link.originConversationId } : {}),
 				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			}

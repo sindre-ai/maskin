@@ -209,29 +209,6 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
-	/**
-	 * Gates the 1-1 "Meet {name}" intro a new agent posts when it is created
-	 * (bet [A new agent introduces itself in a 1-1 chat with the person it was made for](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e9cec236-3251-487c-ad5b-a334b525a0f2)).
-	 * Actor-scoped on the HUMAN WHO RECEIVES THE INTRO, not on the creating actor:
-	 * read with `isFlagEnabled(recipientId, ...)`. When an agent such as Chief of
-	 * Staff creates the agent, the recipient is the person behind the creating
-	 * session (`resolveHumanBehindSession`). Off means no intro and no event, as
-	 * today. Rollout: the tester's actor id in `FF_TESTER_ACTOR_IDS` and this id in
-	 * `FF_TESTER_FEATURES`, then restart. Backend only, no UI reads it. Retire once
-	 * the intro is on for everyone.
-	 */
-	AGENT_INTRO_ONE_TO_ONE: 'agent-intro-1-1',
-	/**
-	 * Gates routing of chat-started work back to the chat it started in (bet
-	 * [A new agent introduces itself in a 1-1 chat with the person it was made for](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e9cec236-3251-487c-ad5b-a334b525a0f2)).
-	 * Actor-scoped on the human whose For You feed changes, read with
-	 * `isFlagEnabled(humanId, ...)`. Off means a human @mention in an agent comment
-	 * reaches For You and a helper returns to its object, as today. Rollout: the
-	 * tester's actor id in `FF_TESTER_ACTOR_IDS` and this id in `FF_TESTER_FEATURES`,
-	 * then restart. Backend only, no UI reads it. Retire once routing is on for
-	 * everyone.
-	 */
-	CHAT_ORIGIN_OUTPUT_ROUTING: 'chat-origin-output-routing',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -89,9 +89,6 @@ function ConversationThreadPage() {
 	const producedEnabled = useFeatureFlag('graph-provenance-writes')
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const producedRequested = producedEnabled && !!producedSearch
-	// Agent intro buttons and tool rows (bet e9cec236, slice 5a): one read here, one
-	// boolean down. Off is today's chat: the intro shows as its plain text.
-	const agentIntroEnabled = useFeatureFlag('agent-intro-1-1')
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A fill step asks the composer to take its prompt; a send step asks it only to
 	// take focus, so the person can follow up (the tapped button is gone by then).
@@ -252,7 +249,6 @@ function ConversationThreadPage() {
 						v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 						v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 						producedEnabled={producedEnabled}
-						suggestedStepsEnabled={agentIntroEnabled}
 						onPickStep={requestComposer}
 						onSendStep={sendStep}
 						sendingStep={sendMessage.isPending}

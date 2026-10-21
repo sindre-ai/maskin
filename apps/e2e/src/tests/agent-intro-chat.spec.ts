@@ -4,25 +4,12 @@ import { VIEWPORTS } from '../helpers/viewports'
 
 /**
  * A new agent introduces itself in a 1-1 chat "Meet {name}" with the person who
- * created it, behind the agent-intro-1-1 flag (bet/e9ce-agent-intro-chat-routing,
- * slice 2). The flag is actor-scoped and read on the server, so this spec only
- * has something to assert when the stack under test lists the test actor in
- * FF_TESTER_ACTOR_IDS and the flag in FF_TESTER_FEATURES. CI does not set them,
- * so there the spec stays out of the way instead of failing.
+ * created it (bet/e9ce-agent-intro-chat-routing, slice 2).
  *
  * Not covered here: an agent reply to a message in the intro chat, and asking
  * Chief of Staff in the UI to create an agent. Both need a workspace with real
  * LLM credentials, which the e2e stack does not have.
  */
-
-async function introFlagIsOn(page: Page, apiKey: string): Promise<boolean> {
-	return page.evaluate(async (key) => {
-		const res = await fetch('/api/feature-flags', { headers: { Authorization: `Bearer ${key}` } })
-		if (!res.ok) return false
-		const body = (await res.json()) as { flags?: Record<string, boolean> }
-		return body.flags?.['agent-intro-1-1'] === true
-	}, apiKey)
-}
 
 test.describe('Agent intro chat', () => {
 	test('creating an agent in the UI puts an unread "Meet {name}" chat with its intro in the list', async ({
@@ -30,10 +17,6 @@ test.describe('Agent intro chat', () => {
 		account,
 	}) => {
 		await page.goto(`/${account.workspaceId}/chats`)
-		test.skip(
-			!(await introFlagIsOn(page, account.apiKey)),
-			'agent-intro-1-1 is not on for the test actor in this stack',
-		)
 
 		const name = `Intro Agent ${Date.now()}`
 		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
@@ -54,7 +37,7 @@ test.describe('Agent intro chat', () => {
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()
 		await expect(
-			page.getByText('Start with one of these, or tell me what you need.').first(),
+			page.getByText('How can I help? Start with one of these, or tell me what you need.').first(),
 		).toBeVisible()
 	})
 })
@@ -107,7 +90,6 @@ async function stubIntroThread(page: Page, conversationId: string) {
 	// What the server would return: oldest first here, newest first on the wire. A sent
 	// message joins the thread, or the refetch after the send would drop it again.
 	const thread: Array<Record<string, unknown>> = [intro]
-	await page.addInitScript(() => localStorage.setItem('ff:agent-intro-1-1', 'on'))
 	await page.route('**/api/conversations/*/messages*', async (route) => {
 		const method = route.request().method()
 		if (method === 'POST') {
