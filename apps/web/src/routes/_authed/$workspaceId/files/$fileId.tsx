@@ -270,6 +270,8 @@ function FileViewerPage() {
 				const postedTempIds: string[] = []
 				for (const draft of drafts) {
 					if (draft.body.trim().length === 0) continue
+					// Text comments never go into a round: nothing hands the quote to an agent.
+					if (draft.textAnchor) continue
 					try {
 						const posted = await createComment.mutateAsync({
 							body: draft.body,
@@ -291,7 +293,7 @@ function FileViewerPage() {
 					}
 				}
 				for (const row of comments) {
-					if (row.roundId === null) commentIds.push(row.id)
+					if (row.roundId === null && !row.textAnchor) commentIds.push(row.id)
 				}
 				if (commentIds.length === 0) {
 					setSendPhase('idle')
@@ -381,10 +383,12 @@ function FileViewerPage() {
 				textAnchor: anchor,
 				body,
 			})
-			setPanelOpen(true)
+			// Below lg the panel is a sheet that would cover the document right after
+			// saving; the Comments count in the header already shows the new draft.
+			if (panelLayout === 'inline') setPanelOpen(true)
 			setActiveCommentId(draft.tempId)
 		},
-		[addDraft, fileId],
+		[addDraft, fileId, panelLayout],
 	)
 	const handleOrphansChange = useCallback((ids: string[]) => setOrphanedIds(new Set(ids)), [])
 
