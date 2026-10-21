@@ -2548,11 +2548,26 @@ export function createMcpServer(config: McpConfig) {
 			baseDefinition?.inputSchema && needsNormalise(name)
 				? {
 						...baseDefinition,
-						inputSchema: wrapInputSchema(
-							baseDefinition.inputSchema,
-							(raw) =>
-								normaliseArgs(name, raw, { defaultWorkspaceId: config.defaultWorkspaceId }).args,
-						),
+						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
+							const normalised = normaliseArgs(name, raw, {
+								defaultWorkspaceId: config.defaultWorkspaceId,
+							})
+							// One event per call that used at least one old name. Here, not in
+							// the handler, so it fires before validation and a call that then
+							// fails validation is still counted. Fire and forget; key names
+							// only. A separate event type from tool_call, so the server-side
+							// trace is not double counted.
+							if (normalised.renames.length > 0) {
+								recordAliasUse(telemetrySink, telemetryTarget, {
+									tool_name: name,
+									workspace_id: extractWorkspaceId(raw),
+									renames: normalised.renames,
+									both_sent: normalised.bothSent,
+									transport: config.transport,
+								})
+							}
+							return normalised.args
+						}),
 					}
 				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
@@ -6385,12 +6400,10 @@ export function createMcpServer(config: McpConfig) {
 	//                                                   when the wait times out
 	//   config, poll_interval_seconds, timeout_seconds,
 	//   depends_on_session_ids                          no equivalent, dropped, names recorded
-	// The upstream signature types a schema OBJECT as either a raw shape or a
-	// schema it can infer, and rejects a passthrough object. Every other tool
-	// passes `.shape`, which the SDK rebuilds as a stripping object. This one must
-	// keep unknown keys until the handler runs, so it is registered through the
-	// same wrapper with the narrow type spelled out here.
-	const registerPassthroughTool = registerAppTool as unknown as (
+	// The upstream signature accepts a raw shape; this tool passes a schema object
+	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
+	// here. It is still registered through the same wrapper as every other tool.
+	const registerWrappedSchemaTool = registerAppTool as unknown as (
 		s: typeof server,
 		name: string,
 		definition: {
@@ -6400,25 +6413,33 @@ export function createMcpServer(config: McpConfig) {
 		},
 		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
 	) => unknown
-	registerPassthroughTool(
+	registerWrappedSchemaTool(
 		server,
 		'run_agent',
 		{
 			description: tools.run_agent.description,
-			inputSchema: tools.run_agent.inputSchema,
+			// The dropped key names are read in this preprocess step, before the
+			// schema strips them, and before validation, so a call that then fails
+			// validation is still counted. Same wrapper the alias rows use; this
+			// tool has no alias rows, so registerAppTool leaves the schema as given.
+			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
+				const sent =
+					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+						? (raw as Record<string, unknown>)
+						: {}
+				recordAliasUse(telemetrySink, telemetryTarget, {
+					tool_name: 'run_agent',
+					workspace_id: extractWorkspaceId(raw),
+					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
+					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+					transport: config.transport,
+				})
+				return raw
+			}),
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
-			const droppedKeys = RUN_AGENT_DROPPED_KEYS.filter((key) => key in args)
-			// Before the wait, which can hold this call open for about 11 minutes.
-			recordAliasUse(telemetrySink, telemetryTarget, {
-				tool_name: 'run_agent',
-				workspace_id,
-				dropped_keys: droppedKeys,
-				tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
-				transport: config.transport,
-			})
 			return createSessionAndWait(config, {
 				workspace_id: workspace_id ?? config.defaultWorkspaceId,
 				actor_id,

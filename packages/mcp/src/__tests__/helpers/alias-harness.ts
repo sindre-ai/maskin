@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createMcpServer } from '../../server'
+import type { TelemetrySink } from '../../telemetry'
 
 // A real McpServer wired to a real MCP client over an in-memory transport, with
 // the upstream Maskin API replaced by a local HTTP server that records what the
@@ -33,7 +34,13 @@ export interface AliasHarness {
 }
 
 export async function startAliasHarness(
-	opts: { defaultWorkspaceId?: string } = {},
+	opts: {
+		defaultWorkspaceId?: string
+		/** Receives every telemetry event the server emits. Defaults to a no-op. */
+		telemetrySink?: TelemetrySink
+		/** Answers an API request with this body instead of the empty envelope. */
+		respond?: (req: { method: string; path: string }) => unknown
+	} = {},
 ): Promise<AliasHarness> {
 	let recorded: RecordedRequest[] = []
 	const api: Server = createServer((req, res) => {
@@ -55,6 +62,11 @@ export async function startAliasHarness(
 				workspace: req.headers['x-workspace-id'] as string | undefined,
 			})
 			res.setHeader('content-type', 'application/json')
+			const custom = opts.respond?.({ method: req.method ?? '', path: req.url ?? '' })
+			if (custom !== undefined) {
+				res.end(JSON.stringify(custom))
+				return
+			}
 			// List routes answer with an array, everything else with an empty envelope.
 			const isList = req.method === 'GET' && /^\/api\/(objects|sessions)(\?|$)/.test(req.url ?? '')
 			res.end(JSON.stringify(isList ? [] : { nodes: [], edges: [], objects: [], sessions: [] }))
@@ -67,7 +79,7 @@ export async function startAliasHarness(
 		apiBaseUrl: `http://localhost:${port}`,
 		apiKey: 'ank_alias_harness',
 		defaultWorkspaceId: opts.defaultWorkspaceId ?? DEFAULT_WORKSPACE_ID,
-		telemetrySink: () => {},
+		telemetrySink: opts.telemetrySink ?? (() => {}),
 	})
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 	const client = new Client({ name: 'alias-harness', version: '0.0.0' })

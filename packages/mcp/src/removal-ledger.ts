@@ -25,6 +25,6 @@ export const REMOVAL_LEDGER: readonly RemovalEntry[] = [
 		removed: '2026-10-12',
 		sweepDate: '2026-10-15',
 		decision:
-			'Removed in PR 1986. Restored as a listed alias of create_session (CTO decision D5), built in the old-name event task.',
+			'Removed in PR 1986. Restored as a listed alias of create_session (CTO decision D5): live in tools/list, see tool-aliases.ts. Not removed on a zero count alone; earliest removal is late January 2027, after another cross-workspace prompt sweep.',
 	},
 ]

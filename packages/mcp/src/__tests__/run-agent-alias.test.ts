@@ -17,7 +17,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { createMcpServer } from '../server'
-import type { TelemetryEvent } from '../telemetry'
+import { REMOVAL_LEDGER } from '../removal-ledger'
 import { MAX_LISTED_TOOL_ALIASES, TOOL_NAME_ALIASES } from '../tool-aliases'
 import { tools } from '../tools'
 
@@ -25,14 +25,15 @@ const wsDefault = '00000000-0000-0000-0000-0000000000aa'
 const actorId = '00000000-0000-0000-0000-0000000000bb'
 const promptText = 'Summarise the Nakatomi account'
 
-describe('run_agent listed alias of create_session', () => {
-	let recorded: TelemetryEvent[]
+// The handler's mapping. Argument validation, the key stripping and the alias_use
+// event happen in the schema's preprocess step, which only the real SDK path runs;
+// those are tested in alias-use-event.test.ts.
+describe('run_agent handler: mapping onto create_session with wait on', () => {
 	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
 	let definitions: Map<string, { description?: string; inputSchema?: unknown }>
 
 	beforeEach(() => {
 		vi.clearAllMocks()
-		recorded = []
 		handlers = new Map()
 		definitions = new Map()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, def, handler) => {
@@ -43,9 +44,7 @@ describe('run_agent listed alias of create_session', () => {
 			apiBaseUrl: 'http://localhost:3000',
 			apiKey: 'ank_testkey',
 			defaultWorkspaceId: wsDefault,
-			telemetrySink: (event) => {
-				recorded.push(event)
-			},
+			telemetrySink: () => {},
 		})
 	})
 
@@ -77,11 +76,6 @@ describe('run_agent listed alias of create_session', () => {
 		return (await resultPromise) as { content: Array<{ text: string }> }
 	}
 
-	const aliasEvents = () =>
-		recorded.filter((e): e is Extract<TelemetryEvent, { event_type: 'alias_use' }> => {
-			return e.event_type === 'alias_use'
-		})
-
 	it('is registered through the wrapper with a one line deprecated description', () => {
 		const def = definitions.get('run_agent')
 		expect(def).toBeDefined()
@@ -92,18 +86,6 @@ describe('run_agent listed alias of create_session', () => {
 
 	it('points at a tool that is itself registered', () => {
 		expect(handlers.has(TOOL_NAME_ALIASES.run_agent)).toBe(true)
-	})
-
-	it('keeps the keys it will drop on the parsed arguments, so their names can be recorded', () => {
-		const parsed = tools.run_agent.inputSchema.parse({
-			actor_id: actorId,
-			action_prompt: promptText,
-			config: { runtime: 'codex' },
-			timeout_seconds: 120,
-		}) as Record<string, unknown>
-		expect(Object.keys(parsed)).toEqual(
-			expect.arrayContaining(['actor_id', 'action_prompt', 'config', 'timeout_seconds']),
-		)
 	})
 
 	it('creates a session and returns the shape create_session returns with wait on', async () => {
@@ -152,7 +134,7 @@ describe('run_agent listed alias of create_session', () => {
 		expect(headers['X-Workspace-Id']).toBe(other)
 	})
 
-	it('carries actor_id, action_prompt and spawned_by_message_id over and sends no dropped key', async () => {
+	it('carries actor_id, action_prompt and spawned_by_message_id over and never sends the dropped keys', async () => {
 		vi.useFakeTimers()
 		const fetchSpy = mockSessionCompletes()
 
@@ -183,86 +165,6 @@ describe('run_agent listed alias of create_session', () => {
 		}
 		expect(body).not.toHaveProperty('wait')
 	})
-
-	it('records one alias_use event naming the tool alias and the dropped key names', async () => {
-		vi.useFakeTimers()
-		mockSessionCompletes()
-
-		await callRunAgent({
-			actor_id: actorId,
-			action_prompt: promptText,
-			config: { runtime: 'codex' },
-			timeout_seconds: 120,
-		})
-
-		const events = aliasEvents()
-		expect(events).toHaveLength(1)
-		expect(events[0]).toMatchObject({
-			event_type: 'alias_use',
-			tool_name: 'run_agent',
-			renames: [],
-			both_sent: false,
-			dropped_keys: ['config', 'timeout_seconds'],
-			tool_alias: { old: 'run_agent', new: 'create_session' },
-		})
-	})
-
-	it('omits dropped_keys when the caller sent none', async () => {
-		vi.useFakeTimers()
-		mockSessionCompletes()
-
-		await callRunAgent({ actor_id: actorId, action_prompt: promptText })
-
-		expect(aliasEvents()).toHaveLength(1)
-		expect(aliasEvents()[0].dropped_keys).toBeUndefined()
-	})
-
-	it('puts no argument value in the event', async () => {
-		vi.useFakeTimers()
-		mockSessionCompletes()
-
-		await callRunAgent({
-			actor_id: actorId,
-			action_prompt: promptText,
-			config: { runtime: 'codex' },
-		})
-
-		const serialised = JSON.stringify(aliasEvents()[0])
-		expect(serialised).not.toContain(promptText)
-		expect(serialised).not.toContain(actorId)
-		expect(serialised).not.toContain('codex')
-	})
-
-	it('emits the event before the wait, so a call that never settles is still counted', async () => {
-		vi.useFakeTimers()
-		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-			ok: true,
-			json: () => Promise.resolve({ id: 'sess-n', status: 'running' }),
-		} as Response)
-
-		const handler = handlers.get('run_agent')
-		if (!handler) throw new Error('run_agent is not registered')
-		const pending = handler({ actor_id: actorId, action_prompt: promptText })
-		await vi.advanceTimersByTimeAsync(1000)
-
-		expect(aliasEvents()).toHaveLength(1)
-		await vi.advanceTimersByTimeAsync(3_800_000)
-		await pending
-	})
-
-	it('records one tool_call and one alias_use for a single call, no duplicate', async () => {
-		vi.useFakeTimers()
-		mockSessionCompletes()
-
-		await callRunAgent({ actor_id: actorId, action_prompt: promptText })
-
-		const runAgentToolCalls = recorded.filter(
-			(e) => e.event_type === 'tool_call' && e.tool_name === 'run_agent',
-		)
-		expect(runAgentToolCalls).toHaveLength(1)
-		expect(recorded.filter((e) => e.event_type === 'tool_call')).toHaveLength(1)
-		expect(aliasEvents()).toHaveLength(1)
-	})
 })
 
 describe('tool-name alias cap', () => {
@@ -287,6 +189,16 @@ describe('tool-name alias cap', () => {
 			expect(def.description).toMatch(/^Deprecated, use /)
 			expect(def.description).toContain(target)
 			expect(def.description).not.toContain('\n')
+		}
+	})
+
+	it('shows every alias as a live listed alias in the removal ledger, with a sweep date', () => {
+		for (const [oldName, target] of Object.entries(TOOL_NAME_ALIASES)) {
+			const entry = REMOVAL_LEDGER.find((e) => e.tool === oldName && e.path === undefined)
+			expect(entry, `${oldName} has no removal ledger entry`).toBeDefined()
+			expect(entry?.sweepDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+			expect(entry?.decision).toContain(`listed alias of ${target}`)
+			expect(entry?.decision).toContain('live in tools/list')
 		}
 	})
 })
