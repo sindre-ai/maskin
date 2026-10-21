@@ -191,8 +191,9 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByRole('option', { name, exact: true })).toBeVisible()
 		}
 		await expect(page.getByRole('option', { name: 'Ask first' })).toHaveCount(0)
+		// Read is the default here, so choosing it drops the agent's own entry.
 		await page.getByRole('option', { name: 'Read', exact: true }).click()
-		await expect(level).toContainText('Read')
-		expect(state.agentGrants).toEqual([{ actorId: writer.id, access: 'read' }])
+		await expect(level).toHaveCount(0)
+		expect(state.agentGrants).toEqual([])
 	})
 }

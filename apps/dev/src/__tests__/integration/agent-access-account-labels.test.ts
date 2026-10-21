@@ -73,3 +73,27 @@ describe('describeAgentAccess names (Integration)', () => {
 		expect(names.every((n) => n.startsWith('LinkedIn ('))).toBe(true)
 	})
 })
+
+describe('describeAgentAccess saved-key default (Integration)', () => {
+	it('shows a saved key as on only when its default is read', async () => {
+		const s = await setup()
+		const key = (displayName: string, defaultAgentAccess: 'none' | 'read' | 'read_write') =>
+			connect(s, 'custom', {
+				providerMode: 'byo_apikey',
+				displayName,
+				defaultAgentAccess,
+			})
+		await key('Off key', 'none')
+		await key('On key', 'read')
+		await key('Read and write key', 'read_write')
+
+		const view = await describeAgentAccess(db, s.ws.id, s.agent.id)
+
+		const byName = Object.fromEntries(view.credentials.map((c) => [c.name, c]))
+		expect(byName['Off key'].default_access).toBe('none')
+		expect(byName['On key'].default_access).toBe('read')
+		// effectiveAccess treats anything but 'read' as off, so the screen must not say 'read'.
+		expect(byName['Read and write key'].default_access).toBe('none')
+		expect(byName['Read and write key'].has_access).toBe(false)
+	})
+})
