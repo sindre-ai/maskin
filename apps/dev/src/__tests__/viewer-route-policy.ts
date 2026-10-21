@@ -81,6 +81,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'registers a Live Activity token for the caller\u2019s own device',
 	],
 	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
+	// Device sign-in (Apple TV): start/token are public and write only the device's own code row;
+	// approve/deny act on a code, not on workspace data, so a read-only viewer can still sign in a TV.
+	['POST', '/api/device-auth/start', 'public, creates only the device\u2019s own sign-in code'],
+	['POST', '/api/device-auth/token', 'public, polls the device\u2019s own sign-in code'],
+	['POST', '/api/device-auth/approve', 'approves a sign-in code for the caller\u2019s own account'],
+	['POST', '/api/device-auth/deny', 'refuses a sign-in code, no workspace data'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
