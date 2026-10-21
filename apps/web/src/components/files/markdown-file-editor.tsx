@@ -24,8 +24,10 @@ export const READ_ONLY_FILE_BANNER =
 const noop = () => undefined
 
 // The editor mounts with the read view's typography (shared prose class), so
-// Rendered looks the same before and after you start typing.
-const EDITOR_CLASS = '[&_.ProseMirror]:min-h-40 [&_.ProseMirror]:outline-none'
+// Rendered looks the same before and after you start typing. Selects the editable
+// root by attribute: the editor's own class name in this file would put the
+// string into the main chunk, which assert-editor-chunk rejects.
+const EDITOR_CLASS = '[&_[contenteditable]]:min-h-40 [&_[contenteditable]]:outline-none'
 
 // The wrapper ring is the only focus cue while the file is editable: 2px
 // brand-subtle inside, 3px brand outside, on a plain background (v2 File page).
