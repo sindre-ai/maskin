@@ -368,7 +368,7 @@ describe('Session route access', () => {
 			return { rows, ids: rows.map((row) => row.id), raw: JSON.stringify(rows) }
 		}
 
-		it('hides another member\'s private session, lean and verbose', async () => {
+		it("hides another member's private session, lean and verbose", async () => {
 			const session = await personSession({ actionPrompt: SECRET })
 
 			for (const qs of ['', '?verbose=true']) {
@@ -412,7 +412,7 @@ describe('Session route access', () => {
 			}
 		})
 
-		it('shows a chat\'s sessions only to people still in the chat', async () => {
+		it("shows a chat's sessions only to people still in the chat", async () => {
 			const conversationId = await chat([starterId, otherMemberId])
 			const session = await personSession({ interactive: true, conversationId })
 			const helper = await personSession({ config: { ask_conversation_id: conversationId } })
@@ -474,7 +474,10 @@ describe('Session route access', () => {
 					if (rows.length === 0) break
 					seen.push(...rows.map((row) => row.id))
 					const last = rows[rows.length - 1]
-					const [row] = await db.select().from(sessions).where(eq(sessions.id, last?.id ?? ''))
+					const [row] = await db
+						.select()
+						.from(sessions)
+						.where(eq(sessions.id, last?.id ?? ''))
 					before = `&before=${encodeURIComponent((row?.updatedAt as Date).toISOString())}`
 				}
 				expect(seen, verbose).toEqual(visible)
