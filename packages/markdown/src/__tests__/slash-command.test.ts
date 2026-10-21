@@ -50,9 +50,18 @@ function mount(content = ''): Harness {
 	return { editor, states, destroyed, onCommandUsed }
 }
 
+/**
+ * The suggestion plugin awaits the item list before it opens or updates the
+ * menu, so the view only sees a keystroke one tick after the transaction.
+ */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
 /** Types a string at the end of the document, one character at a time. */
-function type(editor: Editor, text: string) {
-	for (const char of text) editor.commands.insertContent(char)
+async function type(editor: Editor, text: string) {
+	for (const char of text) {
+		editor.commands.insertContent(char)
+		await settle()
+	}
 }
 
 describe('SLASH_ITEMS', () => {
@@ -125,57 +134,58 @@ describe('SlashCommand extension', () => {
 		harness = undefined
 	})
 
-	it('opens on / at the start of a block and reports itself active', () => {
+	it('opens on / at the start of a block and reports itself active', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		expect(harness.states.length).toBeGreaterThan(0)
 		expect(harness.states[0]?.items).toHaveLength(8)
 		expect(harness.editor.storage.suggestion.active).toBe(true)
 	})
 
-	it('opens on / after whitespace', () => {
+	it('opens on / after whitespace', async () => {
 		harness = mount()
-		type(harness.editor, 'hello /')
+		await type(harness.editor, 'hello /')
 		expect(harness.states.length).toBeGreaterThan(0)
 	})
 
-	it('does not open on / in the middle of a word', () => {
+	it('does not open on / in the middle of a word', async () => {
 		harness = mount()
-		type(harness.editor, 'and/')
+		await type(harness.editor, 'and/')
 		expect(harness.states).toHaveLength(0)
 		expect(harness.editor.storage.suggestion.active).toBe(false)
 	})
 
-	it('does not open inside a code block', () => {
+	it('does not open inside a code block', async () => {
 		harness = mount('<pre><code></code></pre>')
 		harness.editor.commands.focus('end')
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		expect(harness.states).toHaveLength(0)
 	})
 
-	it('filters as the query grows and closes when a spaced query matches nothing', () => {
+	it('filters as the query grows and closes when a spaced query matches nothing', async () => {
 		harness = mount()
-		type(harness.editor, '/head')
+		await type(harness.editor, '/head')
 		expect(harness.states.at(-1)?.items.map((i) => i.id)).toEqual(['heading', 'subheading'])
-		type(harness.editor, 'zzz yyy')
+		await type(harness.editor, 'zzz yyy')
 		expect(harness.editor.storage.suggestion.active).toBe(false)
 		expect(harness.destroyed).toHaveBeenCalled()
 	})
 
-	it('stays closed after dismiss until the slash is typed again', () => {
+	it('stays closed after dismiss until the slash is typed again', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		harness.states.at(-1)?.dismiss()
+		await settle()
 		expect(harness.editor.storage.suggestion.active).toBe(false)
 		// The slash is still in the document.
 		expect(harness.editor.getText()).toBe('/')
-		type(harness.editor, 'h')
+		await type(harness.editor, 'h')
 		expect(harness.editor.storage.suggestion.active).toBe(false)
 	})
 
-	it('inserts Heading as a level 2 heading and removes the typed query', () => {
+	it('inserts Heading as a level 2 heading and removes the typed query', async () => {
 		harness = mount()
-		type(harness.editor, '/head')
+		await type(harness.editor, '/head')
 		const heading = harness.states.at(-1)?.items.find((i) => i.id === 'heading')
 		expect(heading).toBeDefined()
 		if (heading) harness.states.at(-1)?.select(heading)
@@ -186,25 +196,25 @@ describe('SlashCommand extension', () => {
 		expect(harness.onCommandUsed).toHaveBeenCalledWith('heading')
 	})
 
-	it('inserts Subheading as a level 3 heading', () => {
+	it('inserts Subheading as a level 3 heading', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		const item = SLASH_ITEMS.find((i) => i.id === 'subheading')
 		if (item) harness.states.at(-1)?.select(item)
 		expect(harness.editor.getJSON().content?.[0]?.attrs?.level).toBe(3)
 	})
 
-	it('inserts a bulleted list', () => {
+	it('inserts a bulleted list', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		const item = SLASH_ITEMS.find((i) => i.id === 'bulleted-list')
 		if (item) harness.states.at(-1)?.select(item)
 		expect(harness.editor.getJSON().content?.[0]?.type).toBe('bulletList')
 	})
 
-	it('inserts a code block, plain text by default and with a language when given one', () => {
+	it('inserts a code block, plain text by default and with a language when given one', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		const item = SLASH_ITEMS.find((i) => i.id === 'code-block')
 		if (item) harness.states.at(-1)?.select(item)
 		const plain = harness.editor.getJSON().content?.[0]
@@ -212,14 +222,14 @@ describe('SlashCommand extension', () => {
 		expect(plain?.attrs?.language ?? null).toBeNull()
 
 		harness.editor.commands.setContent('')
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		if (item) harness.states.at(-1)?.select(item, { language: 'python' })
 		expect(harness.editor.getJSON().content?.[0]?.attrs?.language).toBe('python')
 	})
 
-	it('inserts a divider', () => {
+	it('inserts a divider', async () => {
 		harness = mount()
-		type(harness.editor, '/')
+		await type(harness.editor, '/')
 		const item = SLASH_ITEMS.find((i) => i.id === 'divider')
 		if (item) harness.states.at(-1)?.select(item)
 		expect(harness.editor.getJSON().content?.some((n) => n.type === 'horizontalRule')).toBe(true)
