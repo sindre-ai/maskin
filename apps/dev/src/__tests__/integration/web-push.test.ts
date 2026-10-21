@@ -39,7 +39,7 @@ describe('web_push_subscriptions', () => {
 	let actorB: string
 
 	beforeEach(async () => {
-		endpoint = `https://push.example.com/send/${crypto.randomUUID()}`
+		endpoint = `https://fcm.googleapis.com/send/${crypto.randomUUID()}`
 		actorA = (await insertActor(db))?.id as string
 		actorB = (await insertActor(db))?.id as string
 	})
@@ -112,7 +112,7 @@ describe('web_push_subscriptions', () => {
 
 	it('keeps at most MAX_SUBSCRIPTIONS_PER_ACTOR, dropping the least recently seen', async () => {
 		const app = appAs(actorA)
-		const oldest = `https://push.example.com/send/${crypto.randomUUID()}`
+		const oldest = `https://fcm.googleapis.com/send/${crypto.randomUUID()}`
 		await db.insert(webPushSubscriptions).values({
 			actorId: actorA,
 			endpoint: oldest,
@@ -125,7 +125,7 @@ describe('web_push_subscriptions', () => {
 				jsonRequest(
 					'POST',
 					'/api/web-push/subscriptions',
-					subscribeBody(`https://push.example.com/send/${crypto.randomUUID()}`),
+					subscribeBody(`https://fcm.googleapis.com/send/${crypto.randomUUID()}`),
 				),
 			)
 			expect(res.status).toBe(200)
@@ -139,8 +139,8 @@ describe('web_push_subscriptions', () => {
 	})
 
 	it('WebPushSender prunes a subscription the push service reports gone (410) and keeps live ones', async () => {
-		const gone = `https://push.example.com/gone/${crypto.randomUUID()}`
-		const live = `https://push.example.com/live/${crypto.randomUUID()}`
+		const gone = `https://fcm.googleapis.com/gone/${crypto.randomUUID()}`
+		const live = `https://fcm.googleapis.com/live/${crypto.randomUUID()}`
 		for (const e of [gone, live]) {
 			await db
 				.insert(webPushSubscriptions)

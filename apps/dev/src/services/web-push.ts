@@ -20,6 +20,7 @@
  */
 import type { Database } from '@maskin/db'
 import { webPushSubscriptions } from '@maskin/db/schema'
+import { isAllowedWebPushEndpoint } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import webpush from 'web-push'
 import { logger } from '../lib/logger'
@@ -196,6 +197,15 @@ export class WebPushSender implements PushChannel {
 
 			await Promise.all(
 				subs.map(async (sub) => {
+					// Re-checked at send time: rows stored before the allowlist, or written some other
+					// way, must never make the server call an arbitrary host. Drop them.
+					if (!isAllowedWebPushEndpoint(sub.endpoint)) {
+						await this.db.delete(webPushSubscriptions).where(eq(webPushSubscriptions.id, sub.id))
+						logger.warn('Web Push subscription has a non-push-service endpoint, removed', {
+							subscriptionId: sub.id,
+						})
+						return
+					}
 					try {
 						const res = await this.transport.send(
 							config,

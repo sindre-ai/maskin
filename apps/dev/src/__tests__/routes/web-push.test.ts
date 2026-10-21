@@ -67,6 +67,13 @@ describe('POST /api/web-push/subscriptions', () => {
 		['missing keys', { endpoint }],
 		['non-base64url auth', { endpoint, keys: { p256dh: keys.p256dh, auth: 'not base64!!' } }],
 		['endpoint over 2048 chars', { endpoint: `https://x.example.com/${'a'.repeat(2100)}`, keys }],
+		['loopback host', { endpoint: 'https://localhost/x', keys }],
+		['cloud metadata IP', { endpoint: 'https://169.254.169.254/latest/meta-data', keys }],
+		['private IP', { endpoint: 'https://10.0.0.5/x', keys }],
+		['internal hostname', { endpoint: 'https://postgres.internal/x', keys }],
+		['lookalike host', { endpoint: 'https://fcm.googleapis.com.evil.test/x', keys }],
+		['credentials in URL', { endpoint: 'https://fcm.googleapis.com@127.0.0.1/x', keys }],
+		['non-default port', { endpoint: 'https://fcm.googleapis.com:8443/x', keys }],
 	])('rejects %s with 400', async (_name, body) => {
 		const { app } = createTestApp(webPushRoutes, '/api/web-push')
 		const res = await app.request(jsonRequest('POST', '/api/web-push/subscriptions', body))

@@ -42,7 +42,7 @@ async function installFakePushApi(page: Page, opts: { permission: NotificationPe
 						return endpoint ? makeSub(endpoint) : null
 					},
 					async subscribe() {
-						const endpoint = `https://push.example.test/send/${crypto.randomUUID()}`
+						const endpoint = `https://fcm.googleapis.com/fcm/send/${crypto.randomUUID()}`
 						sessionStorage.setItem(KEY, endpoint)
 						return makeSub(endpoint)
 					},

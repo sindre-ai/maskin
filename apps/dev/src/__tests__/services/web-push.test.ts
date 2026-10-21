@@ -19,7 +19,7 @@ const config: WebPushConfig = {
 const sub = (over: Record<string, unknown> = {}) => ({
 	id: 'sub-1',
 	actorId: 'actor-1',
-	endpoint: 'https://push.example.com/send/abc',
+	endpoint: 'https://fcm.googleapis.com/send/abc',
 	p256dh: 'p256dhKey',
 	auth: 'authKey',
 	userAgent: null,
@@ -117,17 +117,28 @@ describe('WebPushSender', () => {
 	it('sends to every subscription with the stored keys', async () => {
 		const transport = { send: vi.fn().mockResolvedValue({ status: 201 }) }
 		const { sender } = setup(
-			[sub(), sub({ id: 'sub-2', endpoint: 'https://push.example.com/2' })],
+			[sub(), sub({ id: 'sub-2', endpoint: 'https://fcm.googleapis.com/2' })],
 			transport,
 		)
 		await sender.sendToActor('actor-1', msg)
 		expect(transport.send).toHaveBeenCalledTimes(2)
 		const [, target, body] = transport.send.mock.calls[0] ?? []
 		expect(target).toEqual({
-			endpoint: 'https://push.example.com/send/abc',
+			endpoint: 'https://fcm.googleapis.com/send/abc',
 			keys: { p256dh: 'p256dhKey', auth: 'authKey' },
 		})
 		expect(JSON.parse(body)).toMatchObject({ title: 'Bet shipped', url: '/ws-1/notifications' })
+	})
+
+	it('never calls a stored endpoint that is not a push service, and removes the row', async () => {
+		const transport = { send: vi.fn().mockResolvedValue({ status: 201 }) }
+		const { sender, del } = setup(
+			[sub({ endpoint: 'https://169.254.169.254/latest/meta-data' })],
+			transport,
+		)
+		await sender.sendToActor('actor-1', msg)
+		expect(transport.send).not.toHaveBeenCalled()
+		expect(del).toHaveBeenCalled()
 	})
 
 	it.each([404, 410])('deletes the subscription on %i', async (status) => {
