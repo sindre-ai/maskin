@@ -257,7 +257,7 @@ export function GroupedProviderRow({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
-	const [expanded, setExpanded] = useState(installations.length > 1)
+	const [expanded, setExpanded] = useState(false)
 	const count = installations.length
 
 	// LinkedIn installs are per-member: the row carries `actorId`, and the only

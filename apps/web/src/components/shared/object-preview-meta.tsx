@@ -22,10 +22,19 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 		...(preview.missing.length > 0 ? [`Missing: ${preview.missing.join(', ')}`] : []),
 		...preview.warnings,
 	]
-	if (rows.length === 0 && problems.length === 0) return null
+	if (rows.length === 0 && problems.length === 0 && !preview.context) return null
 
 	return (
 		<div className="flex flex-col gap-1">
+			{/* What the draft answers, so the text below is read in context. Not sent. */}
+			{preview.context ? (
+				<figure className="mb-1">
+					<figcaption className="text-[11px] text-muted-foreground">In reply to</figcaption>
+					<blockquote className="line-clamp-5 whitespace-pre-wrap border-l-2 border-border pl-2 text-[12.5px] text-muted-foreground">
+						{preview.context}
+					</blockquote>
+				</figure>
+			) : null}
 			{rows.length > 0 ? (
 				<dl className="flex flex-col gap-0.5 text-[12.5px]">
 					{rows.map((row) => (

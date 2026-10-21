@@ -28,6 +28,12 @@ export const objectPreviewSchema = z.object({
 	provider: z.string().nullable(),
 	recipients: z.array(previewRecipientSchema),
 	subject: z.string().nullable(),
+	/**
+	 * What the draft answers, as the person who wrote it said it (the LinkedIn message a reply
+	 * is to). Shown above the text so it is read in context. Not part of what is approved:
+	 * it is not sent, so it is not in `content_hash`.
+	 */
+	context: z.string().nullable().optional(),
 	/** The exact text that would go out. */
 	body: z.string(),
 	/** Longest body the channel accepts, when it has a limit worth showing. */
