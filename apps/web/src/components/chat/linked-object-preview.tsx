@@ -224,7 +224,7 @@ export function LinkedObjectCard({
 					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
 					    A very long text scrolls inside the card instead of being cut off. */}
-					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
+					<div className="max-h-50 overflow-y-auto px-3 pt-2 text-[13.5px]">
 						<MarkdownContent
 							content={shown}
 							size="sm"
