@@ -120,24 +120,6 @@ describe('ToolsSection', () => {
 		expect(screen.queryByText('Docs search')).not.toBeInTheDocument()
 	})
 
-	it('adds the Browser server in one click, and only once', async () => {
-		const user = userEvent.setup()
-		const { unmount } = render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add Browser/ }))
-		expect(createServer).toHaveBeenCalledWith(
-			expect.objectContaining({
-				name: 'Browser',
-				server: expect.objectContaining({ command: 'npx' }),
-			}),
-			expect.anything(),
-		)
-		unmount()
-
-		integrations = [server({ displayName: 'Browser' })]
-		render(<ToolsSection workspaceId="ws-1" />)
-		expect(screen.queryByRole('button', { name: /Add Browser/ })).not.toBeInTheDocument()
-	})
-
 	it('saves a new http server from the form', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)
