@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const useObject = vi.fn()
 const updateMutate = vi.fn()
 const sendMutate = vi.fn()
+const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => useObject(id),
+	useApproveObject: () => ({ mutate: approveMutate, isPending: false, error: null }),
 	useUpdateObject: () => ({ mutate: updateMutate, mutateAsync: vi.fn(), error: null }),
 }))
 vi.mock('@/hooks/use-conversation', () => ({
@@ -62,7 +64,6 @@ const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
-const CONTENT = `Draft: /objects/${ID}`
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -77,7 +78,7 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 }
 
 function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
-	return render(<LinkedObjectPreviews workspaceId={WS} content={CONTENT} {...props} />)
+	return render(<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} {...props} />)
 }
 
 // The card starts contracted; click its top to read the text.
@@ -90,6 +91,88 @@ describe('LinkedObjectPreviews', () => {
 		useObject.mockReset()
 		updateMutate.mockReset()
 		sendMutate.mockReset()
+		approveMutate.mockReset()
+	})
+
+	// What the server adds to an object an integration can deliver.
+	function previewOf(overrides: Record<string, unknown> = {}) {
+		return {
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			provider: 'linkedin-unipile',
+			recipients: [],
+			subject: null,
+			body: 'Hej Catja, tillykke med fusionen.',
+			maxLength: 8000,
+			missing: [],
+			warnings: [],
+			content_hash: 'hash-1',
+			delivery: { state: 'draft', at: null },
+			...overrides,
+		}
+	}
+
+	it('ends a draft in Approve and send, not the next phase, and tells the agent to send the text', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+		approveMutate.mockImplementation((_vars, options) => options.onSuccess())
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
+		expect(approveMutate).toHaveBeenCalledWith(
+			{ id: ID, contentHash: 'hash-1' },
+			expect.any(Object),
+		)
+		const message = sendMutate.mock.calls[0][0]
+		expect(message.metadata).toEqual({ mentions: [AGENT] })
+		expect(message.content).toContain(`passing object_id ${ID}`)
+		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+	})
+
+	it('shows what the draft answers and who it goes to, above the text', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				preview: previewOf({
+					context: 'We already have governance and culture.',
+					recipients: [{ role: 'to', name: 'Liz Benison', address: null }],
+				}),
+			}),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		const quoted = screen.getByText('We already have governance and culture.')
+		expect(screen.getByText('In reply to')).toBeInTheDocument()
+		expect(screen.getByText('Liz Benison')).toBeInTheDocument()
+		const text = screen.getByText(/tillykke med fusionen/)
+		expect(quoted.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('says so when nobody is filed as the recipient', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ warnings: ['To is not filed.'] }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByRole('alert')).toHaveTextContent('To is not filed.')
+	})
+
+	it('cannot approve a draft that is missing something', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ missing: ['Message'] }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByRole('button', { name: /Approve and send/ })).toBeDisabled()
+	})
+
+	it('shows a sent draft as sent, with nothing left to approve', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: previewOf({ delivery: { state: 'sent', at: null } }) }),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByText('Sent')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve and send/ })).not.toBeInTheDocument()
 	})
 
 	it('shows the title and text of an object the message links to', async () => {
@@ -101,8 +184,18 @@ describe('LinkedObjectPreviews', () => {
 		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
 	})
 
+	it('says what the object is about, from its metadata, on the contracted card', () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				metadata: { source: 'sales_conversation', channel: 'linkedin_dm', priority: 'P1' },
+			}),
+		})
+		renderCard()
+		expect(screen.getByText('LinkedIn message · P1')).toBeInTheDocument()
+	})
+
 	it('shows nothing when the message links to no object', () => {
-		const { container } = render(<LinkedObjectPreviews workspaceId={WS} content="No links" />)
+		const { container } = render(<LinkedObjectPreviews workspaceId={WS} objectIds={[]} />)
 		expect(container).toBeEmptyDOMElement()
 		expect(useObject).not.toHaveBeenCalled()
 	})
@@ -110,7 +203,7 @@ describe('LinkedObjectPreviews', () => {
 	it('shows no card for an object an earlier message already shows', () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		const { container } = render(
-			<LinkedObjectPreviews workspaceId={WS} content={CONTENT} skipIds={new Set([ID])} />,
+			<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} skipIds={new Set([ID])} />,
 		)
 		expect(container).toBeEmptyDOMElement()
 		expect(useObject).not.toHaveBeenCalled()
