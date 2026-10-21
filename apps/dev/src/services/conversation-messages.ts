@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { notifyChatReply } from './chat-notifications'
+import { notifyChatReply, resolveAnsweredQuestions } from './chat-notifications'
 
 export type InsertConversationMessageArgs = {
 	conversationId: string
@@ -106,6 +106,14 @@ export async function insertConversationMessage(
 		kind: args.kind,
 		metadata: args.metadata,
 		sessionId: args.sessionId,
+	})
+
+	// The person replying in the chat answers any agent question waiting on them there.
+	await resolveAnsweredQuestions(db, {
+		workspaceId: args.workspaceId,
+		conversationId: args.conversationId,
+		answererId: args.actorId,
+		messageId: created.id,
 	})
 
 	return created

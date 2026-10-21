@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { actors, conversationParticipants, notifications } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type Notification, insertNotificationsWithEvents } from '../lib/notifications'
 
@@ -254,6 +255,57 @@ export async function notifyChatReply(
 		logger.warn('Failed to create notification for chat reply', {
 			conversationId: msg.conversationId,
 			messageId: msg.messageId,
+			error: String(err),
+		})
+	}
+}
+
+/**
+ * The person answered in the chat: close the `needs_input` rows an agent question
+ * created for them in this conversation. Without this the question keeps its
+ * pending status, the "waiting on you" banner on its object and the app badge
+ * until somebody resolves it by hand. A silent resolve on purpose: unlike
+ * POST /notifications/:id/respond it does not wake the agent, because the chat
+ * answer already reaches it.
+ *
+ * Only rows created by `notifyAgentQuestion` match (push_category needs_you with a
+ * conversation_id and message_id) and only questions posted before this message,
+ * so a later question is never closed by an earlier answer. Best effort: logged
+ * and swallowed, never blocks the message.
+ */
+export async function resolveAnsweredQuestions(
+	db: Db,
+	args: { workspaceId: string; conversationId: string; answererId: string; messageId: number },
+): Promise<void> {
+	try {
+		const resolved = await db
+			.update(notifications)
+			.set({ status: 'resolved', resolvedAt: new Date(), updatedAt: new Date() })
+			.where(
+				and(
+					eq(notifications.targetActorId, args.answererId),
+					eq(notifications.type, 'needs_input'),
+					inArray(notifications.status, ['pending', 'seen']),
+					sql`${notifications.metadata}->>'conversation_id' = ${args.conversationId}`,
+					sql`${notifications.metadata}->>'push_category' = 'needs_you'`,
+					sql`${notifications.metadata}->>'message_id' ~ '^[0-9]+$'`,
+					sql`(${notifications.metadata}->>'message_id')::bigint < ${args.messageId}`,
+				),
+			)
+			.returning({ id: notifications.id })
+		for (const row of resolved) {
+			await recordEvent(db, {
+				workspaceId: args.workspaceId,
+				actorId: args.answererId,
+				action: 'resolved',
+				entityType: 'notification',
+				entityId: row.id,
+				data: { reason: 'answered_in_chat', message_id: args.messageId },
+			})
+		}
+	} catch (err) {
+		logger.warn('Failed to resolve answered agent questions', {
+			conversationId: args.conversationId,
 			error: String(err),
 		})
 	}

@@ -36,15 +36,7 @@ watchOS and tvOS have no push/URL entitlements here: the backend's single APNs t
 | root `image_url` | https image (<= 5 MB, 12 s timeout) attached to the banner. No producer yet: `PushMessage.imageUrl` exists, nothing sets it | extension |
 
 Failure behaviour: a bad payload, a failed or slow download, or the ~30 s budget expiring all still deliver the notification with whatever was ready (the decision category is set synchronously, the image is best effort).
-Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app (enable the capability on the App ID); without it iOS silently treats those pushes as `active`. It is not in `Maskin.entitlements` yet because it needs the portal change first.
-
-**TO ADD ONCE THE CAPABILITY IS ENABLED** (do not add earlier: an entitlement the App ID/profile lacks breaks signing). In `Apps/Maskin/Maskin.entitlements` (iOS) and `Apps/Maskin/Maskin-macOS.entitlements`, inside the top-level `<dict>`:
-
-```xml
-<!-- Enable "Time Sensitive Notifications" on App ID io.maskin.app and regenerate profiles first. -->
-<key>com.apple.developer.usernotifications.time-sensitive</key>
-<true/>
-```
+Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app and the "Time Sensitive Notifications" capability on App ID `io.maskin.app` (enabled 2026-10). It is in the iOS `Maskin.entitlements`; with automatic signing Xcode refreshes the provisioning profile on the next build. If a signed build fails with "profile doesn't include the time-sensitive entitlement", open Xcode > Settings > Accounts > Download Manual Profiles (or toggle automatic signing) once. Without the entitlement iOS silently treats those pushes as `active`. It is not in `Maskin-macOS.entitlements`: that file is Release-only and restricted, and nothing here needs it on macOS.
 
 ## Notification preferences, timezone, permission timing (client)
 - Settings > Notifications (`NotificationPreferencesSection`) edits `GET/PUT /api/notification-preferences`: Needs you is shown as "Always on" (not a switch; a workspace mute is the only way to quiet it, and even then decisions still arrive without breaking through Focus), Chat replies / Digests / Tips toggles, quiet hours (off by default), the daily briefing and its time, and a mute list of workspace names. Changes are optimistic with rollback and carry an `Idempotency-Key`. The PUT is hand-encoded (`NotificationPreferencesPatch.jsonBody`) because the generated payload cannot send `null`, which is how quiet hours and the timezone are cleared.

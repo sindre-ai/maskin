@@ -301,4 +301,85 @@ describe('push producers', () => {
 			}
 		})
 	})
+	describe('answering an agent question in the chat', () => {
+		async function ask(sessionId: string) {
+			const res = await createSessionsApp(agentId).request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${sessionId}/ask`,
+					{ questions: QUESTIONS },
+					{ 'X-Workspace-Id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+		}
+
+		async function askerSession() {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId,
+				status: 'running',
+			})
+			return (session as { id: string }).id
+		}
+
+		const humanReply = (actorId: string, inConversation = conversationId) =>
+			insertConversationMessage(db, {
+				conversationId: inConversation,
+				workspaceId,
+				actorId,
+				content: 'Use the API token.',
+				metadata: {},
+			})
+
+		it('resolves only the replying person\'s question rows, and records the resolve', async () => {
+			await ask(await askerSession())
+			await humanReply(humanId)
+
+			const rows = await rowsFor()
+			const mine = rows.find((r) => r.targetActorId === humanId)
+			const theirs = rows.find((r) => r.targetActorId === secondHumanId)
+			expect(mine).toMatchObject({ status: 'resolved' })
+			expect(mine?.resolvedAt).toBeTruthy()
+			expect(theirs).toMatchObject({ status: 'pending' })
+
+			const resolvedEvents = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityType, 'notification'), eq(events.action, 'resolved')))
+			expect(resolvedEvents.map((e) => e.entityId)).toEqual([mine?.id])
+		})
+
+		it('does not close a question asked after the answer, nor one in another chat', async () => {
+			const sessionId = await askerSession()
+			await ask(sessionId)
+			await humanReply(humanId)
+			await ask(sessionId)
+
+			const pendingMine = (await rowsFor()).filter(
+				(r) => r.targetActorId === humanId && r.status === 'pending',
+			)
+			expect(pendingMine).toHaveLength(1)
+
+			const [other] = await db
+				.insert(conversations)
+				.values({ workspaceId, title: 'Elsewhere', createdBy: humanId })
+				.returning()
+			await humanReply(humanId, (other as { id: string }).id)
+			const stillPending = (await rowsFor()).filter(
+				(r) => r.targetActorId === humanId && r.status === 'pending',
+			)
+			expect(stillPending).toHaveLength(1)
+		})
+
+		it('an agent message never resolves a human\'s question', async () => {
+			await ask(await askerSession())
+			await finalReply('turn-1')
+			const pending = (await rowsFor()).filter(
+				(r) => r.type === 'needs_input' && r.status === 'pending',
+			)
+			expect(pending).toHaveLength(2)
+		})
+	})
+
 })
