@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	commentDecisionSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
 } from '@maskin/shared'
@@ -462,7 +463,45 @@ export const messageReactionSchema = z.object({
 	actors: z.array(z.object({ actorId: z.string().uuid(), actorName: z.string() })),
 })
 
+export const messageDecisionStateSchema = z.object({
+	status: z.enum(['open', 'answered', 'withdrawn']),
+	forActorIds: z.array(z.string().uuid()),
+	attention: z.number().nullable(),
+	answerOptionIndex: z.number().nullable(),
+	answeredBy: z.string().uuid().nullable(),
+	answeredAt: z.string().nullable(),
+	withdrawnReason: z.string().nullable(),
+})
+
+/** One row of the decisions feed: a card addressed to the caller, with where to discuss it. */
+export const decisionFeedItemSchema = z.object({
+	message_id: z.number(),
+	conversation_id: z.string().uuid(),
+	conversation_title: z.string(),
+	/** The object the chat is about, when it is an object chat. */
+	object_id: z.string().uuid().nullable(),
+	content: z.string(),
+	decision: commentDecisionSchema,
+	attention: z.number().nullable(),
+	status: z.enum(['open', 'answered', 'withdrawn']),
+	/** Why the Chief of Staff or the poster took it back. */
+	withdrawn_reason: z.string().nullable(),
+	created_at: z.string().nullable(),
+	posted_by: z.object({ id: z.string().uuid(), name: z.string(), type: z.string() }),
+	/** Replies in the card's thread: the questions asked about it and the answers. */
+	reply_count: z.number(),
+	answer: z
+		.object({
+			option_index: z.number(),
+			answered_by: z.string().uuid().nullable(),
+			answered_at: z.string().nullable(),
+		})
+		.nullable(),
+})
+
 export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
+	/** Present on a decision card. */
+	decision: messageDecisionStateSchema.nullable(),
 	spawned_sessions: z.array(spawnedSessionResponseSchema),
 	/** Reactions grouped by emoji, in the order each emoji was first used. */
 	reactions: z.array(messageReactionSchema),

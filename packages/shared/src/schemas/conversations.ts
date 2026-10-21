@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { commentDecisionSchema } from './comment-decision'
 import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
@@ -265,6 +266,8 @@ export const messageMetadataSchema = z.object({
 	computer_request: messageComputerRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/** Backend-owned: the decision card an agent posted for people to answer. */
+	decision: commentDecisionSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -288,6 +291,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		keychain_access_request: _keychainAccessRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
+		decision: _decision,
 		...rest
 	} = metadata
 	return rest as T
@@ -507,3 +511,66 @@ export const reactionEmojiSchema = z
 export const addReactionSchema = z.object({ emoji: reactionEmojiSchema })
 
 export const removeReactionQuerySchema = z.object({ emoji: reactionEmojiSchema })
+
+/** An agent (the Chief of Staff) puts a decision for people into the chat about an object. */
+export const postDecisionSchema = z.object({
+	object_id: z
+		.string()
+		.uuid()
+		.describe('The object the decision is about. Its group chat is used, or made.'),
+	decision: commentDecisionSchema,
+	attention: z.number().int().min(1).max(5).optional(),
+	for_actor_ids: z
+		.array(z.string().uuid())
+		.min(1)
+		.max(20)
+		.optional()
+		.describe('The people who can answer. Defaults to the humans following the object.'),
+	content: z
+		.string()
+		.min(1)
+		.max(MESSAGE_MAX_LENGTH)
+		.optional()
+		.describe('Text shown where cards are not drawn. Defaults to the decision title and ask.'),
+})
+
+export const answerDecisionSchema = z.object({
+	option_index: z.number().int().min(0).max(9).describe('Which option, counting from 0.'),
+	note: z
+		.string()
+		.max(500)
+		.optional()
+		.describe("Why, in the person's words (for example a reason for holding)."),
+})
+
+export const decisionListQuerySchema = z.object({
+	state: z.enum(['open', 'answered', 'withdrawn']).default('open'),
+	/** 'all' is the Chief of Staff's view of every decision in the workspace. */
+	scope: z.enum(['mine', 'all']).default('mine'),
+	limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+
+/**
+ * What the Chief of Staff may do to another agent's open decision: change its urgency, hand it to
+ * other people, or take it back (a duplicate, or no longer needed). At least one change per call.
+ */
+export const curateDecisionSchema = z
+	.object({
+		attention: z.number().int().min(1).max(5).optional(),
+		for_actor_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
+		withdraw: z
+			.object({
+				reason: z.string().min(1).max(500),
+				merged_into: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('The message id of the open decision this one duplicates.'),
+			})
+			.optional(),
+	})
+	.refine(
+		(v) => v.attention !== undefined || v.for_actor_ids !== undefined || v.withdraw !== undefined,
+		{ message: 'Say what to change: attention, for_actor_ids or withdraw' },
+	)
