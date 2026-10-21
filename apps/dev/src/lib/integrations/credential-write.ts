@@ -1,5 +1,5 @@
 import type { KmsProvider } from '@maskin/auth/kms'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
@@ -14,7 +14,7 @@ import { encryptEnvelope } from '../crypto'
  * readers decrypt integrations.credentials directly and cannot read an envelope.
  */
 export async function writeEnvelopeCredential(
-	db: Database,
+	db: Database | Transaction,
 	kms: KmsProvider,
 	params: { workspaceId: string; integrationId: string; plaintext: string },
 ): Promise<void> {
