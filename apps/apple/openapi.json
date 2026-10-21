@@ -31930,9 +31930,55 @@
 												"maxItems": 3,
 												"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 											},
+											"drafts": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"id": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 40,
+															"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+														},
+														"object_id": {
+															"type": "string",
+															"format": "uuid",
+															"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+														},
+														"label": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 30,
+															"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+														},
+														"to": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 300,
+															"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+														},
+														"body": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 20000,
+															"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+														}
+													}
+												},
+												"minItems": 1,
+												"maxItems": 10,
+												"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+											},
 											"draft": {
 												"type": "object",
 												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40,
+														"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+													},
 													"object_id": {
 														"type": "string",
 														"format": "uuid",
@@ -42870,9 +42916,55 @@
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 																	},
+																	"drafts": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"id": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 40,
+																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				},
+																				"object_id": {
+																					"type": "string",
+																					"format": "uuid",
+																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 30,
+																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				},
+																				"to": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300,
+																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				},
+																				"body": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 20000,
+																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				}
+																			}
+																		},
+																		"minItems": 1,
+																		"maxItems": 10,
+																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
+																			"id": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 40,
+																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																			},
 																			"object_id": {
 																				"type": "string",
 																				"format": "uuid",
@@ -44421,9 +44513,55 @@
 																		"maxItems": 3,
 																		"description": "2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe."
 																	},
+																	"drafts": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"id": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 40,
+																					"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																				},
+																				"object_id": {
+																					"type": "string",
+																					"format": "uuid",
+																					"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
+																				},
+																				"label": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 30,
+																					"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+																				},
+																				"to": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300,
+																					"description": "Who it goes to, as a person would read it: \"Hans Jensen, Netwerk\". Leave out for a public post."
+																				},
+																				"body": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 20000,
+																					"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
+																				}
+																			}
+																		},
+																		"minItems": 1,
+																		"maxItems": 10,
+																		"description": "Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as \"Send: <label> to <to> (<id>)\" or \"Skip: ...\". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
+																			"id": {
+																				"type": "string",
+																				"minLength": 1,
+																				"maxLength": 40,
+																				"description": "Only in `drafts`: a short key for this message (\"kenneth\", \"dan-1\"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped."
+																			},
 																			"object_id": {
 																				"type": "string",
 																				"format": "uuid",

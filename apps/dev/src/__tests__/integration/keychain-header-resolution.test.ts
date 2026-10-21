@@ -75,8 +75,6 @@ function expandHeaders(env: Record<string, string>): Record<string, string> {
 	try {
 		const script = [
 			'set -e',
-			// The cdp retry proxy is browser-only and returns early without BROWSER_CDP_URL.
-			`eval "$(sed -n '/^setup_cdp_retry_proxy()/,/^}/p' "${AGENT_RUN}")"`,
 			`eval "$(sed -n '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
 			'setup_mcps',
 			'cat "$MCP_CONFIG_FILE"',

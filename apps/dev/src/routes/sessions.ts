@@ -5,6 +5,7 @@ import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
+	formatComputerRequestAsMarkdown,
 	formatIntegrationConnectAsMarkdown,
 	formatKeychainAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
@@ -13,6 +14,7 @@ import {
 	sessionActivityQuerySchema,
 	sessionActivityResponseSchema,
 	sessionAskSchema,
+	sessionComputerCardSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
 	sessionKeychainAccessCardSchema,
@@ -1416,6 +1418,108 @@ app.openapi(keychainCardRoute, (async (c) => {
 
 	return c.json({ posted: true as const, message_id: created.id }, 200)
 }) as RouteHandler<typeof keychainCardRoute, Env>)
+
+// POST /:id/computer-card - Ask the human to act on the agent's own computer, in the chat
+//
+// Called by the `show_computer` MCP tool when it runs inside a chat session. The card
+// opens the live view of the asking agent's computer (always its own: the card derives
+// whose from the message author, so an agent cannot point it at another agent's) and
+// its Done button posts a message, which is what hands control back. Same gates as
+// /keychain-card: only the agent that owns an interactive chat session may post, and
+// anything else gets a 409 so the tool can say there is nobody to ask.
+const computerCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/computer-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: "Post an 'act on my computer' card into the session chat",
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionComputerCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ posted: z.literal(true), message_id: z.number() }),
+				},
+			},
+			description: 'Card posted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found, or computers are not available in this workspace',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(computerCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { task } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is nobody to show a card to',
+			),
+			409,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatComputerRequestAsMarkdown(task),
+		metadata: { computer_request: { session_id: session.id, task } },
+		sessionId: session.id,
+	})
+
+	// Null means a unique constraint suppressed the insert, which this caller has
+	// no dedupe key to trigger. Surface it as a 500, never a 409 (see /ask).
+	if (!created) {
+		logger.error('Computer card insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Computer card could not be posted'), 500)
+	}
+
+	// Never the task text: it is the agent's words and may name a site or an account.
+	logger.info('Posted computer card into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+	})
+
+	return c.json({ posted: true as const, message_id: created.id }, 200)
+}) as RouteHandler<typeof computerCardRoute, Env>)
 
 // GET /:id/keychain-credentials - What this session's agent can ask for from the Keychain
 //

@@ -38855,10 +38855,73 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/options`.
                         public var options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload`.
+                        public struct draftsPayloadPayload: Codable, Hashable, Sendable {
+                            /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload/id`.
+                            public var id: Swift.String?
+                            /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload/object_id`.
+                            public var object_id: Swift.String?
+                            /// What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload/label`.
+                            public var label: Swift.String?
+                            /// Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload/to`.
+                            public var to: Swift.String?
+                            /// Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draftsPayload/body`.
+                            public var body: Swift.String?
+                            /// Creates a new `draftsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                            ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                            ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                            ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                            ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                            public init(
+                                id: Swift.String? = nil,
+                                object_id: Swift.String? = nil,
+                                label: Swift.String? = nil,
+                                to: Swift.String? = nil,
+                                body: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.label = label
+                                self.to = to
+                                self.body = body
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case label
+                                case to
+                                case body
+                            }
+                        }
+                        /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
+                        public typealias draftsPayload = [Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayloadPayload]
+                        /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
+                        public var drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload?
                         /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft`.
                         public struct draftPayload: Codable, Hashable, Sendable {
+                            /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft/id`.
+                            public var id: Swift.String?
                             /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft/object_id`.
@@ -38878,22 +38941,26 @@ public enum Operations {
                             /// Creates a new `draftPayload`.
                             ///
                             /// - Parameters:
+                            ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
                             ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                             ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
                             ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
                             ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
                             public init(
+                                id: Swift.String? = nil,
                                 object_id: Swift.String? = nil,
                                 label: Swift.String? = nil,
                                 to: Swift.String? = nil,
                                 body: Swift.String? = nil
                             ) {
+                                self.id = id
                                 self.object_id = object_id
                                 self.label = label
                                 self.to = to
                                 self.body = body
                             }
                             public enum CodingKeys: String, CodingKey {
+                                case id
                                 case object_id
                                 case label
                                 case to
@@ -38911,18 +38978,21 @@ public enum Operations {
                         ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
                         ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
+                        ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                         public init(
                             title: Swift.String,
                             summary: Swift.String,
                             ask: Swift.String,
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
+                            drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
                             draft: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftPayload? = nil
                         ) {
                             self.title = title
                             self.summary = summary
                             self.ask = ask
                             self.options = options
+                            self.drafts = drafts
                             self.draft = draft
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -38930,6 +39000,7 @@ public enum Operations {
                             case summary
                             case ask
                             case options
+                            case drafts
                             case draft
                         }
                     }
@@ -54244,10 +54315,73 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/options`.
                                     public var options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload`.
+                                    public struct draftsPayloadPayload: Codable, Hashable, Sendable {
+                                        /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/id`.
+                                        public var id: Swift.String?
+                                        /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/object_id`.
+                                        public var object_id: Swift.String?
+                                        /// What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/label`.
+                                        public var label: Swift.String?
+                                        /// Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/to`.
+                                        public var to: Swift.String?
+                                        /// Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/body`.
+                                        public var body: Swift.String?
+                                        /// Creates a new `draftsPayloadPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                                        ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                                        ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                                        ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                                        public init(
+                                            id: Swift.String? = nil,
+                                            object_id: Swift.String? = nil,
+                                            label: Swift.String? = nil,
+                                            to: Swift.String? = nil,
+                                            body: Swift.String? = nil
+                                        ) {
+                                            self.id = id
+                                            self.object_id = object_id
+                                            self.label = label
+                                            self.to = to
+                                            self.body = body
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case id
+                                            case object_id
+                                            case label
+                                            case to
+                                            case body
+                                        }
+                                    }
+                                    /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
+                                    public typealias draftsPayload = [Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
+                                    /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
+                                    public var drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
                                     /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
+                                        /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
+                                        public var id: Swift.String?
                                         /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/object_id`.
@@ -54267,22 +54401,26 @@ public enum Operations {
                                         /// Creates a new `draftPayload`.
                                         ///
                                         /// - Parameters:
+                                        ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
                                         ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                                         ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
                                         ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
                                         ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
                                         public init(
+                                            id: Swift.String? = nil,
                                             object_id: Swift.String? = nil,
                                             label: Swift.String? = nil,
                                             to: Swift.String? = nil,
                                             body: Swift.String? = nil
                                         ) {
+                                            self.id = id
                                             self.object_id = object_id
                                             self.label = label
                                             self.to = to
                                             self.body = body
                                         }
                                         public enum CodingKeys: String, CodingKey {
+                                            case id
                                             case object_id
                                             case label
                                             case to
@@ -54300,18 +54438,21 @@ public enum Operations {
                                     ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
+                                    ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
                                     ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                                     public init(
                                         title: Swift.String,
                                         summary: Swift.String,
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
+                                        drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         draft: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
                                         self.summary = summary
                                         self.ask = ask
                                         self.options = options
+                                        self.drafts = drafts
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -54319,6 +54460,7 @@ public enum Operations {
                                         case summary
                                         case ask
                                         case options
+                                        case drafts
                                         case draft
                                     }
                                 }
@@ -56114,10 +56256,73 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/options`.
                                     public var options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload`.
+                                    public struct draftsPayloadPayload: Codable, Hashable, Sendable {
+                                        /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/id`.
+                                        public var id: Swift.String?
+                                        /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/object_id`.
+                                        public var object_id: Swift.String?
+                                        /// What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/label`.
+                                        public var label: Swift.String?
+                                        /// Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/to`.
+                                        public var to: Swift.String?
+                                        /// Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draftsPayload/body`.
+                                        public var body: Swift.String?
+                                        /// Creates a new `draftsPayloadPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
+                                        ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
+                                        ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
+                                        ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
+                                        public init(
+                                            id: Swift.String? = nil,
+                                            object_id: Swift.String? = nil,
+                                            label: Swift.String? = nil,
+                                            to: Swift.String? = nil,
+                                            body: Swift.String? = nil
+                                        ) {
+                                            self.id = id
+                                            self.object_id = object_id
+                                            self.label = label
+                                            self.to = to
+                                            self.body = body
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case id
+                                            case object_id
+                                            case label
+                                            case to
+                                            case body
+                                        }
+                                    }
+                                    /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
+                                    public typealias draftsPayload = [Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
+                                    /// Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
+                                    public var drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
                                     /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
+                                        /// Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
+                                        public var id: Swift.String?
                                         /// The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/object_id`.
@@ -56137,22 +56342,26 @@ public enum Operations {
                                         /// Creates a new `draftPayload`.
                                         ///
                                         /// - Parameters:
+                                        ///   - id: Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.
                                         ///   - object_id: The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.
                                         ///   - label: What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".
                                         ///   - to: Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.
                                         ///   - body: Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.
                                         public init(
+                                            id: Swift.String? = nil,
                                             object_id: Swift.String? = nil,
                                             label: Swift.String? = nil,
                                             to: Swift.String? = nil,
                                             body: Swift.String? = nil
                                         ) {
+                                            self.id = id
                                             self.object_id = object_id
                                             self.label = label
                                             self.to = to
                                             self.body = body
                                         }
                                         public enum CodingKeys: String, CodingKey {
+                                            case id
                                             case object_id
                                             case label
                                             case to
@@ -56170,18 +56379,21 @@ public enum Operations {
                                     ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
+                                    ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
                                     ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.
                                     public init(
                                         title: Swift.String,
                                         summary: Swift.String,
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
+                                        drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         draft: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
                                         self.summary = summary
                                         self.ask = ask
                                         self.options = options
+                                        self.drafts = drafts
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -56189,6 +56401,7 @@ public enum Operations {
                                         case summary
                                         case ask
                                         case options
+                                        case drafts
                                         case draft
                                     }
                                 }

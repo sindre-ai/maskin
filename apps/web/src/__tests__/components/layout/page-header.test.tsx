@@ -4,6 +4,7 @@ import { render } from '@testing-library/react'
 const mockSetTitle = vi.fn()
 const mockSetSubtitle = vi.fn()
 const mockSetActions = vi.fn()
+const mockSetLeadingActions = vi.fn()
 const mockSetTitleTabs = vi.fn()
 const mockSetStickyIdentity = vi.fn()
 const mockSetCrumb = vi.fn()
@@ -17,6 +18,7 @@ vi.mock('@/lib/page-header-context', () => ({
 		setTitle: mockSetTitle,
 		setSubtitle: mockSetSubtitle,
 		setActions: mockSetActions,
+		setLeadingActions: mockSetLeadingActions,
 		setTitleTabs: mockSetTitleTabs,
 		setStickyIdentity: mockSetStickyIdentity,
 		setCrumb: mockSetCrumb,
@@ -32,6 +34,7 @@ describe('PageHeader', () => {
 		mockSetTitle.mockClear()
 		mockSetSubtitle.mockClear()
 		mockSetActions.mockClear()
+		mockSetLeadingActions.mockClear()
 		mockSetTitleTabs.mockClear()
 		mockSetStickyIdentity.mockClear()
 		mockSetCrumb.mockClear()
@@ -39,6 +42,15 @@ describe('PageHeader', () => {
 		mockSetScrollLocked.mockClear()
 		mockSetNewMenuPrimaryOverride.mockClear()
 		mockSetNewMenuDisabled.mockClear()
+	})
+
+	it('publishes leadingActions separately from actions and clears them on unmount', () => {
+		const lead = <button type="button">Take over</button>
+		const { unmount } = render(<PageHeader leadingActions={lead} />)
+		expect(mockSetLeadingActions).toHaveBeenCalledWith(lead)
+		expect(mockSetActions).toHaveBeenCalledWith(null)
+		unmount()
+		expect(mockSetLeadingActions).toHaveBeenLastCalledWith(null)
 	})
 
 	it('publishes titleTabs separately from actions — they land in different clusters', () => {

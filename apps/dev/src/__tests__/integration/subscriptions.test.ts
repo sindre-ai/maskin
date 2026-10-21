@@ -1674,6 +1674,127 @@ describe('Subscriptions Integration', () => {
 			})
 		})
 
+		describe('a stack of drafts on one card', () => {
+			async function askMany(entityId: string, drafts: Array<Record<string, unknown>>) {
+				const res = await appAs(bId).request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: entityId,
+							content: 'Send these first DMs?',
+							mentions: [aId],
+							decision: { ...decision, drafts },
+						},
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				return res
+			}
+
+			async function cardDrafts(entityId: string) {
+				const res = await appAs(aId).request(
+					jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }),
+				)
+				const body = (await res.json()) as {
+					items: Array<{
+						entity_id: string
+						latest_mention?: {
+							decision: { drafts?: Array<Record<string, unknown>> } | null
+						}
+					}>
+				}
+				return body.items.find((i) => i.entity_id === entityId)?.latest_mention?.decision?.drafts
+			}
+
+			it('sends every message with its id, label, recipient and text, in order', async () => {
+				const obj = await seedObject()
+				const res = await askMany(obj.id, [
+					{
+						id: 'kenneth',
+						label: 'LinkedIn DM',
+						to: 'Kenneth Krog Madsen',
+						body: 'Hej Kenneth, tak for sidst.',
+					},
+					{ id: 'dan', label: 'Connection note', to: 'Dan Højgaard Jensen', body: 'Hej Dan.' },
+				])
+				expect(res.status).toBe(201)
+
+				expect(await cardDrafts(obj.id)).toEqual([
+					expect.objectContaining({
+						id: 'kenneth',
+						to: 'Kenneth Krog Madsen',
+						body: 'Hej Kenneth, tak for sidst.',
+					}),
+					expect.objectContaining({ id: 'dan', label: 'Connection note', body: 'Hej Dan.' }),
+				])
+			})
+
+			it('reads each message live from its own object and leaves the others as stored', async () => {
+				const obj = await seedObject()
+				const [task] = await db
+					.insert(objects)
+					.values({
+						workspaceId,
+						type: 'task',
+						title: 'DM to Kenneth',
+						content: 'Live text for Kenneth',
+						status: 'in_review',
+						createdBy: aId,
+					})
+					.returning()
+				if (!task) throw new Error('failed to seed task')
+				await askMany(obj.id, [
+					{ id: 'kenneth', object_id: task.id, body: 'stale copy' },
+					{ id: 'dan', body: 'Hej Dan.' },
+				])
+
+				const drafts = await cardDrafts(obj.id)
+				expect(drafts?.map((d) => d.body)).toEqual(['Live text for Kenneth', 'Hej Dan.'])
+			})
+
+			it('never reads an object from another workspace; it falls back to the stored text', async () => {
+				const obj = await seedObject()
+				const foreignWorkspace = await insertWorkspace(db, aId)
+				const [foreign] = await db
+					.insert(objects)
+					.values({
+						workspaceId: foreignWorkspace.id,
+						type: 'task',
+						title: 'Foreign',
+						content: 'secret text',
+						status: 'backlog',
+						createdBy: aId,
+					})
+					.returning()
+				if (!foreign) throw new Error('failed to seed foreign object')
+				await askMany(obj.id, [{ id: 'x', object_id: foreign.id, body: 'safe fallback' }])
+
+				const drafts = await cardDrafts(obj.id)
+				expect(drafts?.[0]?.body).toBe('safe fallback')
+				expect(JSON.stringify(drafts)).not.toContain('secret text')
+			})
+
+			it('leaves out a message with nothing to show and keeps the rest', async () => {
+				const obj = await seedObject()
+				await askMany(obj.id, [
+					{ id: 'gone', object_id: '99999999-9999-4999-8999-999999999999' },
+					{ id: 'dan', body: 'Hej Dan.' },
+				])
+
+				expect((await cardDrafts(obj.id))?.map((d) => d.id)).toEqual(['dan'])
+			})
+
+			it('rejects more messages than the card can hold', async () => {
+				const obj = await seedObject()
+				const res = await askMany(
+					obj.id,
+					Array.from({ length: 11 }, (_, i) => ({ id: `m${i}`, body: 'Hej.' })),
+				)
+				expect(res.status).toBe(400)
+			})
+		})
+
 		it('still rejects a card whose own prose breaks the rules when a draft is attached', async () => {
 			const appB = appAs(bId)
 			const headers = { 'x-workspace-id': workspaceId }

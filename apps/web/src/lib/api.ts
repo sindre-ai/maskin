@@ -40,6 +40,15 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
+import type { TeachRequest, TeachResponse } from '@maskin/shared'
+
+export interface DesktopConnectResponse {
+	ticket: string
+	// Path of the stream WebSocket on the API origin; the ticket goes in `?ticket=`.
+	path: string
+	password: string
+}
+
 export interface PlanCapContext {
 	plan: string
 	used: number
@@ -1014,6 +1023,38 @@ export const api = {
 		},
 	},
 
+	desktop: {
+		// Idempotent: starts the workspace desktop if needed (slow the first time) and
+		// returns a one-time ticket for the stream WebSocket plus the VNC password.
+		// Every agent has its own computer: say whose.
+		connect: (workspaceId: string, agentId: string) =>
+			request<DesktopConnectResponse>(`/desktop/connect?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (workspaceId: string, agentId: string) =>
+			request<{ removed: boolean }>(`/desktop?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		// Which agents have a computer and whether it is asleep. Never wakes one.
+		list: (workspaceId: string) =>
+			request<{ desktops: Array<{ agent_id: string; status: 'running' | 'suspended' }> }>(
+				'/desktop',
+				{ workspaceId },
+			),
+		// "Teach a task": hands a recorded demonstration to the chosen agent, which
+		// writes a draft skill from it.
+		teach: (workspaceId: string, body: TeachRequest) =>
+			request<TeachResponse>('/desktop/teach', { method: 'POST', body, workspaceId }),
+		// The recording is an input; the page deletes it once the agent's session ends.
+		deleteTeaching: (workspaceId: string, recordingId: string, agentId: string) =>
+			request<{ deleted: number }>(
+				`/desktop/teach/${recordingId}?agent_id=${encodeURIComponent(agentId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
+	},
+
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
 	},
@@ -1490,6 +1531,8 @@ export interface LatestMentionDecisionOption {
  * here; `object_id` says which object it came from.
  */
 export interface LatestMentionDecisionDraft {
+	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
+	id?: string
 	object_id?: string
 	label?: string
 	to?: string
@@ -1502,6 +1545,8 @@ export interface LatestMentionDecision {
 	ask: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
+	/** One card, several messages: each shows as its own preview with Send and Skip. */
+	drafts?: LatestMentionDecisionDraft[]
 }
 
 export interface LatestMention {
@@ -1875,7 +1920,7 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
 
 export interface AgentGrant {
 	actorId: string
@@ -2303,7 +2348,7 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'read_write'
+		access: 'none' | 'read' | 'ask_first' | 'read_write'
 		source: 'grant' | 'default'
 		default_access: 'read' | 'none'
 		server_attached: boolean
@@ -2332,6 +2377,12 @@ export interface MessageKeychainAccessRequest {
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
+}
+
+/** An agent asking the person to act on its own computer (the card opens it). */
+export interface MessageComputerRequest {
+	session_id: string
+	task: string
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2371,6 +2422,7 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 }

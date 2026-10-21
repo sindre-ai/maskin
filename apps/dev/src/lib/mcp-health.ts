@@ -13,7 +13,7 @@
  * tools, and the agent — which cannot see this line — concludes the capability
  * was never wired and says so to the user, while every log and metric around
  * it looks healthy. That is exactly how a customer-reported "no Playwright in
- * this session" survived a browser sidecar that had started and attached
+ * this session" survived a browser that had started and attached
  * correctly (session 317335d0, 2026-08-26).
  *
  * Emitting a `system` log line at ingest puts the failure where both the user
