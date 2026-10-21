@@ -8,6 +8,7 @@ import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
 import {
 	createCommentResponseSchema,
@@ -331,6 +332,12 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
+	// A person's answer to an email approval card pins the text they were looking at.
+	const approvedSendHash =
+		c.get('actorType') === 'human' && parentEventId !== undefined
+			? await approvedSendHashFor(db, workspaceId, parentEventId, body.content)
+			: undefined
+
 	const { comment, unresolvedMentions } = await postComment(db, {
 		workspaceId,
 		actorId,
@@ -343,6 +350,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		decision: body.decision,
 		attention: body.attention,
 		authorSessionId: c.get('maskinSessionId'),
+		approvedSendHash,
 	})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
