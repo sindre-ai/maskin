@@ -1653,6 +1653,33 @@ describe('Subscriptions Integration', () => {
 				expect((await cardDraft(task.id))?.body).toBe('the saved text')
 			})
 
+			it('adds the preview and where the draft stands when the object is an email', async () => {
+				const task = await seedDraftTask(workspaceId, 'Hej Hans,\n\nMå jeg ringe?')
+				await db
+					.update(objects)
+					.set({
+						metadata: { kind: 'email', to: 'Hans Jensen <hans@example.com>', subject: 'Opkald' },
+					})
+					.where(eq(objects.id, task.id))
+				await ask(task.id, { object_id: task.id })
+
+				const draft = (await cardDraft(task.id)) as {
+					label?: string
+					body?: string
+					preview?: {
+						subject: string | null
+						recipients: unknown[]
+						delivery?: { state: string }
+					}
+				}
+				expect(draft.label).toBe('Email')
+				expect(draft.body).toBe('Hej Hans,\n\nMå jeg ringe?')
+				expect(draft.preview).toMatchObject({ subject: 'Opkald', delivery: { state: 'draft' } })
+				expect(draft.preview?.recipients).toEqual([
+					{ role: 'to', name: 'Hans Jensen', address: 'hans@example.com' },
+				])
+			})
+
 			it('never reads an object from another workspace', async () => {
 				const otherWorkspace = await insertWorkspace(db, aId)
 				if (!otherWorkspace) throw new Error('failed to seed workspace')

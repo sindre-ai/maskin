@@ -1,13 +1,13 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
-import { FOR_YOU_KIND, commentDecisionSchema, parseForYouMetadata } from '@maskin/shared'
+import { FOR_YOU_KIND, parseForYouMetadata } from '@maskin/shared'
 import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
-import { toLatestMention } from './subscriptions'
+import { feedDecisionSchema, fillDraftBodies, toLatestMention } from './subscriptions'
 
 type Env = {
 	Variables: {
@@ -53,7 +53,8 @@ const forYouItemSchema = z.object({
 			created_at: z.string(),
 			content: z.string(),
 			attention: z.number().nullable(),
-			decision: commentDecisionSchema.nullable(),
+			// With each draft's text and, for an email or message, its `preview`.
+			decision: feedDecisionSchema.nullable(),
 		})
 		.optional(),
 })
@@ -213,6 +214,16 @@ app.openapi(listForYouRoute, async (c) => {
 				...(source ? { latest_mention: toLatestMention(source) } : {}),
 			}
 		})
+
+	// A draft names an object: fill its text from the object as it reads now, and add its
+	// preview (recipients, subject, approved or sent), the same as the unread feed does.
+	// Without this a card carrying a draft shows no draft at all.
+	await fillDraftBodies(
+		db,
+		workspaceId,
+		items.flatMap((i) => (i.latest_mention ? [i.latest_mention] : [])),
+		objectById,
+	)
 
 	return c.json({ items }, 200)
 })

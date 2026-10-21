@@ -15,9 +15,11 @@ test.describe('Chat — a message that links to an object shows what the object 
 			const task = await account.api.createObject(account.workspaceId, {
 				type: 'task',
 				title: 'LinkedIn note to Catja',
-				status: 'in_review',
+				status: 'todo',
 				content: NOTE,
 			})
+			// The API rejects tasks created at in_review, so move it after creation.
+			await account.api.updateObject(task.id, account.workspaceId, { status: 'in_review' })
 
 			// Posted by a second agent actor: only the non-own branch of MessageBubble
 			// renders previews (see chat-link-new-tab.spec.ts).
@@ -38,8 +40,13 @@ test.describe('Chat — a message that links to an object shows what the object 
 
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			await expect(thread.getByText(NOTE)).toBeVisible({ timeout: 10_000 })
-			await expect(thread.getByRole('link', { name: 'LinkedIn note to Catja' })).toBeVisible()
+			// The card starts collapsed: the title and Open link, then the text once expanded.
+			await expect(thread.getByText('LinkedIn note to Catja', { exact: true })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByRole('link', { name: 'Open' })).toBeVisible()
+			await thread.getByRole('button', { name: 'Expand preview' }).click()
+			await expect(thread.getByText(NOTE)).toBeVisible()
 
 			for (const colorScheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme })

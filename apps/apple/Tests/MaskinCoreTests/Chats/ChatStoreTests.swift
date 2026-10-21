@@ -475,6 +475,14 @@ struct ChatStoreTests {
 		#expect(h.store.openedReadCursor == 1)
 	}
 
+	@Test("the thread is only server-confirmed once the newest page has been read")
+	func serverConfirmed() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 1))
+		#expect(!h.store.serverConfirmed)
+		await h.store.start()
+		#expect(h.store.serverConfirmed)
+	}
+
 	@Test("an already-read thread doesn't call the server again")
 	func alreadyRead() async {
 		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 2))

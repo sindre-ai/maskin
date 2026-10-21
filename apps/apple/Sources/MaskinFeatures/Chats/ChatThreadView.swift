@@ -14,6 +14,11 @@ import SwiftUI
 /// composer or search bar) pinned above the keyboard. The nav bar carries the chat's lead name with
 /// a live status line under it. Takes a ready `ChatStore` and `ChatComposerModel` so it previews
 /// and snapshots without a server.
+/// Which thread is open over a chat: the id of its root message.
+struct ThreadRoute: Hashable {
+	let rootID: Int
+}
+
 struct ChatThreadView: View {
 	let store: ChatStore
 	let composer: ChatComposerModel
@@ -55,6 +60,8 @@ struct ChatThreadView: View {
 	@State private var openedOnUnread = false
 	@State private var renaming = false
 	@State private var newTitle = ""
+	/// The thread open on top of this chat (a pushed screen).
+	@State private var threadRoute: ThreadRoute?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -186,6 +193,11 @@ struct ChatThreadView: View {
 					Button("OK", role: .cancel) {}
 				} message: {
 					Text(store.notice ?? "")
+				}
+				.navigationDestination(item: $threadRoute) { route in
+					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
+						ThreadScreen(store: store, root: root)
+					}
 				}
 				.alert("Rename conversation", isPresented: $renaming) {
 					TextField("Title", text: $newTitle)
@@ -398,7 +410,12 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), matchIDs: matchSet,
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			onOpenThread: { message in
+				guard let id = message.serverID else { return }
+				threadRoute = ThreadRoute(rootID: id)
+			},
+			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
 			.onAppear { if !usesGeometryTracking { reachedBottom() } }
@@ -432,9 +449,9 @@ struct ChatThreadView: View {
 				if followingOpen { followingOpen = false }
 				if !revealed { revealed = true }
 			}
-			// The opening position waits for the read cursor (see `settleOpen`); this runs it the
-			// moment the cursor is known, and a timer opens at the bottom if it never arrives.
-			.onChange(of: store.openPositionKnown) { _, _ in settleOpen(proxy) }
+			// The opening position waits for the server's newest page (see `settleOpen`); this runs it
+			// the moment that arrives, and a timer opens at the bottom if it never does.
+			.onChange(of: store.serverConfirmed) { _, _ in settleOpen(proxy) }
 			.task {
 				try? await Task.sleep(for: Self.openTimeout)
 				if !settled { settleOpen(proxy, force: true) }
@@ -739,7 +756,9 @@ struct ChatThreadView: View {
 	/// reader never sees it land somewhere and then move. `force` opens at the bottom when the cursor
 	/// never arrived (offline).
 	private func settleOpen(_ proxy: ScrollViewProxy, force: Bool = false) {
-		guard !settled, store.openPositionKnown || force else { return }
+		// A saved thread knows the cursor but not the messages that arrived since: wait for the
+		// server's newest page, or the divider would be missing when the position is chosen.
+		guard !settled, store.serverConfirmed || force else { return }
 		settled = true
 		if opensOnUnread {
 			openedOnUnread = true
@@ -752,6 +771,19 @@ struct ChatThreadView: View {
 				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 				if !userScrolled { proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset)) }
 				revealed = true
+				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
+				// callback never fires and it would stay unread however far it is read.
+				if usesGeometryTracking, !userScrolled, distanceFromBottom < MaskinSpace.touchMin {
+					store.isAtBottom = true
+					await store.markReadIfNeeded()
+				}
+				// The rows above the divider are estimates until the lazy stack has drawn them, so
+				// the first scrolls land short. Re-anchor as they measure, until the reader moves.
+				for delay in [250, 600] {
+					try? await Task.sleep(for: .milliseconds(delay))
+					if userScrolled { break }
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
 			}
 			return
 		}
@@ -810,6 +842,8 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// Opens the thread under a message (the pill, or Reply in thread).
+	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -912,6 +946,13 @@ struct ThreadTranscript: View {
 				MaskinHaptics.play(.selection)
 			}
 		}
+		if message.serverID != nil, message.kind == "message", !message.isFailed {
+			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
+			actions.onReact = { emoji in Task { await store.toggleReaction(emoji, on: message) } }
+		}
+		if message.serverID != nil, message.kind == "message", !message.isThreadReply, !message.isFailed {
+			actions.onThread = { onOpenThread(message) }
+		}
 		if message.serverID != nil {
 			actions.isPinned = store.isPinned(message)
 			actions.onPin = { if store.isPinned(message) { store.unpin() } else { store.pin(message) } }
@@ -954,7 +995,7 @@ struct ThreadTranscript: View {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now).uppercased())
 		case .system(let message):
-			ThreadDivider(label: message.content, ruled: false)
+			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
 		case .liveCall(let card):
@@ -982,6 +1023,9 @@ struct ThreadTranscript: View {
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				threadSummary: store.threadSummary(for: message),
+				onOpenThread: { onOpenThread(message) },
+				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onSelectVersion: { store.selectVersion($0, of: message.id) }
 			)
