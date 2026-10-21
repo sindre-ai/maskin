@@ -90,6 +90,17 @@ public struct SettingsScreen: View {
 					}
 				}
 				Section("About") {
+					// Signed in, privacy choices are the workspace's own settings on the web app.
+					if let url = services.webSettingsURL {
+						Button("Privacy & data") { openURL(url) }
+					}
+					// The public pages; a link only appears when its Info.plist key is set.
+					if let url = AuthConfig.current.privacyURL {
+						Button("Privacy policy") { openURL(url) }
+					}
+					if let url = AuthConfig.current.termsURL {
+						Button("Terms of Service") { openURL(url) }
+					}
 					LabeledContent("Version", value: Self.versionString)
 				}
 				// Its own centred red card, as the mockup draws it.

@@ -122,7 +122,7 @@ describe('DesktopViewer', () => {
 		expect(screen.queryByRole('button', { name: /take over/i })).not.toBeInTheDocument()
 	})
 
-	it('offers a reconnect with a fresh ticket after the connection drops', async () => {
+	it('offers to wake an idle computer with a fresh ticket after the connection drops', async () => {
 		const user = userEvent.setup()
 		renderViewer()
 		await waitFor(() => expect(instances).toHaveLength(1))
@@ -130,10 +130,10 @@ describe('DesktopViewer', () => {
 		act(() => first.emit('connect'))
 		act(() => first.emit('disconnect'))
 
-		expect(await screen.findByText('The connection was closed')).toBeInTheDocument()
+		expect(await screen.findByText('The computer is idle')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /take over/i })).not.toBeInTheDocument()
 
-		await user.click(screen.getByRole('button', { name: /reconnect/i }))
+		await user.click(screen.getByRole('button', { name: /wake up/i }))
 
 		await waitFor(() => expect(instances).toHaveLength(2))
 		expect(api.desktop.connect).toHaveBeenCalledTimes(2)

@@ -87,7 +87,7 @@ const getObject = (actorId: string, workspaceId: string, objectId: string) =>
 		headers: { 'X-Workspace-Id': workspaceId },
 	})
 
-async function setup(access: 'read' | 'ask_first' | 'read_write' = 'ask_first') {
+async function setup(access: 'read' | 'read_write' = 'read_write') {
 	const human = getTestActorId()
 	const workspace = await insertWorkspace(db, human)
 	const agent = await insertActor(db, { type: 'agent' })
@@ -171,8 +171,8 @@ describe('object email drafts', () => {
 		expect(res.status).toBe(409)
 	})
 
-	it('does not let "Ask first" send an unapproved draft, and sends it once approved', async () => {
-		const s = await setup('ask_first')
+	it('does not send an unapproved draft, and sends it once a person approves it', async () => {
+		const s = await setup('read_write')
 		const refused = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
 		expect(refused.status).toBe(403)
 		expect(fetchMock).not.toHaveBeenCalled()
@@ -197,7 +197,7 @@ describe('object email drafts', () => {
 	})
 
 	it('uses one approval for one send', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		await approve(s.human, s.workspace.id, s.draft.id)
 		fetchMock.mockResolvedValueOnce(gmailOk())
 		expect((await sendDraft(s.agent.id, s.workspace.id, s.draft.id)).status).toBe(200)
@@ -207,7 +207,7 @@ describe('object email drafts', () => {
 	})
 
 	it('withdraws the approval when the text is edited afterwards', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		await approve(s.human, s.workspace.id, s.draft.id)
 		await db.execute(
 			`update objects set content = 'Hi Ada, how about Friday?' where id = '${s.draft.id}'` as never,
@@ -216,14 +216,6 @@ describe('object email drafts', () => {
 		const res = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
 		expect(res.status).toBe(403)
 		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('lets "Read & write" send an unapproved draft on its own', async () => {
-		const s = await setup('read_write')
-		fetchMock.mockResolvedValueOnce(gmailOk('m2'))
-		const res = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
-		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ mode: 'direct' })
 	})
 
 	it('refuses to send an object that is not an email draft', async () => {
@@ -296,7 +288,7 @@ describe('approving by answering a decision card', () => {
 			.where(and(eq(events.entityId, objectId), eq(events.action, 'approved')))
 
 	it('approves the draft when the person chooses the send option, before the reply lands', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const card = await postCard(s, { ...decisionBase, draft: { object_id: s.draft.id } })
 
 		const res = await reply(s, card, 'Send it')
@@ -316,14 +308,14 @@ describe('approving by answering a decision card', () => {
 	})
 
 	it('does not approve when the person picks another option', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const card = await postCard(s, { ...decisionBase, draft: { object_id: s.draft.id } })
 		expect((await reply(s, card, 'Hold')).status).toBe(201)
 		expect(await approvals(s.draft.id)).toHaveLength(0)
 	})
 
 	it('does not approve for an agent, or for a reply that came through MCP', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const card = await postCard(s, { ...decisionBase, draft: { object_id: s.draft.id } })
 		expect((await reply(s, card, 'Send it', { as: 'agent' })).status).toBe(201)
 		expect((await reply(s, card, 'Send it', { source: 'mcp' })).status).toBe(201)
@@ -332,7 +324,7 @@ describe('approving by answering a decision card', () => {
 	})
 
 	it('does not add a second approval when the Approve call already recorded one', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const card = await postCard(s, { ...decisionBase, draft: { object_id: s.draft.id } })
 		const shown = await previewOf(s)
 		await approve(s.human, s.workspace.id, s.draft.id, shown.content_hash)
@@ -341,7 +333,7 @@ describe('approving by answering a decision card', () => {
 	})
 
 	it('posts the reply but approves nothing for a draft that is not complete', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const bare = await insertObject(db, s.workspace.id, s.agent.id, {
 			type: 'task',
 			content: 'Hello',
@@ -353,7 +345,7 @@ describe('approving by answering a decision card', () => {
 	})
 
 	it('approves only the message of a stacked card the person sent', async () => {
-		const s = await setup('ask_first')
+		const s = await setup('read_write')
 		const second = await insertObject(db, s.workspace.id, s.agent.id, {
 			type: 'task',
 			content: 'Hi Dan',

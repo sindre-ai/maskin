@@ -65,6 +65,7 @@ import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
+import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
 import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
@@ -469,6 +470,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
+	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
