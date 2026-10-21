@@ -131,6 +131,14 @@ describe('GET /api/for-you', () => {
 		return row
 	}
 
+	async function listFull() {
+		const res = await appAs(humanId).request(
+			jsonGet('/api/for-you', { 'X-Workspace-Id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		return ((await res.json()) as { items: Array<{ latest_event_id: number | null }> }).items
+	}
+
 	async function list() {
 		const res = await appAs(humanId).request(
 			jsonGet('/api/for-you', { 'X-Workspace-Id': workspaceId }),
@@ -291,6 +299,51 @@ describe('GET /api/for-you', () => {
 			expect(items[0]?.latest_mention?.decision?.draft?.body).toBe(
 				'Hej Hans, må jeg ringe i morgen?',
 			)
+		})
+	})
+
+	describe('a curated item with no source comment', () => {
+		it('offers the newest activity on its object as the read position', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_review',
+			})
+			await comment(obj.id, agentId)
+			const newest = await comment(obj.id, agentId)
+			await item({ objectId: obj.id }, { headline: 'Graduate 5 wiki pages' })
+			const items = await listFull()
+			expect(items).toHaveLength(1)
+			expect(items[0]?.latest_event_id).toBe(newest)
+		})
+
+		it('drops once the person has read the object, and stays gone when it gets new activity', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_review',
+			})
+			const before = await comment(obj.id, agentId)
+			await item({ objectId: obj.id }, { headline: 'Graduate 5 wiki pages' })
+			expect(await list()).toHaveLength(1)
+			await db.insert(readState).values({
+				workspaceId,
+				actorId: humanId,
+				entityType: 'object',
+				entityId: obj.id,
+				lastReadEventId: before,
+			})
+			await comment(obj.id, agentId)
+			expect(await list()).toEqual([])
+		})
+
+		it('keeps the item when new activity arrives that the person has not read', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_review',
+			})
+			await comment(obj.id, agentId)
+			await item({ objectId: obj.id }, { headline: 'Graduate 5 wiki pages' })
+			await comment(obj.id, agentId)
+			expect(await list()).toHaveLength(1)
 		})
 	})
 

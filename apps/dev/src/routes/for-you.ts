@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND, commentDecisionSchema, parseForYouMetadata } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, lte, max, ne, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -50,6 +50,10 @@ const forYouItemSchema = z.object({
 	// decision card an agent addressed to this person directly.
 	source: z.enum(['curated', 'decision']),
 	rank: z.number(),
+	// What marking the item read moves the person's read position to: the source comment, or
+	// for a curated item with no comment the newest activity on its object. Null when the
+	// object has no activity to mark.
+	latest_event_id: z.number().nullable(),
 	headline: z.string(),
 	rationale: z.string().nullable(),
 	created_at: z.string().nullable(),
@@ -177,6 +181,46 @@ app.openapi(listForYouRoute, async (c) => {
 				)
 		: []
 
+	// A curated item with no source comment cannot be retired by answering a comment. It
+	// counts as handled once the person has read its object past everything that existed
+	// when the Chief of Staff listed it; later activity does not bring it back.
+	const noSource = candidates.filter(
+		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
+	)
+	const baselineByNotification = new Map<string, number>()
+	await Promise.all(
+		noSource.map(async ({ row }) => {
+			const [found] = await db
+				.select({ id: max(events.id) })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityId, row.objectId as string),
+						row.createdAt ? lte(events.createdAt, row.createdAt) : undefined,
+					),
+				)
+			baselineByNotification.set(row.id, Number(found?.id ?? 0))
+		}),
+	)
+	const newestEventByEntity = new Map<string, number>()
+	if (noSource.length > 0) {
+		const newest = await db
+			.select({ entityId: events.entityId, id: max(events.id) })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					inArray(
+						events.entityId,
+						noSource.map(({ row }) => row.objectId as string),
+					),
+				),
+			)
+			.groupBy(events.entityId)
+		for (const r of newest) newestEventByEntity.set(r.entityId, Number(r.id ?? 0))
+	}
+
 	const curatedItems = candidates
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
@@ -197,6 +241,10 @@ app.openapi(listForYouRoute, async (c) => {
 					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
 					if (lastRead >= sourceId) return false
 					if (replyRows.some((r) => r.entityId === row.objectId && r.id > sourceId)) return false
+				} else {
+					const baseline = baselineByNotification.get(row.id) ?? 0
+					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
+					if (baseline > 0 && lastRead >= baseline) return false
 				}
 			}
 			return true
@@ -214,6 +262,11 @@ app.openapi(listForYouRoute, async (c) => {
 				notification_id: row.id,
 				source: 'curated' as const,
 				rank: meta.rank,
+				latest_event_id: source
+					? Number(source.id)
+					: row.objectId
+						? (newestEventByEntity.get(row.objectId) ?? 0) || null
+						: null,
 				headline: meta.headline,
 				rationale: meta.rationale ?? null,
 				created_at: row.createdAt ? row.createdAt.toISOString() : null,
@@ -307,6 +360,7 @@ app.openapi(listForYouRoute, async (c) => {
 			notification_id: null,
 			source: 'decision' as const,
 			rank: rankBase + 1 + index,
+			latest_event_id: mention.event_id,
 			headline: mention.decision?.title ?? 'Needs your call',
 			rationale: null,
 			created_at: mention.created_at,

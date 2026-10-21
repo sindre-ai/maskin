@@ -1517,6 +1517,9 @@ export interface UnreadItem {
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
 	latest_mention?: LatestMention
+	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
+	// shows when there is no source comment to lead with.
+	curated?: { headline: string; rationale: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1571,6 +1574,8 @@ export interface ForYouItem {
 	notification_id: string | null
 	source: 'curated' | 'decision'
 	rank: number
+	/** What marking the item read moves the read position to. Null when there is nothing to mark. */
+	latest_event_id: number | null
 	headline: string
 	rationale: string | null
 	created_at: string | null
