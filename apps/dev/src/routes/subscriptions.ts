@@ -93,7 +93,7 @@ const feedDraftSchema = z.object({
 	body: z.string().optional(),
 	preview: objectPreviewSchema.optional(),
 })
-const feedDecisionSchema = commentDecisionSchema.extend({
+export const feedDecisionSchema = commentDecisionSchema.extend({
 	draft: feedDraftSchema.optional(),
 	drafts: z.array(feedDraftSchema).optional(),
 })
@@ -183,7 +183,7 @@ const DRAFT_BODY_MAX = 20_000
  * foreign object. A draft whose object is gone or empty falls back to a stored
  * `body`, and with neither it is dropped rather than sent as an empty box.
  */
-async function fillDraftBodies(
+export async function fillDraftBodies(
 	db: Database,
 	workspaceId: string,
 	mentions: LatestMention[],
