@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/cn'
 import { useState } from 'react'
 
 interface SecretInputProps {
@@ -9,6 +10,9 @@ interface SecretInputProps {
 	disabled?: boolean
 	/** Passed through so a browser's password manager can tell a login from a key. */
 	autoComplete?: 'new-password' | 'off'
+	/** False when leaving it blank is allowed, as when editing a saved credential. */
+	required?: boolean
+	placeholder?: string
 }
 
 /**
@@ -22,6 +26,8 @@ export function SecretInput({
 	onChange,
 	disabled,
 	autoComplete = 'new-password',
+	required = true,
+	placeholder,
 }: SecretInputProps) {
 	const [reveal, setReveal] = useState(false)
 	return (
@@ -31,11 +37,13 @@ export function SecretInput({
 				type={reveal ? 'text' : 'password'}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
-				className="pr-16 font-mono"
+				// Monospace for the secret itself; the placeholder stays in the normal font like every other field.
+				className={cn('pr-16', value && 'font-mono')}
 				autoComplete={autoComplete}
 				spellCheck={false}
 				disabled={disabled}
-				required
+				required={required}
+				placeholder={placeholder}
 			/>
 			<Button
 				type="button"

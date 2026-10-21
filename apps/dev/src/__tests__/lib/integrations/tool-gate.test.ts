@@ -83,7 +83,11 @@ describe('access levels', () => {
 		expect(effectiveAccess(reg, null)).toBe('read')
 		expect(effectiveAccess({ ...reg, defaultAgentAccess: 'none' }, null)).toBe('none')
 		expect(effectiveAccess(reg, 'read_write')).toBe('read_write')
-		expect(effectiveAccess({ ...reg, providerMode: 'byo_login' }, null)).toBe('none')
+		// A saved key or login is on or off: its own entry, else its default (none unless set to read).
+		const login = { ...reg, providerMode: 'byo_login' as const }
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'none' }, null)).toBe('none')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, null)).toBe('read_write')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, 'none')).toBe('none')
 	})
 })
 

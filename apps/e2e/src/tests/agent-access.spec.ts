@@ -113,20 +113,28 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await expect(page.getByRole('option', { name: 'Code Reviewer' })).toHaveCount(0)
 		await page.keyboard.press('Escape')
 
-		// Narrow that agent to read-only.
+		// Narrow that agent to read-only. That is what everyone else gets, so its entry goes and it
+		// falls back into "All other agents".
 		await page.getByRole('combobox', { name: 'Access for Code Reviewer' }).click()
 		await page.getByRole('option', { name: 'Read', exact: true }).click()
+		await expect(page.getByRole('combobox', { name: 'Access for Code Reviewer' })).toHaveCount(0)
 		await expect(toggle).toContainText('All agents can read')
 		await expect(toggle).not.toContainText('can also write')
+		expect(state.agentGrants).toEqual([])
 
 		// Take read access away from everyone else.
 		await page.getByRole('combobox', { name: 'Access for all other agents' }).click()
 		await page.getByRole('option', { name: 'No access' }).click()
-		await expect(toggle).toContainText('1 agent has access')
+		await expect(toggle).toContainText('No agents have access')
 		expect(state.defaultAgentAccess).toBe('none')
 
-		// Remove the override and it is gone from the list.
-		await page.getByRole('button', { name: 'Remove Code Reviewer' }).click()
+		// An agent added now starts with read access of its own, and setting it back to No access,
+		// the same as everyone else, drops it from the list again.
+		await page.getByRole('combobox', { name: 'Add an agent' }).click()
+		await page.getByRole('option', { name: 'Code Reviewer' }).click()
+		await expect(toggle).toContainText('1 agent has access')
+		await page.getByRole('combobox', { name: 'Access for Code Reviewer' }).click()
+		await page.getByRole('option', { name: 'No access' }).click()
 		await expect(page.getByRole('combobox', { name: 'Access for Code Reviewer' })).toHaveCount(0)
 		await expect(toggle).toContainText('No agents have access')
 
