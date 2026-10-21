@@ -185,7 +185,32 @@ export interface ErrorEvent {
 	requested_shape: Record<string, string>
 }
 
-export type TelemetryEvent = ToolCallEvent | MutationEvent | ToolCallResponseSizeEvent | ErrorEvent
+// Old-name use: one event per call that reached a tool through a deprecated
+// tool name or argument key. Key NAMES only, never values. The actor is not a
+// field; the ingest route reads it from the authenticated request.
+export interface AliasUseEvent {
+	event_type: 'alias_use'
+	/** The tool that was called. For a tool-name alias, the old name. */
+	tool_name: string
+	session_id: string
+	session_source?: 'maskin-session' | 'process' | 'unknown'
+	transport?: 'stdio' | 'http'
+	/** Old and new dotted path per renamed key, capped at MAX_ALIAS_RENAMES. */
+	renames: { old: string; new: string }[]
+	/** Both the old and the new spelling were sent; the new one won. */
+	both_sent: boolean
+	/** Key names dropped with no replacement, capped at MAX_ALIAS_DROPPED_KEYS. */
+	dropped_keys?: string[]
+	/** Present only when the tool NAME was the old one. */
+	tool_alias?: { old: string; new: string }
+}
+
+export type TelemetryEvent =
+	| ToolCallEvent
+	| MutationEvent
+	| ToolCallResponseSizeEvent
+	| ErrorEvent
+	| AliasUseEvent
 
 /** A telemetry sink ingests events. Production default POSTs to the API; tests
  *  inject capturing sinks; deployments without telemetry endpoints can pass a
@@ -364,6 +389,56 @@ export function recordToolCallResponseSize(
 			// averaging a measurement fault in as "this tool returned no rows".
 			shape_error: shape.shapeError ? true : undefined,
 			view: event.view,
+		},
+		cfg,
+	)
+}
+
+// Mirror the caps and key shape in @maskin/shared so one odd entry cannot cost
+// the whole event at the ingest boundary.
+const MAX_ALIAS_RENAMES = 64
+const MAX_ALIAS_DROPPED_KEYS = 16
+
+/**
+ * Record that a call used at least one old name. Called by the alias layer
+ * before validation, so it fires even when validation then fails.
+ *
+ * Privacy contract: key names only. Callers pass dotted paths, never values.
+ * Entries whose path does not fit the key shape are dropped, not sent, for the
+ * reason given at `ARG_KEY_RE`.
+ */
+export function recordAliasUse(
+	sink: TelemetrySink,
+	target: TelemetryConfig,
+	event: {
+		tool_name: string
+		workspace_id?: string
+		renames?: { old: string; new: string }[]
+		both_sent?: boolean
+		dropped_keys?: string[]
+		tool_alias?: { old: string; new: string }
+		transport?: 'stdio' | 'http'
+	},
+): void {
+	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	const session = eventSession(target)
+	const renames = (event.renames ?? [])
+		.filter((r) => ARG_KEY_RE.test(r.old) && ARG_KEY_RE.test(r.new))
+		.slice(0, MAX_ALIAS_RENAMES)
+	const droppedKeys = (event.dropped_keys ?? [])
+		.filter((k) => ARG_KEY_RE.test(k))
+		.slice(0, MAX_ALIAS_DROPPED_KEYS)
+	sink(
+		{
+			event_type: 'alias_use',
+			tool_name: event.tool_name,
+			session_id: session.id,
+			session_source: session.source,
+			transport: event.transport,
+			renames,
+			both_sent: event.both_sent ?? false,
+			dropped_keys: droppedKeys.length > 0 ? droppedKeys : undefined,
+			tool_alias: event.tool_alias,
 		},
 		cfg,
 	)

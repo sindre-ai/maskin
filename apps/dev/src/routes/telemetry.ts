@@ -8,6 +8,7 @@ import {
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { recordMcpAliasUse } from '../lib/analytics/mcp-alias'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
 import { captureMcpToolCall, normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -36,7 +37,7 @@ const recordRoute = createRoute({
 	path: '/mcp',
 	tags: ['Telemetry'],
 	summary:
-		'Record an MCP telemetry event (tool_call, mutation, error, or tool_call_response_size).',
+		'Record an MCP telemetry event (tool_call, mutation, error, alias_use, or tool_call_response_size).',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: recordMcpTelemetrySchema } } },
@@ -166,6 +167,22 @@ app.openapi(recordRoute, (async (c) => {
 			requestedShape: body.requested_shape,
 			sessionId: body.session_id ?? null,
 			agentActorId: body.agent_actor_id ?? null,
+		})
+	} else if (body.event_type === 'alias_use') {
+		// Old-name use. Awaited, unlike the misfire branch: Postgres is the source
+		// of truth for the removal check (PostHog has been dark since 4 Oct), so
+		// the row is written before the sink is answered. `recordMcpAliasUse`
+		// never throws. The actor is the authenticated caller's, never a payload
+		// field — the schema has no slot for one, so it cannot be spoofed.
+		await recordMcpAliasUse(db, workspaceId, {
+			toolName: body.tool_name,
+			sessionId: body.session_id ?? null,
+			transport: body.transport ?? null,
+			renames: body.renames,
+			bothSent: body.both_sent,
+			droppedKeys: body.dropped_keys ?? [],
+			toolAlias: body.tool_alias ?? null,
+			agentActorId: actorId,
 		})
 	} else {
 		// tool_call_response_size — PostHog-only fan-out for the MCP

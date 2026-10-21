@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
 	alignTopFields,
+	recordMcpAliasUseSchema,
+	recordMcpTelemetrySchema,
 	recordMcpToolCallResponseSizeSchema,
 	recordMcpToolCallSchema,
 } from '../schemas/telemetry'
@@ -121,5 +123,91 @@ describe('recordMcpToolCallResponseSizeSchema — view', () => {
 		)
 		expect(parsed.view).toBeUndefined()
 		expect(parsed.structured_content_bytes).toBe(900)
+	})
+})
+
+describe('recordMcpTelemetrySchema — alias_use', () => {
+	const aliasEvent = (overrides: Record<string, unknown> = {}) => ({
+		event_type: 'alias_use' as const,
+		tool_name: 'update_actor',
+		session_id: 'session-1',
+		session_source: 'maskin-session' as const,
+		transport: 'http' as const,
+		renames: [{ old: 'driver_id', new: 'driver' }],
+		both_sent: false,
+		...overrides,
+	})
+
+	it('accepts a key-rename event and leaves tool_alias absent', () => {
+		const parsed = recordMcpTelemetrySchema.parse(aliasEvent())
+		expect(parsed).toMatchObject({
+			event_type: 'alias_use',
+			tool_name: 'update_actor',
+			renames: [{ old: 'driver_id', new: 'driver' }],
+			both_sent: false,
+		})
+		expect('tool_alias' in parsed ? parsed.tool_alias : undefined).toBeUndefined()
+	})
+
+	it('accepts nested dotted paths', () => {
+		const parsed = recordMcpAliasUseSchema.parse(
+			aliasEvent({ renames: [{ old: 'config.maxTurns', new: 'config.max_turns' }] }),
+		)
+		expect(parsed.renames[0]).toEqual({ old: 'config.maxTurns', new: 'config.max_turns' })
+	})
+
+	it('accepts a tool-name alias with dropped key names', () => {
+		const parsed = recordMcpAliasUseSchema.parse(
+			aliasEvent({
+				tool_name: 'run_agent',
+				renames: [],
+				tool_alias: { old: 'run_agent', new: 'create_session' },
+				dropped_keys: ['config', 'poll_interval_seconds'],
+			}),
+		)
+		expect(parsed.tool_alias).toEqual({ old: 'run_agent', new: 'create_session' })
+		expect(parsed.dropped_keys).toEqual(['config', 'poll_interval_seconds'])
+	})
+
+	it('defaults renames to empty and both_sent to false', () => {
+		const parsed = recordMcpAliasUseSchema.parse({
+			event_type: 'alias_use',
+			tool_name: 'run_agent',
+		})
+		expect(parsed.renames).toEqual([])
+		expect(parsed.both_sent).toBe(false)
+	})
+
+	it('caps renames at 64 and dropped keys at 16', () => {
+		const rename = { old: 'a', new: 'b' }
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: Array(64).fill(rename) })).success,
+		).toBe(true)
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: Array(65).fill(rename) })).success,
+		).toBe(false)
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ dropped_keys: Array(17).fill('k') })).success,
+		).toBe(false)
+	})
+
+	// The contract is key NAMES. A path with spaces or punctuation is what a
+	// value (free text) looks like, so it must not get through.
+	it('rejects a rename path that is not identifier-like', () => {
+		for (const bad of ['Acquire the Nakatomi account', 'owner:login', 'a'.repeat(65), '']) {
+			expect(
+				recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: [{ old: bad, new: 'driver' }] }))
+					.success,
+			).toBe(false)
+		}
+	})
+
+	it('has no actor field: an actor id in the payload is stripped', () => {
+		const parsed = recordMcpAliasUseSchema.parse(aliasEvent({ agent_actor_id: 'someone-else' }))
+		expect('agent_actor_id' in parsed).toBe(false)
+	})
+
+	it('is a member of the discriminated telemetry union', () => {
+		expect(recordMcpTelemetrySchema.safeParse(aliasEvent()).success).toBe(true)
 	})
 })
