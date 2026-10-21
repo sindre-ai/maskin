@@ -148,7 +148,10 @@ test.describe('Slash-command menu (document variant)', () => {
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
 		await page.keyboard.type('/')
-		await page.getByRole('option', { name: /^Heading/ }).first().click()
+		await page
+			.getByRole('option', { name: /^Heading/ })
+			.first()
+			.click()
 		await page.keyboard.type('Section')
 		await expect(editor.locator('h2')).toHaveText('Section')
 		await expect(editor.locator('h1')).toHaveCount(0)
