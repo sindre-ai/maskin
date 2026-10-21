@@ -225,10 +225,14 @@ export class NotificationPushFanout {
 			.where(eq(notifications.id, notificationId))
 			.limit(1)
 		if (!n || !n.targetActorId) return
-		if (n.status !== 'pending') return
+		const meta = (n.metadata ?? {}) as Record<string, unknown>
+		// Push-only rows (chat replies) are stored 'seen' so they never count toward the pending
+		// badge or show in the inbox; they are still waiting to be pushed. Everything else must
+		// still be pending.
+		const pushOnly = meta.push_only === true && n.status === 'seen'
+		if (n.status !== 'pending' && !pushOnly) return
 		if (this.ledger.hasSent(n.targetActorId, n.id)) return
 
-		const meta = (n.metadata ?? {}) as Record<string, unknown>
 		if (await this.alreadyRead(n.targetActorId, meta)) return
 
 		const createdMs = (n.createdAt ?? new Date()).getTime()

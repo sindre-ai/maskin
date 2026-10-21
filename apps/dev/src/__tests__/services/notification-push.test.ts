@@ -329,6 +329,38 @@ describe('NotificationPushFanout', () => {
 				expect(sender.sendToActor).toHaveBeenCalledTimes(1)
 			})
 
+			it('still sends a push-only row (stored seen) after the wait', async () => {
+				vi.useFakeTimers()
+				const pushOnly = {
+					...delayed,
+					status: 'seen',
+					metadata: { ...(delayed.metadata as Record<string, unknown>), push_only: true },
+				}
+				const { fanout, sender } = setup([], true, [
+					[pushOnly],
+					[], // preferences
+					[pushOnly], // re-read after the wait
+					[{ lastRead: 3 }], // read check
+					[], // preferences
+					[{ value: 0 }], // badge
+				])
+				await fanout.handleEvent(event)
+				await vi.advanceTimersByTimeAsync(31_000)
+				expect(sender.sendToActor).toHaveBeenCalledTimes(1)
+			})
+
+			it('drops a seen row that is not push-only', async () => {
+				vi.useFakeTimers()
+				const { fanout, sender } = setup([], true, [
+					[delayed],
+					[],
+					[{ ...delayed, status: 'seen' }],
+				])
+				await fanout.handleEvent(event)
+				await vi.advanceTimersByTimeAsync(31_000)
+				expect(sender.sendToActor).not.toHaveBeenCalled()
+			})
+
 			it('drops the push when the notification is no longer pending', async () => {
 				vi.useFakeTimers()
 				const { fanout, sender } = setup([], true, [
