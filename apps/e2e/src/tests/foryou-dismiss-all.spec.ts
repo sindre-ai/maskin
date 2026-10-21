@@ -13,7 +13,13 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 	page,
 	account,
 }) => {
-	const agent = await account.api.createAgentActor(`Reviewer ${Date.now()}`)
+	// Only the Chief of Staff may curate For You items, and it is found by name. The workspace
+	// already has one whose key the test cannot read, so move it aside and make this agent it.
+	const existing = await account.api.listWorkspaceActors(account.workspaceId)
+	for (const actor of existing.filter((a) => a.type === 'agent' && a.name === 'Chief of Staff')) {
+		await account.api.updateActor(actor.id, { name: `Former Chief of Staff ${Date.now()}` })
+	}
+	const agent = await account.api.createAgentActor('Chief of Staff')
 	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 	const agentApi = new TestAPI(agent.api_key)
 

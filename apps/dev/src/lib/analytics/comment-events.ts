@@ -1,3 +1,4 @@
+import type { RouteReason, RoutedTo, SessionOrigin } from '../../services/chat-origin-routing'
 import { capturePosthogEvent } from './posthog'
 
 interface AgentCommentPostedProps {
@@ -7,6 +8,12 @@ interface AgentCommentPostedProps {
 	entityType: string
 	content: string
 	hasTaskList: boolean
+	/** How the commenting session relates to a chat; see planCommentRouting. */
+	sessionOrigin?: SessionOrigin
+	hasDecisionBlock?: boolean
+	/** Where a human mention ended up: still in For You, moved to a chat, or no human mentioned. */
+	routedTo?: RoutedTo
+	routeReason?: RouteReason
 }
 
 // Detects an opt-in visual fenced block (currently ```chart). Kept as a regex
@@ -23,5 +30,9 @@ export async function trackAgentCommentPosted(p: AgentCommentPostedProps): Promi
 		char_count: p.content.length,
 		has_visual: VISUAL_FENCE_RE.test(p.content),
 		has_task_list: p.hasTaskList,
+		session_origin: p.sessionOrigin,
+		has_decision_block: p.hasDecisionBlock,
+		routed_to: p.routedTo,
+		route_reason: p.routeReason,
 	})
 }

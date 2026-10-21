@@ -229,6 +229,13 @@ export interface ComposerProps {
 	/** When set, a Call button for this agent sits beside the mic. Callers pass it
 	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
 	callAgent?: VoiceCallAgent | null
+	/**
+	 * Asks the composer to replace its draft with `text` (when given), then focus
+	 * with the caret at the end. Without `text` it only focuses and leaves the draft
+	 * alone. One request per nonce: a request that was already there when the
+	 * composer mounted never fires, so a stale one cannot overwrite a draft.
+	 */
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -289,6 +296,7 @@ export function Composer({
 	secretRestarting,
 	vaultModeBlocked,
 	callAgent,
+	fillRequest,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -397,6 +405,23 @@ export function Composer({
 	const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+	// A fill request replaces the draft through the same setter typing uses, so the
+	// sessionStorage mirror keeps working, then puts the caret at the end. Seeded
+	// with the nonce already present on mount so a stale request never fires.
+	const handledFillNonceRef = useRef(fillRequest?.nonce)
+	useEffect(() => {
+		if (!fillRequest || fillRequest.nonce === handledFillNonceRef.current) return
+		handledFillNonceRef.current = fillRequest.nonce
+		if (fillRequest.text !== undefined) setValue(fillRequest.text)
+		requestAnimationFrame(() => {
+			const el = textareaRef.current
+			if (!el) return
+			el.focus()
+			const end = el.value.length
+			el.setSelectionRange(end, end)
+		})
+	}, [fillRequest, setValue])
 	// `/` opens the create list (mockup 761–771). The chosen type seeds the
 	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
 	// pre-fills the name/fields from the conversation, which needs a `seed`

@@ -6,6 +6,7 @@ import {
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
+	objectPreviewSchema,
 	parseCommentDecision,
 	subscribeBodySchema,
 	subscribersQuerySchema,
@@ -14,6 +15,8 @@ import {
 } from '@maskin/shared'
 import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { withDeliveryState } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import {
@@ -80,6 +83,22 @@ const subscribersResponseSchema = z.object({
 	),
 })
 
+// The decision as the feed returns it: each draft also carries the `preview` of the
+// object behind it. Response only, so it is not part of what an agent can write.
+const feedDraftSchema = z.object({
+	id: z.string().optional(),
+	object_id: z.string().optional(),
+	label: z.string().optional(),
+	to: z.string().optional(),
+	body: z.string().optional(),
+	preview: objectPreviewSchema.optional(),
+})
+export const feedDecisionSchema = commentDecisionSchema.extend({
+	draft: feedDraftSchema.optional(),
+	drafts: z.array(feedDraftSchema).optional(),
+})
+type FeedDraft = z.infer<typeof feedDraftSchema>
+
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
@@ -120,7 +139,7 @@ const unreadItemSchema = z.object({
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
 			// card renders its options as the buttons the reader taps.
-			decision: commentDecisionSchema.nullable(),
+			decision: feedDecisionSchema.nullable(),
 		})
 		.optional(),
 })
@@ -164,7 +183,7 @@ const DRAFT_BODY_MAX = 20_000
  * foreign object. A draft whose object is gone or empty falls back to a stored
  * `body`, and with neither it is dropped rather than sent as an empty box.
  */
-async function fillDraftBodies(
+export async function fillDraftBodies(
 	db: Database,
 	workspaceId: string,
 	mentions: LatestMention[],
@@ -179,23 +198,34 @@ async function fillDraftBodies(
 			allDrafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
 		),
 	]
-	const fetched = new Map<string, string | null>()
+	const fetched = new Map<string, { content: string | null; metadata: unknown }>()
 	if (missing.length > 0) {
 		const rows = await db
-			.select({ id: objects.id, content: objects.content })
+			.select({ id: objects.id, content: objects.content, metadata: objects.metadata })
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, missing)))
-		for (const row of rows) fetched.set(row.id, row.content)
+		for (const row of rows) fetched.set(row.id, row)
 	}
 
 	// One draft, filled from its object's live text, or null when there is nothing
 	// to show (object gone or empty, and no stored body).
-	const fill = (draft: DecisionDraft): DecisionDraft | null => {
-		const live = draft.object_id
-			? (loaded.get(draft.object_id)?.content ?? fetched.get(draft.object_id) ?? null)
+	const fill = (draft: DecisionDraft): FeedDraft | null => {
+		const source = draft.object_id
+			? (loaded.get(draft.object_id) ?? fetched.get(draft.object_id) ?? null)
 			: null
-		const body = (live?.trim() ? live : draft.body)?.slice(0, DRAFT_BODY_MAX)
-		return body ? { ...draft, label: draft.label ?? 'Draft', body } : null
+		const live = source?.content ?? null
+		const preview = source ? buildObjectPreview(source) : null
+		// A previewable object shows its parsed text (the subject line is its own field);
+		// anything else keeps showing the description as before.
+		const text = preview ? preview.body : live
+		const body = (text?.trim() ? text : draft.body)?.slice(0, DRAFT_BODY_MAX)
+		if (!body) return null
+		return {
+			...draft,
+			label: draft.label ?? preview?.label ?? 'Draft',
+			body,
+			...(preview ? { preview } : {}),
+		}
 	}
 
 	for (const mention of mentions) {
@@ -211,6 +241,20 @@ async function fillDraftBodies(
 			decision.drafts = filled.length > 0 ? filled : undefined
 		}
 	}
+
+	// Where each previewable draft stands (draft, approved, sent), so the card can show a
+	// receipt instead of a Send button for a message that has already gone.
+	const previewed = mentions.flatMap((m) =>
+		[...(m.decision?.draft ? [m.decision.draft] : []), ...(m.decision?.drafts ?? [])].filter(
+			(d) => d.preview && d.object_id,
+		),
+	)
+	await Promise.all(
+		previewed.map(async (d) => {
+			if (!d.preview || !d.object_id) return
+			d.preview = await withDeliveryState(db, workspaceId, d.object_id, d.preview)
+		}),
+	)
 }
 
 const unreadResponseSchema = z.object({

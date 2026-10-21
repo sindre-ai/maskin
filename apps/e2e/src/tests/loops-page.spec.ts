@@ -290,6 +290,7 @@ test.describe('Loops list page', () => {
 
 		await page.goto(`/${account.workspaceId}/loops`)
 		await expect(page.getByText('Look into the churn spike')).toBeVisible({ timeout: 10000 })
-		await expect(page.getByText('feeds Churn watch')).toBeVisible()
+		// The agent's own "Meet Relay" intro chat feeds the same loop, so the label shows twice.
+		await expect(page.getByText('feeds Churn watch').first()).toBeVisible()
 	})
 })
