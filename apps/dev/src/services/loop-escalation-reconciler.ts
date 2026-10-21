@@ -37,9 +37,8 @@ import { logger } from '../lib/logger'
  *   sits between those and matches the SPEC ("same step + same threshold
  *   must not double-post" is inherently a per-wait-spell rule).
  *
- * - **Global env gate for rollback.** The reconciler runs iff BOTH
- *   `loops-v4-polish` AND `loops-v4-polish.step_flow` are present in
- *   `FF_TESTER_FEATURES`. That gives Ops the same one-env-flip revert
+ * - **Global env gate for rollback.** The reconciler runs iff
+ *   `loops-v4-polish.step_flow` is present in `FF_TESTER_FEATURES`. That gives Ops the same one-env-flip revert
  *   `.claude/rules/feature-flags.md` guarantees for frontend deltas, only
  *   applied at the backend cron boundary. The bet's SPEC explicitly opts the
  *   reconciler into feature-flag rollback ("per-delta sub-flags let a single
@@ -159,10 +158,7 @@ export class LoopEscalationReconciler {
 
 	private isFlagOn(): boolean {
 		const config = this.readConfig()
-		return (
-			config.testerFlags.has(FLAGS.loopsV4Polish) &&
-			config.testerFlags.has(FLAGS.loopsV4PolishStepFlow)
-		)
+		return config.testerFlags.has(FLAGS.loopsV4PolishStepFlow)
 	}
 
 	private async loadCandidates(): Promise<CandidateStep[]> {

@@ -1,19 +1,11 @@
 import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { startVoiceCall } from '@/lib/voice-active-call'
 import { VOICE_UNAVAILABLE_TOOLTIP, useVoiceUnavailable } from '@/lib/voice-availability'
 import { Phone } from 'lucide-react'
 import { useEffect } from 'react'
-
-// One boundary per feature — this component reads `voice-mode-v1` and renders
-// nothing when the flag is off, so every surface that mounts it (agent detail
-// header, agent rows, thread header) stays trivial and the flag is not
-// scattered across per-element checks. When the flag is deleted (feature ships
-// to everyone), this component's guard is the only site to clean up.
-const VOICE_MODE_V1_ID = 'voice-mode-v1'
 
 export function AgentCallButton({
 	agent,
@@ -30,14 +22,13 @@ export function AgentCallButton({
 	 *  one page and V has no single agent to mean. */
 	shortcut?: boolean
 }) {
-	const enabled = useFeatureFlag(VOICE_MODE_V1_ID)
 	const unavailable = useVoiceUnavailable()
 
 	// `V` starts the call when the agent detail is focused (anywhere on the
 	// page counts, provided the user isn't typing in an input). Global scope
 	// mirrors the SPEC: "V opens when the agent detail is focused."
 	useEffect(() => {
-		if (!enabled || !shortcut || unavailable) return
+		if (!shortcut || unavailable) return
 		function onKey(e: KeyboardEvent) {
 			if (e.metaKey || e.ctrlKey || e.altKey) return
 			if (e.key.toLowerCase() !== 'v') return
@@ -53,9 +44,7 @@ export function AgentCallButton({
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [enabled, shortcut, unavailable, agent])
-
-	if (!enabled) return null
+	}, [shortcut, unavailable, agent])
 
 	const button = (
 		<Button

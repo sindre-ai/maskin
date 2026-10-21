@@ -8,17 +8,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // here; session end (hangup, WS-drop grace, sweeper, cost, daily cap) is
 // covered against real Postgres in
 // apps/dev/src/__tests__/integration/voice-session-lifecycle.test.ts.
-//
-// `ff:voice-mode-v1` (see feature-flags.ts) beats the server response so the
-// spec can flip both sides of the flag boundary without a second actor.
 
 const GRANT = 'Allow microphone & start call'
-
-async function flagOn(page: Page) {
-	await page.addInitScript(() => {
-		window.localStorage.setItem('ff:voice-mode-v1', 'on')
-	})
-}
 
 /** Makes getUserMedia fail the way a real browser does, by DOMException name. */
 async function failMicWith(page: Page, name: 'NotAllowedError' | 'NotFoundError') {
@@ -43,7 +34,6 @@ test.describe('Voice — row-level Call button', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, voice.id)
 			const text = await account.api.createAgentActor('Tia Text')
 			await account.api.addWorkspaceMember(account.workspaceId, text.id)
-			await flagOn(page)
 
 			await page.goto(`/${account.workspaceId}/agents`)
 			const voiceRow = page.getByRole('listitem').filter({ hasText: 'Vera Voice' })
@@ -73,27 +63,12 @@ test.describe('Voice — row-level Call button', () => {
 		})
 	}
 
-	test('hides the row Call button when the flag is off', async ({ page, account }) => {
-		const voice = await account.api.createAgentActor('Vera Voice')
-		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await page.addInitScript(() => {
-			window.localStorage.setItem('ff:voice-mode-v1', 'off')
-		})
-
-		await page.goto(`/${account.workspaceId}/agents`)
-		await expect(page.getByRole('link').filter({ hasText: 'Vera Voice' })).toBeVisible({
-			timeout: 10_000,
-		})
-		await expect(page.getByRole('button', { name: 'Call Vera Voice' })).toHaveCount(0)
-	})
-
 	test('a row Call button opens the permission dialog without navigating away', async ({
 		page,
 		account,
 	}) => {
 		const voice = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await flagOn(page)
 
 		await page.goto(`/${account.workspaceId}/agents`)
 		const row = page.getByRole('listitem').filter({ hasText: 'Vera Voice' })
@@ -107,7 +82,6 @@ test.describe('Voice — row-level Call button', () => {
 	test('the call stays open when the user navigates to another page', async ({ page, account }) => {
 		const voice = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, voice.id)
-		await flagOn(page)
 
 		await page.goto(`/${account.workspaceId}/agents`)
 		const row = page.getByRole('listitem').filter({ hasText: 'Vera Voice' })
@@ -135,7 +109,6 @@ test.describe('Voice — thread-header Call button', () => {
 			title: 'Weekly check-in',
 			participant_actor_ids: [voice.id],
 		})
-		await flagOn(page)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		const call = page.getByRole('button', { name: 'Call Vera Voice' })
@@ -156,7 +129,6 @@ test.describe('Voice — thread-header Call button', () => {
 			title: 'Two voices',
 			participant_actor_ids: [a.id, b.id],
 		})
-		await flagOn(page)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: /Two voices/ })).toBeVisible({
@@ -175,7 +147,6 @@ test.describe('Voice — Mic-blocked and No-mic dialog states', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const agent = await account.api.createAgentActor('Vera Voice')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await flagOn(page)
 			await failMicWith(page, 'NotAllowedError')
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
@@ -207,7 +178,6 @@ test.describe('Voice — Mic-blocked and No-mic dialog states', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const agent = await account.api.createAgentActor('Vera Voice')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await flagOn(page)
 			await failMicWith(page, 'NotFoundError')
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
@@ -230,7 +200,6 @@ test.describe('Voice — Mic-blocked and No-mic dialog states', () => {
 	test('reduced motion: the error states render no animation', async ({ page, account }) => {
 		const agent = await account.api.createAgentActor('Vera Voice')
 		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-		await flagOn(page)
 		await failMicWith(page, 'NotAllowedError')
 		await page.emulateMedia({ reducedMotion: 'reduce' })
 

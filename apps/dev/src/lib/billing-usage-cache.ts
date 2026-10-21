@@ -6,10 +6,9 @@
 // in-flight promise as well as the settled value, so concurrent identical
 // requests share one computation.
 //
-// Keyed per actor AND workspace, never shared wider: the response carries an
-// actor-scoped flag (the LinkedIn add-on line), and a workspace id alone would
-// let one member's response answer another's. Callers sit behind authMiddleware,
-// which has already proven the actor is a member of the workspace.
+// Keyed per actor AND workspace, never shared wider, so one member's response
+// can never answer another's. Callers sit behind authMiddleware, which has
+// already proven the actor is a member of the workspace.
 //
 // Freshness does not depend on the TTL being shorter than the web app's refetch
 // window: `recordEvent` evicts a workspace's entries whenever it records a

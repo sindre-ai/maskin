@@ -235,8 +235,7 @@ export const relationships = pgTable(
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
-		// Applied live via migration 0074; hook itself gated on
-		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
 			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,

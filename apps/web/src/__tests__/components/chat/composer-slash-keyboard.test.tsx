@@ -5,23 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildObjectResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
-// The composer's `/` picker only wires keyboard-from-composer nav when the
-// `chat-slash-picker-v2` flag is on. Force it on for the entire file so the
-// unified branch executes without touching the real flag cache.
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (flagId: string) => flagId === 'chat-slash-picker-v2',
-}))
-
 vi.mock('@/hooks/use-files', () => ({
 	useUploadFile: () => vi.fn(),
 }))
 
 vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: async () => '',
-}))
-
-vi.mock('@/components/chat/slash-picker', () => ({
-	SlashPicker: () => null,
 }))
 
 vi.mock('@/lib/analytics', () => ({

@@ -14,10 +14,7 @@ interface LoopStatsProps {
 	loop: LoopSummary
 	/** Live cycles count. When any of the three new props are provided the
 	 * component renders the v4 5-tile strip; when all are undefined it renders
-	 * the pre-v4 3-tile strip. Boundary lives at the /loops/:id route (see the
-	 * `loops-v4-polish` flag read there); LoopStats itself doesn't read the
-	 * flag so the same component covers both branches without a scattered
-	 * check. */
+	 * the 3-tile strip. */
 	cyclesRunning?: number
 	asksWaiting?: number
 	nextFire?: string | null

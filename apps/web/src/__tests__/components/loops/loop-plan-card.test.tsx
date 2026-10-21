@@ -23,14 +23,6 @@ vi.mock('@tanstack/react-router', () => ({
 	},
 }))
 
-// D9 v4 gate. Tests below opt each case into the flagged branch via
-// `mockFeatureFlag.mockReturnValueOnce(true)` — the pre-v4 tests above run
-// unaffected because the mock defaults to `false`.
-const mockFeatureFlag = vi.fn<() => boolean>()
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: () => mockFeatureFlag(),
-}))
-
 const mockProviders = vi.fn()
 const mockIntegrations = vi.fn()
 vi.mock('@/hooks/use-integrations', () => ({
@@ -74,7 +66,6 @@ function baseProps(overrides: Partial<Parameters<typeof LoopPlanCard>[0]> = {}) 
 }
 
 beforeEach(() => {
-	mockFeatureFlag.mockReturnValue(false)
 	mockProviders.mockReturnValue([])
 	mockIntegrations.mockReturnValue([])
 })
@@ -212,11 +203,9 @@ describe('LoopPlanCard — created state', () => {
 	})
 })
 
-// D9 — NEEDS THESE CONNECTED row. Only mounts under the `loops-v4-polish`
-// umbrella; every test opts in via `mockFeatureFlag.mockReturnValue(true)`.
-describe('LoopPlanCard — NEEDS THESE CONNECTED (loops-v4-polish)', () => {
+// D9 — NEEDS THESE CONNECTED row.
+describe('LoopPlanCard — NEEDS THESE CONNECTED', () => {
 	beforeEach(() => {
-		mockFeatureFlag.mockReturnValue(true)
 		mockProviders.mockReturnValue([
 			{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
 			{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
@@ -236,7 +225,7 @@ describe('LoopPlanCard — NEEDS THESE CONNECTED (loops-v4-polish)', () => {
 		}
 	}
 
-	it('renders the section when the flag is on and the plan has a trigger', () => {
+	it('renders the section when the plan has a trigger', () => {
 		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
 		expect(screen.getByText('NEEDS THESE CONNECTED')).toBeInTheDocument()
 	})

@@ -234,7 +234,7 @@ resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 
 **One boundary per feature, as high in the tree as possible** — the shell or a
 route layout, not scattered checks on individual components.
-`linkedin-addon-visible` is the one live flag; the pattern to copy is the
+The live flags are whatever `FLAGS` in `apps/dev/src/lib/feature-flags.ts` registers. The pattern to copy is the
 retired `new-design` flag, which shipped the v2 redesign: it was read once per
 route component, each swapping a whole page, plus one shell read in
 `src/components/layout/sidebar.tsx`, with the pre-v2 components vendored under

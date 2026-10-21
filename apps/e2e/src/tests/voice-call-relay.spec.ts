@@ -26,8 +26,6 @@ declare global {
 
 async function installFakes(page: Page) {
 	await page.addInitScript(() => {
-		window.localStorage.setItem('ff:voice-mode-v1', 'on')
-
 		const voice = {
 			dcSent: [] as Array<Record<string, unknown>>,
 			sockets: [] as string[],

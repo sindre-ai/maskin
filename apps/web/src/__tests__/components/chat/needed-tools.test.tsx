@@ -17,16 +17,12 @@ vi.mock('@tanstack/react-router', () => ({
 let providers: ProviderInfo[] | undefined
 let integrations: IntegrationResponse[] | undefined
 let agentTools: { mcpServers?: Record<string, unknown> } | undefined
-let visible = true
 
 vi.mock('@/hooks/use-integrations', () => ({
 	useProviders: () => ({ data: providers }),
 	useIntegrations: () => ({ data: integrations }),
 }))
 vi.mock('@/hooks/use-actors', () => ({ useActor: () => ({ data: { tools: agentTools } }) }))
-vi.mock('@/hooks/use-provider-visibility', () => ({
-	useProviderVisibility: () => () => visible,
-}))
 // The card has its own tests; here it stands in for "a row".
 vi.mock('@/components/chat/integration-connect-card', () => ({
 	IntegrationConnectCard: ({ provider }: { provider: string }) => (
@@ -76,7 +72,6 @@ describe('NeededTools', () => {
 		]
 		integrations = []
 		agentTools = { mcpServers: {} }
-		visible = true
 	})
 
 	it('draws nothing until providers and integrations have both loaded', () => {
@@ -102,13 +97,9 @@ describe('NeededTools', () => {
 		expect(screen.getByRole('heading', { name: 'Tools for this job' })).toBeInTheDocument()
 	})
 
-	it('skips a provider that is unknown or hidden by a flag', () => {
+	it('skips a provider that is unknown', () => {
 		renderTools([{ provider: 'not-a-provider' }, { provider: 'linear' }])
 		expect(screen.getAllByTestId('connect-card')).toHaveLength(1)
-
-		visible = false
-		const { container } = renderTools([{ provider: 'linear' }])
-		expect(container.querySelector('[data-testid="needed-tools"]')).toBeNull()
 	})
 
 	it('links to the agent tools page when a tool is connected but the agent cannot use it', () => {

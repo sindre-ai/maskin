@@ -48,7 +48,7 @@ const someFlag = useFeatureFlag('some-flag')
 {someFlag ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-`linkedin-addon-visible` is the one live flag. The pattern to copy is the
+The live flags are whatever `FLAGS` in `apps/dev/src/lib/feature-flags.ts` registers. The pattern to copy is the
 retired `new-design` flag, which shipped the v2 redesign: its read sites were
 route components, each swapping a whole page, plus one shell read in
 `layout/sidebar.tsx`, with the pre-v2 components vendored under sibling

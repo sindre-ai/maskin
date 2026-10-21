@@ -45,7 +45,7 @@ describe('LoopEscalationReconciler', () => {
 
 		flagOnConfig = {
 			testerActorIds: new Set([getTestActorId().toLowerCase()]),
-			testerFlags: new Set([FLAGS.loopsV4Polish, FLAGS.loopsV4PolishStepFlow]),
+			testerFlags: new Set([FLAGS.loopsV4PolishStepFlow]),
 		}
 	})
 
@@ -181,29 +181,13 @@ describe('LoopEscalationReconciler', () => {
 		expect(await countEscalationCommentsFor(loop.id)).toBe(0)
 	})
 
-	it('posts zero comments when the umbrella loops-v4-polish flag is off (rollback path)', async () => {
-		const { loop, child } = await seedLoopWithStep({ escalateAfterMs: 1_000 })
-		await seedUnreadEventOn(child.id, 5_000)
-
-		const flagOffConfig: FeatureFlagConfig = {
-			testerActorIds: new Set([getTestActorId().toLowerCase()]),
-			// Umbrella missing, sub-flag present — still off, because the sub-flag
-			// is gated by the umbrella at the read site (per the SPEC).
-			testerFlags: new Set([FLAGS.loopsV4PolishStepFlow]),
-		}
-		const reconciler = new LoopEscalationReconciler(db, 60_000, () => flagOffConfig)
-		await reconciler.tick()
-
-		expect(await countEscalationCommentsFor(loop.id)).toBe(0)
-	})
-
 	it('posts zero comments when the sub-flag loops-v4-polish.step_flow is off', async () => {
 		const { loop, child } = await seedLoopWithStep({ escalateAfterMs: 1_000 })
 		await seedUnreadEventOn(child.id, 5_000)
 
 		const subFlagOffConfig: FeatureFlagConfig = {
 			testerActorIds: new Set([getTestActorId().toLowerCase()]),
-			testerFlags: new Set([FLAGS.loopsV4Polish]),
+			testerFlags: new Set<string>(),
 		}
 		const reconciler = new LoopEscalationReconciler(db, 60_000, () => subFlagOffConfig)
 		await reconciler.tick()

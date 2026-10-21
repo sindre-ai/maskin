@@ -44,11 +44,6 @@ interface MessageBubbleProps {
 	activity?: React.ReactNode
 	/** A later message in the thread already answered this message's question. */
 	questionAnswered?: boolean
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
-	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.bubbles`
-	 *  sub-flag. Off keeps the pre-v4 bubble — lowercase "You attached" eyebrow
-	 *  and no per-message Copy/Retry action row. */
-	v4Polish?: boolean
 	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
@@ -69,7 +64,6 @@ export function MessageBubble({
 	message,
 	activity,
 	questionAnswered = false,
-	v4Polish = false,
 	spawnInfo,
 	shownLinkedObjectIds,
 }: MessageBubbleProps) {
@@ -87,8 +81,7 @@ export function MessageBubble({
 	// Real, persisted, own message (not a system row, not an optimistic
 	// bubble) — the only kind that can be edited or retried.
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
-	// Any real, persisted message with text can be copied, own or not, and
-	// independent of the v4 polish flag.
+	// Any real, persisted message with text can be copied, own or not.
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
@@ -153,7 +146,7 @@ export function MessageBubble({
 			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
-						<span className="eyebrow shrink-0">{v4Polish ? 'YOU ATTACHED' : 'You attached'}</span>
+						<span className="eyebrow shrink-0">YOU ATTACHED</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
@@ -267,8 +260,8 @@ export function MessageBubble({
 	}
 
 	// Optimistic bubbles (id ≤ 0) get no action row. Copy is always available;
-	// Retry is a v4 delta, so it is additionally gated by `v4Polish`.
-	const canRetryAgent = v4Polish && message.id > 0 && message.kind === 'message'
+	// Retry only applies to a persisted agent message.
+	const canRetryAgent = message.id > 0 && message.kind === 'message'
 	return (
 		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar

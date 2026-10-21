@@ -140,12 +140,10 @@ function buildTrigger(overrides: Partial<TriggerResponse> = {}): TriggerResponse
 	} as TriggerResponse
 }
 
-const FLAG_UMBRELLA = 'loops-v4-polish'
 const FLAG_STEP_FLOW = 'loops-v4-polish.step_flow'
 
-function setFlags(state: { umbrella: boolean; stepFlow: boolean }) {
+function setFlags(state: { stepFlow: boolean }) {
 	mockUseFeatureFlag.mockImplementation((id: string) => {
-		if (id === FLAG_UMBRELLA) return state.umbrella
 		if (id === FLAG_STEP_FLOW) return state.stepFlow
 		return false
 	})
@@ -158,12 +156,12 @@ beforeEach(() => {
 	mockUseActors.mockReturnValue({ data: [] })
 	mockUseRelationships.mockReturnValue({ data: [] })
 	mockUseLoopSteps.mockReturnValue({ data: [] })
-	setFlags({ umbrella: false, stepFlow: false })
+	setFlags({ stepFlow: false })
 })
 
 describe('LoopDetailRoute — AskBanner wiring', () => {
 	it('samples the first pending step for agentName + askText when step_flow is on', () => {
-		setFlags({ umbrella: true, stepFlow: true })
+		setFlags({ stepFlow: true })
 		const loop = buildLoopSummary({
 			id: 'loop-1',
 			name: 'Deal pipeline',
@@ -236,7 +234,7 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 	})
 
 	it('pendingCount counts steps where isWaitingOnViewer is true', () => {
-		setFlags({ umbrella: true, stepFlow: true })
+		setFlags({ stepFlow: true })
 		const loop = buildLoopSummary({
 			id: 'loop-1',
 			// The loop-level count is deliberately different — the wiring must
@@ -275,7 +273,7 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 	})
 
 	it('hides the banner when no step is pending, even if the loop-level waitingOnViewer bit is true', () => {
-		setFlags({ umbrella: true, stepFlow: true })
+		setFlags({ stepFlow: true })
 		const loop = buildLoopSummary({
 			id: 'loop-1',
 			// Loop-level bit says "waiting" but the per-step feed says no step is
@@ -295,11 +293,11 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 		expect(screen.queryByRole('region', { name: /Pending ask/i })).not.toBeInTheDocument()
 	})
 
-	it('falls back to the loop-level waitingOnViewer bit when step_flow is off but the umbrella is on', () => {
-		// Sub-flag off: the banner still renders under the umbrella alone, and
+	it('falls back to the loop-level waitingOnViewer bit when step_flow is off', () => {
+		// Sub-flag off: the banner still renders, and
 		// pendingCount falls back to the loop-level `waitingCount` because
 		// there is no per-step feed to count from.
-		setFlags({ umbrella: true, stepFlow: false })
+		setFlags({ stepFlow: false })
 		const loop = buildLoopSummary({
 			id: 'loop-1',
 			waitingOnViewer: true,
@@ -334,22 +332,6 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 		expect(screen.getByText(/First agent asks/)).toBeInTheDocument()
 		expect(screen.getByText(/is waiting on your input\./)).toBeInTheDocument()
 		expect(screen.getByLabelText('4 pending')).toBeInTheDocument()
-	})
-
-	it('does not render the banner when the umbrella flag is off', () => {
-		setFlags({ umbrella: false, stepFlow: false })
-		const loop = buildLoopSummary({
-			id: 'loop-1',
-			waitingOnViewer: true,
-			waitingCount: 2,
-			triggerIds: ['t-a'],
-		})
-		mockUseLoops.mockReturnValue({ data: [loop] })
-		mockUseLoopSteps.mockReturnValue({ data: undefined })
-
-		render(<LoopDetailRoute />)
-
-		expect(screen.queryByRole('region', { name: /Pending ask/i })).not.toBeInTheDocument()
 	})
 })
 

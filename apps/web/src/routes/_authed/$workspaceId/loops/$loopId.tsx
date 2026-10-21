@@ -107,22 +107,17 @@ function LoopDetailRoute() {
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
-	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
-	// level per the feature-flags rule (`.claude/rules/feature-flags.md`); kept
-	// above the early returns below so the hook order stays stable across renders.
-	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
-	const loopsV4Polish = useFeatureFlag('loops-v4-polish')
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. When the `step_flow` sub-flag is on
 	// the getter returns the real per-step array from `useLoopSteps` so the
 	// banner samples the actually-stalled step. When the sub-flag is off, fall
 	// back to the loop-level `waitingOnViewer` bit as a single synthetic step so
-	// the banner still renders under the umbrella flag alone. Every hook the
+	// the banner still renders. Every hook the
 	// banner needs is called unconditionally BEFORE the loading / error /
 	// not-found early-returns so hook order is stable across renders (React
 	// rules-of-hooks).
@@ -146,12 +141,12 @@ function LoopDetailRoute() {
 		return (loopSteps ?? []).reduce((n, s) => (isWaitingOnViewer(s) ? n + 1 : n), 0)
 	}, [stepFlowEnabled, loopSteps])
 	const loopIdForBanner = loop?.id ?? ''
-	const askBannerVisible = loopsV4Polish && !!loop && anyStepPending
+	const askBannerVisible = !!loop && anyStepPending
 	// Real count, not a 0/1 flag — this is the dimension the bet's Won
 	// condition is measured on, so a constant 1 would make every session look
 	// identical in PostHog. When the step_flow sub-flag is on, count pending
 	// steps from the shared predicate; otherwise fall back to the loop-level
-	// waitingCount so the umbrella-only banner still emits a real number.
+	// waitingCount so the banner still emits a real number.
 	const pendingCount = askBannerVisible ? (pendingStepCount ?? loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-flow')
@@ -291,10 +286,10 @@ function LoopDetailRoute() {
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
 	// D3 AskBanner content sourcing. When the `step_flow` sub-flag is on, sample
 	// the first pending step from `useLoopSteps` for `agentName`, `askText`, and
-	// the avatar so the banner surfaces the actually-stalled ask. Under the
-	// umbrella flag alone (sub-flag off) the per-step feed is not fetched — fall
-	// back to the loop's first agent for the copy, matching the pre-D6a wiring
-	// so the banner still renders.
+	// the avatar so the banner surfaces the actually-stalled ask. With the
+	// sub-flag off the per-step feed is not fetched — fall back to the loop's
+	// first agent for the copy, matching the pre-D6a wiring so the banner still
+	// renders.
 	const askAgentActor = firstPendingStep?.agent ?? firstAgentActor ?? null
 	const askAgentName = askAgentActor?.name ?? 'This loop'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
@@ -443,43 +438,37 @@ function LoopDetailRoute() {
 					</Link>
 				)}
 
-				{/* Stable aria-live wrapper for the D3 AskBanner (loops-v4-polish
-				    umbrella flag). The wrapper element is permanent so screen
-				    readers announce the banner appearance without racing the DOM
-				    swap — banner content swaps in and out of the wrapper, the
-				    wrapper does not swap. Never put aria-live on the banner. */}
-				{loopsV4Polish && (
-					<div
-						aria-live="polite"
-						aria-atomic="true"
-						data-testid="ask-banner-live-region"
-						className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
-					>
-						{askBannerVisible && (
-							<AskBanner
-								agentName={askAgentName}
-								askText={askText}
-								jumpHref={decideJumpHref}
-								onDecideClick={handleDecideClick}
-								pendingCount={pendingCount}
-								avatarId={askAgentActor?.id}
-								avatarType={askAvatarType}
-							/>
-						)}
-					</div>
-				)}
+				{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
+				    is permanent so screen readers announce the banner appearance
+				    without racing the DOM swap — banner content swaps in and out of
+				    the wrapper, the wrapper does not swap. Never put aria-live on
+				    the banner. */}
+				<div
+					aria-live="polite"
+					aria-atomic="true"
+					data-testid="ask-banner-live-region"
+					className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
+				>
+					{askBannerVisible && (
+						<AskBanner
+							agentName={askAgentName}
+							askText={askText}
+							jumpHref={decideJumpHref}
+							onDecideClick={handleDecideClick}
+							pendingCount={pendingCount}
+							avatarId={askAgentActor?.id}
+							avatarType={askAvatarType}
+						/>
+					)}
+				</div>
 
 				<div className="mt-5">
-					{loopsV4Enabled ? (
-						<LoopStats
-							loop={loop}
-							cyclesRunning={cyclesRunning}
-							asksWaiting={asksWaiting}
-							nextFire={nextFire}
-						/>
-					) : (
-						<LoopStats loop={loop} />
-					)}
+					<LoopStats
+						loop={loop}
+						cyclesRunning={cyclesRunning}
+						asksWaiting={asksWaiting}
+						nextFire={nextFire}
+					/>
 				</div>
 
 				{isPreFirstRun && (

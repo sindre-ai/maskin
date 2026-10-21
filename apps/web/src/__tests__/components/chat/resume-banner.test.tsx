@@ -61,12 +61,7 @@ describe('ResumeBanner', () => {
 
 	it('stacks the eyebrow + time helper above the bullet list', () => {
 		const { container } = render(
-			<ResumeBanner
-				conversationId="conv-1"
-				messages={agedThread(2)}
-				lastReadMessageId={1}
-				v4Polish
-			/>,
+			<ResumeBanner conversationId="conv-1" messages={agedThread(2)} lastReadMessageId={1} />,
 			{ wrapper: TestWrapper },
 		)
 		const banner = container.firstElementChild
