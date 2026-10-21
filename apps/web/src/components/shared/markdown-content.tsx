@@ -4,9 +4,8 @@ import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { captureEditorParseError } from '@/lib/editor-events'
+import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
-import { capture } from '@/lib/posthog'
 import {
 	MarkdownRenderer,
 	type MentionActor,
@@ -15,6 +14,7 @@ import {
 } from '@maskin/markdown/react'
 import type {
 	MarkdownParseErrorInfo,
+	SavedInfo,
 	ShortcutInfo,
 	ToolbarActionInfo,
 } from '@maskin/markdown/react/editor'
@@ -871,19 +871,17 @@ function EditorAdapter({
 	}, [])
 
 	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
-		capture('editor_toolbar_action_used', {
-			action: info.action,
-			variant: info.variant,
-			surface: info.surface,
-			object_id: info.objectId,
-		})
+		editorTelemetry(info).emitToolbarAction({ action: info.action })
 	}, [])
 
 	const handleShortcutUsed = useCallback((info: ShortcutInfo) => {
-		capture('editor_shortcut_used', {
-			shortcut: info.shortcut,
-			variant: info.variant,
-			surface: info.surface,
+		editorTelemetry(info).emitShortcut({ shortcut: info.shortcut })
+	}, [])
+
+	const handleSaved = useCallback((info: SavedInfo) => {
+		editorTelemetry(info).emitSaved({
+			contentLength: info.contentLength,
+			saveTrigger: info.saveTrigger,
 		})
 	}, [])
 
@@ -912,6 +910,7 @@ function EditorAdapter({
 				onParseError={handleParseError}
 				onToolbarAction={handleToolbarAction}
 				onShortcutUsed={handleShortcutUsed}
+				onSaved={handleSaved}
 			/>
 		</Suspense>
 	)

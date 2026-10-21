@@ -82,6 +82,15 @@ export interface ShortcutInfo {
 	surface: string | undefined
 }
 
+export interface SavedInfo {
+	variant: EditorVariant
+	surface: string | undefined
+	objectId: string | undefined
+	/** Length of the markdown handed to onChange. */
+	contentLength: number
+	saveTrigger: 'blur'
+}
+
 export type { ToolbarAction }
 
 export interface MarkdownEditorProps {
@@ -138,6 +147,12 @@ export interface MarkdownEditorProps {
 	 * Callers wire this to PostHog's `editor_shortcut_used` event.
 	 */
 	onShortcutUsed?: (info: ShortcutInfo) => void
+	/**
+	 * Fires once per blur that hands changed markdown to `onChange`, never per
+	 * keystroke and never on a focus + blur with no edit. Callers wire this to
+	 * PostHog's `editor_saved` event (spec §11).
+	 */
+	onSaved?: (info: SavedInfo) => void
 }
 
 export interface MarkdownEditorRef {
@@ -286,6 +301,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			objectId,
 			onToolbarAction,
 			onShortcutUsed,
+			onSaved,
 		},
 		ref,
 	) {
@@ -401,6 +417,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 							const markdown = markdownOf(e)
 							onChange(markdown)
 							dirtyRef.current = false
+							onSaved?.({
+								variant,
+								surface,
+								objectId,
+								contentLength: markdown.length,
+								saveTrigger: 'blur',
+							})
 						} catch (err) {
 							console.error('[maskin] markdown editor onBlur getMarkdown failed', err)
 						}
