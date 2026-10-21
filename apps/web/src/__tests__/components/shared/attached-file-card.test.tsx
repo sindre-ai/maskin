@@ -39,6 +39,24 @@ describe('AttachedFileCard', () => {
 		useFileMock.mockReset()
 	})
 
+	it('sets its own text colour so the name stays readable inside a dark chat bubble', () => {
+		useFileMock.mockReturnValue({ data: undefined })
+
+		render(
+			<div className="bg-primary text-primary-foreground">
+				<AttachedFileCard
+					workspaceId="ws-1"
+					file={{ id: 'f1', name: 'Briefing.html', sizeBytes: 1200, mimeType: 'text/html' }}
+				/>
+			</div>,
+			{ wrapper: TestWrapper },
+		)
+
+		// bg-card is only legible with its own foreground token, not the bubble's inherited one.
+		const card = screen.getByText('Briefing.html').closest('a')
+		expect(card).toHaveClass('bg-card', 'text-card-foreground')
+	})
+
 	it('renders an inline <img> with a data URI for image MIME types', () => {
 		const detail = buildImageDetail()
 		useFileMock.mockReturnValue({ data: detail })

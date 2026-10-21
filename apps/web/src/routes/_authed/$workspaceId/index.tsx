@@ -1,4 +1,4 @@
-import { BriefCard } from '@/components/foryou/brief-card'
+import { BriefingRow } from '@/components/foryou/briefing-row'
 import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
 import {
@@ -7,7 +7,6 @@ import {
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
-import { ReleaseCard } from '@/components/foryou/release-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -63,7 +62,7 @@ export function feedModeToForyouViewMode(
 /**
  * For You — the feed (mockup `Maskin For You - Feed v4`).
  *
- * A single scrolling column: today's brief, then every unread thread as a
+ * A single scrolling column: the briefing cards, then every unread thread as a
  * card. Cards view expands them all; List view shows one line each until you
  * open one. Nothing leaves the column until it is answered or dismissed.
  */
@@ -608,8 +607,7 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
-					<BriefCard workspaceId={workspaceId} />
-					<ReleaseCard />
+					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (
 						<div className="mt-3 space-y-3">
