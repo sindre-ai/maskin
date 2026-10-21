@@ -1,9 +1,8 @@
 import { objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { recordEvent } from '../../../events/record-event'
-import { logger } from '../../../logger'
-import { DELIVERED_ACTION, findCurrentApproval, withDeliveryState } from '../../../object-delivery'
+import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
+import { type SendClosure, recordSendOutcome } from '../../../send-closure'
 import { LinkedInIntegrationError } from './errors'
 import { type LinkedInOperationContext, replyToLinkedInThread } from './operations'
 
@@ -28,7 +27,12 @@ import { type LinkedInOperationContext, replyToLinkedInThread } from './operatio
 export async function replyWithApprovedObject(
 	ctx: LinkedInOperationContext,
 	input: { object_id: string; thread_id?: string },
-): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
+): Promise<{
+	message_id: string
+	chat_id?: string
+	sent_at: string
+	object: { id: string } & SendClosure
+}> {
 	const [object] = await ctx.db
 		.select()
 		.from(objects)
@@ -85,26 +89,14 @@ export async function replyWithApprovedObject(
 		idempotency_key: `object-${object.id}-${approval.id}`,
 	})
 
-	try {
-		await recordEvent(ctx.db, {
-			workspaceId: ctx.workspaceId,
-			actorId: ctx.actorId,
-			action: DELIVERED_ACTION,
-			entityType: object.type,
-			entityId: object.id,
-			data: {
-				provider: 'linkedin-unipile',
-				content_hash: preview.content_hash,
-				message_id: sent.message_id,
-				thread_id: threadId,
-			},
-		})
-	} catch (err) {
-		// The message is gone. Bookkeeping must not turn that into an error the caller retries.
-		logger.error('LinkedIn reply sent but the record of it failed', {
-			objectId: object.id,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-	return sent
+	// The message is gone: recording it (and closing a task) never throws, so a bookkeeping
+	// failure cannot turn into an error the caller retries.
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: { content_hash: preview.content_hash, message_id: sent.message_id, thread_id: threadId },
+	})
+	return { ...sent, object: { id: object.id, ...outcome } }
 }

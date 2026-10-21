@@ -54,6 +54,8 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
+	/** Linked objects an earlier message already shows a card for. */
+	shownLinkedObjectIds?: ReadonlySet<string>
 }
 
 /**
@@ -70,6 +72,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	v4Polish = false,
 	spawnInfo,
+	shownLinkedObjectIds,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -318,6 +321,7 @@ export function MessageBubble({
 									objectIds={segment.objectIds}
 									conversationId={message.conversationId}
 									agentId={message.actorId}
+									skipIds={shownLinkedObjectIds}
 								/>
 							</Fragment>
 						))}

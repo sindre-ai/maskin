@@ -60,7 +60,7 @@ The same `ObjectPreviewMeta` block renders it in chat, For You and the Claude ca
    - **Answering the card.** Choosing the send option on a decision card (or "Send: ... (id)" on one message of a stack) approves the draft behind it. The server reads this from the reply itself (`POST /api/events` with `parent_event_id`), in the same transaction as the reply, so every client approves without a second call and the agent the reply wakes already finds the approval. The approval covers the text as it reads when the reply arrives. Replies from an agent, or sent through MCP (`X-Client-Source: mcp`, where a model holds the person's key), never approve.
    - **The Approve button** (`POST /api/objects/:id/approval`, used by the Claude card and by web before it replies). Only a person can: an agent gets 403. The body may carry the `content_hash` the person saw; if the draft changed since, the answer is 409. This is the stricter path, because it is bound to the exact text shown.
 2. The approval is an `approved` event on the object carrying the hash. **Editing the recipients, subject or text changes the hash, which withdraws the approval.**
-3. The agent sends with `gmail_send_email({ object_id })`. "Ask first" needs a current approval; "Read & write" may send without one unless a recipient is protected or opted out. One approval sends once (the same claim a decision card uses, keyed on the approval event). A send records a `delivered` event on the object.
+3. The agent sends with `gmail_send_email({ object_id })`. It needs "Read & write" access and a current approval: nothing is sent without a person's yes. One approval sends once (the same claim a decision card uses, keyed on the approval event). A send records a `delivered` event on the object and, when the object is a task, moves it to `done`, so nothing still says "to do" for an email that went out.
    For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. Sending with a `thread_id` and a `body` and no object is unchanged and needs no approval; `object_id` is the path for drafts a person was asked to approve.
 
 In chat, the card for a linked draft ends in **Approve and send**: it approves the text as it reads in the card (an edit made there is what is approved), then posts a message mentioning the agent that names the object id to send. Once the send is recorded, the card shows "Sent".
@@ -68,6 +68,17 @@ In chat, the card for a linked draft ends in **Approve and send**: it approves t
 In Claude, the Approve button calls `approve_object_draft`, an MCP tool with `visibility: ['app']`: hidden from the model, so a model cannot approve its own draft.
 
 To have an agent send the moment a person approves (for example from the Claude card, where no reply comment wakes it), create an `event` [trigger](./notifications.md) on `entity_type` of the draft's type with `action: "approved"`.
+
+## LinkedIn sends
+
+The LinkedIn send tools (`send_message`, `reply`, `send_connection_request`) take an optional `object_id`: the task or draft the message carries out. With it, the server checks the object before sending and ends it after:
+
+- The object must exist in the workspace, and must not already carry a `delivered` event. A second send of the same object is refused with `INVALID_INPUT` and nothing goes out, whatever the new text. Create a new task for a new message.
+- Once LinkedIn accepts the message, a `delivered` event is written on the object and a task moves to `done` (a `status_changed` event records it). A task already `done`, `validated` or `discarded` is left alone, and other object types get the event only.
+- The tool's result carries `object: { id, delivered, task_closed }`, so the agent can see what happened and does not update the task itself.
+- A failure to write the record never turns into an error: the message is gone, so the tool still reports success with `delivered: false`, and the failure is logged.
+
+Without `object_id` a send behaves as before and nothing is recorded.
 
 ## Older paths
 
