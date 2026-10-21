@@ -23,23 +23,33 @@ create_objects({
 })
 ```
 
-Then post a `create_comment` with a `decision` whose `draft` is `{ object_id, label, to }` (see [the card](#the-card-on-for-you)). `get_workspace_schema` does not list kinds yet; this table is the list.
+Then mention the person with `create_comment`. No `decision` is needed; the object shows its own preview. `get_workspace_schema` does not list kinds yet; this table is the list, and the send tool's description names the shape.
 
 ## Kinds
 
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |
 |---|---|---|---|---|
 | `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })` |
-| `linkedin_message` | LinkedIn | `to` (required): a name or a profile link | 8,000 | `send_message` |
+| `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to` | 8,000 | `reply({ object_id })` |
 | `linkedin_connection_request` | LinkedIn | `to` (required) | 200 | `send_connection_request` |
 | `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date` | 3,000 | `publish_post` |
 | `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message` |
 
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
 
+A LinkedIn reply is a task filed with `channel: "linkedin_dm"` (that matches the kind, so `kind` is not needed) and `to` (who it goes to; without it the card warns "To is not filed"), `thread_id` (the conversation) and `reply_to` (the message being answered, shown above the draft):
+
+```
+create_objects({ nodes: [{
+  type: "task", title: "Reply to Liz Benison",
+  content: "Thanks Liz, ...",
+  metadata: { channel: "linkedin_dm", to: "Liz Benison", thread_id: "<conversation id>", reply_to: "<her message>" },
+}] })
+```
+
 A **LinkedIn post** also previews without any `kind` when the object has `metadata.content_type = "linkedin_post"`, which is how the Copywriter files them. The content may carry a header (account, voice, angle) above the copy; the preview shows only what lies between the `--- POST ---` and `--- MEDIA ---` lines, and nothing else is treated as the post. An explicit `kind` always wins over this match.
 
-A kind is declared by its provider in `deliverables` (`DeliverableKind` in `apps/dev/src/lib/integrations/types.ts`). A text field with no `slot` shows as a labelled line in the preview (`details`); those lines, like the recipients, subject and text, are part of what an approval is bound to, so changing the account a post is published as withdraws the approval. Approval is recorded for every kind. Only `email` can be sent by object id today; for the others the agent is woken by the approval and sends with its own tool.
+A kind is declared by its provider in `deliverables` (`DeliverableKind` in `apps/dev/src/lib/integrations/types.ts`). A text field with no `slot` shows as a labelled line in the preview (`details`); `slot: "hidden"` keeps one the send tool needs (a conversation id) off the card, and `slot: "context"` fills the text shown above the draft; those lines, like the recipients, subject and text, are part of what an approval is bound to, so changing the account a post is published as withdraws the approval. Approval is recorded for every kind. Only `email` and `linkedin_message` read their text from the object when sent by object id; for the others the agent is woken by the approval and sends with its own tool. A field may also be `recommended` (a warning when empty, not a block), and a kind matches through `alsoMatches` when `metadata.kind` is absent (an explicit `kind` wins).
 
 A new provider gets previews everywhere by adding a `deliverables` block to its `config.ts` (kind name, metadata fields, body limit, send tool), with no UI change.
 
@@ -53,6 +63,7 @@ A new provider gets previews everywhere by adding a `deliverables` block to its 
 | `recipients` | `to` and `cc`, name and address |
 | `subject`, `body` | Exactly what would go out. An older "Subject: ..." first line in the text is read as the subject |
 | `details` | Other facts about where it goes: `[{ label, value }]`, for example the account a post is published as, or a Slack channel |
+| `context` | What the draft answers (a LinkedIn reply's `reply_to`). Shown above the text; not sent, so not in `content_hash` |
 | `missing` | Required fields that are empty. A draft with any cannot be approved |
 | `warnings` | Things to check: an address that is not one, text over the limit |
 | `content_hash` | Fingerprint of recipients, subject, detail lines and text. An approval is bound to it |
@@ -99,6 +110,9 @@ Three places draw them: a chat message that links `/files/<id>`, a file attached
    - **The Approve button** (`POST /api/objects/:id/approval`, used by the chat card, the Claude card, and by web before it replies on For You). Only a person can: an agent gets 403. The body may carry the `content_hash` the person saw; if the draft changed since, the answer is 409. This is the stricter path, because it is bound to the exact text shown.
 2. The approval is an `approved` event on the object carrying the hash. **Editing the recipients, subject or text changes the hash, which withdraws the approval.**
 3. The agent sends. For an email: `gmail_send_email({ object_id })`. It needs "Read & write" access and a current approval: nothing is sent without a person's yes. One approval sends once (the same claim a decision card uses, keyed on the approval event). A send records a `delivered` event on the object and, when the object is a task, moves it to `done`, so nothing still says "to do" for an email that went out.
+   For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. Sending with a `thread_id` and a `body` and no object is unchanged and needs no approval; `object_id` is the path for drafts a person was asked to approve.
+
+In chat, the card for a linked draft ends in **Approve and send**: it approves the text as it reads in the card (an edit made there is what is approved), then posts a message mentioning the agent that names the object id to send. Once the send is recorded, the card shows "Sent".
 
 In Claude, the Approve button calls `approve_object_draft`, an MCP tool with `visibility: ['app']`: hidden from the model, so a model cannot approve its own draft.
 

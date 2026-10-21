@@ -36,6 +36,12 @@ export const objectPreviewSchema = z.object({
 	subject: z.string().nullable(),
 	/** Other facts about where it goes (the account a post is published as, a Slack channel). */
 	details: z.array(previewDetailSchema),
+	/**
+	 * What the draft answers, as the person who wrote it said it (the LinkedIn message a reply
+	 * is to). Shown above the text so it is read in context. Not part of what is approved:
+	 * it is not sent, so it is not in `content_hash`.
+	 */
+	context: z.string().nullable().optional(),
 	/** The exact text that would go out. */
 	body: z.string(),
 	/** Longest body the channel accepts, when it has a limit worth showing. */

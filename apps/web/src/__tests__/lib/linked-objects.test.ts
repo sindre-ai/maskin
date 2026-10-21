@@ -1,4 +1,8 @@
-import { extractLinkedFileIds, extractLinkedObjectIds } from '@/lib/linked-objects'
+import {
+	extractLinkedFileIds,
+	extractLinkedObjectIds,
+	splitAtLinkedObjects,
+} from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -48,5 +52,36 @@ describe('extractLinkedFileIds', () => {
 
 	it('returns nothing for text without links', () => {
 		expect(extractLinkedFileIds('no links here')).toEqual([])
+	})
+})
+
+describe('splitAtLinkedObjects', () => {
+	it('keeps a message without links as one piece', () => {
+		expect(splitAtLinkedObjects('One.\n\nTwo.')).toEqual([{ text: 'One.\n\nTwo.', objectIds: [] }])
+	})
+
+	it('puts the card right after the paragraph that links it', () => {
+		const text = `Intro.\n\nDraft: /objects/${A}\n\nClosing.`
+		expect(splitAtLinkedObjects(text)).toEqual([
+			{ text: `Intro.\n\nDraft: /objects/${A}`, objectIds: [A] },
+			{ text: 'Closing.', objectIds: [] },
+		])
+	})
+
+	it('gives a repeated link one card, at its first mention', () => {
+		const text = `First /objects/${A}\n\nAgain /objects/${A}`
+		expect(splitAtLinkedObjects(text).map((s) => s.objectIds)).toEqual([[A], []])
+	})
+
+	it('does not cut inside a fenced block', () => {
+		const text = `Look:\n\n\`\`\`\nline\n\n/objects/${A}\n\`\`\`\n\nDone.`
+		const segments = splitAtLinkedObjects(text)
+		expect(segments[0].text).toContain('line\n\n/objects/')
+		expect(segments[0].objectIds).toEqual([A])
+	})
+
+	it('stops giving cards after the maximum', () => {
+		const text = [A, B, C, D].map((id) => `/objects/${id}`).join('\n\n')
+		expect(splitAtLinkedObjects(text, 3).flatMap((s) => s.objectIds)).toEqual([A, B, C])
 	})
 })

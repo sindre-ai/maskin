@@ -206,14 +206,22 @@ export interface DeliverableField {
 	role?: 'to' | 'cc'
 	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
 	address?: 'email'
-	/** Which part of the preview a `text` field fills. Only `subject` today; without one it is a detail line. */
-	slot?: 'subject'
+	/**
+	 * Which part of the preview a `text` field fills: the `subject`, or the `context` (what
+	 * the draft answers, shown above the text and never sent). `hidden` keeps a field the
+	 * send tool needs (a conversation id) off the card. A `text` field with no slot is a
+	 * detail line.
+	 */
+	slot?: 'subject' | 'context' | 'hidden'
+	/** Not required to send, but worth a warning on the card when empty. */
+	recommended?: boolean
 }
 
 /**
  * A second way for an object to be of a deliverable kind, for objects an agent already
  * writes without `metadata.kind`: every pair must match the object's `metadata`.
- * LinkedIn posts the Copywriter files carry `content_type: "linkedin_post"`, not a kind.
+ * A sales task filed with `channel: "linkedin_dm"` and a LinkedIn post filed with
+ * `content_type: "linkedin_post"` are not given a kind.
  */
 export interface DeliverableMatch {
 	key: string
@@ -242,7 +250,7 @@ export interface DeliverableKind {
 	/** Shown above the text: "Email". */
 	label: string
 	fields: DeliverableField[]
-	/** Also treat an object as this kind when all of these pairs match its metadata. */
+	/** Also treat an object as this kind when all of these pairs match its metadata. An explicit `metadata.kind` always wins. */
 	alsoMatches?: DeliverableMatch[]
 	/** Read the message from a block of the content instead of all of it. */
 	bodyBlock?: DeliverableBodyBlock

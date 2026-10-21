@@ -53,7 +53,7 @@ export function getDeliverableKind(kind: unknown): RegisteredKind | null {
 /**
  * The kind an object is of: its `metadata.kind` when a provider declares it, otherwise the
  * kind whose `alsoMatches` pairs all hold in its metadata (a LinkedIn post filed with
- * `content_type: linkedin_post`). An explicit kind always wins.
+ * `content_type: linkedin_post`, a sales task with `channel: linkedin_dm`). An explicit kind always wins.
  */
 function kindOf(metadata: Record<string, unknown>): RegisteredKind | null {
 	const declared = getDeliverableKind(metadata[PREVIEW_KIND_KEY])
@@ -129,6 +129,7 @@ export function buildObjectPreview(object: {
 	const recipients: PreviewRecipient[] = []
 	const details: PreviewDetail[] = []
 	let subject: string | null = null
+	let context: string | null = null
 	const missing: string[] = []
 	const warnings: string[] = []
 
@@ -146,6 +147,7 @@ export function buildObjectPreview(object: {
 		}
 		if (!value) {
 			if (field.required) missing.push(field.label)
+			else if (field.recommended) warnings.push(`${field.label} is not filed.`)
 			continue
 		}
 		if (field.maxLength && value.length > field.maxLength) {
@@ -161,7 +163,9 @@ export function buildObjectPreview(object: {
 			recipients.push(...parsed)
 		} else if (field.slot === 'subject') {
 			subject = value
-		} else {
+		} else if (field.slot === 'context') {
+			context = value
+		} else if (field.slot !== 'hidden') {
 			details.push({ label: field.label, value })
 		}
 	}
@@ -179,6 +183,7 @@ export function buildObjectPreview(object: {
 		recipients,
 		subject,
 		details,
+		context,
 		body,
 		maxLength,
 		missing,

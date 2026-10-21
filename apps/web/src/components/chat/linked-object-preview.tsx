@@ -8,7 +8,7 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { extractLinkedFileIds, extractLinkedObjectIds } from '@/lib/linked-objects'
+import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown } from 'lucide-react'
@@ -45,8 +45,12 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
-	// A draft an integration can deliver (an email, a LinkedIn message or post) has a preview;
-	// its card says what it is, shows where it goes and ends in Approve instead of a next phase.
+	const properties = describeObjectProperties(object.metadata)
+	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
+	// has a preview. Its card says what it is, shows where it goes and ends in an approval
+	// instead of the next phase: the person's yes to this exact text, after which the agent is
+	// told to send it. Which objects qualify, and how they are sent, is the integration's own
+	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
 	const delivery = preview?.delivery?.state
 	// What would go out. For most drafts that is the whole text; for one that carries a header
@@ -78,8 +82,8 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 		)
 	}
 
-	// The person's yes to this exact text. The agent is told with the text it can send, the
-	// same way a status change tells it, so it does not have to guess what was approved.
+	// The person's yes to this exact text. The agent is told with the text it can send, the same
+	// way a status change tells it, so it does not have to guess what was approved.
 	const approveDraft = () => {
 		if (!preview) return
 		approve.mutate(
@@ -88,7 +92,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				onSuccess: () => {
 					if (!conversationId || !agentId) return
 					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads:\n\n${shown
+						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
 							.split('\n')
 							.map((line) => `> ${line}`)
 							.join('\n')}`,
@@ -148,11 +152,23 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				<p
 					className={cn(
 						'px-3 text-sm font-semibold leading-snug text-foreground',
-						expanded ? 'pt-3' : 'truncate pb-3 pt-1',
+						expanded ? 'pt-3' : 'truncate pt-1',
+						!expanded && properties.length === 0 && 'pb-3',
 					)}
 				>
 					{object.title || 'Untitled'}
 				</p>
+				{/* What the object is about, from its metadata: "LinkedIn message · P1". */}
+				{properties.length > 0 ? (
+					<p
+						className={cn(
+							'truncate px-3 pt-0.5 text-xs text-muted-foreground',
+							!expanded && 'pb-3',
+						)}
+					>
+						{properties.join(' · ')}
+					</p>
+				) : null}
 			</div>
 			{expanded ? (
 				<>
@@ -190,10 +206,13 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 								<Button
 									type="button"
 									size="sm"
-									disabled={approve.isPending || update.isPending || preview.missing.length > 0}
+									disabled={
+										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+									}
 									onClick={approveDraft}
 								>
-									Approve
+									Approve and send
+									<ArrowRight size={14} aria-hidden />
 								</Button>
 							)}
 						</div>
@@ -229,30 +248,33 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 }
 
 /**
- * Shows the objects and files a message links to as cards: what they say, their status
- * (changeable from the card, with the writing agent told), a button for the
- * next phase, and the text editable in place; a draft an integration can deliver shows
- * where it goes and is approved from the card. A linked file (an HTML page, a markdown
- * document, a picture) shows as itself. Works for any agent and any object type, because
- * it reads the link, not a tool call.
+ * The cards for the objects and files a message links to: what they say, what they are about,
+ * their status (changeable from the card, with the writing agent told), a button for the next
+ * phase, and the text editable in place; a draft an integration can deliver shows where it goes
+ * and is approved from the card. A linked file (an HTML page, a markdown document, a picture)
+ * shows as itself. Works for any agent and any object type, because it reads the link, not a
+ * tool call. The message places the object cards: each follows the paragraph that links it
+ * (see `splitAtLinkedObjects`).
  */
 export function LinkedObjectPreviews({
 	workspaceId,
-	content,
+	objectIds,
+	fileIds = [],
 	conversationId,
 	agentId,
 	skipIds,
 }: {
 	workspaceId: string
-	content: string
+	objectIds: string[]
+	/** Files the message links to; their cards follow the objects'. */
+	fileIds?: string[]
 	conversationId?: string
 	agentId?: string
 	/** Objects whose card an earlier message in the chat already shows; the link
 	 *  in this message stays, the card is not repeated. */
 	skipIds?: ReadonlySet<string>
 }) {
-	const ids = extractLinkedObjectIds(content).filter((id) => !skipIds?.has(id))
-	const fileIds = extractLinkedFileIds(content)
+	const ids = objectIds.filter((id) => !skipIds?.has(id))
 	if (ids.length === 0 && fileIds.length === 0) return null
 	return (
 		<>
