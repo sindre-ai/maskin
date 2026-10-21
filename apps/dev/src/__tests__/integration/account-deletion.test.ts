@@ -137,6 +137,7 @@ describe('account deletion (integration)', () => {
 			},
 		])
 		await db.insert(liveActivityCards).values({ actorId, workspaceId })
+		await db.insert(notificationPreferences).values({ actorId, timezone: 'Europe/Copenhagen' })
 		await db.insert(deviceAuthCodes).values({
 			deviceCodeHash: `device-${tag}`,
 			userCodeHash: `user-${tag}`,
@@ -156,6 +157,12 @@ describe('account deletion (integration)', () => {
 			.length,
 		authCodes: (await db.select().from(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId)))
 			.length,
+		preferences: (
+			await db
+				.select()
+				.from(notificationPreferences)
+				.where(eq(notificationPreferences.actorId, actorId))
+		).length,
 	})
 
 	it('removes the push tokens and device sign-ins of the person, and only theirs', async () => {
@@ -169,6 +176,7 @@ describe('account deletion (integration)', () => {
 			activityTokens: 2,
 			cards: 1,
 			authCodes: 1,
+			preferences: 1,
 		})
 
 		const res = await del()
@@ -179,12 +187,14 @@ describe('account deletion (integration)', () => {
 			activityTokens: 0,
 			cards: 0,
 			authCodes: 0,
+			preferences: 0,
 		})
 		expect(await pushRowCounts(other.id)).toEqual({
 			devices: 1,
 			activityTokens: 2,
 			cards: 1,
 			authCodes: 1,
+			preferences: 1,
 		})
 	})
 

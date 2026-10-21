@@ -176,7 +176,9 @@ function briefingFile(workspaceId: string, page: (typeof BRIEFING_PAGES)[number]
 }
 
 async function mockBriefings(page: Page, workspaceId: string) {
-	await page.route('**/api/files*', async (route) => {
+	// `**` at the end: a single `*` would not match `/api/files/<id>`, so each page's detail
+	// request would skip this mock and 404 against the real server.
+	await page.route('**/api/files**', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
 		const url = new URL(route.request().url())
 		if (url.pathname.endsWith('/api/files')) {
