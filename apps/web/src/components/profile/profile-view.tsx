@@ -1,5 +1,5 @@
-import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { BrowserNotificationsToggle } from '@/components/profile/browser-notifications-row'
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
