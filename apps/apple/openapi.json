@@ -8059,6 +8059,1133 @@
 				}
 			}
 		},
+		"/api/device-auth/start": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Begin a device sign-in",
+				"description": "Public. A device without a keyboard asks for a code pair. Show `user_code` to the person and poll `/token` with `device_code` every `interval` seconds.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"client": {
+										"type": "string",
+										"enum": [
+											"tvos"
+										]
+									},
+									"device_name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"client"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Code pair created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"device_code": {
+											"type": "string"
+										},
+										"user_code": {
+											"type": "string"
+										},
+										"verification_uri": {
+											"type": "string",
+											"format": "uri"
+										},
+										"verification_uri_complete": {
+											"type": "string",
+											"format": "uri"
+										},
+										"expires_in": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										},
+										"interval": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										}
+									},
+									"required": [
+										"device_code",
+										"user_code",
+										"verification_uri",
+										"verification_uri_complete",
+										"expires_in",
+										"interval"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Could not mint a code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/device-auth/token": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Poll a device sign-in",
+				"description": "Public. Poll with the `device_code` from `/start`. `pending`: keep polling. `approved`: the response carries the actor and API key, once; the code is then spent. `denied` and `expired`: show a new code.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"device_code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256
+									}
+								},
+								"required": [
+									"device_code"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Current state of the sign-in",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending",
+												"approved",
+												"denied",
+												"expired"
+											]
+										},
+										"interval": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										},
+										"actor": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"type": {
+													"type": "string"
+												},
+												"name": {
+													"type": "string"
+												},
+												"email": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"description": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"system_prompt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"tools": {
+													"type": [
+														"object",
+														"null"
+													],
+													"additionalProperties": {}
+												},
+												"memory": {
+													"type": [
+														"object",
+														"null"
+													],
+													"additionalProperties": {}
+												},
+												"llm_provider": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"llm_config": {
+													"type": [
+														"object",
+														"null"
+													],
+													"additionalProperties": {}
+												},
+												"isSystem": {
+													"type": "boolean"
+												},
+												"agentState": {
+													"type": "string",
+													"enum": [
+														"idle",
+														"running",
+														"paused",
+														"failed"
+													]
+												},
+												"agentStateUpdatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"createdAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"updatedAt": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"installedLoopId": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"voice_enabled": {
+													"type": "boolean"
+												},
+												"skills": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"id",
+															"name"
+														]
+													}
+												},
+												"role": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"api_key": {
+													"type": "string"
+												},
+												"workspace_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"workspace_provisioning_failed": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"id",
+												"type",
+												"name",
+												"email",
+												"description",
+												"system_prompt",
+												"tools",
+												"memory",
+												"llm_provider",
+												"llm_config",
+												"isSystem",
+												"agentState",
+												"agentStateUpdatedAt",
+												"createdAt",
+												"updatedAt",
+												"api_key"
+											]
+										}
+									},
+									"required": [
+										"status"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/device-auth/preview": {
+			"get": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Which device is asking, for a code",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 32
+						},
+						"required": true,
+						"name": "user_code",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The pending sign-in this code belongs to",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"client": {
+											"type": "string",
+											"enum": [
+												"tvos"
+											]
+										},
+										"device_name": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"created_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"client",
+										"device_name",
+										"created_at"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/device-auth/approve": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Approve a device sign-in",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"user_code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 32
+									}
+								},
+								"required": [
+									"user_code"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Recorded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"ok"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/device-auth/deny": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Refuse a device sign-in",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"user_code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 32
+									}
+								},
+								"required": [
+									"user_code"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Recorded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"ok"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/account/deletion-preview": {
 			"get": {
 				"tags": [
