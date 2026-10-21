@@ -67,6 +67,11 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'traverse_graph',
 	'get_conversation',
 	'list_conversation_messages',
+	'get_session_activity',
+	'list_notifications',
+	'get_notification',
+	'list_keychain_credentials',
+	'desktop_list_ports',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
@@ -76,10 +81,10 @@ const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES = ['get_started']
 // on another MCP server, so they are never in the Maskin tool list.
 const EXTERNAL_TEMPLATE_TOOLS = new Set<string>(['get_pull_request'])
 
-// create_notification is temporarily hidden from the MCP surface (see server.ts),
-// so no template may tell an agent to call it. The watchdog prompt only says
-// "Do NOT call create_notification", which stays correct once the tool returns.
-const PROHIBITED_TEMPLATE_TOOLS = new Set<string>(['create_notification'])
+// Registered tools that no template may tell an agent to call. Empty today:
+// create/list/update_notification are live for the Chief of Staff's For You list.
+// The watchdog prompt says "Do NOT call create_notification", which is still fine.
+const PROHIBITED_TEMPLATE_TOOLS = new Set<string>()
 
 function collectStrings(value: unknown, out: string[] = []): string[] {
 	if (typeof value === 'string') out.push(value)
@@ -285,11 +290,12 @@ describe('MCP surface pin', () => {
 			}
 		})
 
-		it('destructiveHint is true for every delete_* tool, stop_session and disconnect_integration only', () => {
+		it('destructiveHint is true for every delete_* tool, stop_session, disconnect_integration and desktop_run only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter((n) => n.startsWith('delete_')),
 				'stop_session',
 				'disconnect_integration',
+				'desktop_run',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.destructiveHint)
@@ -315,13 +321,16 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and the integration tools only', () => {
+		it('openWorldHint is true for create_session, the integration tools and the tools that send mail only', () => {
 			const expected = [
 				'create_session',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',
 				'disconnect_integration',
+				'approve_object_draft',
+				'gmail_send_email',
+				'update_integration_access',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.openWorldHint)

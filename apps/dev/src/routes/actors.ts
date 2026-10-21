@@ -33,6 +33,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
+import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -40,6 +41,7 @@ import { resolveBearerCaller } from '../lib/bearer-caller'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -62,6 +64,7 @@ import {
 	isWorkspaceMember,
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
+import { introduceAgentToRecipient } from '../services/agent-intro'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
@@ -76,6 +79,7 @@ type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		workspaceRole?: string
+		maskinSessionId?: string
 	}
 }
 
@@ -390,6 +394,20 @@ app.openapi(createActorRoute, async (c) => {
 		}
 	}
 
+	// The new agent says hello to the person it was made for. Fire and forget,
+	// after the commit: the service never throws, so creation is unaffected.
+	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		void introduceAgentToRecipient({
+			db,
+			actor,
+			workspaceId: memberWorkspaceId,
+			creator: { id: creatorId, type: creatorType },
+			claimedSessionId: c.get('maskinSessionId'),
+			clientSource,
+			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+		})
+	}
+
 	// Auto-create personal workspace (default true for humans, false for agents)
 	const shouldCreateWorkspace = body.auto_create_workspace ?? body.type === 'human'
 	let workspaceId: string | undefined = memberWorkspaceId
@@ -461,27 +479,13 @@ app.openapi(createActorRoute, async (c) => {
 		})
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field.
-	// Field names must be snake_case to match actorResponseSchema so MCP read→update
-	// round trips don't get keys stripped.
-	const {
-		apiKey: _,
-		passwordHash: __,
-		systemPrompt,
-		llmProvider,
-		llmConfig,
-		...actorWithoutKey
-	} = actor
+	// Allowlisted via actorWithKeySchema (see toActorWithKeyResponse) — never
+	// spread the raw row here: it carries password_hash.
 	return c.json(
-		{
-			...serialize(actorWithoutKey),
-			system_prompt: systemPrompt,
-			llm_provider: llmProvider,
-			llm_config: maskLlmConfigSecrets(llmConfig),
-			api_key: key,
+		toActorWithKeyResponse(actor, key, {
 			...(workspaceId && { workspace_id: workspaceId }),
-			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
-		} as z.infer<typeof actorWithKeySchema>,
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true as const }),
+		}),
 		201,
 	)
 })
@@ -606,6 +610,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -654,6 +659,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -700,6 +706,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -768,6 +775,7 @@ interface ActorMembershipRow {
 	workspaceId: string
 	workspaceName: string
 	role: string
+	voice_enabled: boolean
 }
 
 function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
@@ -779,6 +787,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	isSystem: boolean
 	agentState: AgentState
 	createdAt: Date | null
+	voice_enabled: boolean
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -792,6 +801,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			isSystem: boolean
 			agentState: AgentState
 			createdAt: Date | null
+			voice_enabled: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -810,6 +820,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				isSystem: r.isSystem,
 				agentState: r.agentState,
 				createdAt: r.createdAt,
+				voice_enabled: r.voice_enabled,
 				workspaces: [membership],
 			})
 		}
@@ -874,6 +885,7 @@ app.openapi(getActorRoute, (async (c) => {
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -910,6 +922,70 @@ app.openapi(getActorRoute, (async (c) => {
 		}) as z.infer<typeof actorResponseSchema>,
 	)
 }) as RouteHandler<typeof getActorRoute, Env>)
+
+// GET /:id/access - What this actor can use: integrations and saved credentials
+//
+// The same description the launch prompt is built from, so the agent page, get_actor and a
+// running session never disagree. Read-only; changes go through the integration grants routes.
+const actorAccessRoute = createRoute({
+	method: 'get',
+	path: '/{id}/access',
+	tags: ['Actors'],
+	summary: 'What an actor can use: integrations (level, server attached) and saved credentials',
+	request: {
+		params: idParamSchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						integrations: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								provider: z.string(),
+								name: z.string(),
+								access: z.enum(['none', 'read', 'ask_first', 'read_write']),
+								source: z.enum(['grant', 'default']),
+								default_access: z.enum(['read', 'none']),
+								server_attached: z.boolean(),
+								created_by: z.string().uuid(),
+							}),
+						),
+						credentials: z.array(
+							z.object({
+								integration_id: z.string().uuid(),
+								name: z.string(),
+								kind: z.enum(['api_key', 'login']),
+								has_access: z.boolean(),
+								scope: z.enum(['always', 'this_chat']).nullable(),
+								chat_count: z.number().int(),
+								created_by: z.string().uuid(),
+							}),
+						),
+					}),
+				},
+			},
+			description: 'Access by integration and credential',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(actorAccessRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	return c.json(await describeAgentAccess(db, workspaceId, id), 200)
+}) as RouteHandler<typeof actorAccessRoute, Env>)
 
 // PATCH /:id - Update actor
 const updateActorRoute = createRoute({
@@ -1112,6 +1188,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1263,6 +1340,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 		})
 
 	if (!updated) {
@@ -1460,7 +1538,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
 
-// Returning shape used by /pause and /run handlers — full actor row.
+// Returning shape used by /pause, /run, and /voice-mode handlers — full actor
+// row. voice_enabled is projected off the metadata JSONB so the wire shape
+// stays flat and callers never reach into raw metadata.
 const actorReturningCols = {
 	id: actors.id,
 	type: actors.type,
@@ -1477,6 +1557,7 @@ const actorReturningCols = {
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,
 	createdAt: actors.createdAt,
 	updatedAt: actors.updatedAt,
+	voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 } as const
 
 // POST /:id/pause - Pause an agent (and any in-flight session for it)

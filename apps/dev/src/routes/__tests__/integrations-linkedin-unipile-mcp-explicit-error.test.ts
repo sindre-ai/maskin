@@ -9,6 +9,11 @@ import {
 } from '@maskin/mcp/linkedin'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Access gating has its own tests; this file is about the route's error envelopes.
+vi.mock('../../lib/integrations/tool-gate', () => ({
+	toolGateFor: vi.fn(async () => () => {}),
+}))
+
 vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))

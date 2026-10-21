@@ -58,6 +58,11 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'traverse_graph',
 	'get_conversation',
 	'list_conversation_messages',
+	'get_session_activity',
+	'list_notifications',
+	'get_notification',
+	'list_keychain_credentials',
+	'desktop_list_ports',
 ])
 
 interface Row {
@@ -79,9 +84,10 @@ function row(
 	}
 }
 
-// destructive: delete_*, stop_session, disconnect_integration.
+// destructive: delete_*, stop_session, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, resume_session, mark_read.
-// openWorld: create_session (starts an agent) and the integration tools.
+// openWorld: create_session (starts an agent), the integration tools, and the two tools that
+// send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
 	create_objects: row('Create objects'),
@@ -159,6 +165,37 @@ const ROWS: Record<string, Row> = {
 	create_extension: row('Create extension'),
 	update_extension: row('Update extension', { idempotent: true }),
 	delete_extension: row('Delete extension', { destructive: true, idempotent: true }),
+	// Notifications
+	create_notification: row('Create notification'),
+	list_notifications: row('List notifications'),
+	get_notification: row('Get notification'),
+	update_notification: row('Update notification', { idempotent: true }),
+	delete_notification: row('Delete notification', { destructive: true, idempotent: true }),
+	// Session activity, drafts, mail and access
+	get_session_activity: row('Get session activity'),
+	approve_object_draft: row('Approve object draft', { openWorld: true }),
+	gmail_send_email: row('Send Gmail email', { openWorld: true }),
+	update_integration_access: row('Update integration access', {
+		idempotent: true,
+		openWorld: true,
+	}),
+	// Keychain + chat cards
+	request_keychain_credential: row('Request keychain credential'),
+	list_keychain_credentials: row('List keychain credentials'),
+	request_keychain_access: row('Request keychain access'),
+	show_computer: row('Show computer'),
+	// Workspace desktop
+	desktop_screenshot: row('Desktop screenshot'),
+	desktop_click: row('Desktop click'),
+	desktop_move: row('Desktop move'),
+	desktop_drag: row('Desktop drag'),
+	desktop_scroll: row('Desktop scroll'),
+	desktop_type: row('Desktop type'),
+	desktop_key: row('Desktop key'),
+	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_expose_port: row('Desktop expose port'),
+	desktop_list_ports: row('Desktop list ports'),
+	desktop_close_port: row('Desktop close port'),
 	// Setup
 	get_started: row('Get started'),
 }

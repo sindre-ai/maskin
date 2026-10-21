@@ -14,6 +14,9 @@ const mockDisconnect = vi.fn()
  *  whether to open the post-authorization org picker. */
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
+// The Tools section has its own tests (components/integrations/tools-section.test.tsx).
+vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -67,6 +70,10 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// Agent access has its own tests; here it only has to render.
+	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected

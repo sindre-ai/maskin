@@ -34,6 +34,9 @@ vi.mock('@/components/agents/agent-usage-block', () => ({
 vi.mock('@/components/agents/agent-sessions-section', () => ({
 	AgentSessionsSection: () => null,
 }))
+vi.mock('@/components/agents/agent-triggers-section', () => ({
+	AgentTriggersSection: () => null,
+}))
 vi.mock('@/components/agents/agent-loops-section', () => ({
 	AgentLoopsSection: () => null,
 }))
@@ -42,9 +45,6 @@ vi.mock('@/components/agents/agent-instructions-section', () => ({
 }))
 vi.mock('@/components/agents/agent-skills-section', () => ({
 	AgentSkillsSection: () => null,
-}))
-vi.mock('@/components/agents/agent-tools-section', () => ({
-	AgentToolsSection: () => null,
 }))
 vi.mock('@/components/agents/agent-composer', () => ({
 	AgentComposer: () => null,

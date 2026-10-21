@@ -48,6 +48,84 @@ struct ThreadDivider: View {
 	}
 }
 
+/// A system line in the chat ("Sales Rep sent the connection request"): a small teal marker, the
+/// words, and the time on the right. Not a bubble and not a divider.
+struct SystemLine: View {
+	let message: ChatMessage
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			RoundedRectangle(cornerRadius: MaskinSpace.s1, style: .continuous)
+				.fill(MaskinColor.sig)
+				.frame(width: MaskinSpace.s3 + 1, height: MaskinSpace.s3 + 1)
+				.accessibilityHidden(true)
+			Text(message.content)
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink5)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			if let time = message.createdAt {
+				RelativeTime(time, style: .clock)
+					.font(MaskinTypeface.sans(MaskinFontSize.t11, relativeTo: .caption2))
+					.foregroundStyle(MaskinColor.inkPlaceholder)
+			}
+		}
+		.padding(.vertical, MaskinSpace.s4)
+		.accessibilityElement(children: .combine)
+	}
+}
+
+/// How long a message may run before it folds to about six lines with "Show more".
+enum LongMessage {
+	static let characters = 320
+	static let lines = 7
+	static let collapsedHeight: CGFloat = 150
+
+	static func isLong(_ text: String) -> Bool {
+		text.count > characters || text.split(separator: "\n", omittingEmptySubsequences: false).count > lines
+	}
+}
+
+private struct FoldedMessage: ViewModifier {
+	let folded: Bool
+
+	func body(content: Content) -> some View {
+		if folded {
+			content
+				.frame(maxHeight: LongMessage.collapsedHeight, alignment: .top)
+				.clipped()
+				.mask(
+					LinearGradient(
+						stops: [.init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
+						startPoint: .top, endPoint: .bottom))
+		} else {
+			content
+		}
+	}
+}
+
+extension View {
+	fileprivate func folded(_ folded: Bool) -> some View { modifier(FoldedMessage(folded: folded)) }
+}
+
+private struct ShowMoreButton: View {
+	let expanded: Bool
+	var onInverse = false
+	let action: () -> Void
+
+	var body: some View {
+		Button {
+			withAnimation(MaskinMotion.standard) { action() }
+		} label: {
+			Text(expanded ? "Show less" : "Show more")
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
+				.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.sigInk)
+				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s4, alignment: .leading)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+}
+
 /// What a message attaches: photos as pictures (one large, several as tiles) and every other file
 /// as a chip. Each opens the file.
 struct MessageAttachments: View {
@@ -144,12 +222,19 @@ struct MessageRow: View {
 	var onRetrySend: () -> Void = {}
 	/// Swipe right (and the menu's Reply) start a reply; nil when there is nothing to quote.
 	var onReply: (() -> Void)?
+	/// The thread under this message, when it has replies; the pill under the bubble opens it.
+	var threadSummary: ThreadSummary?
+	var onOpenThread: () -> Void = {}
+	/// Tap on an emoji chip under the bubble (add or take back).
+	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	var onSelectVersion: (Int) -> Void = { _ in }
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var rowWidth: CGFloat = 0
+	/// A long message starts folded; the reader unfolds it here.
+	@State private var unfolded = false
 
 	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
 	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
@@ -170,6 +255,7 @@ struct MessageRow: View {
 	private func perform(_ title: String) {
 		switch title {
 		case "Reply": actions.onReply?()
+		case "Reply in thread": actions.onThread?()
 		case "Copy": actions.onCopy?()
 		case "Pin", "Unpin": actions.onPin?()
 		case "Edit": actions.onEdit?()
@@ -182,6 +268,9 @@ struct MessageRow: View {
 		default: actions.onReadAloud?()
 		}
 	}
+
+	private var isLong: Bool { LongMessage.isLong(bodyText) }
+	private var folded: Bool { isLong && !unfolded }
 
 	private var shownText: String { messageOverride.text(original: message.content) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
@@ -230,6 +319,8 @@ struct MessageRow: View {
 									.textSelection(.enabled)
 								if message.editedAt != nil { EditedMark() }
 							}
+							.folded(folded)
+							if isLong { ShowMoreButton(expanded: unfolded, onInverse: true) { unfolded.toggle() } }
 						}
 					}
 					.environment(\.markdownHugsContent, true)
@@ -244,6 +335,8 @@ struct MessageRow: View {
 			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
+			ReactionChips(reactions: message.reactions, isOwn: true, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, isOwn: true, onOpen: onOpenThread) }
 			if mentionChips.isEmpty {
 				MentionLine(names: untaggedNames, isOwn: true)
 			} else {
@@ -276,6 +369,8 @@ struct MessageRow: View {
 						if !bodyText.isEmpty {
 							MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 								.textSelection(.enabled)
+								.folded(folded)
+							if isLong { ShowMoreButton(expanded: unfolded) { unfolded.toggle() } }
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
 						if message.isErrorReply, let onTryAgain = actions.onTryAgain {
@@ -294,6 +389,8 @@ struct MessageRow: View {
 			}
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: actions)
+			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty {
 				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}
@@ -389,5 +486,68 @@ struct ResumeBanner: View {
 			RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 		.accessibilityElement(children: .contain)
+	}
+}
+
+extension View {
+	/// The shape the long-press menu lifts (iOS); elsewhere the view as it is.
+	func contextPreview<S: Shape>(_ shape: S) -> some View {
+		#if os(iOS)
+		contentShape(.contextMenuPreview, shape)
+		#else
+		self
+		#endif
+	}
+}
+
+/// The agent is composing a reply (before any activity shows): its name above three pulsing 7pt dots
+/// in an agent-shaped bubble. Dots always mean composing; work gets equalizer bars (`WorkingBars`).
+struct TypingBubble: View {
+	let agent: ChatParticipant
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			HStack(spacing: MaskinSpace.s3) {
+				ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12, seed: agent.id)
+					.accessibilityHidden(true)
+				Text(agent.name).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+			}
+			dots
+				.padding(.horizontal, MaskinSpace.s10 - MaskinSpace.s1)
+				.padding(.vertical, MaskinSpace.s9)
+				.background(
+					MaskinSurface.card,
+					in: UnevenRoundedRectangle(
+						topLeadingRadius: MaskinSpace.s3, bottomLeadingRadius: MaskinRadius.tile,
+						bottomTrailingRadius: MaskinRadius.tile, topTrailingRadius: MaskinRadius.tile,
+						style: .continuous))
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(agent.name) is typing")
+	}
+
+	/// Three 7pt dots, pulsing over 1s and staggered by 0.2s.
+	private var dots: some View {
+		HStack(spacing: MaskinSpace.s2) {
+			ForEach(0..<3, id: \.self) { i in
+				Circle().fill(MaskinColor.ink5).frame(width: MaskinSpace.s3 + MaskinSpace.s1 / 2, height: MaskinSpace.s3 + MaskinSpace.s1 / 2)
+					.phaseAnimator([0.3, 1.0], trigger: reduceMotion) { view, phase in
+						view.opacity(reduceMotion ? 0.7 : phase)
+					} animation: { _ in
+						.easeInOut(duration: 0.5).delay(Double(i) * 0.2)
+					}
+			}
+		}
+	}
+}
+
+/// Three small equalizer bars in signal green: "working on a task" (live activity, Flows rows,
+/// handoff cards). Still under Reduce Motion.
+struct WorkingBars: View {
+	var body: some View {
+		VoiceWaveform(bars: 3, height: MaskinSpace.s8, barWidth: MaskinSpace.s1, tint: MaskinColor.sig)
+			.fixedSize()
 	}
 }

@@ -105,12 +105,12 @@ private struct TVObjectCard: View {
 			HStack(spacing: 12) {
 				Circle().fill(MaskinColor.ink3).frame(width: 14, height: 14)
 				Text(schema.displayName(for: object.type).uppercased())
-					.font(.system(size: 22, weight: .semibold, design: .monospaced))
+					.font(.system(size: 24, weight: .semibold, design: .monospaced))
 					.foregroundStyle(MaskinColor.ink4)
 				Spacer(minLength: 0)
 				if object.unreadCount > 0 {
 					Text("NEEDS YOU")
-						.font(.system(size: 20, weight: .semibold, design: .monospaced))
+						.font(.system(size: 24, weight: .semibold, design: .monospaced))
 						.padding(.horizontal, 14).padding(.vertical, 6)
 						.background(MaskinSurface.inverse, in: Capsule())
 						.foregroundStyle(MaskinSurface.onInverse)

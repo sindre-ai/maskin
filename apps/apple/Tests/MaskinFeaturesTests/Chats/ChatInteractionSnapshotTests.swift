@@ -184,6 +184,8 @@ struct ChatInteractionSnapshotTests {
 	func agentActivity(dark: Bool) throws {
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+				TypingBubble(agent: relay)
+				TypingBubble(agent: forge)
 				WorkingIndicator(agent: relay, activity: "Reading the Q4 pipeline brief")
 				WorkingIndicator(agent: forge)
 				TypingIndicator(agent: relay)
@@ -202,7 +204,7 @@ struct ChatInteractionSnapshotTests {
 		for width in Self.widths {
 			let view = VStack(spacing: MaskinSpace.s7) {
 				ThreadNavTitle(title: "Relay")
-				ThreadNavTitle(title: "Relay", status: .live("typing…"))
+				ThreadNavTitle(title: "Relay", status: .live("working"))
 				ThreadNavTitle(title: "Relay, Sam Berg, Forge", status: .live("working"))
 				HStack {
 					ThreadNavTitle(title: "Q4 launch", status: .quiet("Q4 launch flow"), onTap: {})
@@ -217,10 +219,10 @@ struct ChatInteractionSnapshotTests {
 		#expect(ThreadNav.title(participants: [], currentActorID: "me", fallback: "Chat", flow: flow) == "Q4 launch")
 		#expect(ThreadNav.status(presences: [], flow: nil) == nil)
 		#expect(ThreadNav.status(presences: [(relay, .working)], flow: nil) == .live("working"))
-		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .typing)], flow: nil) == .live("typing…"))
+		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .typing)], flow: nil) == .live("working"))
 		#expect(ThreadNav.status(presences: [], flow: flow) == .quiet("Q4 launch flow"))
-		#expect(ThreadNav.status(presences: [(relay, .typing)], flow: flow) == .live("Relay is typing…"))
-		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .working)], flow: flow) == .live("▮ 2 working"))
+		#expect(ThreadNav.status(presences: [(relay, .typing)], flow: flow) == .live("working"))
+		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .working)], flow: flow) == .live("2 working"))
 		#expect(!ThreadNav.showsMemberStack(participants: [relay, sam], flow: nil))
 		#expect(ThreadNav.showsMemberStack(participants: [relay, sam, forge], flow: nil))
 	}

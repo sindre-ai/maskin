@@ -160,6 +160,14 @@ describe('Notifications Routes', () => {
 			expect(body).toHaveLength(2)
 		})
 
+		it('accepts order=desc and rejects unknown order values', async () => {
+			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
+			const ok = await app.request(jsonGet('/api/notifications?order=desc', headers))
+			expect(ok.status).toBe(200)
+			const bad = await app.request(jsonGet('/api/notifications?order=sideways', headers))
+			expect(bad.status).toBe(400)
+		})
+
 		it('returns 200 with empty list', async () => {
 			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
 

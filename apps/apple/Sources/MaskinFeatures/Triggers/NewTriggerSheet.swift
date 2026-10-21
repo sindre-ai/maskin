@@ -8,6 +8,8 @@ import SwiftUI
 struct NewTriggerSheet: View {
 	let store: TriggersStore
 	let onCreated: (Trigger) -> Void
+	/// The agent to run, when opened from that agent's page.
+	var presetAgentID: String?
 
 	@Environment(\.dismiss) private var dismiss
 	@State private var draft = TriggerDraft()
@@ -60,7 +62,10 @@ struct NewTriggerSheet: View {
 				}
 			}
 			.overlay { if isCreating { ProgressView() } }
-			.task { await store.loadActors() }
+			.task {
+				await store.loadActors()
+				if draft.targetActorID == nil { draft.targetActorID = presetAgentID }
+			}
 		}
 	}
 

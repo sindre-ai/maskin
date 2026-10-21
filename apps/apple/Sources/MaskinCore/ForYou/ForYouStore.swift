@@ -13,13 +13,32 @@ public struct ForYouDisplayOptions: Sendable, Equatable, Codable {
 
 	public var mode: Mode = .cards
 	public var sort: Sort = .attention
-	/// Show only this object type (`bet`, `task`, `insight`…).
-	public var typeFilter: String?
+	/// Show only this kind of ask. Nil is "All".
+	public var intent: ForYouIntent?
+	/// The intent pills under the briefs row are showing (the menu's Filter).
+	public var filterBarOn = false
+	/// The HANDLED TODAY list at the bottom (the menu's Show handled).
+	public var showsHandled = true
 
-	public init(mode: Mode = .cards, sort: Sort = .attention, typeFilter: String? = nil) {
+	public init(
+		mode: Mode = .cards, sort: Sort = .attention, intent: ForYouIntent? = nil,
+		filterBarOn: Bool = false, showsHandled: Bool = true
+	) {
 		self.mode = mode
 		self.sort = sort
-		self.typeFilter = typeFilter
+		self.intent = intent
+		self.filterBarOn = filterBarOn
+		self.showsHandled = showsHandled
+	}
+
+	// Hand-written so options saved before these existed (with a `typeFilter`) still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? .cards
+		sort = try c.decodeIfPresent(Sort.self, forKey: .sort) ?? .attention
+		intent = try c.decodeIfPresent(ForYouIntent.self, forKey: .intent)
+		filterBarOn = try c.decodeIfPresent(Bool.self, forKey: .filterBarOn) ?? false
+		showsHandled = try c.decodeIfPresent(Bool.self, forKey: .showsHandled) ?? true
 	}
 }
 
@@ -41,19 +60,38 @@ public struct FeedEntry: Identifiable, Sendable, Equatable {
 	public var card: ForYouCard
 	public var bucket: FeedBucket
 	public var record: DecisionRecord?
+	/// The reader deferred it and it has come due: the card says "Back again".
+	public var backFromLater: Bool
+	/// The one chip saying why it sits where it does.
+	public var urgency: ForYouUrgency?
 	public var id: String { card.id }
 
-	/// Where the card sits in the list. While its undo window is open a decided card keeps the slot
-	/// it had, so it is grouped with what it was, not with the receipts.
-	public var section: FeedBucket {
-		if let record, case .held = record.phase { return card.kind == .decision ? .needs : .fyi }
-		return bucket
-	}
+	/// Where the card sits in the list. A decided card leaves the open list the moment it is
+	/// decided (it lands in HANDLED TODAY with its Undo), so the next ask moves up under the thumb.
+	public var section: FeedBucket { bucket }
 
-	public init(card: ForYouCard, bucket: FeedBucket, record: DecisionRecord? = nil) {
+	public init(
+		card: ForYouCard, bucket: FeedBucket, record: DecisionRecord? = nil,
+		backFromLater: Bool = false, urgency: ForYouUrgency? = nil
+	) {
 		self.card = card
 		self.bucket = bucket
 		self.record = record
+		self.backFromLater = backFromLater
+		self.urgency = urgency
+	}
+}
+
+/// What "Take every suggested" did.
+public struct SuggestedBatch: Equatable, Sendable {
+	/// Cards that got their recommended option.
+	public var taken: [ForYouCard]
+	/// Asks left for the reader because their recommended option needs a confirmation or there is none.
+	public var skipped: Int
+
+	public var summary: String {
+		"\(taken.count) suggested \(taken.count == 1 ? "call" : "calls") taken"
+			+ (skipped > 0 ? " \u{00B7} \(skipped) still need\(skipped == 1 ? "s" : "") you" : "")
 	}
 }
 
@@ -93,6 +131,11 @@ public final class ForYouStore {
 	}
 
 	public let decisions: DecisionService
+	/// Cards the reader deferred with Later (device-local).
+	public let later: LaterStore
+	/// Cards the reader has been shown. A card the server adds afterwards waits behind the
+	/// "N new" pill instead of landing above the thumb.
+	public private(set) var shownIds: Set<String> = []
 
 	/// The workspace schema's display names by object type key, for card footers and the filter.
 	public var typeDisplayNames: [String: String] = [:]
@@ -116,6 +159,7 @@ public final class ForYouStore {
 	@ObservationIgnored private var debounce: Task<Void, Never>?
 	@ObservationIgnored private let eventDebounce: Duration
 	@ObservationIgnored private let cache: SnapshotCache?
+	@ObservationIgnored private let now: @Sendable () -> Date
 	/// Tells the home/lock-screen widgets the feed or a decision changed. No-op unless the runtime
 	/// installs the real (debounced) one.
 	@ObservationIgnored public var widgetReloader: any WidgetReloader = NoopWidgetReloader()
@@ -124,9 +168,12 @@ public final class ForYouStore {
 	public init(
 		source: any ForYouSource, decisions: DecisionService,
 		workspaceId: @escaping @MainActor () -> String?, defaults: UserDefaults = .standard,
-		eventDebounce: Duration = .milliseconds(350), cache: SnapshotCache? = nil
+		eventDebounce: Duration = .milliseconds(350), cache: SnapshotCache? = nil,
+		now: @escaping @Sendable () -> Date = { Date() }
 	) {
 		self.cache = cache
+		self.now = now
+		self.later = LaterStore(defaults: defaults, workspaceId: workspaceId, now: now)
 		self.source = source
 		self.decisions = decisions
 		self.workspaceId = workspaceId
@@ -156,6 +203,7 @@ public final class ForYouStore {
 	private func hydrate(workspace ws: String) {
 		guard cards.isEmpty, let entry = cache?.read(Snapshot.self, Self.cacheName) else { return }
 		cards = entry.value.cards
+		shownIds = Set(entry.value.cards.map(\.id))
 		actors = Dictionary(entry.value.actors.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 		phase = .loaded
 		loadedWorkspace = ws
@@ -195,7 +243,7 @@ public final class ForYouStore {
 				case .event(let event):
 					if Self.isRelevant(event) { self.scheduleRefresh() }
 				case .reconnected:
-					await self.refresh()
+					await self.refresh(revealingNew: false)
 				}
 			}
 		}
@@ -211,7 +259,7 @@ public final class ForYouStore {
 		debounce = Task { [weak self, eventDebounce] in
 			try? await Task.sleep(for: eventDebounce)
 			guard !Task.isCancelled else { return }
-			await self?.refresh()
+			await self?.refresh(revealingNew: false)
 		}
 	}
 
@@ -222,6 +270,8 @@ public final class ForYouStore {
 		guard let ws = workspaceId() else { return }
 		if loadedWorkspace != ws {
 			cards = []
+			shownIds = []
+			later.reload()
 			retained = [:]
 			actors = [:]
 			brief = .idle
@@ -237,7 +287,11 @@ public final class ForYouStore {
 
 	/// Pull-to-refresh and event-driven refetch. Keeps what is on screen; a failure while the
 	/// feed is already showing is swallowed rather than replacing cards with an error.
-	public func refresh() async {
+	///
+	/// `revealingNew: false` is for live updates: an ask that arrives while the reader is looking
+	/// at the list waits behind the "N new" pill (`pendingNewCount`) instead of pushing the card
+	/// under their thumb down. Pull-to-refresh is the reader asking, so it shows everything.
+	public func refresh(revealingNew: Bool = true) async {
 		guard let ws = workspaceId() else { return }
 		if loadedWorkspace != ws {
 			await load()
@@ -245,10 +299,24 @@ public final class ForYouStore {
 		}
 		isRefreshing = true
 		defer { isRefreshing = false }
-		await fetch(workspace: ws)
+		await fetch(workspace: ws, revealingNew: revealingNew)
 	}
 
-	private func fetch(workspace ws: String) async {
+	/// Brings the asks that arrived while reading into the list (the "N new · Show" pill).
+	public func showNew() {
+		shownIds = Set(cards.map(\.id))
+	}
+
+	/// Asks the server added since the reader last looked.
+	public var pendingNewCount: Int {
+		cards.filter { isOpenCandidate($0) && !shownIds.contains($0.id) }.count
+	}
+
+	private func isOpenCandidate(_ card: ForYouCard) -> Bool {
+		card.unreadCount > 0 && card.objectType != "onboarding_session"
+	}
+
+	private func fetch(workspace ws: String, revealingNew: Bool = true) async {
 		generation += 1
 		let mine = generation
 		isFetching = true
@@ -260,8 +328,10 @@ public final class ForYouStore {
 			let fetched = try await source.fetchFeed(workspaceId: ws)
 			guard mine == generation, workspaceId() == ws else { return }
 			cards = fetched
+			if revealingNew || entries.isEmpty { shownIds = Set(fetched.map(\.id)) }
 			phase = .loaded
 			freshness.refreshed(at: cache?.now() ?? Date())
+			later.prune(keeping: Set(fetched.map(\.id)))
 			succeeded = true
 		} catch {
 			guard mine == generation, workspaceId() == ws else { return }
@@ -301,18 +371,36 @@ public final class ForYouStore {
 	/// Take an option on a card.
 	public func choose(_ option: DecisionOption, note: String? = nil, on card: ForYouCard) {
 		retain(card)
+		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
 		widgetReloader.reload()
 	}
 
+	/// Send or skip one message of a card that carries several. The card stays on screen: it
+	/// settles when the view has seen every message dealt with (then it calls `dismiss`).
+	/// Returns false when the reply could not be queued.
+	@discardableResult
+	public func actOnDraft(
+		_ draft: DecisionDraft, action: DecisionService.DraftAction, on card: ForYouCard
+	) -> Bool {
+		retain(card)
+		later.clear(card.id)
+		let queued = decisions.actOnDraft(
+			action, label: draft.label, to: draft.to, id: draft.id, on: DecisionTarget(card))
+		if queued { widgetReloader.reload() }
+		return queued
+	}
+
 	public func reply(_ text: String, on card: ForYouCard) {
 		retain(card)
+		later.clear(card.id)
 		decisions.reply(text, on: DecisionTarget(card))
 		widgetReloader.reload()
 	}
 
 	public func dismiss(_ card: ForYouCard) {
 		retain(card)
+		later.clear(card.id)
 		decisions.markRead(DecisionTarget(card))
 		widgetReloader.reload()
 	}
@@ -325,27 +413,65 @@ public final class ForYouStore {
 		return undone
 	}
 
+	/// Defer a card to a preset time. Returns what to hand `undoLater` to take it back.
+	@discardableResult
+	public func deferCard(_ card: ForYouCard, to preset: LaterPreset) -> LaterEntry? {
+		let previous = later.entry(for: card.id)
+		later.defer(card.id, preset: preset)
+		widgetReloader.reload()
+		return previous
+	}
+
+	/// Take a deferral back (the toast's Undo): the card returns to the open list.
+	public func undoLater(_ card: ForYouCard, restoring previous: LaterEntry?) {
+		later.restore(card.id, to: previous)
+		widgetReloader.reload()
+	}
+
+	/// "Bring back" on a LATER row.
+	public func bringBack(_ card: ForYouCard) {
+		later.clear(card.id)
+		widgetReloader.reload()
+	}
+
 	/// Dismiss every FYI at once; each is individually undoable.
 	public func dismissAllFYIs() {
 		for entry in entries where entry.bucket == .fyi { dismiss(entry.card) }
 	}
 
 	/// The recommended option on every open decision, in one go. Options that can't be undone are
-	/// left for the reader: like the swipe, this never takes one.
-	public func takeSuggestedOptions() {
-		for entry in entries where entry.bucket == .needs {
+	/// left for the reader: like the swipe, this never takes one. Each stays individually
+	/// undoable, and the returned batch is what a single Undo takes back.
+	@discardableResult
+	public func takeSuggestedOptions() -> SuggestedBatch {
+		var batch = SuggestedBatch(taken: [], skipped: 0)
+		for entry in entries where entry.bucket == .needs && entry.card.kind == .decision {
 			if let option = entry.card.decision?.recommended, !option.destructive {
 				choose(option, on: entry.card)
+				batch.taken.append(entry.card)
+			} else {
+				batch.skipped += 1
 			}
 		}
+		return batch
 	}
 
-	/// How many decisions `takeSuggestedOptions()` would act on.
-	public var suggestedOptionCount: Int {
-		entries.filter { entry in
-			guard entry.bucket == .needs, let option = entry.card.decision?.recommended else { return false }
-			return !option.destructive
-		}.count
+	/// Takes back every card of a batch.
+	public func undo(_ batch: SuggestedBatch) {
+		for card in batch.taken { _ = undo(card) }
+	}
+
+	/// How many decisions `takeSuggestedOptions()` would act on, and how many it would leave.
+	public var suggestedOptionCount: Int { suggestedCounts.take }
+	public var suggestedSkipCount: Int { suggestedCounts.skip }
+
+	private var suggestedCounts: (take: Int, skip: Int) {
+		var take = 0
+		var skip = 0
+		for entry in entries where entry.bucket == .needs && entry.card.kind == .decision {
+			if let option = entry.card.decision?.recommended, !option.destructive { take += 1 } else { skip += 1 }
+		}
+		return (take, skip)
 	}
 
 	private func retain(_ card: ForYouCard) { retained[card.id] = card }
@@ -360,11 +486,27 @@ public final class ForYouStore {
 	/// Who raised the card.
 	public func senderName(of card: ForYouCard) -> String? { actorName(card.mention?.actorId) }
 
-	/// The ordered feed: decisions first, then what waits on an agent, then FYIs, then what has
-	/// been handled. Stable within a bucket.
-	public var entries: [FeedEntry] {
+	/// The agent that did the work, for the "with {agent}" credit: the one who raised the card,
+	/// when that is an agent. Nil for a person.
+	public func agent(of card: ForYouCard) -> ForYouActor? {
+		guard let id = card.mention?.actorId, let actor = actors[id], actor.isAgent else { return nil }
+		return actor
+	}
+
+	/// The ordered feed: decisions first (blocking, then due, then the rest), then what waits on an
+	/// agent, then FYIs, then what has been handled. Stable within a rank. Cards the reader
+	/// deferred and asks still behind the "N new" pill are not here.
+	public var entries: [FeedEntry] { build(deferred: false) }
+
+	/// Cards deferred with Later and not yet due, in the order they come back.
+	public var laterEntries: [FeedEntry] {
+		build(deferred: true)
+			.sorted { (later.entry(for: $0.id)?.until ?? .distantFuture) < (later.entry(for: $1.id)?.until ?? .distantFuture) }
+	}
+
+	private func build(deferred wantDeferred: Bool) -> [FeedEntry] {
 		var byId: [String: ForYouCard] = [:]
-		for card in cards where card.unreadCount > 0 && card.objectType != "onboarding_session" {
+		for card in cards where isOpenCandidate(card) && shownIds.contains(card.id) {
 			byId[card.id] = card
 		}
 		var ordered = sorted(Array(byId.values))
@@ -372,21 +514,24 @@ public final class ForYouStore {
 		let extra = retained.values.filter { byId[$0.id] == nil && decisions.record(for: $0.id) != nil }
 		ordered += sorted(Array(extra))
 
-		let filter = options.typeFilter
-		return ordered.compactMap { card -> (entry: FeedEntry, slot: FeedBucket)? in
-			if let filter, card.objectType != filter { return nil }
+		let intent = options.intent
+		let at = now()
+		return ordered.compactMap { card -> (entry: FeedEntry, slot: FeedBucket, rank: Int)? in
 			let record = decisions.record(for: card.id)
-			let entry = FeedEntry(card: card, bucket: bucket(for: card, record: record), record: record)
-			// While the undo window is open the card keeps its place and only its options turn
-			// into the receipt. It drops to the receipt strip once the choice is committed, so
-			// the card under the reader's thumb never jumps away the moment they tap.
-			if let record, case .held = record.phase {
-				return (entry, card.kind == .decision ? .needs : .fyi)
-			}
-			return (entry, entry.bucket)
+			let isDeferred = record == nil && later.isDeferred(card.id)
+			guard isDeferred == wantDeferred else { return nil }
+			let bucket = bucket(for: card, record: record)
+			let urgency = bucket == .needs || bucket == .fyi
+				? ForYouUrgency.make(for: card, agent: senderName(of: card), now: at) : nil
+			if let intent, bucket != .done, !intent.matches(card, urgency: urgency) { return nil }
+			let entry = FeedEntry(
+				card: card, bucket: bucket, record: record,
+				backFromLater: record == nil && later.isBackFromLater(card.id), urgency: urgency)
+			// A card from the Chief of Staff's list keeps that order; urgency only orders the rest.
+			return (entry, bucket, bucket == .needs && card.rank == nil ? ForYouUrgency.rank(of: urgency) : 0)
 		}
 		.enumerated()
-		.sorted { ($0.element.slot, $0.offset) < ($1.element.slot, $1.offset) }
+		.sorted { ($0.element.slot, $0.element.rank, $0.offset) < ($1.element.slot, $1.element.rank, $1.offset) }
 		.map(\.element.entry)
 	}
 
@@ -402,6 +547,11 @@ public final class ForYouStore {
 	}
 
 	private func sorted(_ list: [ForYouCard]) -> [ForYouCard] {
+		// The Chief of Staff's ranking wins over the reader's sort setting; cards without a rank
+		// (none come from the server today, but a cached card might) follow it.
+		if list.contains(where: { $0.rank != nil }) {
+			return list.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) }
+		}
 		let latest: (ForYouCard, ForYouCard) -> Bool = {
 			($0.latestActivityAt ?? .distantPast) > ($1.latestActivityAt ?? .distantPast)
 		}
@@ -416,17 +566,39 @@ public final class ForYouStore {
 		}
 	}
 
-	/// Cards that still need the reader (decisions awaiting an answer, plus FYIs).
+	/// Asks still open: not decided, held or deferred. This is the tab badge and the "caught up"
+	/// test; handled and held cards never count.
 	public var unreadCount: Int { entries.filter { $0.bucket == .needs || $0.bucket == .fyi }.count }
 	public var needsCount: Int { entries.filter { $0.bucket == .needs }.count }
 
-	/// Counts per object type across the unread queue, for the filter menu.
-	public var typeCounts: [(type: String, count: Int)] {
-		var counts: [String: Int] = [:]
-		for card in cards where card.unreadCount > 0 {
-			if let type = card.objectType, type != "onboarding_session" { counts[type, default: 0] += 1 }
+	/// Open asks per intent, for the filter pills.
+	public func intentCount(_ intent: ForYouIntent?) -> Int {
+		let at = now()
+		return cards.filter { card in
+			guard isOpenCandidate(card), shownIds.contains(card.id) else { return false }
+			let record = decisions.record(for: card.id)
+			guard bucket(for: card, record: record) == .needs || bucket(for: card, record: record) == .fyi,
+				!later.isDeferred(card.id)
+			else { return false }
+			guard let intent else { return true }
+			return intent.matches(
+				card, urgency: ForYouUrgency.make(for: card, agent: senderName(of: card), now: at))
+		}.count
+	}
+
+	/// The caught-up line: who is now carrying on because of the reader's calls.
+	public var caughtUpDetail: String {
+		var names: [String] = []
+		for entry in entries where entry.bucket == .done {
+			guard case .option = entry.record?.kind, let name = senderName(of: entry.card),
+				!names.contains(name)
+			else { continue }
+			names.append(name)
 		}
-		return counts.map { ($0.key, $0.value) }.sorted { $0.type < $1.type }
+		guard !names.isEmpty else {
+			return "Nothing needs you right now. The flows keep running \u{2014} you\u{2019}ll hear when one does."
+		}
+		return "Your calls are in motion with \(names.joined(separator: ", ")). You\u{2019}ll hear when one needs you again."
 	}
 
 	public var isEmpty: Bool { phase == .loaded && entries.isEmpty }

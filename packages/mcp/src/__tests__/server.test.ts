@@ -38,15 +38,10 @@ const config = {
 }
 
 // Tools whose `registerAppTool` calls are intentionally commented out in
-// server.ts (notification MCP tools are temporarily hidden). Keep the tool
-// *definitions* in `tools.ts` so re-enabling stays a one-line change.
-const HIDDEN_TOOL_NAMES = new Set([
-	'create_notification',
-	'list_notifications',
-	'get_notification',
-	'update_notification',
-	'delete_notification',
-])
+// server.ts (get/delete notification stay hidden; create/list/update are live for
+// the Chief of Staff's For You list). Keep the tool *definitions* in `tools.ts`
+// so re-enabling stays a one-line change.
+const HIDDEN_TOOL_NAMES = new Set(['get_notification', 'delete_notification'])
 
 describe('createMcpServer', () => {
 	beforeEach(() => {
@@ -57,6 +52,18 @@ describe('createMcpServer', () => {
 		createMcpServer(config)
 		const expectedCount = Object.keys(tools).filter((name) => !HIDDEN_TOOL_NAMES.has(name)).length
 		expect(registerAppTool).toHaveBeenCalledTimes(expectedCount)
+	})
+
+	it("keeps the approve tool out of the model's tool list", () => {
+		createMcpServer(config)
+		const call = vi.mocked(registerAppTool).mock.calls.find((c) => c[1] === 'approve_object_draft')
+		const meta = (call?.[2] as { _meta?: { ui?: { visibility?: string[] } } } | undefined)?._meta
+		// Only the preview card may call it: a model that could would approve its own draft.
+		expect(meta?.ui?.visibility).toEqual(['app'])
+	})
+
+	it('lets gmail_send_email send an email object by id', () => {
+		expect(Object.keys(tools.gmail_send_email.inputSchema.shape)).toContain('object_id')
 	})
 
 	it('registers a UI resource for every defined resource', () => {
@@ -808,6 +815,42 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_session_activity handler', () => {
+		const sid = '11111111-1111-4111-8111-111111111111'
+		const payload = {
+			session_id: sid,
+			turns: [{ message_id: 7, steps: [{ id: '1-0', kind: 'tool_use', label: 'Using Read' }] }],
+			oldest_log_id: 1,
+			has_older: false,
+		}
+
+		it('forwards paging params and returns the same full payload on both channels', async () => {
+			mockFetchSuccess(payload)
+			const handler = getHandler('get_session_activity')
+			const result = (await handler({
+				id: sid,
+				limit_turns: 3,
+				message_id: 7,
+				before_log_id: 99,
+			})) as { content: Array<{ text: string }>; structuredContent: unknown }
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain(`/api/sessions/${sid}/activity?`)
+			expect(calledUrl).toContain('limit_turns=3')
+			expect(calledUrl).toContain('message_id=7')
+			expect(calledUrl).toContain('before_log_id=99')
+			expect(result.structuredContent).toEqual(payload)
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('states it is read-only and names its write counterparts', async () => {
+			const { tools } = await import('../tools')
+			const d = tools.get_session_activity.description
+			expect(d).toContain('read-only')
+			expect(d).toContain('stop_session')
+		})
+	})
+
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
 			// PATCH the object, GET (per file, returns empty → not yet attached),
@@ -1276,6 +1319,29 @@ describe('tool handlers', () => {
 			expect(create?.method).toBe('POST')
 			expect(create?.headers.Authorization).toBe('Bearer ank_testkey123')
 			expect(create?.body).toMatchObject({ type: 'agent', name: 'Bot', workspace_id: 'ws-123' })
+		})
+
+		it('forwards first_steps and needed_integrations on the agent create call', async () => {
+			const requests = recordRequests()
+			const firstSteps = [
+				{ label: 'Summarise open bugs', prompt: 'Summarise open bugs', action: 'send' },
+				{ label: 'Draft a reply', prompt: 'Draft a reply to: ', action: 'fill' },
+			]
+
+			const handler = getHandler('create_actor')
+			await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
+
+			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
+			expect(create?.body).toMatchObject({
+				first_steps: firstSteps,
+				needed_integrations: ['linear', 'gmail'],
+			})
 		})
 
 		it('does not add the agent to the workspace in a second call, and reports member', async () => {
@@ -2070,6 +2136,39 @@ describe('tool handlers', () => {
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
 			})
 
+			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { tags: ['Old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', tags: ['Sales', 'EMEA'] })
+				await handler({ id: 'loop-1', tags: [] })
+
+				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
+				expect(patches[1]?.metadata).toEqual({ tags: [] })
+			})
+
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
 				const relationshipDeletes: string[] = []
 				let patchBody: Record<string, unknown> | undefined
@@ -2400,7 +2499,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id, status: 'running' }),
 				} as Response)
 
-		it('flag on and the wait times out: asks for the return with one PATCH, nothing on the create call', async () => {
+		it('flag on and the wait times out: asks for the return with one PATCH, false on the create call', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
@@ -2417,7 +2516,8 @@ describe('tool handlers', () => {
 			expect(parsed.notify_on_complete).toBe('registered')
 
 			const [create] = callsWith(fetchSpy, 'POST')
-			expect(JSON.parse(create[1].body as string)).not.toHaveProperty('notify_on_complete')
+			// False, not omitted: omitted defaults on for a helper started from a chat.
+			expect(JSON.parse(create[1].body as string).notify_on_complete).toBe(false)
 			const patches = callsWith(fetchSpy, 'PATCH')
 			expect(patches).toHaveLength(1)
 			expect(patches[0][0]).toBe('http://localhost:3000/api/sessions/sess-n1')
@@ -3509,9 +3609,8 @@ describe('tool handlers', () => {
 		})
 	})
 
-	// Notification MCP tools are temporarily hidden — see server.ts. Skip the
-	// handler tests until the tools are re-enabled.
-	describe.skip('create_notification handler', () => {
+	// create_notification is registered again (the Chief of Staff writes the For You list).
+	describe('create_notification handler', () => {
 		it('passes native array metadata.actions through unchanged', async () => {
 			const mockResult = { id: 'notif-1' }
 			mockFetchSuccess(mockResult)
@@ -7120,5 +7219,62 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', hostSession)
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
+	})
+
+	// POST /api/actors reads this header to find the person behind the creating
+	// session, so the new agent can introduce itself to them.
+	async function createActorHeaders(): Promise<Record<string, string>> {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'actor-new' }),
+		} as Response)
+		const handler = handlers.get('create_actor')
+		if (!handler) throw new Error('create_actor handler not registered')
+		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		const call = vi
+			.mocked(fetch)
+			.mock.calls.find(
+				(c) => String(c[0]).endsWith('/api/actors') && (c[1] as RequestInit).method === 'POST',
+			)
+		return (call?.[1] as RequestInit).headers as Record<string, string>
+	}
+
+	it('create_actor for an agent sends config.maskinSessionId on the POST /api/actors call', async () => {
+		vi.stubEnv('SESSION_ID', hostSession)
+		build({ maskinSessionId: callerSession })
+		expect((await createActorHeaders())['X-Maskin-Session-Id']).toBe(callerSession)
+	})
+
+	it('post_conversation_message resolves mention_names to metadata.mentions and reports misses', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const isPost = String(input).endsWith('/messages')
+			return {
+				ok: true,
+				headers: new Headers(),
+				json: () =>
+					Promise.resolve(
+						isPost
+							? { id: 'msg-1' }
+							: { participants: [{ actorId: 'actor-strategist', actorName: 'Strategist' }] },
+					),
+			} as Response
+		})
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		const result = await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'over to you',
+			mention_names: ['Strategist', 'Nobody'],
+		})
+		const post = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((post?.[1] as RequestInit).body as string)
+		expect(sent.metadata.mentions).toEqual(['actor-strategist'])
+		expect(sent.mention_names).toBeUndefined()
+		const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? ''
+		expect(JSON.parse(text).unresolved_mentions).toEqual([
+			{ name: 'Nobody', reason: 'not_in_conversation' },
+		])
 	})
 })
