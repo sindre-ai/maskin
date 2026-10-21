@@ -193,6 +193,7 @@ export interface EventMapping {
  * One field an object of a deliverable kind carries in `metadata`.
  * `recipients` is a comma separated list of "Name <address>" or bare addresses;
  * `text` is a single line. The body is never a field: it is the object's content.
+ * A `text` field with no `slot` shows as a labelled detail line ("Posting as", "Channel").
  */
 export interface DeliverableField {
 	key: string
@@ -205,8 +206,36 @@ export interface DeliverableField {
 	role?: 'to' | 'cc'
 	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
 	address?: 'email'
-	/** Which part of the preview a `text` field fills. Only `subject` today. */
-	slot?: 'subject'
+	/**
+	 * Which part of the preview a `text` field fills: the `subject`, or the `context` (what
+	 * the draft answers, shown above the text and never sent). `hidden` keeps a field the
+	 * send tool needs (a conversation id) off the card. A `text` field with no slot is a
+	 * detail line.
+	 */
+	slot?: 'subject' | 'context' | 'hidden'
+	/** Not required to send, but worth a warning on the card when empty. */
+	recommended?: boolean
+}
+
+/**
+ * A second way for an object to be of a deliverable kind, for objects an agent already
+ * writes without `metadata.kind`: every pair must match the object's `metadata`.
+ * A sales task filed with `channel: "linkedin_dm"` and a LinkedIn post filed with
+ * `content_type: "linkedin_post"` are not given a kind.
+ */
+export interface DeliverableMatch {
+	key: string
+	value: string
+}
+
+/**
+ * Where the text that goes out sits inside the object's content, for content that carries
+ * more than the message (a header of account, voice and angle above the post). The
+ * preview shows only what lies between the `start` line and the `end` line.
+ */
+export interface DeliverableBodyBlock {
+	start: string
+	end?: string
 }
 
 /**
@@ -221,6 +250,10 @@ export interface DeliverableKind {
 	/** Shown above the text: "Email". */
 	label: string
 	fields: DeliverableField[]
+	/** Also treat an object as this kind when all of these pairs match its metadata. An explicit `metadata.kind` always wins. */
+	alsoMatches?: DeliverableMatch[]
+	/** Read the message from a block of the content instead of all of it. */
+	bodyBlock?: DeliverableBodyBlock
 	/** Longest body the channel takes, in characters. */
 	bodyMaxLength?: number
 	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */

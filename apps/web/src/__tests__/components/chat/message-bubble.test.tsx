@@ -8,6 +8,10 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspace: { settings: { statuses: { bet: ['active', 'done'] } } } }),
+}))
+
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -18,15 +22,39 @@ vi.mock('@/hooks/use-objects', () => ({
 			type: 'bet',
 			title: 'Retry window',
 			status: 'active',
+			content: 'The retry window text.',
+			metadata: { channel: 'linkedin_dm', priority: 'P1' },
+			// A draft an integration can deliver: only those get a card in chat.
+			preview: {
+				kind: 'linkedin_message',
+				label: 'LinkedIn message',
+				provider: 'linkedin-unipile',
+				recipients: [],
+				subject: null,
+				details: [],
+				body: 'The retry window text.',
+				maxLength: null,
+				missing: [],
+				warnings: [],
+				content_hash: 'hash-1',
+				delivery: { state: 'draft', at: null },
+			},
 		},
 		isLoading: false,
 	}),
+	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), error: null }),
+	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
 	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
+	useSendMessage: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-object-type-label', () => ({
+	useObjectTypeLabel: () => (type: string) => type,
 }))
 
 vi.mock('@/hooks/use-actors', async () => {
@@ -82,6 +110,20 @@ const CHART_MESSAGE = [
 ].join('\n')
 
 describe('MessageBubble', () => {
+	it('shows the card of a linked object right after the paragraph that links it', () => {
+		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+		renderBubble(
+			buildMessage({
+				content: `Before the link.\n\nThe draft is [here](/ws-1/objects/${id}) for you.\n\nAfter the link.`,
+			}),
+		)
+		const before = screen.getByText('Before the link.')
+		const card = screen.getByText('LinkedIn message · P1')
+		const after = screen.getByText('After the link.')
+		expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
 	it('renders an own message as an ink plate with no avatar or name', () => {
 		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		const body = screen.getByText('Here is what I found.')

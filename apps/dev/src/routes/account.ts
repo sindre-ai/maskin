@@ -221,8 +221,6 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
 		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.
 		await tx.delete(webPushSubscriptions).where(eq(webPushSubscriptions.actorId, actorId))
-		// Timezone, quiet hours and mute choices of the person; the scheduled pushes read them.
-		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 
 		// The row stays (records elsewhere reference it) but nothing about the person does. The key
 		// is replaced with a random value nobody holds; null password and email mean no sign-in and
