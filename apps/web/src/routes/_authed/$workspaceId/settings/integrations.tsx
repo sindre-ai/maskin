@@ -25,6 +25,7 @@ import {
 import { useProviderVisibility } from '@/hooks/use-provider-visibility'
 import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
 import { safeReturnPath } from '@/lib/return-path'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -50,7 +51,11 @@ function IntegrationsPage() {
 	// Flagged providers (google-meet, resend) stay hidden here until their flag is
 	// on; the Connect card an agent puts in chat asks the same hook.
 	const isProviderVisible = useProviderVisibility()
-	const visibleProviders = (providers ?? []).filter((p) => isProviderVisible(p.name))
+	const visibleProviders = sortBy(
+		(providers ?? []).filter((p) => isProviderVisible(p.name)),
+		(p) => p.displayName,
+		(p) => p.name,
+	)
 
 	// A GitHub connect where the user could reach several orgs' installations
 	// comes back here with the pending row id, for them to pick one.

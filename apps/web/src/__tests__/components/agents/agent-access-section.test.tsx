@@ -44,6 +44,7 @@ function data(over: Partial<AgentAccessView> = {}): AgentAccessView {
 				name: 'Stripe',
 				kind: 'api_key',
 				has_access: false,
+				default_access: 'none',
 				scope: null,
 				chat_count: 0,
 				created_by: 'human-1',

@@ -17,6 +17,7 @@ import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
 import type { MessageMetadata, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
+import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
@@ -146,6 +147,18 @@ export function ThreadMessages({
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
 	})
+
+	// A linked object's card shows once, on the first message that links it; later
+	// messages keep the link but not another copy of the card.
+	const shownLinkedObjectIdsByMessage = useMemo(() => {
+		const seen = new Set<string>()
+		const byMessage = new Map<number, ReadonlySet<string>>()
+		for (const m of visibleMessages) {
+			byMessage.set(m.id, new Set(seen))
+			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
+		}
+		return byMessage
+	}, [visibleMessages])
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -421,6 +434,7 @@ export function ThreadMessages({
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
+									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
 									// Keyed by index as well as session: one session can put two
 									// turns under the same message (a result segment plus the
 									// live turn that follows it), so `sessionId` alone is not

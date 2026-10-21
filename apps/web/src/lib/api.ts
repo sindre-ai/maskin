@@ -603,6 +603,20 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		updateCredential: (
+			id: string,
+			workspaceId: string,
+			body: {
+				displayName?: string
+				rawSecret?: string
+				username?: string
+				password?: string
+			},
+		) =>
+			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
+				`/integrations/${id}/update`,
+				{ method: 'POST', body, workspaceId },
+			),
 		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
 			request<CredentialAuditLogPage>(
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
@@ -639,8 +653,8 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
-		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
-			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: DefaultAgentAccess) =>
+			request<{ defaultAgentAccess: DefaultAgentAccess }>(`/integrations/${id}/default-access`, {
 				method: 'PUT',
 				body: { defaultAgentAccess },
 				workspaceId,
@@ -1318,7 +1332,7 @@ export const api = {
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
 			const { ids, ...rest } = params
@@ -1560,6 +1574,9 @@ export interface UnreadItem {
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
 	latest_mention?: LatestMention
+	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
+	// shows when there is no source comment to lead with.
+	curated?: { headline: string; rationale: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1614,8 +1631,12 @@ export interface UnreadResponse {
 
 /** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
 export interface ForYouItem {
-	notification_id: string
+	/** Null for a decision card an agent addressed to the person directly. */
+	notification_id: string | null
+	source: 'curated' | 'decision'
 	rank: number
+	/** What marking the item read moves the read position to. Null when there is nothing to mark. */
+	latest_event_id: number | null
 	headline: string
 	rationale: string | null
 	created_at: string | null
@@ -1963,7 +1984,7 @@ export interface IntegrationResponse {
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
 	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
-	defaultAgentAccess?: 'read' | 'none'
+	defaultAgentAccess?: DefaultAgentAccess
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
@@ -1971,7 +1992,10 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+/** What an agent with no grant of its own gets. */
+export type DefaultAgentAccess = 'read' | 'read_write' | 'none'
 
 export interface AgentGrant {
 	actorId: string
@@ -1981,7 +2005,7 @@ export interface AgentGrant {
 export interface IntegrationGrants {
 	integrationId: string
 	mode: 'keychain' | 'standard'
-	defaultAgentAccess: 'read' | 'none'
+	defaultAgentAccess: DefaultAgentAccess
 	grants: AgentGrant[]
 }
 
@@ -2193,6 +2217,8 @@ export interface FileListItem {
 	workspaceId: string
 	name: string
 	description: string | null
+	/** What the file is for. `briefing` puts an HTML page in the For you row. */
+	kind?: 'briefing' | null
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
@@ -2399,9 +2425,9 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'ask_first' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		source: 'grant' | 'default'
-		default_access: 'read' | 'none'
+		default_access: DefaultAgentAccess
 		server_attached: boolean
 		created_by: string
 		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
@@ -2414,6 +2440,8 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access). */
+		default_access: 'read' | 'none'
 		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
 		scope: 'always' | 'this_chat' | null
 		/** In how many chats it is shared with this agent, apart from any grant. */
