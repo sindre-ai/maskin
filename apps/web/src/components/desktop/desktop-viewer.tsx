@@ -90,6 +90,7 @@ export function DesktopViewer({
 	workspaceId,
 	agentId,
 	toolbarEnd,
+	variant = 'inline',
 	onOpenAgent,
 }: {
 	workspaceId: string
@@ -97,6 +98,11 @@ export function DesktopViewer({
 	agentId: string
 	/** Rendered at the far end of the toolbar (the Expand / Close button). */
 	toolbarEnd?: React.ReactNode
+	/**
+	 * `inline`: toolbar above the picture. `preview`: just the picture, for a card that opens
+	 * the popup. `immersive`: the popup, controls float under the picture.
+	 */
+	variant?: 'inline' | 'preview' | 'immersive'
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
 }) {
@@ -227,26 +233,52 @@ export function DesktopViewer({
 			)
 		) : null
 
+	// The popup's floating pill: what you are doing on the left, the one switch on the right.
+	const pill = (
+		<div
+			role="toolbar"
+			aria-label="Computer controls"
+			className="flex items-center gap-1 self-center rounded-full border bg-card p-1 shadow-md"
+		>
+			<span className="flex items-center gap-1.5 px-3 text-sm text-muted-foreground">
+				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
+				{controlling ? "You're in control" : 'Watching'}
+			</span>
+			<Button
+				variant={controlling ? 'secondary' : 'default'}
+				size="sm"
+				className="rounded-full"
+				aria-label={controlling ? 'Stop controlling' : 'Take over'}
+				disabled={sending}
+				onClick={() => setControlling((v) => !v)}
+			>
+				{controlling ? 'Stop' : 'Take control'}
+			</Button>
+		</div>
+	)
+
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
-			<div
-				role="toolbar"
-				aria-label="Computer controls"
-				className="flex min-w-0 items-center justify-between gap-2"
-			>
-				<div className="min-w-0">
-					<DesktopStatus
-						phase={phase}
-						teaching={teaching.status}
-						elapsedMs={teaching.elapsedMs}
-						agentName={teaching.agentName}
-					/>
+			{variant === 'inline' && (
+				<div
+					role="toolbar"
+					aria-label="Computer controls"
+					className="flex min-w-0 items-center justify-between gap-2"
+				>
+					<div className="min-w-0">
+						<DesktopStatus
+							phase={phase}
+							teaching={teaching.status}
+							elapsedMs={teaching.elapsedMs}
+							agentName={teaching.agentName}
+						/>
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						{controls}
+						{toolbarEnd}
+					</div>
 				</div>
-				<div className="flex shrink-0 items-center gap-2">
-					{controls}
-					{toolbarEnd}
-				</div>
-			</div>
+			)}
 
 			<div
 				className={cn(
@@ -291,6 +323,7 @@ export function DesktopViewer({
 					/>
 				)}
 			</div>
+			{variant === 'immersive' && phase === 'connected' && (recording ? controls : pill)}
 			{/* <TeachDialog
 				open={teaching.dialogOpen}
 				onOpenChange={teaching.setDialogOpen}
