@@ -65,6 +65,12 @@ export interface TelemetrySummary {
 	errorRowsByTool: Record<string, number>
 }
 
+/** What the agent saw on its side of the connection, per tool name (no mcp__maskin__ prefix). */
+export interface ClientSummary {
+	/** Error results saying "not found". These write no mcp_telemetry row. */
+	notFoundByTool: Record<string, number>
+}
+
 export interface TaskContext {
 	/** Fresh uuid per run. Sent as X-Maskin-Session-Id, so telemetry rows join to it. */
 	sessionId: string
@@ -91,7 +97,12 @@ export interface TaskDef {
 	setup(ctx: TaskContext): Promise<Seed>
 	/** Never names an argument: the agent has to find the spelling itself. */
 	prompt(ctx: TaskContext, seed: Seed): string
-	check(ctx: TaskContext, seed: Seed, telemetry: TelemetrySummary): Promise<CheckResult>
+	check(
+		ctx: TaskContext,
+		seed: Seed,
+		telemetry: TelemetrySummary,
+		client: ClientSummary,
+	): Promise<CheckResult>
 }
 
 export interface TokenUsage {
@@ -113,6 +124,8 @@ export interface RunOutcome {
 	clientToolUses: number
 	/** tool_result blocks the client saw flagged as errors. */
 	clientToolErrors: number
+	/** Error tool results saying "not found", by tool name. */
+	clientNotFoundByTool: Record<string, number>
 	finished: boolean
 	error: string | null
 	durationMs: number
@@ -135,6 +148,7 @@ export interface ResultRow {
 	error_rows_by_tool: Record<string, number>
 	client_tool_uses: number
 	client_tool_errors: number
+	client_not_found_by_tool: Record<string, number>
 	num_turns: number | null
 	duration_ms: number
 	run_date: string

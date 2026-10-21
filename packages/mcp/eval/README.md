@@ -73,9 +73,12 @@ runs do not collide.
 it does have.
 
 The no-worse rule reads the original five (`T1` to `T5`). `H6` is reported on its own line and
-counts as passed in a step only when all three runs pass. A "Not found" reply is not an error
-row, so an agent that tries the id, gets "Not found" and then falls back to the name can pass
-`H6` on the current surface. `client_tool_errors` on the row shows when that happened.
+counts as passed in a step only when all three runs pass. A run passes `H6` only with the stored
+content right, no error rows for the two skill tools, and zero "Not found" replies to
+`get_workspace_skill`. The prompt tells the agent to fetch by id, so a "Not found" there is the
+failure the id-or-name change removes. It writes no error row, so the runner reads it from the
+agent's own tool errors and records it per tool in `client_not_found_by_tool`. Without this rule
+`H6` would pass at baseline and could not show an improvement.
 
 ## Staging
 
@@ -122,7 +125,7 @@ Use the same `EVAL_MODEL` for every step you compare.
 `stack_git_branch`, `staging_workspace_id`, `summary` and one row per task run:
 `task_id`, `held_out`, `run_index`, `session_id`, `workspace_id`, `passed`, `check_reason`,
 `call_count`, `tokens`, `tokens_source`, `cost_usd`, `errors_total`, `errors_by_kind`,
-`error_rows_by_tool`, `client_tool_uses`, `client_tool_errors`, `num_turns`, `duration_ms`,
+`error_rows_by_tool`, `client_tool_uses`, `client_tool_errors`, `client_not_found_by_tool`, `num_turns`, `duration_ms`,
 `run_date`, `runner`, `model`, `run_error`.
 
 `summary.original` is the line the no-worse rule reads: pass rate and calls per passing task over

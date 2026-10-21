@@ -38,7 +38,9 @@ export async function runTask(task: TaskDef, runIndex: number, deps: RunDeps): P
 	const telemetry = await readSettledTelemetry(() => deps.readTelemetry(sessionId), deps.settle)
 	// A run that never finished still gets checked: a partial result is a fail
 	// with a reason, not a missing row.
-	const check = await task.check(ctx, seed, telemetry)
+	const check = await task.check(ctx, seed, telemetry, {
+		notFoundByTool: outcome.clientNotFoundByTool,
+	})
 	return {
 		task_id: task.id,
 		held_out: task.heldOut,
@@ -56,6 +58,7 @@ export async function runTask(task: TaskDef, runIndex: number, deps: RunDeps): P
 		error_rows_by_tool: telemetry.errorRowsByTool,
 		client_tool_uses: outcome.clientToolUses,
 		client_tool_errors: outcome.clientToolErrors,
+		client_not_found_by_tool: outcome.clientNotFoundByTool,
 		num_turns: outcome.numTurns,
 		duration_ms: outcome.durationMs,
 		run_date: deps.now().toISOString(),

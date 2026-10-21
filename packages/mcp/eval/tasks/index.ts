@@ -233,7 +233,7 @@ const skillLookup: TaskDef = {
 	prompt(ctx) {
 		return `List the skills in the workspace. Fetch the skill named "${H6_SKILL_NAME}" using the id shown in the list. Fetch it again using its name. Then add a new last line to its content that reads "${h6Marker(ctx)}" and save the skill.`
 	},
-	async check(ctx, seed, telemetry) {
+	async check(ctx, seed, telemetry, client) {
 		const stored = await ctx.state.skillContent(H6_SKILL_NAME)
 		if (stored === null) return fail(`skill ${H6_SKILL_NAME} is gone`)
 		const expected = `${seed.baseline}\n${h6Marker(ctx)}`
@@ -247,6 +247,14 @@ const skillLookup: TaskDef = {
 			return fail(
 				`error rows in the session: get_workspace_skill ${getErrors}, update_workspace_skill ${updateErrors}`,
 			)
+		}
+		// The prompt tells the agent to fetch by id, so a "Not found" reply on that
+		// call is the failure the id-or-name change removes. It writes no error row,
+		// so it is read from the agent's own tool errors. The fetch by name must
+		// succeed, so any "Not found" on get_workspace_skill means the id fetch failed.
+		const notFound = client.notFoundByTool.get_workspace_skill ?? 0
+		if (notFound > 0) {
+			return fail(`get_workspace_skill answered "Not found" ${notFound} time(s) on the fetch by id`)
 		}
 		return pass
 	},
