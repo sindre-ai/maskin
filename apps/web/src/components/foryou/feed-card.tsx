@@ -287,9 +287,12 @@ export function FeedCard({
 						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
 							{decision.ask}
 						</p>
-						{decision.draft ? <DraftPreview draft={decision.draft} /> : null}
+						{decision.draft ? (
+							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
+						) : null}
 						{decision.drafts?.length && onDraftAction && onDraftsDone ? (
 							<DraftStack
+								workspaceId={workspaceId}
 								drafts={decision.drafts}
 								onAction={onDraftAction}
 								onAllDone={onDraftsDone}

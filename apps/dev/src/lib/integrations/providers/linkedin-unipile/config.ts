@@ -62,5 +62,42 @@ export const config: ProviderConfig = {
 		},
 	},
 
+	// What agents can draft here for a person to read, edit and approve. The send tools
+	// are served per identity, so each is prefixed `linkedin-{account}-{identity}__`;
+	// `sendTool` names the verb. Limits mirror operations.ts (8000-character messages,
+	// 3000-character posts, the 200-character invite note).
+	deliverables: [
+		{
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			sendTool: 'send_message',
+			bodyMaxLength: 8000,
+			// The recipient is a name or a profile link; neither is checked as an address.
+			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+		},
+		{
+			kind: 'linkedin_connection_request',
+			label: 'LinkedIn connection request',
+			sendTool: 'send_connection_request',
+			bodyMaxLength: 200,
+			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+		},
+		{
+			kind: 'linkedin_post',
+			label: 'LinkedIn post',
+			sendTool: 'publish_post',
+			bodyMaxLength: 3000,
+			// The Copywriter's posts are `content` objects with `content_type: linkedin_post`
+			// and a header (account, voice, angle) above the copy, so they preview as posts
+			// without anyone adding a kind, showing only what would be published.
+			alsoMatches: [{ key: 'content_type', value: 'linkedin_post' }],
+			bodyBlock: { start: '--- POST ---', end: '--- MEDIA ---' },
+			fields: [
+				{ key: 'account', label: 'Posting as', type: 'text' },
+				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
+			],
+		},
+	],
+
 	externalIdDisplay: 'installation',
 }

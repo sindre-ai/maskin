@@ -1581,6 +1581,9 @@ export interface LatestMentionDecisionDraft {
 	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
 	id?: string
 	object_id?: string
+	/** The card is about a file (an HTML page, a document, a picture); the card draws the file. */
+	file_id?: string
+	file?: { id: string; name: string; mime_type: string; size_bytes: number }
 	label?: string
 	to?: string
 	body?: string

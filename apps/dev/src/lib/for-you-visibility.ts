@@ -20,6 +20,9 @@ const CLOSED_OBJECT_STATUSES = [
 	'archived',
 	'shipped',
 	'dismissed',
+	// The workspace task status for work that was dropped. An agent that discards the task a
+	// card was about must not leave the card behind.
+	'discarded',
 ]
 
 export type ForYouCard = {

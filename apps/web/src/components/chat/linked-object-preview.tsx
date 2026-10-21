@@ -1,16 +1,17 @@
 import { StatusSelect } from '@/components/objects/property-selects'
+import { FilePreview } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
-import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { extractLinkedFileIds, extractLinkedObjectIds } from '@/lib/linked-objects'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ArrowUpRight, ChevronDown } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Check, ChevronDown } from 'lucide-react'
 import { useState } from 'react'
 
 interface PreviewProps {
@@ -27,6 +28,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
+	const approve = useApproveObject()
 	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
@@ -43,6 +45,15 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
+	// A draft an integration can deliver (an email, a LinkedIn message or post) has a preview;
+	// its card says what it is, shows where it goes and ends in Approve instead of a next phase.
+	const preview = object.preview ?? null
+	const delivery = preview?.delivery?.state
+	// What would go out. For most drafts that is the whole text; for one that carries a header
+	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
+	// what the card shows. Such a text is edited on the object page, where the header is.
+	const shown = preview ? preview.body : body
+	const editable = canAct && (!preview || preview.body.trim() === body)
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -67,6 +78,27 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 		)
 	}
 
+	// The person's yes to this exact text. The agent is told with the text it can send, the
+	// same way a status change tells it, so it does not have to guess what was approved.
+	const approveDraft = () => {
+		if (!preview) return
+		approve.mutate(
+			{ id: object.id, contentHash: preview.content_hash },
+			{
+				onSuccess: () => {
+					if (!conversationId || !agentId) return
+					sendMessage.mutate({
+						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads:\n\n${shown
+							.split('\n')
+							.map((line) => `> ${line}`)
+							.join('\n')}`,
+						metadata: { mentions: [agentId] },
+					})
+				},
+			},
+		)
+	}
+
 	return (
 		<div className="mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card">
 			{/* The whole top (header and title) toggles the card. The status menu and
@@ -78,7 +110,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					className={cn('flex items-center gap-2 px-3 py-2', expanded && 'border-b border-border')}
 				>
 					<span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
-						{typeLabel(object.type)}
+						{preview?.label ?? typeLabel(object.type)}
 					</span>
 					<span className="flex-1" />
 					{canAct && statuses.length > 0 ? (
@@ -133,16 +165,39 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					    A very long text scrolls inside the card instead of being cut off. */}
 					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
 						<MarkdownContent
-							content={body}
+							content={shown}
 							size="sm"
-							editable={canAct}
+							editable={editable}
 							editorLabel="Edit the text"
 							onChange={async (value) => {
 								await update.mutateAsync({ id: object.id, data: { content: value } })
 							}}
 						/>
 					</div>
-					{canAct && nextStatus ? (
+					{preview ? (
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							{delivery === 'sent' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Sent
+								</span>
+							) : delivery === 'approved' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Approved
+								</span>
+							) : (
+								<Button
+									type="button"
+									size="sm"
+									disabled={approve.isPending || update.isPending || preview.missing.length > 0}
+									onClick={approveDraft}
+								>
+									Approve
+								</Button>
+							)}
+						</div>
+					) : canAct && nextStatus ? (
 						<div className="flex items-center justify-end px-3 pb-3 pt-1">
 							<Button
 								type="button"
@@ -164,15 +219,22 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					Could not save: {update.error.message}
 				</p>
 			) : null}
+			{approve.error ? (
+				<p role="alert" className="px-3 pb-2 text-xs text-destructive">
+					Could not approve: {approve.error.message}
+				</p>
+			) : null}
 		</div>
 	)
 }
 
 /**
- * Shows the objects a message links to as cards: what they say, their status
+ * Shows the objects and files a message links to as cards: what they say, their status
  * (changeable from the card, with the writing agent told), a button for the
- * next phase, and the text editable in place. Works for any agent and any object
- * type, because it reads the link, not a tool call.
+ * next phase, and the text editable in place; a draft an integration can deliver shows
+ * where it goes and is approved from the card. A linked file (an HTML page, a markdown
+ * document, a picture) shows as itself. Works for any agent and any object type, because
+ * it reads the link, not a tool call.
  */
 export function LinkedObjectPreviews({
 	workspaceId,
@@ -186,7 +248,8 @@ export function LinkedObjectPreviews({
 	agentId?: string
 }) {
 	const ids = extractLinkedObjectIds(content)
-	if (ids.length === 0) return null
+	const fileIds = extractLinkedFileIds(content)
+	if (ids.length === 0 && fileIds.length === 0) return null
 	return (
 		<>
 			{ids.map((id) => (
@@ -197,6 +260,9 @@ export function LinkedObjectPreviews({
 					conversationId={conversationId}
 					agentId={agentId}
 				/>
+			))}
+			{fileIds.map((id) => (
+				<FilePreview key={id} workspaceId={workspaceId} fileId={id} />
 			))}
 		</>
 	)
