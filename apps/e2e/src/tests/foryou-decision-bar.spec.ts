@@ -113,7 +113,8 @@ test.describe('For You — the decision bar', () => {
 			await expect(card).toBeVisible()
 
 			const bar = card.getByRole('button', { name: 'Send all three' })
-			const skip = card.getByRole('button', { name: 'Skip', exact: true })
+			// The decision's Skip, not the per-reply Skip each of the three replies keeps.
+			const skip = card.locator('[data-action-id="skip"]')
 			const edit = card.getByRole('button', { name: 'Edit first' })
 			await expect(bar).toBeVisible()
 			await expect(skip).toBeVisible()
