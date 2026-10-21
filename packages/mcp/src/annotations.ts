@@ -60,7 +60,6 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_conversation_messages',
 	'get_session_activity',
 	'list_notifications',
-	'get_notification',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ])
@@ -168,9 +167,7 @@ const ROWS: Record<string, Row> = {
 	// Notifications
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
-	get_notification: row('Get notification'),
 	update_notification: row('Update notification', { idempotent: true }),
-	delete_notification: row('Delete notification', { destructive: true, idempotent: true }),
 	// Session activity, drafts, mail and access
 	get_session_activity: row('Get session activity'),
 	approve_object_draft: row('Approve object draft', { openWorld: true }),

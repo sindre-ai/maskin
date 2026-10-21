@@ -69,7 +69,6 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_conversation_messages',
 	'get_session_activity',
 	'list_notifications',
-	'get_notification',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ]
