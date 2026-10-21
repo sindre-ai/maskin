@@ -8,6 +8,7 @@ import {
 	deviceTokens,
 	liveActivityCards,
 	liveActivityTokens,
+	notificationPreferences,
 	notifications,
 	readState,
 	slackUserLinks,
@@ -207,6 +208,8 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(readState).where(eq(readState.actorId, actorId))
 		await tx.delete(starState).where(eq(starState.actorId, actorId))
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
+		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
+		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 		await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.actorId, actorId))
 		await tx.delete(slackUserLinks).where(eq(slackUserLinks.actorId, actorId))
 		// The actor row is kept, so its ON DELETE CASCADE never fires. These hold APNs tokens and
