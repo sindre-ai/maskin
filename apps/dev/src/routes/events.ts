@@ -6,16 +6,19 @@ import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@m
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
+import { recordObjectApproval } from '../lib/object-delivery'
 import {
 	createCommentResponseSchema,
 	errorSchema,
 	eventResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { startSession } from '../services/session-lifecycle'
@@ -332,26 +335,58 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
+	// A person choosing the send option on a decision card approves the draft behind it. It is
+	// written in the same transaction as the reply, so the agent that the reply wakes always
+	// finds the approval. Only a person's own client counts: an agent, or anything posting
+	// through MCP (where a model holds the person's key), never approves by replying.
+	const mayApprove = c.get('actorType') !== 'agent' && c.req.header(CLIENT_SOURCE_HEADER) !== 'mcp'
+	const replyApprovals = mayApprove
+		? await resolveReplyApprovals(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: []
+
 	// A person's answer to an email approval card pins the text they were looking at.
 	const approvedSendHash =
 		c.get('actorType') === 'human' && parentEventId !== undefined
 			? await approvedSendHashFor(db, workspaceId, parentEventId, body.content)
 			: undefined
 
-	const { comment, unresolvedMentions } = await postComment(db, {
-		workspaceId,
-		actorId,
-		entityId: body.entity_id,
-		content: body.content,
-		mentions: body.mentions,
-		parentEventId,
-		attachmentFileIds: body.attachment_file_ids,
-		metadata: body.metadata,
-		decision: body.decision,
-		attention: body.attention,
-		authorSessionId: c.get('maskinSessionId'),
-		approvedSendHash,
-	})
+	const post = (writer: typeof db) =>
+		postComment(writer, {
+			workspaceId,
+			actorId,
+			entityId: body.entity_id,
+			content: body.content,
+			mentions: body.mentions,
+			parentEventId,
+			attachmentFileIds: body.attachment_file_ids,
+			metadata: body.metadata,
+			decision: body.decision,
+			attention: body.attention,
+			authorSessionId: c.get('maskinSessionId'),
+			approvedSendHash,
+		})
+	const { comment, unresolvedMentions } =
+		replyApprovals.length === 0
+			? await post(db)
+			: await db.transaction(async (tx) => {
+					for (const approval of replyApprovals) {
+						await recordObjectApproval(tx, {
+							workspaceId,
+							actorId,
+							objectId: approval.objectId,
+							objectType: approval.objectType,
+							preview: approval.preview,
+							via: 'reply',
+							replyToEventId: approval.cardEventId,
+						})
+					}
+					return post(tx as unknown as typeof db)
+				})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the

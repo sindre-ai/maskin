@@ -1,5 +1,6 @@
 import { StatusSelect } from '@/components/objects/property-selects'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -123,6 +124,11 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			</div>
 			{expanded ? (
 				<>
+					{object.preview ? (
+						<div className="px-3 pt-2">
+							<ObjectPreviewMeta preview={object.preview} />
+						</div>
+					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
 					    A very long text scrolls inside the card instead of being cut off. */}
 					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
