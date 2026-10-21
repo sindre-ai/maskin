@@ -83,7 +83,9 @@ describe('GET / DELETE /api/integrations/google-search-console/mcp', () => {
 
 	it('rejects DELETE with 405', async () => {
 		const app = mountedApp()
-		const res = await app.request('/api/integrations/google-search-console/mcp', { method: 'DELETE' })
+		const res = await app.request('/api/integrations/google-search-console/mcp', {
+			method: 'DELETE',
+		})
 		expect(res.status).toBe(405)
 	})
 })
