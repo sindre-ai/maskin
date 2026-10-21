@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { splitStatements } from '@maskin/db/migrate-utils'
-import { conversations, relationships, type sessions } from '@maskin/db/schema'
+import { conversations, relationships, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { recordEvent, writeSpawnedEdge } from '../../lib/events/record-event'
@@ -21,6 +21,27 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATION_DIR = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 const UP_SQL = join(MIGRATION_DIR, '0074_graph_conversation_session_types.sql')
 const DOWN_SQL = join(MIGRATION_DIR, 'down', '0074_graph_conversation_session_types_down.sql')
+
+async function insertSession(
+	workspaceId: string,
+	actorId: string,
+	overrides: Partial<typeof sessions.$inferInsert> = {},
+) {
+	const [row] = await db
+		.insert(sessions)
+		.values({
+			workspaceId,
+			actorId,
+			status: 'running',
+			actionPrompt: 'Do the thing that produces the object',
+			interactive: false,
+			createdBy: actorId,
+			...overrides,
+		})
+		.returning()
+	if (!row) throw new Error('failed to insert session')
+	return row
+}
 
 describe('S2 · graph provenance writer + read hydration', () => {
 	describe('migration 0074', () => {
