@@ -15,9 +15,11 @@ test.describe('Chat — a message that links to an object shows what the object 
 			const task = await account.api.createObject(account.workspaceId, {
 				type: 'task',
 				title: 'LinkedIn note to Catja',
-				status: 'in_review',
+				status: 'todo',
 				content: NOTE,
 			})
+			// The API rejects tasks created at in_review, so move it after creation.
+			await account.api.updateObject(task.id, account.workspaceId, { status: 'in_review' })
 
 			// Posted by a second agent actor: only the non-own branch of MessageBubble
 			// renders previews (see chat-link-new-tab.spec.ts).
