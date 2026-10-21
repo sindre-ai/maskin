@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { type AgentGrantAccess, type CustomMcpServerSpec, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
@@ -214,32 +214,6 @@ export function useCreateByoLogin(workspaceId: string) {
 }
 
 /**
- * Keychain: replace which agents may use a saved key. The error stays on the mutation so
- * the access sheet can show it inline; only the success toast lives here. The list and the
- * audit log are refetched because the Agents block and the SCOPE CHANGED row both read them.
- */
-export function useUpdateKeyScope(workspaceId: string, integrationId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		// The sheet shows the failure inline, so the global error toast would only cover Save.
-		meta: { handlesOwnErrors: true },
-		mutationFn: (agentIds: string[]) =>
-			api.integrations.replaceGrants(
-				integrationId,
-				workspaceId,
-				agentIds.map((actorId) => ({ actorId, access: 'read_write' as const })),
-			),
-		onSuccess: () => {
-			toast.success('Access updated')
-			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
-			})
-		},
-	})
-}
-
-/**
  * Keychain: remove a saved key or login at any time. The secret is destroyed on the server,
  * so the credential drops out of the list. The page shows the failure inline in its dialog,
  * so the global error toast is switched off.
@@ -253,18 +227,6 @@ export function useRemoveCredential(workspaceId: string) {
 			toast.success('Credential removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
-	})
-}
-
-/** Keychain: one credential's audit log, newest first, paged by the last row's id. */
-export function useCredentialAuditLog(workspaceId: string, integrationId: string) {
-	return useInfiniteQuery({
-		queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
-		queryFn: ({ pageParam }) =>
-			api.integrations.auditLog(integrationId, workspaceId, pageParam || undefined),
-		initialPageParam: '',
-		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
-		enabled: !!workspaceId && !!integrationId,
 	})
 }
 

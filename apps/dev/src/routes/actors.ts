@@ -950,6 +950,7 @@ const actorAccessRoute = createRoute({
 								name: z.string(),
 								kind: z.enum(['api_key', 'login']),
 								has_access: z.boolean(),
+								default_access: z.enum(['read', 'none']),
 								scope: z.enum(['always', 'this_chat']).nullable(),
 								chat_count: z.number().int(),
 								created_by: z.string().uuid(),

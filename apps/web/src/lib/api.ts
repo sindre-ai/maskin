@@ -2416,6 +2416,8 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access). */
+		default_access: 'read' | 'none'
 		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
 		scope: 'always' | 'this_chat' | null
 		/** In how many chats it is shared with this agent, apart from any grant. */
