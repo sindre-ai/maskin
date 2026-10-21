@@ -327,14 +327,13 @@ export function DesktopViewer({
 					<EmptyState
 						className="absolute inset-0 py-0"
 						compact
-						title={
-							phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
-						}
+						// A closed stream is an idle computer going to sleep, not a fault.
+						title={phase === 'disconnected' ? 'The computer is idle' : "Couldn't open the desktop"}
 						description={error ?? undefined}
 						action={
 							<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
 								<RefreshCw size={15} />
-								Reconnect
+								{phase === 'disconnected' ? 'Wake up' : 'Reconnect'}
 							</Button>
 						}
 					/>
