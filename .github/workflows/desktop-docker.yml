@@ -1,15 +1,20 @@
-name: Build & Push browser-sidecar Docker image
+name: Build & Push desktop Docker image
 
 on:
   push:
     branches: [main]
     paths:
-      - 'docker/browser-sidecar/**'
+      - 'docker/desktop/**'
+      - '.github/workflows/desktop-docker.yml'
+  workflow_dispatch: {}
 
 concurrency:
-  group: browser-sidecar-docker-${{ github.ref }}
+  group: desktop-docker-${{ github.ref }}
   cancel-in-progress: true
 
+# Unlike agent-base there is no agent-server restart step: desktops are created with
+# `--pull always` (workspace-desktop.ts), so every new desktop pulls the newest
+# `latest` by itself. Desktops that already exist keep the image they were created from.
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -29,7 +34,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ vars.BROWSER_SIDECAR_IMAGE }}
+          images: ${{ vars.DESKTOP_IMAGE || 'magnusnoeddegaard/maskin-desktop' }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -38,7 +43,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: docker/browser-sidecar
+          context: docker/desktop
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -49,7 +54,7 @@ jobs:
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          IMAGE: ${{ vars.BROWSER_SIDECAR_IMAGE }}
+          IMAGE: ${{ vars.DESKTOP_IMAGE || 'magnusnoeddegaard/maskin-desktop' }}
         run: |
           TOKEN=$(curl -s -X POST "https://hub.docker.com/v2/users/login" \
             -H "Content-Type: application/json" \

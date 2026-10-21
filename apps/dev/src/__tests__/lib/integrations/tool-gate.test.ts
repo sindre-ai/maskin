@@ -13,6 +13,7 @@ vi.mock('../../../lib/events/record-event', () => ({
 import { buildAccessPreamble } from '../../../lib/integrations/access-preamble'
 import {
 	type AgentAccess,
+	canActWithoutAsking,
 	canRead,
 	canWrite,
 	effectiveAccess,
@@ -65,13 +66,16 @@ describe('classifyTool', () => {
 })
 
 describe('access levels', () => {
-	it.each<[AgentAccess, boolean, boolean]>([
-		['none', false, false],
-		['read', true, false],
-		['read_write', true, true],
-	])('%s: can read %s, can write %s', (access, read, write) => {
+	it.each<[AgentAccess, boolean, boolean, boolean]>([
+		['none', false, false, false],
+		['read', true, false, false],
+		// Ask first uses the write tools; it is only the irreversible action that asks.
+		['ask_first', true, true, false],
+		['read_write', true, true, true],
+	])('%s: can read %s, can write %s, acts without asking %s', (access, read, write, acts) => {
 		expect(canRead(access)).toBe(read)
 		expect(canWrite(access)).toBe(write)
+		expect(canActWithoutAsking(access)).toBe(acts)
 	})
 
 	it('resolves from a grant, the default, and the Keychain rule', () => {
@@ -238,6 +242,13 @@ describe('buildAccessPreamble', () => {
 		expect(text).toMatch(/- gmail: No access/i)
 		expect(text).toContain('do not retry')
 		expect(text.endsWith('\n\n')).toBe(true)
+	})
+
+	it('tells the agent that Gmail asks first, in the words the person sees', () => {
+		const text = buildAccessPreamble([row('gmail', 'ask_first')])
+		expect(text).toMatch(
+			/- gmail: Ask first \(all tools, but sending needs a person to approve each one\)/i,
+		)
 	})
 
 	it('folds several accounts of one provider into one line when they differ', () => {

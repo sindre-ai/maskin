@@ -188,6 +188,21 @@ struct ForYouStoreTests {
 		#expect(options.showsHandled)
 	}
 
+	@Test func actingOnOneMessageOfAStackSendsItsReplyAndLeavesTheCardOpen() async {
+		let (store, source, backend, _) = make()
+		source.feed = .success([decisionCard("a")])
+		await store.load()
+		let card = store.entries[0].card
+		let draft = DecisionDraft(id: "kenneth", label: "DM", to: "Kenneth", body: "Hej.")
+
+		#expect(store.actOnDraft(draft, action: .send, on: card))
+
+		#expect(await eventually { backend.calls.count == 1 })
+		#expect(backend.calls == ["comment:a:Send: DM to Kenneth (kenneth):7"])
+		#expect(store.entries.first(where: { $0.id == "a" })?.bucket == .needs)  // still open
+		#expect(store.entries.first(where: { $0.id == "a" })?.record == nil)
+	}
+
 	@Test func decidedCardStaysAsAReceiptAfterTheServerDropsIt() async {
 		let (store, source, backend, _) = make()
 		source.feed = .success([decisionCard("a"), threadCard("b")])

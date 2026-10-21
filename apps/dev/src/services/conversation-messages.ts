@@ -2,7 +2,9 @@ import type { Database } from '@maskin/db'
 import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
+import { logger } from '../lib/logger'
 
 export type InsertConversationMessageArgs = {
 	conversationId: string
@@ -77,5 +79,63 @@ export async function insertConversationMessage(
 		},
 	})
 
+	if ((args.kind ?? 'message') === 'message') {
+		await mirrorAsObjectComment(db, {
+			conversationId: args.conversationId,
+			workspaceId: args.workspaceId,
+			actorId: args.actorId,
+			content: args.content,
+			mentions: args.metadata?.mentions,
+			messageId: created.id,
+		})
+	}
+
 	return created
+}
+
+/**
+ * A chat about an object is where people now comment on it, but triggers, For You,
+ * subscriptions and the Activity tab still read `commented` events. So a message in
+ * an object's chat also lands as one, flagged `suppress_auto_dispatch`: the chat's
+ * own responder already wakes the agents, and the comment dispatcher must not wake
+ * them a second time. Event triggers still see it. Best effort: a failed mirror is
+ * logged and never blocks the message.
+ */
+export async function mirrorAsObjectComment(
+	db: Database,
+	msg: {
+		conversationId: string
+		workspaceId: string
+		actorId: string
+		content: string
+		mentions?: string[]
+		messageId: number
+	},
+): Promise<void> {
+	try {
+		const [conversation] = await db
+			.select({ subjectType: conversations.subjectType, subjectId: conversations.subjectId })
+			.from(conversations)
+			.where(eq(conversations.id, msg.conversationId))
+			.limit(1)
+		if (conversation?.subjectType !== 'object' || !conversation.subjectId) return
+
+		await postComment(db, {
+			workspaceId: msg.workspaceId,
+			actorId: msg.actorId,
+			entityId: conversation.subjectId,
+			content: msg.content,
+			mentions: msg.mentions,
+			metadata: {
+				suppress_auto_dispatch: true,
+				via_chat: { conversation_id: msg.conversationId, message_id: msg.messageId },
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to mirror chat message as object comment', {
+			conversationId: msg.conversationId,
+			messageId: msg.messageId,
+			error: String(err),
+		})
+	}
 }

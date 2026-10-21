@@ -376,6 +376,21 @@ public final class ForYouStore {
 		widgetReloader.reload()
 	}
 
+	/// Send or skip one message of a card that carries several. The card stays on screen: it
+	/// settles when the view has seen every message dealt with (then it calls `dismiss`).
+	/// Returns false when the reply could not be queued.
+	@discardableResult
+	public func actOnDraft(
+		_ draft: DecisionDraft, action: DecisionService.DraftAction, on card: ForYouCard
+	) -> Bool {
+		retain(card)
+		later.clear(card.id)
+		let queued = decisions.actOnDraft(
+			action, label: draft.label, to: draft.to, id: draft.id, on: DecisionTarget(card))
+		if queued { widgetReloader.reload() }
+		return queued
+	}
+
 	public func reply(_ text: String, on card: ForYouCard) {
 		retain(card)
 		later.clear(card.id)
