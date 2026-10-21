@@ -127,6 +127,9 @@ test.describe('For You — an email draft card', () => {
 			await expect(draft.getByText('dan@northwind.dk')).toBeVisible()
 			await expect(draft.getByText('Thursday works')).toBeVisible()
 			await expect(draft.getByText(/Thursday at ten works for us/)).toBeVisible()
+			// The whole message, down to the sign-off, with nothing folded behind "Read all".
+			await expect(draft.getByText(/Best,\s+Seb/)).toBeVisible()
+			await expect(card.getByRole('button', { name: 'Read all' })).toHaveCount(0)
 			// The object's durable spec never reaches the card.
 			await expect(card.getByText('The durable spec, which the card must not show.')).toHaveCount(0)
 			await assertNoHorizontalOverflow(page, vp.label)

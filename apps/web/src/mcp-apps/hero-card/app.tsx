@@ -217,7 +217,7 @@ function DraftReview({ objectId, preview }: { objectId: string; preview: ObjectP
 		<div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
 			<span className="eyebrow">{preview.label}</span>
 			<ObjectPreviewMeta preview={preview} />
-			<p className="m-0 max-h-60 overflow-y-auto whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">
+			<p className="m-0 whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">
 				{preview.body}
 			</p>
 			{sent ? (

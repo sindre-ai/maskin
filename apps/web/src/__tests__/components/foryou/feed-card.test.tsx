@@ -172,8 +172,7 @@ describe('FeedCard — draft on the card', () => {
 		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
 	})
 
-	it('folds a long draft and opens it with Read all', async () => {
-		const user = userEvent.setup()
+	it('shows a long draft in full, with nothing to open', () => {
 		renderCard({
 			item: buildItem({
 				latest_mention: buildMention({
@@ -182,22 +181,10 @@ describe('FeedCard — draft on the card', () => {
 			}),
 		})
 
-		await user.click(screen.getByRole('button', { name: 'Read all' }))
-
-		expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
-	})
-
-	it('has no Read all for a short draft', () => {
-		renderCard({
-			item: buildItem({
-				latest_mention: buildMention({
-					decision: buildDecision({ draft: { body: 'Short note.' } }),
-				}),
-			}),
-		})
-
-		expect(screen.getByRole('region', { name: 'Draft' })).toBeInTheDocument()
+		const region = screen.getByRole('region', { name: 'Email to Hans' })
+		expect(region.textContent).toContain(LONG.trim())
 		expect(screen.queryByRole('button', { name: 'Read all' })).not.toBeInTheDocument()
+		expect(region.querySelector('.line-clamp-4')).toBeNull()
 	})
 
 	it('shows nothing for a draft the feed could not fill', () => {
