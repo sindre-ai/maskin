@@ -89,8 +89,10 @@ import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type GitHubInstallSkip,
 	type PreflightVerdict,
 	collectGitHubMcpIdentities,
+	formatGitHubInstallSkip,
 	postGitHubPreflightSlackAlert,
 	runGitHubPreflight,
 	stripFailedIdentities,
@@ -2624,6 +2626,23 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			installationId: string
 			tokenMetadata: TokenMetadata
 		}> = []
+		// Why each GitHub install was left out of this session. A `missing-token` preflight
+		// verdict only says no token arrived; these say which install and which skip point.
+		const githubInstallSkips: GitHubInstallSkip[] = []
+		const noteGithubSkip = (
+			integration: typeof integrations.$inferSelect,
+			reason: GitHubInstallSkip['reason'],
+			detail?: string,
+		) => {
+			if (integration.provider !== 'github') return
+			githubInstallSkips.push({
+				integrationId: integration.id,
+				reason,
+				installationId: integration.externalId ?? undefined,
+				ownerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+				detail,
+			})
+		}
 		for (const integration of activeIntegrations) {
 			let resolved: ReturnType<typeof getProvider>
 			try {
@@ -2641,6 +2660,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			// Per-integration switch: the credential stays usable server-side, but
 			// agent sessions get neither the token env var nor the MCP server.
 			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				noteGithubSkip(integration, 'not-exposed')
 				logger.info('Integration not exposed to agent sessions; skipping injection', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -2710,6 +2730,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
+					noteGithubSkip(integration, 'revoked')
 					logger.warn(
 						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
 						{
@@ -2724,6 +2745,11 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				// var below), a missing/broken token blocks the whole integration
 				// — log and skip.
 				if (serverNeedsToken || integration.provider === 'github') {
+					noteGithubSkip(
+						integration,
+						'token-load-failed',
+						err instanceof Error ? err.message : String(err),
+					)
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
@@ -2744,16 +2770,22 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 			if (integration.provider === 'github') {
 				// No access means no installation token and no MCP entry for this org.
-				if (access === 'none') continue
+				if (access === 'none') {
+					noteGithubSkip(integration, 'no-access')
+					continue
+				}
 				// Unreachable when accessToken is null: the catch above continues on
 				// getValidToken failure for github. Guard for the type checker.
 				if (accessToken === null) continue
 
-				const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+				const ownerLogin = await this.resolveGithubOwnerLogin(integration, (reason, detail) =>
+					noteGithubSkip(integration, reason, detail),
+				)
 				if (!ownerLogin) continue
 
 				const installationId = integration.externalId
 				if (!installationId) {
+					noteGithubSkip(integration, 'no-install-id')
 					logger.warn(
 						'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
 						{
@@ -3086,7 +3118,26 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						installationId: v.installationId,
 						statusSnippet: v.statusSnippet,
 					})),
+					skippedInstalls: githubInstallSkips.map(formatGitHubInstallSkip),
 				})
+				// A `missing-token` verdict means an install was skipped above. Name the skips in the
+				// alert and keep them in the session log: the host log only holds about 2 minutes.
+				const skippedInstalls = failed.some((v) => v.failureClass === 'missing-token')
+					? githubInstallSkips
+					: []
+				if (skippedInstalls.length > 0) {
+					await this.insertSystemLog(
+						session.id,
+						`GitHub preflight: no token attached. Installs skipped at launch: ${skippedInstalls
+							.map(formatGitHubInstallSkip)
+							.join('; ')}`,
+					).catch((err) =>
+						logger.warn('Failed to store GitHub install skip reasons', {
+							sessionId: session.id,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					)
+				}
 				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
@@ -3096,6 +3147,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						context: {
 							sessionId: session.id,
 							workspaceId: session.workspaceId,
+							skippedInstalls,
 						},
 					})
 				} else {
@@ -3513,12 +3565,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async resolveGithubOwnerLogin(
 		integration: typeof integrations.$inferSelect,
+		onSkip?: (reason: 'no-install-id' | 'owner-lookup-failed', detail?: string) => void,
 	): Promise<string | undefined> {
 		const config = (integration.config as IntegrationConfig | null) ?? {}
 		if (config.owner_login) return config.owner_login
 
 		const installationId = integration.externalId
 		if (!installationId) {
+			onSkip?.('no-install-id')
 			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
 				integrationId: integration.id,
 			})
@@ -3540,6 +3594,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			})
 			return ownerLogin
 		} catch (err) {
+			onSkip?.('owner-lookup-failed', err instanceof Error ? err.message : String(err))
 			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
 				integrationId: integration.id,
 				installationId,
