@@ -13,6 +13,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides which of the slow jobs a change can affect (scripts/ci/changed-areas.sh).
+  # Lint, type-check and unit tests always run: they are cheap and cover every package.
+  # Integration tests and e2e are skipped only when every changed file is one the script
+  # lists as unable to affect them (docs, the Apple app, other apps' workflows, ...);
+  # anything unknown, a push to main, or a diff that cannot be computed runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.areas.outputs.backend }}
+      e2e: ${{ steps.areas.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Self-test the path rules
+        run: bash scripts/ci/changed-areas.test.sh
+
+      - name: Which areas changed?
+        id: areas
+        run: |
+          : > changed.txt
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt || : > changed.txt
+          fi
+          bash scripts/ci/changed-areas.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
   # Config-only gate. The Alloy configs and Grafana alert rules under
   # observability/ are shipped as text and applied by hand — nothing in the
   # build or the test suite ever parses them, so without this job their first
@@ -113,6 +140,9 @@ jobs:
       - run: pnpm test -- -- --run
 
   integration-tests:
+    needs: changes
+    # A skipped job counts as passing for the required check of the same name.
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -278,6 +308,10 @@ jobs:
         run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
+    needs: changes
+    # Not a job-level `if`: the ruleset requires the checks `verify-e2e (1)`..`(5)` by name, and a
+    # skipped matrix job would never create them. So every shard starts and reports success, and
+    # each step below does its work only when the e2e area changed.
     runs-on: ubuntu-24.04
     # Pinned: ubuntu-latest moved to 26.04, which Playwright cannot install chromium on
     # ("does not support chromium on ubuntu26.04-x64"). Unpin once Playwright supports it.
@@ -306,6 +340,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.e2e == 'true'
 
       # SeaweedFS is the S3-compatible backend the dev server writes skill
       # content to. The install path (POST /api/installed-loops) puts one S3
@@ -316,6 +351,7 @@ jobs:
       # `seaweedfs-s3.json`; same image + credentials + bucket name as
       # docker-compose.yml so behaviour matches local dev.
       - name: Start SeaweedFS (S3-compatible backend)
+        if: needs.changes.outputs.e2e == 'true'
         run: |
           set -euo pipefail
           docker run -d --name seaweedfs \
@@ -349,29 +385,36 @@ jobs:
           exit 1
 
       - uses: pnpm/action-setup@v5
+        if: needs.changes.outputs.e2e == 'true'
         with:
           version: 9.15.0
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.e2e == 'true'
         with:
           node-version: 20
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.e2e == 'true'
 
       - name: Cache turbo build outputs
+        if: needs.changes.outputs.e2e == 'true'
         uses: ./.github/actions/cache-turbo
         with:
           job-name: verify-e2e
 
       - run: pnpm build
+        if: needs.changes.outputs.e2e == 'true'
 
       - name: Run database migrations
+        if: needs.changes.outputs.e2e == 'true'
         run: pnpm db:migrate
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
 
       - name: Cache Playwright browsers
+        if: needs.changes.outputs.e2e == 'true'
         id: playwright-cache
         uses: actions/cache@v4
         with:
@@ -379,14 +422,15 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
+        if: needs.changes.outputs.e2e == 'true'
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -438,7 +482,7 @@ jobs:
           S3_REGION: us-east-1
 
       - name: Upload Playwright report
-        if: always()
+        if: always() && needs.changes.outputs.e2e == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.shard }}
