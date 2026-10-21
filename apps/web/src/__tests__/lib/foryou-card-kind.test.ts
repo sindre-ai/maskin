@@ -193,3 +193,24 @@ describe('cardHeadline', () => {
 		expect(cardHeadline(buildItem({ object: undefined }))).toBe('Untitled')
 	})
 })
+
+describe('a curated item with no source comment', () => {
+	const curated = {
+		headline: 'Graduate 5 wiki pages',
+		rationale: 'Voice is your judgment, so no agent can do it.',
+	}
+
+	it('leads with the Chief of Staff headline and shows the rationale under it', () => {
+		const item = buildItem({ curated })
+		expect(cardHeadline(item)).toBe('Graduate 5 wiki pages')
+		expect(cardBody(item)).toBe('Voice is your judgment, so no agent can do it.')
+	})
+
+	it('still prefers the comment when there is one', () => {
+		const item = buildItem({
+			curated,
+			latest_mention: buildMention({ content: 'Can you check the pricing page?' }),
+		})
+		expect(cardHeadline(item)).toBe('Can you check the pricing page?')
+	})
+})
