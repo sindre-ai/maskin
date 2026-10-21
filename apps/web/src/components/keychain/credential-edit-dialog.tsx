@@ -155,6 +155,7 @@ function EditForm({
 							value={password}
 							onChange={setPassword}
 							required={false}
+							placeholder="Leave empty to keep the current login"
 						/>
 						{halfLogin && (
 							<p className="text-xs text-error">
