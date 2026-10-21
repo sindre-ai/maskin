@@ -2510,12 +2510,15 @@ const githubTokenRoute = createRoute({
 						'Ignored when the flag is off — behavior is identical to the legacy path.',
 					example: 'sindre-ai/maskin',
 				}),
-			reason: z.string().optional().openapi({
-				description:
-					'Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; ' +
-					'any other value is ignored and the response is unchanged.',
-				example: 'mcp_age',
-			}),
+			reason: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; ' +
+						'any other value is ignored and the response is unchanged.',
+					example: 'mcp_age',
+				}),
 		}),
 		headers: workspaceIdHeader,
 	},
