@@ -1,4 +1,4 @@
-import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
+import { renderLinkedCard } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -12,10 +12,9 @@ import { useFiles } from '@/hooks/use-files'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { extractLinkedFileIds, splitAtLinkedObjects } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
@@ -111,8 +110,6 @@ export function MessageBubble({
 	const mentions = message.metadata?.mentions ?? []
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
-	const linkedSegments = useMemo(() => splitAtLinkedObjects(message.content), [message.content])
-	const linkedFileIds = useMemo(() => extractLinkedFileIds(message.content), [message.content])
 	const isVoice = message.metadata?.source === 'voice'
 
 	if (message.kind === 'system') {
@@ -308,26 +305,23 @@ export function MessageBubble({
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
 						    parser backs object comments — no new payload, just the render
-						    path the chat surface was missing. The card for an object the text
-						    links sits right after the paragraph that links it, so a draft is
-						    read in context and can be acted on without leaving the chat. */}
-						{linkedSegments.map((segment, index) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and only change with the text
-							<Fragment key={index}>
-								{segment.text ? (
-									<MarkdownContent content={segment.text} size="sm" renderVisuals />
-								) : null}
-								<LinkedObjectPreviews
-									workspaceId={workspaceId}
-									objectIds={segment.objectIds}
-									// File cards close the message, after the last paragraph.
-									fileIds={index === linkedSegments.length - 1 ? linkedFileIds : undefined}
-									conversationId={message.conversationId}
-									agentId={message.actorId}
-									skipIds={shownLinkedObjectIds}
-								/>
-							</Fragment>
-						))}
+						    path the chat surface was missing. `linkedCards` draws a link to a
+						    draft or a page as its card, where the link stands, so it can be read
+						    (and a draft approved) without leaving the chat. A link in a sentence
+						    gets its card right after that paragraph; an id an earlier message
+						    already shows is not drawn again. */}
+						<MarkdownContent
+							content={message.content}
+							size="sm"
+							renderVisuals
+							linkedCards={{
+								workspaceId,
+								conversationId: message.conversationId,
+								agentId: message.actorId,
+								skipIds: shownLinkedObjectIds,
+								renderCard: renderLinkedCard,
+							}}
+						/>
 					</div>
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
