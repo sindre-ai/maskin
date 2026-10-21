@@ -109,7 +109,8 @@ function createWriteDb(
 	const inserted: Record<string, unknown>[] = []
 	const updates: Record<string, unknown>[] = []
 	const selectChain: Record<string, unknown> = {}
-	for (const m of ['from', 'innerJoin', 'where', 'orderBy', 'offset', 'limit']) selectChain[m] = () => selectChain
+	for (const m of ['from', 'innerJoin', 'where', 'orderBy', 'offset', 'limit'])
+		selectChain[m] = () => selectChain
 	// biome-ignore lint/suspicious/noThenProperty: the mock must be awaitable like a Drizzle query
 	selectChain.then = (resolve: (v: unknown) => void) => resolve(opts.selectRows ?? [])
 	const db = {
