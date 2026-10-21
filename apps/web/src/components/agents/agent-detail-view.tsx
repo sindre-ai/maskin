@@ -8,6 +8,7 @@ import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
 import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
+import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
@@ -131,6 +132,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
+				<AgentTriggersSection agent={agent} />
 				<AgentComputerSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />
