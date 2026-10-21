@@ -653,8 +653,8 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
-		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
-			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: DefaultAgentAccess) =>
+			request<{ defaultAgentAccess: DefaultAgentAccess }>(`/integrations/${id}/default-access`, {
 				method: 'PUT',
 				body: { defaultAgentAccess },
 				workspaceId,
@@ -1977,7 +1977,7 @@ export interface IntegrationResponse {
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
 	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
-	defaultAgentAccess?: 'read' | 'none'
+	defaultAgentAccess?: DefaultAgentAccess
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
@@ -1985,7 +1985,10 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+/** What an agent with no grant of its own gets. */
+export type DefaultAgentAccess = 'read' | 'read_write' | 'none'
 
 export interface AgentGrant {
 	actorId: string
@@ -1995,7 +1998,7 @@ export interface AgentGrant {
 export interface IntegrationGrants {
 	integrationId: string
 	mode: 'keychain' | 'standard'
-	defaultAgentAccess: 'read' | 'none'
+	defaultAgentAccess: DefaultAgentAccess
 	grants: AgentGrant[]
 }
 
@@ -2415,9 +2418,9 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'ask_first' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		source: 'grant' | 'default'
-		default_access: 'read' | 'none'
+		default_access: DefaultAgentAccess
 		server_attached: boolean
 		created_by: string
 		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
