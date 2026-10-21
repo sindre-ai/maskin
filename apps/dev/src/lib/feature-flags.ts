@@ -33,23 +33,6 @@
 // `.unread` for D8 (unread boundary + Mark read). See
 // `.claude/rules/feature-flags.md` for the boundary rule.
 export const FLAGS = {
-	/**
-	 * Sales Rep loop's `Draft next LinkedIn touch` step: off means "draft
-	 * posted for human review only" (today's behaviour); on means "draft posted
-	 * → sent via `linkedin_send_message` with an idempotency key derived from
-	 * `(contact_id, draft_id)`". Per-actor, so the workspace admin can opt in
-	 * their own Sales Rep driver-actor without flipping every workspace at
-	 * once. See the parent bet [First-party LinkedIn MCP — LinkedIn-backed,
-	 * customer-auth](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/56c2ffd7-7e45-448b-a409-c08c15755f9a)
-	 * — this flag is the "human-fire path stays available (feature flag on the
-	 * loop) so early customers can opt in gradually" gate from the spec's
-	 * §Behavioral shape. Behavioural (not visual-layer) — the invocation
-	 * surface Task 3 delivers (`linkedin_send_message`) reads this via
-	 * `resolveFlags(driverActorId, config)` on each Sales Rep loop tick.
-	 * Retire once autosend is the default for every workspace with a
-	 * connected `linkedin-unipile` credential.
-	 */
-	SALES_REP_LINKEDIN_AUTOSEND: 'sales_rep__linkedin_autosend',
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
 	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
 	loopsV4PolishUnread: 'loops-v4-polish.unread',

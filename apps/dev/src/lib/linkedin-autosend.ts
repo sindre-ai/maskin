@@ -1,28 +1,7 @@
-// Shared helpers for the Sales Rep loop's LinkedIn autosend gate.
-// The flag itself lives in feature-flags.ts (SALES_REP_LINKEDIN_AUTOSEND);
-// this module holds the two adjacent pieces the loop step needs on the
-// on-flag path:
-//
-//   1. isSalesRepLinkedinAutosendEnabled(actorId) — the flag lookup, wrapped
-//      so callers don't have to remember to pass the registry key.
-//   2. buildLinkedinAutosendIdempotencyKey({ contactId, draftId }) — the
-//      single source of truth for the `{contact_id}:{draft_id}` format that
-//      `linkedin_send_message` expects on the autosend path (per parent
-//      bet spec §5 + task acceptance criterion 5).
-//
-// Kept separate from feature-flags.ts so that shipping/retiring the autosend
-// flag never sprawls across the shared flag file, and separate from the (not
-// yet in this repo) linkedin_send_message tool handler so the caller — the
-// loop step, wherever it eventually lands — has a stable, testable shim.
-
-import { FLAGS, type FeatureFlagConfig, resolveFlags } from './feature-flags'
-
-export function isSalesRepLinkedinAutosendEnabled(
-	actorId: string,
-	config: FeatureFlagConfig,
-): boolean {
-	return resolveFlags(actorId, config)[FLAGS.SALES_REP_LINKEDIN_AUTOSEND] === true
-}
+// Shared helper for the Sales Rep loop's LinkedIn autosend path:
+// buildLinkedinAutosendIdempotencyKey({ contactId, draftId }) is the single
+// source of truth for the `{contact_id}:{draft_id}` format that
+// `linkedin_send_message` expects on the autosend path (per parent bet spec §5).
 
 export interface LinkedinAutosendIdempotencyKeyInput {
 	contactId: string
