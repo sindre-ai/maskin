@@ -22,6 +22,16 @@ async function startOnTv(deviceName = 'Living Room') {
 	return (await res.json()) as { device_code: string; user_code: string }
 }
 
+// Keys are stored hashed, so the TV is handed a key minted for it rather than the account's own.
+// What matters is that it is a real key and signs in as the person who approved.
+async function expectTvKeySignsInAs(apiKey: string | undefined, actorId: string) {
+	expect(apiKey).toMatch(/^ank_[a-f0-9]{32}$/)
+	const res = await fetch(`http://localhost:5173/api/actors/${actorId}`, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+	})
+	expect(res.status).toBe(200)
+}
+
 async function pollFromTv(deviceCode: string) {
 	const res = await fetch(`${API}/token`, {
 		method: 'POST',
@@ -52,7 +62,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 
 		const approved = await pollFromTv(tv.device_code)
 		expect(approved.status).toBe('approved')
-		expect(approved.actor?.api_key).toBe(account.apiKey)
+		await expectTvKeySignsInAs(approved.actor?.api_key, account.actorId)
 		// Single use: the code is spent the moment the session is handed over.
 		expect((await pollFromTv(tv.device_code)).status).toBe('expired')
 	})
@@ -73,7 +83,7 @@ test('a person types the code by hand, lower case and without the dash', async (
 	await expect(page.getByRole('heading', { name: 'Sign in Bedroom?' })).toBeVisible()
 	await page.getByRole('button', { name: 'Approve' }).click()
 	await expect(page.getByRole('heading', { name: 'Your TV is signing in' })).toBeVisible()
-	expect((await pollFromTv(tv.device_code)).actor?.api_key).toBe(account.apiKey)
+	await expectTvKeySignsInAs((await pollFromTv(tv.device_code)).actor?.api_key, account.actorId)
 })
 
 // `account` is requested (not used) so the fixture signs the page in before it loads.
