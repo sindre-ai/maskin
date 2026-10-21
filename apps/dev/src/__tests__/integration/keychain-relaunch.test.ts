@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
+	agentGrants,
 	conversationParticipants,
 	integrations,
 	sessions,
@@ -477,6 +478,46 @@ describe('after a vault, the relaunched session has the key; after undo, the nex
 			// Default grant is the session driver, so the respawned agent is granted.
 			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(FAKE_KEY)
 			expect((await post(app as never, chat, `${integrationId}/undo`)).status).toBe(200)
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
+		} finally {
+			await manager.stop()
+		}
+	})
+
+	it('injects a key into an agent with no entry once its default is Full access, and not into one set to No access', async () => {
+		const chat = await setupChat()
+		const control = fakeSessionControl()
+		const app = appFor(chat.human, control)
+		const { integrationId } = (await (await capture(app as never, chat, 'Coolify')).json()) as {
+			integrationId: string
+		}
+		// Capture granted this agent; clear that so the default is the only thing in play.
+		await db.delete(agentGrants).where(eq(agentGrants.integrationId, integrationId))
+
+		const manager = new SessionManager(db, stubStorage())
+		const launch = async () => {
+			const s = await insertSession(db, chat.ws.id, chat.agent.id, chat.human, {
+				status: 'pending',
+				containerId: null,
+			})
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, s.id))
+			return (await manager.buildLaunchSpec(row as typeof sessions.$inferSelect)).env
+		}
+		try {
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
+
+			await db
+				.update(integrations)
+				.set({ defaultAgentAccess: 'read' })
+				.where(eq(integrations.id, integrationId))
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(FAKE_KEY)
+
+			await db.insert(agentGrants).values({
+				workspaceId: chat.ws.id,
+				integrationId,
+				actorId: chat.agent.id,
+				access: 'none',
+			})
 			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
 		} finally {
 			await manager.stop()

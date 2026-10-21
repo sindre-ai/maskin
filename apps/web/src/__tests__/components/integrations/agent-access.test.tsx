@@ -154,13 +154,16 @@ describe('AgentAccess', () => {
 		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
 	})
 
-	it('removes an override', async () => {
+	it('has no remove button: an agent set to what everyone else gets drops out of the list', async () => {
 		const { open, user } = renderOpen({
 			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
 		})
 		await open()
-		await user.click(screen.getByRole('button', { name: 'Remove Infra & DevOps' }))
+		expect(screen.queryByRole('button', { name: 'Remove Infra & DevOps' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+		await user.click(await screen.findByRole('option', { name: 'Read' }))
 		expect(removeGrant).toHaveBeenCalledWith('agent-1')
+		expect(setGrant).not.toHaveBeenCalled()
 	})
 
 	it('changes an override and the default', async () => {
@@ -169,8 +172,8 @@ describe('AgentAccess', () => {
 		})
 		await open()
 		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
-		await user.click(await screen.findByRole('option', { name: 'Read' }))
-		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read' })
+		await user.click(await screen.findByRole('option', { name: 'No access' }))
+		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'none' })
 
 		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
 		await user.click(await screen.findByRole('option', { name: 'No access' }))
@@ -205,7 +208,6 @@ describe('AgentAccess', () => {
 		await open()
 		expect(screen.getByRole('combobox', { name: 'Access for all other agents' })).toBeDisabled()
 		expect(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' })).toBeDisabled()
-		expect(screen.queryByRole('button', { name: 'Remove Infra & DevOps' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('combobox', { name: 'Add an agent' })).not.toBeInTheDocument()
 		expect(screen.getByText(/Only the person who connected this/)).toBeInTheDocument()
 	})
