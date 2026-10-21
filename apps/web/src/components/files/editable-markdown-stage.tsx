@@ -23,9 +23,9 @@ function fileText(file: FileDetail): string {
  * any file the shared markdown helper accepts (a .md file with a generic type
  * included) opens in the editor. Flag off: the viewer is exactly what shipped.
  */
-export function useEditableMarkdown(file: FileDetail): boolean {
+export function useEditableMarkdown(file: FileDetail | undefined): boolean {
 	const enabled = useFeatureFlag('rich-markdown-editor')
-	return enabled && isMarkdownFile(file)
+	return enabled && file !== undefined && isMarkdownFile(file)
 }
 
 export function EditableMarkdownStage({ file }: { file: FileDetail }) {

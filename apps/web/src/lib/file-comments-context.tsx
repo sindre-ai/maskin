@@ -1,4 +1,4 @@
-import type { PositionDoc } from '@maskin/shared'
+import type { PositionDoc, TextAnchor } from '@maskin/shared'
 import {
 	type ReactNode,
 	createContext,
@@ -38,6 +38,9 @@ export interface FileCommentDraft {
 	page: number | null
 	positionDoc: PositionDoc
 	selector: string | null
+	// Set on a comment on selected text: the quoted passage and its context.
+	// Null for a pin. The legacy selector stays null for text comments.
+	textAnchor: TextAnchor | null
 	parentId: string | null
 	body: string
 	roundId: string
@@ -55,6 +58,7 @@ interface ContextValue {
 		page: number | null
 		positionDoc: PositionDoc
 		selector?: string | null
+		textAnchor?: TextAnchor | null
 		parentId?: string | null
 		body?: string
 	}) => FileCommentDraft
@@ -109,6 +113,7 @@ export function FileCommentsProvider({ children, makeId = randomId }: ProviderPr
 				page: input.page,
 				positionDoc: input.positionDoc,
 				selector: input.selector ?? null,
+				textAnchor: input.textAnchor ?? null,
 				parentId: input.parentId ?? null,
 				body: input.body ?? '',
 				roundId,
