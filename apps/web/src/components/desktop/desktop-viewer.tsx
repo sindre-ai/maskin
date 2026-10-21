@@ -305,7 +305,7 @@ export function DesktopViewer({
 						type="button"
 						aria-label="Open computer in a popup"
 						onClick={onOpen}
-						className="absolute inset-0 flex items-center justify-center focus-visible:outline-none"
+						className="absolute inset-0 z-10 flex items-center justify-center focus-visible:outline-none"
 					>
 						<span className="flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
 							<Maximize2 size={15} />
