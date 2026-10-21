@@ -465,6 +465,23 @@ describe('ReviewPanel — comments on selected text', () => {
 		expect(within(drafts).queryByText(/pin \(/)).toBeNull()
 	})
 
+	it('shows an orphaned text draft with the quote struck through and no quote button', () => {
+		renderPanel({ comments: [], drafts: [textDraft], orphanedIds: ['draft-text'] })
+		expect(screen.getByTestId('comment-quote-orphaned').className).toContain('line-through')
+		expect(
+			screen.getByText('The commented text was edited. The comment is kept here.'),
+		).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Go to commented text' })).toBeNull()
+	})
+
+	it('has no Send round foot in the document editor, and keeps it elsewhere', () => {
+		const { unmount } = renderPanel({ comments: [textComment], textMode: true })
+		expect(screen.queryByTestId('panel-send-round')).toBeNull()
+		unmount()
+		renderPanel({ comments: [textComment], textMode: false })
+		expect(screen.getByTestId('panel-send-round')).toBeInTheDocument()
+	})
+
 	it('reads Select text in the document to comment on it when empty in the document editor', () => {
 		renderPanel({ comments: [], filter: 'all', textMode: true })
 		expect(screen.getByText('No review comments yet')).toBeInTheDocument()
