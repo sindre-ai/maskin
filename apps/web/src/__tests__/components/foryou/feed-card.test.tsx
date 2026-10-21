@@ -259,10 +259,15 @@ describe('FeedCard — full state', () => {
 		expect(
 			screen.queryByText('A page people use every day was rewritten, and no human has opened it.'),
 		).not.toBeInTheDocument()
-		// The buttons are the agent's own labels, each carrying its consequences.
+		// The buttons are the agent's own labels; the recommended one's reasons sit
+		// beneath them as one line, not as a box of bullets per option.
 		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(screen.getByText('No rollback once migrations run')).toBeInTheDocument()
+		expect(
+			screen.getByText(
+				'Suggested: Merge now. Ships with tonight deploy. No rollback once migrations run.',
+			),
+		).toBeInTheDocument()
 		// The composer renders stacked with its default placeholder until the
 		// Object detail split lands `variant`/`placeholder` on the v2 composer —
 		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
