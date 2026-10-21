@@ -1785,7 +1785,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. What you may do depends on your Gmail access (Settings → Integrations): "Read" or none: you cannot send. "Ask first": every email needs a person\'s approval first. "Read & write": you send on your own. Two ways to call it. (1) Send directly with `to`, `subject` and `body`: only with "Read & write", and even then not to someone a person marked protected or who opted out of email in the CRM; for those the call is refused. (2) Send an email a person approved: post a comment with `decision` (create_comment, the person in `mentions`) whose `draft` holds the email, with `to` set to the real address ("Mette Holm <mette@northwind.dk>") and the draft text starting with a line "Subject: ..." followed by the body, so the person approves the actual recipient and subject. Mark the option that sends as destructive (exactly one). End your turn. When the person has chosen that option, call this tool with only `approval_comment_id`, the id of your comment. It sends exactly the draft as the card shows it, once, and only if a person chose the send option and the draft was not changed afterwards. Use this way whenever a direct send is refused. Never pass `to`, `subject` or `body` together with `approval_comment_id`. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. What you may do depends on your Gmail access (Settings → Integrations): "Read" or none: you cannot send. "Ask first": every email needs a person\'s approval first. "Read & write": you send on your own. Two ways to call it. (1) Send directly with `to`, `subject` and `body`: only with "Read & write", and even then not to someone a person marked protected or who opted out of email in the CRM; for those the call is refused. (2) Send an email a person approved: post a comment with `decision` (create_comment, the person in `mentions`) whose `draft` holds the email, with `to` set to the real address ("Mette Holm <mette@northwind.dk>") and the draft text starting with a line "Subject: ..." followed by the body, so the person approves the actual recipient and subject. Mark the option that sends as destructive (exactly one). End your turn. When the person has chosen that option, call this tool with only `approval_comment_id`, the id of your comment. It sends exactly the draft as the card shows it, once, and only if a person chose the send option and the draft was not changed afterwards. For several emails on one card, put them in `decision.drafts` instead of `draft` (each with its own `id`, `to` and a Subject line); the person approves each message with its own Send, and you call this tool once per message with `approval_comment_id` and that message\'s `draft_id`. Use this way whenever a direct send is refused. Never pass `to`, `subject` or `body` together with `approval_comment_id`. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -1810,6 +1810,12 @@ export const tools = {
 				.optional()
 				.describe(
 					'The id of the decision comment you posted (create_comment returns it) after a person chose its send option. Sends the draft attached to that card.',
+				),
+			draft_id: z
+				.string()
+				.optional()
+				.describe(
+					'Only with approval_comment_id, for a card whose `decision.drafts` carries several messages: the `id` of the one message to send. Each message is approved and sent on its own. Leave out for a card with a single `draft`.',
 				),
 		}),
 	},

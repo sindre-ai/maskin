@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
-import { commentDecisionSchema, readChanges } from '@maskin/shared'
+import { type DecisionDraft, commentDecisionSchema, readChanges } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -74,6 +74,7 @@ const sendBodySchema = z
 		subject: z.string().min(1).max(998).optional(),
 		body: z.string().min(1).max(100_000).optional(),
 		approval_comment_id: z.number().int().positive().optional(),
+		draft_id: z.string().min(1).max(40).optional(),
 	})
 	.refine(
 		(v) =>
@@ -85,6 +86,9 @@ const sendBodySchema = z
 				'Pass either approval_comment_id (to send an email a person approved) or to, subject and body (to send a new email), not both.',
 		},
 	)
+	.refine((v) => !v.draft_id || v.approval_comment_id, {
+		message: 'draft_id only goes with approval_comment_id.',
+	})
 
 const sendRoute = createRoute({
 	method: 'post',
@@ -166,7 +170,7 @@ function sendFailureFor(err: GmailSendError): Fail {
 }
 
 const SEND_APPROVAL_HOWTO =
-	'Post a decision comment (create_comment with `decision` and the person in `mentions`) whose `draft` holds the email: `to` with the real address ("Mette Holm <mette@northwind.dk>"), and the text starting with a line "Subject: ..." then the body. Mark the option that sends as destructive. End your turn; when the person has chosen it, call gmail_send_email with approval_comment_id set to the id of your comment.'
+	'Post a decision comment (create_comment with `decision` and the person in `mentions`) whose `draft` holds the email: `to` with the real address ("Mette Holm <mette@northwind.dk>"), and the text starting with a line "Subject: ..." then the body. Mark the option that sends as destructive. End your turn; when the person has chosen it, call gmail_send_email with approval_comment_id set to the id of your comment. For several emails on one card use `drafts` (each with its own `id`, `to` and Subject line) and call once per email with approval_comment_id and that email\'s draft_id; the person approves each with its own Send.'
 
 /**
  * Whether the draft's text changed after the person's tap. Moving the task to another
@@ -208,6 +212,7 @@ async function loadApproval(
 	workspaceId: string,
 	callerId: string,
 	approvalCommentId: number,
+	draftId?: string,
 ): Promise<{ email: OutgoingEmail } | { failure: Fail }> {
 	const [card] = await db
 		.select()
@@ -228,7 +233,8 @@ async function loadApproval(
 	const decision = commentDecisionSchema.safeParse(
 		(card.data as { decision?: unknown } | null)?.decision,
 	)
-	if (!decision.success || !decision.data.draft) {
+	const stack = decision.success ? decision.data.drafts : undefined
+	if (!decision.success || (!decision.data.draft && !stack?.length)) {
 		return {
 			failure: fail(
 				409,
@@ -238,58 +244,143 @@ async function loadApproval(
 			),
 		}
 	}
-	const { draft, options } = decision.data
-	const sendOptions = options.filter((o) => o.destructive)
-	if (sendOptions.length !== 1 || !sendOptions[0]) {
-		return {
-			failure: fail(
-				409,
-				'CONFLICT',
-				'The card must mark exactly one option as destructive: the one that sends.',
-				SEND_APPROVAL_HOWTO,
-			),
-		}
-	}
-	const sendLabel = sendOptions[0].label
 
-	// The person's answer: their latest reply under the card. An agent's reply never counts.
-	const [answer] = await db
-		.select({
-			id: events.id,
-			content: sql<string | null>`${events.data}->>'content'`,
-			createdAt: events.createdAt,
+	let draft: DecisionDraft
+	let answer: { id: number; content: string | null; createdAt: Date | null }
+
+	if (stack?.length) {
+		// One card, several messages. Each message is approved on its own: the person's tap
+		// on it is a reply "Send: <label> to <to> (<id>)", and the latest reply for THAT id
+		// is its answer, whatever they did with the others.
+		const ids = stack.flatMap((d) => (d.id ? [d.id] : []))
+		const known = ids.length > 0 ? `Messages on this card: ${ids.join(', ')}.` : ''
+		if (!draftId) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					`That card carries several messages, so say which one: pass draft_id. ${known}`,
+				),
+			}
+		}
+		const picked = stack.find((d) => d.id === draftId)
+		if (!picked) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					`That card has no message with the id "${draftId}". ${known}`,
+				),
+			}
+		}
+		draft = picked
+		const replies = await db
+			.select({
+				id: events.id,
+				content: sql<string | null>`${events.data}->>'content'`,
+				createdAt: events.createdAt,
+			})
+			.from(events)
+			.innerJoin(actors, eq(actors.id, events.actorId))
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.entityId, card.entityId),
+					eq(events.action, 'commented'),
+					sql`${events.data}->>'parentEventId' = ${String(card.id)}`,
+					eq(actors.type, 'human'),
+				),
+			)
+			.orderBy(desc(events.id))
+			.limit(200)
+		const suffix = ` (${draftId})`
+		const mine = replies.find((r) => {
+			const text = r.content?.trim() ?? ''
+			return (text.startsWith('Send: ') || text.startsWith('Skip: ')) && text.endsWith(suffix)
 		})
-		.from(events)
-		.innerJoin(actors, eq(actors.id, events.actorId))
-		.where(
-			and(
-				eq(events.workspaceId, workspaceId),
-				eq(events.entityId, card.entityId),
-				eq(events.action, 'commented'),
-				sql`${events.data}->>'parentEventId' = ${String(card.id)}`,
-				eq(actors.type, 'human'),
-			),
-		)
-		.orderBy(desc(events.id))
-		.limit(1)
-	if (!answer) {
-		return {
-			failure: fail(
-				409,
-				'CONFLICT',
-				'No person has answered the approval card yet. Do not send.',
-				'End your turn and wait for them to choose.',
-			),
+		if (!mine) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					'No person has answered that message yet. Do not send.',
+					'End your turn and wait for them to choose.',
+				),
+			}
 		}
-	}
-	if (answer.content?.trim() !== sendLabel.trim()) {
-		return {
-			failure: fail(
-				409,
-				'CONFLICT',
-				`The person chose "${answer.content?.trim() ?? ''}", not "${sendLabel}". Do not send.`,
-			),
+		if (!mine.content?.trim().startsWith('Send: ')) {
+			return {
+				failure: fail(409, 'CONFLICT', 'The person skipped that message. Do not send it.'),
+			}
 		}
+		answer = mine
+	} else {
+		if (draftId) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					'That card carries one draft, not several. Leave out draft_id.',
+				),
+			}
+		}
+		const single = decision.data.draft
+		if (!single) return { failure: fail(409, 'CONFLICT', 'That card has no draft.') }
+		draft = single
+		const { options } = decision.data
+		const sendOptions = options.filter((o) => o.destructive)
+		if (sendOptions.length !== 1 || !sendOptions[0]) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					'The card must mark exactly one option as destructive: the one that sends.',
+					SEND_APPROVAL_HOWTO,
+				),
+			}
+		}
+		const sendLabel = sendOptions[0].label
+
+		// The person's answer: their latest reply under the card. An agent's reply never counts.
+		const [latest] = await db
+			.select({
+				id: events.id,
+				content: sql<string | null>`${events.data}->>'content'`,
+				createdAt: events.createdAt,
+			})
+			.from(events)
+			.innerJoin(actors, eq(actors.id, events.actorId))
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.entityId, card.entityId),
+					eq(events.action, 'commented'),
+					sql`${events.data}->>'parentEventId' = ${String(card.id)}`,
+					eq(actors.type, 'human'),
+				),
+			)
+			.orderBy(desc(events.id))
+			.limit(1)
+		if (!latest) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					'No person has answered the approval card yet. Do not send.',
+					'End your turn and wait for them to choose.',
+				),
+			}
+		}
+		if (latest.content?.trim() !== sendLabel.trim()) {
+			return {
+				failure: fail(
+					409,
+					'CONFLICT',
+					`The person chose "${latest.content?.trim() ?? ''}", not "${sendLabel}". Do not send.`,
+				),
+			}
+		}
+		answer = latest
 	}
 
 	// The text is what the card shows: the draft object's current text, else the stored body.
@@ -408,7 +499,13 @@ app.openapi(sendRoute, async (c) => {
 	let email: OutgoingEmail
 	let mode: 'approved_draft' | 'direct'
 	if (input.approval_comment_id) {
-		const loaded = await loadApproval(db, workspaceId, actorId, input.approval_comment_id)
+		const loaded = await loadApproval(
+			db,
+			workspaceId,
+			actorId,
+			input.approval_comment_id,
+			input.draft_id,
+		)
 		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
 		email = loaded.email
 		mode = 'approved_draft'
@@ -472,7 +569,13 @@ app.openapi(sendRoute, async (c) => {
 
 	// 3. One send per approval: claim it before calling Gmail, so two calls cannot both send.
 	const approval: ApprovalRef | null = input.approval_comment_id
-		? { workspaceId, integrationId, actorId, approvalCommentId: input.approval_comment_id }
+		? {
+				workspaceId,
+				integrationId,
+				actorId,
+				approvalCommentId: input.approval_comment_id,
+				...(input.draft_id ? { draftId: input.draft_id } : {}),
+			}
 		: null
 	if (approval && !(await claimApprovalForSend(db, approval))) {
 		const state = await approvalSendState(db, approval)
@@ -528,6 +631,7 @@ app.openapi(sendRoute, async (c) => {
 						.slice(0, 300),
 					recipients: email.to.length + (email.cc?.length ?? 0),
 					...(input.approval_comment_id ? { approval_comment_id: input.approval_comment_id } : {}),
+					...(input.draft_id ? { approval_draft_id: input.draft_id } : {}),
 				},
 			})
 		} catch (bookkeepingErr) {
