@@ -388,6 +388,16 @@ describe('createRealtimeCall — vendor 429', () => {
 		})
 	})
 
+	it('keeps a plain rate limit that only links to the billing page as rate_limited', async () => {
+		const body =
+			'{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached. You can increase your rate limit by adding a payment method at https://platform.openai.com/account/billing."}}'
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(new Response(body, { status: 429, headers: { 'retry-after': '9' } })),
+		)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: 9 })
+	})
+
 	it('reports an out-of-quota 429 as quota_exhausted, not a rate limit', async () => {
 		const body =
 			'{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'

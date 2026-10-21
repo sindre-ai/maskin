@@ -66,9 +66,12 @@ export type CreateRealtimeCallFn = (
 	input: CreateRealtimeCallInput,
 ) => Promise<CreateRealtimeCallOutcome>
 
-/** OpenAI sends insufficient_quota (and billing wording) on a 429 that waiting will not fix. */
+/**
+ * OpenAI sends insufficient_quota (or billing_hard_limit_reached) on a 429 that waiting will not fix.
+ * A bare "billing" match is too wide: plain free-tier rate limits link to the billing page.
+ */
 export function isQuotaBody(body: string): boolean {
-	return /insufficient_quota|exceeded your current quota|billing/i.test(body)
+	return /insufficient_quota|exceeded your current quota|billing_hard_limit/i.test(body)
 }
 
 async function defaultCreateRealtimeCall(
