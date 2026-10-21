@@ -2,7 +2,7 @@ import MaskinCore
 import MaskinDesign
 import SwiftUI
 
-/// One card, several messages: each is its own preview with its own Send and Skip, stacked so
+/// One card, several messages: each is its own preview with its own quiet Send and Skip, stacked so
 /// the reader decides them one at a time. Send reaches a real person, so it asks first. A message
 /// that has been dealt with folds down to a one-line receipt, and once the last one is, the card
 /// is marked read (`allDone`). The card's own options still apply to the whole batch.
@@ -48,11 +48,14 @@ struct DraftStackView: View {
 							Button {
 								confirming = draft
 							} label: {
+								// Quiet on purpose: the card's own ink bar is the main action, this is
+								// for sending one reply on its own.
 								Text("Send")
-									.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold))
-									.foregroundStyle(MaskinSurface.onInverse)
-									.frame(minWidth: 88, minHeight: MaskinSpace.touchMin)
-									.background(MaskinSurface.inverse, in: Capsule())
+									.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+									.foregroundStyle(MaskinColor.ink)
+									.frame(minWidth: 80, minHeight: MaskinSpace.touchMin)
+									.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+									.contentShape(Capsule())
 							}
 							.buttonStyle(.maskinPressed(.shrink))
 							.accessibilityLabel("Send to \(name(draft))")
