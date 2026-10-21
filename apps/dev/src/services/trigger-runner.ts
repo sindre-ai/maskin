@@ -49,12 +49,12 @@ import { loadSenderLine } from './workspace-briefing'
 const SCOPE_MATCH_LIMIT = 100
 
 /**
- * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * Resolve `{ initiatedFromObjectId }` for a
  * `SessionManager.createSession()` call. The two fields on the sessions row
  * are FK-constrained to `objects.id`, so passing an entity id that isn't an
  * object row (a slack.message uuid, a session id, a webhook delivery id)
- * would trip the FK on insert. This helper resolves the id → object type
- * with one PK read, or returns `null / null` when the entity isn't an
+ * would trip the FK on insert. This helper checks the id against the
+ * objects table with one PK read, or returns `null` when the entity isn't an
  * object — matching the same "not a uuid → not an object" posture the
  * `getObjectContext()` hydration path already uses in `handleEvent()`.
  */
@@ -63,18 +63,17 @@ async function loadInitiatedFromObject(
 	entityId: string | null | undefined,
 ): Promise<{
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }> {
 	if (!entityId || !UUID_RE.test(entityId)) {
-		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+		return { initiatedFromObjectId: null }
 	}
 	const [row] = await db
-		.select({ id: objects.id, type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, entityId))
 		.limit(1)
-	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
-	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+	if (!row) return { initiatedFromObjectId: null }
+	return { initiatedFromObjectId: row.id }
 }
 
 /**
@@ -313,6 +312,9 @@ export class TriggerRunner {
 	// terminal event for a given session counts toward its trigger's
 	// failure/backoff accounting — otherwise every explicit stop of a
 	// trigger-spawned session double-counts as two failures instead of one.
+	// (A stop now settles once as session_stopped, which is not handled below,
+	// so it no longer counts as a failure at all; this map still covers any other
+	// double report of one outcome.)
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
@@ -1234,8 +1236,10 @@ export class TriggerRunner {
 		const expression = config.expression as string
 
 		try {
-			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				await this.fireCronTrigger(trigger)
+			const job = new Cron(expression, { timezone: 'UTC' }, async (self) => {
+				// The scheduled time, not the wall clock: two instances fire the same
+				// tick a few ms apart and must derive the same dedupe key.
+				await this.fireCronTrigger(trigger, self.currentRun() ?? new Date())
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -1247,7 +1251,7 @@ export class TriggerRunner {
 		}
 	}
 
-	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect, tick: Date): Promise<void> {
 		// Checked before the scope query and the `trigger_fired` event insert:
 		// a suppressed workspace should cost nothing per tick, and must not
 		// write an audit row claiming a trigger fired when no session follows.
@@ -1284,6 +1288,25 @@ export class TriggerRunner {
 			}
 		}
 
+		// Idempotency claim, same table and same reason as the event path: during a
+		// rolling deploy the old and new instance both hold this cron job, and the
+		// old one only stops once the new one is healthy. Every cron tick would
+		// otherwise start two sessions. A cron tick has no events row, so its key
+		// is the negative of the tick's unix seconds; real event ids are positive
+		// bigserials and can never collide with it. The 30-day purge covers these
+		// rows too.
+		const claimed = await this.db
+			.insert(triggerDispatches)
+			.values({ triggerId: trigger.id, eventId: -Math.floor(tick.getTime() / 1000) })
+			.onConflictDoNothing()
+			.returning({ triggerId: triggerDispatches.triggerId })
+		if (claimed.length === 0) {
+			logger.info(
+				`Cron trigger '${trigger.name}' tick ${tick.toISOString()} already fired by another process`,
+			)
+			return
+		}
+
 		logger.info(`Cron trigger '${trigger.name}' firing`)
 
 		const eventData: Record<string, unknown> = {
@@ -1318,7 +1341,6 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1624,7 +1646,6 @@ export class TriggerRunner {
 				createdBy: trigger.createdBy,
 				// Reminder trigger: one-shot, no originating object.
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				await: 'none',
 			}).catch((err) =>
 				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
@@ -1921,6 +1942,8 @@ export function evaluateCondition(
 //   • noop_suppressed — `data.metadata.suppress_auto_dispatch === true` short-
 //     circuits BEFORE mention / case 2 / case 3, so a bespoke-dispatch caller
 //     (e.g. signup-welcome) can stamp the escape hatch on its own comment.
+//   • noop_suppressed (agent author) — an agent's mention-free comment dispatches
+//     nobody: it returns before case 0 / 2 / 3 (`isAgentMentionFreeComment`).
 //   • case 1a mention — agent-actor mention → needs_input notification + agent
 //     session; human-actor mention → needs_input notification only. Suppressed
 //     when the mentioned actor authored the parent comment (`noop_self_authored`).
@@ -1996,6 +2019,21 @@ export function isCommentFallbackDriverEligible(ctx: {
 	return true
 }
 
+/**
+ * The single source of truth for "an agent's mention-free comment dispatches
+ * nobody". The ladder's case 2 / case 3 wake and the thread-reply auto-spawn in
+ * `routes/events.ts` both consult it, so the rule lives in one spot and the two
+ * paths can't drift apart. Pure on purpose: the callers learn the actor type
+ * differently (the subscriber reads it off the event, the POST handler already
+ * has it in context), so only the predicate is shared, not a lookup.
+ */
+export function isAgentMentionFreeComment(ctx: {
+	actorType: string | null | undefined
+	mentionCount: number
+}): boolean {
+	return ctx.actorType === 'agent' && ctx.mentionCount === 0
+}
+
 export class CommentDispatcher {
 	private handler: ((event: PgEvent) => void) | null = null
 
@@ -2036,8 +2074,9 @@ export class CommentDispatcher {
 		if (!Number.isFinite(eventIdNum)) return
 
 		const [row] = await this.db
-			.select({ actorId: events.actorId, data: events.data })
+			.select({ actorId: events.actorId, data: events.data, actorType: actors.type })
 			.from(events)
+			.leftJoin(actors, eq(actors.id, events.actorId))
 			.where(eq(events.id, eventIdNum))
 			.limit(1)
 		if (!row) return
@@ -2089,6 +2128,14 @@ export class CommentDispatcher {
 					typeof data.metadata?.helper_return === 'string' ? data.metadata.helper_return : null,
 				authorSessionId: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 			})
+			return
+		}
+
+		// An agent's mention-free comment is low-attention: it dispatches nobody,
+		// neither the driver (case 2) nor the Chief of Staff (case 3). Agents
+		// @mention whoever they need. Human comments fall through unchanged.
+		if (isAgentMentionFreeComment({ actorType: row.actorType, mentionCount: mentions.length })) {
+			await this.emitResolved(event, eventIdNum, commenterId, 'noop_suppressed', null)
 			return
 		}
 

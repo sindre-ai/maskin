@@ -1,9 +1,10 @@
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput, SessionResponse } from '@/lib/api'
+import type { CreateSessionInput, MessageQuestionAnswer, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
 const ACTIVE_CONVERSATION_POLL_MS = 5_000
@@ -99,6 +100,9 @@ export function useStopSession(workspaceId: string) {
 		onSuccess: (result) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+		onError: () => {
+			toast.error('Failed to stop session')
 		},
 	})
 }
@@ -234,5 +238,31 @@ export function useSessionLogs(
 		queryFn: () => api.sessions.logs(sessionId as string, workspaceId, { limit: '500' }),
 		enabled: !!sessionId && enabled,
 		refetchInterval: live ? 3000 : false,
+	})
+}
+
+/** Sends a user turn to a running interactive session (`POST /sessions/:id/input`). */
+export function useSendSessionInput(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({
+			id,
+			content,
+			question_answer,
+		}: {
+			id: string
+			content: string
+			question_answer?: MessageQuestionAnswer
+			/** Chat the answer lands in, so its messages refetch. */
+			conversationId?: string
+		}) => api.sessions.input(id, { content, question_answer }, workspaceId),
+		onSuccess: (_data, { id, conversationId }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.logs(id) })
+			if (conversationId) {
+				queryClient.invalidateQueries({
+					queryKey: queryKeys.conversations.messagesPrefix(conversationId),
+				})
+			}
+		},
 	})
 }

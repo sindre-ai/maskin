@@ -1,4 +1,6 @@
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
@@ -273,7 +275,27 @@ function AccountSection({
 				<AccountRow label="Workspace" value={workspaceName} />
 				<AccountRow label="Actor ID" value={actor.id} copyable />
 			</div>
+			<DeleteAccountRow />
 		</>
+	)
+}
+
+function DeleteAccountRow() {
+	const [open, setOpen] = useState(false)
+
+	return (
+		<div className="flex flex-col gap-3 border-t border-border py-2.5 sm:flex-row sm:items-center sm:justify-between">
+			<div className="min-w-0">
+				<span className="block text-[13px] font-semibold">Delete account</span>
+				<span className="text-xs text-muted-foreground">
+					Permanently deletes your account and signs you out everywhere.
+				</span>
+			</div>
+			<Button variant="destructive" onClick={() => setOpen(true)}>
+				Delete account
+			</Button>
+			{open && <DeleteAccountDialog open={open} onOpenChange={setOpen} />}
+		</div>
 	)
 }
 

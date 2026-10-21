@@ -64,10 +64,6 @@ vi.mock('@/components/agents/session-detail-panel', () => ({
 	parseFailureReason: () => null,
 }))
 
-vi.mock('@/components/agents/mcp-servers', () => ({
-	McpServers: () => null,
-}))
-
 vi.mock('@/components/agents/skills', () => ({
 	Skills: () => null,
 }))
@@ -109,7 +105,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		onUpdateSystemPrompt: vi.fn(),
 		onUpdateLlmProvider: vi.fn(),
 		onUpdateLlmConfig: vi.fn(),
-		onUpdateTools: vi.fn(),
 		onUpdateMemory: vi.fn(),
 		onRun: vi.fn(),
 		onPause: vi.fn(),

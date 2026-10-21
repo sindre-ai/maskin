@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { type events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
+import { mirrorCommentIntoChat } from '../services/object-chat-sync'
 import { recordEventReturning } from './events/record-event'
 
 export interface PostCommentInput {
@@ -137,6 +138,17 @@ export async function postComment(
 						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
 					})
 			}
+		}
+
+		if (entityType === 'object') {
+			await mirrorCommentIntoChat(tx, {
+				id: comment.id,
+				actorId: comment.actorId,
+				createdAt: comment.createdAt,
+				data: comment.data,
+				workspaceId: input.workspaceId,
+				entityId: input.entityId,
+			})
 		}
 
 		return { comment, unresolvedMentions }

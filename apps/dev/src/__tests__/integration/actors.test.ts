@@ -16,6 +16,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import {
 	buildAgentFile,
@@ -30,21 +31,14 @@ import {
 	insertWorkspace,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, setTestAgentStorage } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
-const { default: workspacesRoutes } = await import('../../routes/workspaces')
 const { default: eventsRoutes } = await import('../../routes/events')
+const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
-}
-
-function createMcpFlowApp() {
-	return createIntegrationApp(
-		{ path: '/api/actors', module: actorsRoutes },
-		{ path: '/api/workspaces', module: workspacesRoutes },
-	)
 }
 
 describe('Actors Integration — GET /:id', () => {
@@ -273,11 +267,47 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 	})
 })
 
+function createMemoryStorage(): StorageProvider {
+	const store = new Map<string, Buffer>()
+	return {
+		async put(key, data) {
+			store.set(key, Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array))
+		},
+		async get(key) {
+			const buf = store.get(key)
+			if (!buf) throw new Error(`Not found: ${key}`)
+			return buf
+		},
+		async list(prefix) {
+			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
+		async delete(key) {
+			store.delete(key)
+		},
+		async exists(key) {
+			return store.has(key)
+		},
+		async ensureBucket() {},
+	}
+}
+
 describe('Actors Integration — DELETE', () => {
 	let workspaceId: string
 	let agentId: string
+	let storage: StorageProvider
+
+	afterAll(() => {
+		setTestAgentStorage(undefined)
+	})
 
 	beforeEach(async () => {
+		storage = createMemoryStorage()
+		setTestAgentStorage(new AgentStorageManager(storage, db))
 		const ws = await insertWorkspace(db, getTestActorId())
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Delete Me' })
@@ -479,71 +509,293 @@ describe('Actors Integration — DELETE', () => {
 		expect(sseText).toContain('Delete Me')
 		expect(sseText).not.toMatch(/fake-/)
 	})
+
+	it('removes every storage object under the deleted agent and leaves other agents untouched', async () => {
+		const app = createApp()
+		const body = Buffer.from('fake memory')
+		const own = [
+			`agents/${workspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}/learnings/session-1.md`,
+			`agents/${workspaceId}/${agentId}/skills/s/SKILL.md`,
+		]
+		// Keys that must survive: another agent in the same workspace, the same
+		// id in another workspace, and an id that merely starts with this one.
+		const otherAgentId = randomUUID()
+		const otherWorkspaceId = randomUUID()
+		const survivors = [
+			`agents/${workspaceId}/${otherAgentId}/memory/CLAUDE.md`,
+			`agents/${otherWorkspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}-extra/memory/CLAUDE.md`,
+		]
+		for (const key of [...own, ...survivors]) await storage.put(key, body)
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		expect(await storage.list(`agents/${workspaceId}/${agentId}/`)).toEqual([])
+		for (const key of own) expect(await storage.exists(key)).toBe(false)
+		for (const key of survivors) expect(await storage.exists(key)).toBe(true)
+	})
+
+	it('returns 500 and keeps the agent when a storage object cannot be deleted', async () => {
+		const app = createApp()
+		const failingKey = `agents/${workspaceId}/${agentId}/memory/CLAUDE.md`
+		const otherKey = `agents/${workspaceId}/${agentId}/learnings/session-1.md`
+		await storage.put(failingKey, Buffer.from('fake memory'))
+		await storage.put(otherKey, Buffer.from('fake learning'))
+		const realDelete = storage.delete.bind(storage)
+		storage.delete = async (key: string) => {
+			if (key === failingKey) throw new Error('s3 unavailable')
+			await realDelete(key)
+		}
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(500)
+		expect((await res.json()).deleted).toBeUndefined()
+
+		// The agent is still there so the delete can be retried, and no
+		// deleted event was recorded.
+		const remaining = await db.select().from(actors).where(eq(actors.id, agentId))
+		expect(remaining).toHaveLength(1)
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		expect(rows.filter((r) => r.action === 'deleted')).toHaveLength(0)
+		// Every other key was still attempted, the failing one remains.
+		expect(await storage.exists(failingKey)).toBe(true)
+		expect(await storage.exists(otherKey)).toBe(false)
+	})
 })
 
-// Regression coverage for the MCP `create_actor` workspace-attach path.
-// The MCP handler in packages/mcp/src/server.ts (~L2708) calls two HTTP
-// endpoints in sequence — POST /api/actors (skipAuth) then POST
-// /api/workspaces/:id/members (caller-auth) — and the reported bug
-// (insight 4beeafd5) was that the second call silently failed on some
-// deployments, leaving new agents un-attached to the workspace they were
-// created in. This test replays that exact HTTP sequence against real
-// Postgres and asserts the new agent is queryable via the same list
-// endpoint list_actors reads (`GET /api/actors?workspace_id=...`) with
-// role = 'member'. A regression that breaks the members insert or the
-// workspace-scoped list query will fail this test.
-describe('Actors Integration — MCP create_actor + attach flow', () => {
-	it('creates an agent and attaches it to the workspace so list_actors returns it as a member', async () => {
-		const app = createMcpFlowApp()
-		const ws = await insertWorkspace(db, getTestActorId())
+// An agent is created by an authenticated caller and born as a member of the
+// workspace named in the request body, in one transaction. This replaces the old
+// two-step create-then-add-member sequence, whose second step is human-admin-only
+// and left agents created by an agent or a plain member outside the workspace.
+describe('Actors Integration — POST /api/actors agent creation', () => {
+	// The integration test actor (a human) is seeded with this key.
+	const TEST_ACTOR_KEY = 'ank_testintegration'
+	const bearer = (key: string) => ({ Authorization: `Bearer ${key}` })
 
-		const createRes = await app.request(
-			jsonRequest('POST', '/api/actors', { type: 'agent', name: 'MCP-created agent' }),
+	/** A workspace owned by someone else, with the test actor in it at `role`. */
+	async function workspaceWithTestActor(role: 'admin' | 'member') {
+		const owner = await insertActor(db, { type: 'human', name: 'Workspace Owner' })
+		const ws = await insertWorkspace(db, owner.id)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: getTestActorId(), role })
+		return ws
+	}
+
+	async function agentRowsNamed(name: string) {
+		return db.select().from(actors).where(eq(actors.name, name))
+	}
+
+	async function membershipRows(actorId: string) {
+		return db.select().from(workspaceMembers).where(eq(workspaceMembers.actorId, actorId))
+	}
+
+	function post(body: Record<string, unknown>, headers: Record<string, string>) {
+		return createApp().request(
+			jsonRequest('POST', '/api/actors', { type: 'agent', ...body }, headers),
 		)
-		expect(createRes.status).toBe(201)
-		const created = await createRes.json()
-		expect(created.id).toBeDefined()
+	}
+
+	it('lets a plain human member create an agent that is born a member, and lists it', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const name = `Born member ${randomUUID()}`
+
+		const res = await post(
+			{ name, workspace_id: ws.id, system_prompt: 'You are a test agent', description: 'Test' },
+			bearer(TEST_ACTOR_KEY),
+		)
+
+		expect(res.status).toBe(201)
+		const created = await res.json()
 		expect(created.type).toBe('agent')
-		// Agents don't get an auto-created workspace, so the create response
-		// has no workspace_id — the MCP handler adds the attach in a second call.
-		expect(created.workspace_id).toBeUndefined()
+		expect(created.workspace_id).toBe(ws.id)
+		expect(created.api_key).toMatch(/^ank_/)
 
-		const attachRes = await app.request(
-			jsonRequest(
-				'POST',
-				`/api/workspaces/${ws.id}/members`,
-				{ actor_id: created.id, role: 'member' },
-				{ 'x-workspace-id': ws.id },
-			),
+		const [row] = await agentRowsNamed(name)
+		expect(row.createdBy).toBe(getTestActorId())
+		const memberships = await membershipRows(created.id)
+		expect(memberships).toHaveLength(1)
+		expect(memberships[0]).toMatchObject({ workspaceId: ws.id, role: 'member' })
+
+		// Same query list_actors reads: the new agent shows up as a member.
+		const listRes = await createApp().request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		const members = (await listRes.json()) as Array<{ id: string; role: string }>
+		expect(members.find((m) => m.id === created.id)?.role).toBe('member')
+
+		const [event] = await db.select().from(events).where(eq(events.entityId, created.id))
+		expect(event).toMatchObject({
+			workspaceId: ws.id,
+			actorId: getTestActorId(),
+			action: 'created',
+			entityType: 'workspace_member',
+		})
+	})
+
+	it('lets an agent caller create an agent', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const callerKey = `ank_agentcaller${randomUUID()}`
+		const caller = await insertActor(db, { type: 'agent', name: 'Caller Agent', apiKey: callerKey })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: caller.id, role: 'member' })
+		const name = `Born of agent ${randomUUID()}`
+
+		const res = await post({ name, workspace_id: ws.id }, bearer(callerKey))
+
+		expect(res.status).toBe(201)
+		const created = await res.json()
+		const [row] = await agentRowsNamed(name)
+		expect(row.createdBy).toBe(caller.id)
+		expect(await membershipRows(created.id)).toHaveLength(1)
+	})
+
+	it('returns 404 and writes no rows when the caller is not a member of the named workspace', async () => {
+		const mine = await workspaceWithTestActor('member')
+		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+		const theirs = await insertWorkspace(db, otherOwner.id)
+		const name = `Cross workspace ${randomUUID()}`
+
+		// The header names a workspace the caller belongs to; only the body counts.
+		const res = await post(
+			{ name, workspace_id: theirs.id },
+			{ ...bearer(TEST_ACTOR_KEY), 'x-workspace-id': mine.id },
 		)
-		expect(attachRes.status).toBe(201)
-		expect(await attachRes.json()).toEqual({ added: true })
 
-		// list_actors: same query as `GET /api/actors?workspace_id=<id>` via
-		// the workspace-scoped branch. The new agent must appear with the
-		// role recorded on the workspaceMembers join.
-		const listRes = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
-		expect(listRes.status).toBe(200)
-		const members = (await listRes.json()) as Array<{
-			id: string
-			name: string
-			type: string
-			role: string
-		}>
-		const newAgent = members.find((m) => m.id === created.id)
-		expect(newAgent).toBeDefined()
-		expect(newAgent?.role).toBe('member')
-		expect(newAgent?.type).toBe('agent')
-
-		// Belt-and-braces DB check: exactly one workspaceMembers row for the
-		// new agent in this workspace.
-		const rows = await db
+		expect(res.status).toBe(404)
+		expect(await agentRowsNamed(name)).toHaveLength(0)
+		const theirMembers = await db
 			.select()
 			.from(workspaceMembers)
-			.where(eq(workspaceMembers.actorId, created.id))
-		expect(rows).toHaveLength(1)
-		expect(rows[0].workspaceId).toBe(ws.id)
-		expect(rows[0].role).toBe('member')
+			.where(eq(workspaceMembers.workspaceId, theirs.id))
+		expect(theirMembers).toHaveLength(1)
+	})
+
+	it('returns 401 and writes no rows with no key or an invalid key', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const name = `Unauthenticated ${randomUUID()}`
+
+		const noKey = await post({ name, workspace_id: ws.id }, {})
+		const badKey = await post({ name, workspace_id: ws.id }, bearer('ank_doesnotexist'))
+
+		expect(noKey.status).toBe(401)
+		expect(badKey.status).toBe(401)
+		expect(await agentRowsNamed(name)).toHaveLength(0)
+	})
+
+	it('returns 400 when an agent names no workspace', async () => {
+		const name = `No workspace ${randomUUID()}`
+
+		const res = await post({ name }, bearer(TEST_ACTOR_KEY))
+
+		expect(res.status).toBe(400)
+		expect(await agentRowsNamed(name)).toHaveLength(0)
+	})
+
+	it('returns 409 and leaves the existing agent alone when the supplied id is taken', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const existing = await insertActor(db, { type: 'agent', name: 'Existing Agent' })
+
+		const res = await post(
+			{ name: 'Clone', id: existing.id, workspace_id: ws.id },
+			bearer(TEST_ACTOR_KEY),
+		)
+
+		expect(res.status).toBe(409)
+		expect(await membershipRows(existing.id)).toHaveLength(0)
+	})
+
+	describe('tools and llm_config need a human admin or owner', () => {
+		const fakeTools = {
+			mcpServers: { fake: { type: 'http', url: 'https://fake.invalid/mcp', headers: {} } },
+		}
+
+		it.each([
+			['tools', { tools: fakeTools }],
+			['llm_config', { llm_config: { model: 'fake-model' } }],
+		])('returns 403 and writes no rows when a human member sends %s', async (_field, extra) => {
+			const ws = await workspaceWithTestActor('member')
+			const name = `Member with config ${randomUUID()}`
+
+			const res = await post({ name, workspace_id: ws.id, ...extra }, bearer(TEST_ACTOR_KEY))
+
+			expect(res.status).toBe(403)
+			expect(await agentRowsNamed(name)).toHaveLength(0)
+		})
+
+		it('returns 403 and writes no rows when an agent caller with the admin role sends tools', async () => {
+			const ws = await workspaceWithTestActor('member')
+			const callerKey = `ank_adminagent${randomUUID()}`
+			const caller = await insertActor(db, {
+				type: 'agent',
+				name: 'Admin Agent',
+				apiKey: callerKey,
+			})
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: caller.id, role: 'admin' })
+			const name = `Agent admin with tools ${randomUUID()}`
+
+			const res = await post({ name, workspace_id: ws.id, tools: fakeTools }, bearer(callerKey))
+
+			expect(res.status).toBe(403)
+			expect(await agentRowsNamed(name)).toHaveLength(0)
+		})
+
+		it('lets a human admin set tools and llm_config, merged over the Maskin MCP', async () => {
+			const ws = await workspaceWithTestActor('admin')
+			const name = `Admin with config ${randomUUID()}`
+
+			const res = await post(
+				{ name, workspace_id: ws.id, tools: fakeTools, llm_config: { model: 'fake-model' } },
+				bearer(TEST_ACTOR_KEY),
+			)
+
+			expect(res.status).toBe(201)
+			const [row] = await agentRowsNamed(name)
+			const mcpServers = (row.tools as { mcpServers: Record<string, unknown> }).mcpServers
+			expect(Object.keys(mcpServers).sort()).toEqual(['fake', 'maskin'])
+			expect(row.llmConfig).toEqual({ model: 'fake-model' })
+		})
+
+		it('gives a member who sends only name, description and prompt the Maskin MCP alone', async () => {
+			const ws = await workspaceWithTestActor('member')
+			const name = `Member plain ${randomUUID()}`
+
+			const res = await post(
+				{ name, workspace_id: ws.id, description: 'Test', system_prompt: 'You are a test agent' },
+				bearer(TEST_ACTOR_KEY),
+			)
+
+			expect(res.status).toBe(201)
+			const [row] = await agentRowsNamed(name)
+			expect(Object.keys((row.tools as { mcpServers: object }).mcpServers)).toEqual(['maskin'])
+		})
+	})
+
+	it('rejects workspace_id on a human signup', async () => {
+		const ws = await workspaceWithTestActor('member')
+
+		const res = await createApp().request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'Human With Workspace',
+				email: `human-ws-${randomUUID()}@example.com`,
+				password: 'correct-horse-battery',
+				workspace_id: ws.id,
+			}),
+		)
+
+		expect(res.status).toBe(400)
 	})
 })
 
@@ -647,5 +899,64 @@ describe('Actors Integration — signup workspace provisioning', () => {
 			.where(eq(actors.id, defaultAgentId as string))
 			.limit(1)
 		expect(chief?.name).toBe('Chief of Staff')
+	})
+})
+
+describe('Actors Integration — GET voice_enabled projection', () => {
+	// A read-time smoke check that the projection lives on every read path a
+	// UI consumer touches: list, get, and pause/run's returning clause.
+	it('GET /:id projects voice_enabled from metadata', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey Read' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, agent.id))
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(true)
+	})
+
+	it('GET /:id returns false when metadata is null or missing the key', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voiceless' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(false)
+	})
+
+	it('GET /api/actors workspace-scoped list projects voice_enabled per row', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const on = await insertActor(db, { type: 'agent', name: 'On' })
+		const off = await insertActor(db, { type: 'agent', name: 'Off' })
+		await db.insert(workspaceMembers).values([
+			{ workspaceId: ws.id, actorId: on.id, role: 'member' },
+			{ workspaceId: ws.id, actorId: off.id, role: 'member' },
+		])
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, on.id))
+
+		const res = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const rowFor = (name: string) => body.find((r: { name: string }) => r.name === name)
+		expect(rowFor('On')?.voice_enabled).toBe(true)
+		expect(rowFor('Off')?.voice_enabled).toBe(false)
 	})
 })

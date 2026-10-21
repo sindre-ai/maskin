@@ -59,10 +59,6 @@ const ROUTES: RouteSpec[] = [
 		path: () => '/signup',
 	},
 	{
-		label: 'workspace picker',
-		path: () => '/workspaces',
-	},
-	{
 		label: 'for-you (workspace landing)',
 		path: (ctx) => `/${ctx.workspaceId}`,
 		setup: async (ctx) => {
@@ -134,12 +130,6 @@ const ROUTES: RouteSpec[] = [
 		// Pre-existing: muted card meta text on white.
 		disableRules: ['color-contrast'],
 		path: (ctx) => `/${ctx.workspaceId}/marketplace`,
-	},
-	{
-		label: 'briefing',
-		// Pre-existing: the markdown body scrolls but takes no keyboard focus.
-		disableRules: ['scrollable-region-focusable'],
-		path: (ctx) => `/${ctx.workspaceId}/briefing`,
 	},
 	{
 		label: 'settings index',

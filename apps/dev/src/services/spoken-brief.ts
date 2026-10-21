@@ -184,7 +184,6 @@ export function buildFactsMessage(facts: BriefingFacts): string {
 			verdict: b.verdict ?? undefined,
 		})),
 		open_insights: facts.openInsights.map((i) => i.title),
-		recent_learnings: facts.ledgerLines,
 	})
 }
 
@@ -246,11 +245,6 @@ export function formatSpokenFallback(facts: BriefingFacts): string {
 		sentences.push(
 			`Recently closed: ${closed.title}${closed.verdict ? `. The verdict was ${closed.verdict}` : ''}.`,
 		)
-	}
-
-	const lastLearning = facts.ledgerLines[facts.ledgerLines.length - 1]
-	if (lastLearning) {
-		sentences.push(`Last session left a note: ${lastLearning}`)
 	}
 
 	// Says only what the facts contain. `BriefingBetFact.progress` carries a
@@ -378,7 +372,7 @@ export async function generateSpokenBrief(
 	options: { now?: Date } = {},
 ): Promise<SpokenBrief> {
 	const now = options.now ?? new Date()
-	const facts = await collectBriefingFacts(db, storage, workspaceId)
+	const facts = await collectBriefingFacts(db, workspaceId)
 
 	// Resolved before the cache is read, not after: the agent and the model it
 	// would use are part of the fingerprint, so they have to be known to decide

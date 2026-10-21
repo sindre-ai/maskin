@@ -423,13 +423,35 @@ export class TestAPI {
 		return res.json()
 	}
 
-	async createAgentActor(name: string): Promise<CreateActorResponse> {
+	/**
+	 * Creates an agent that is born a member of `workspaceId`. The server needs the
+	 * caller's key and the workspace on the create call. With no workspace given it
+	 * uses the account's first one (a signed-up test account has just its own).
+	 */
+	async createAgentActor(name: string, workspaceId?: string): Promise<CreateActorResponse> {
+		const targetWorkspaceId = workspaceId ?? (await this.listWorkspaces())[0]?.id
+		if (!targetWorkspaceId) throw new Error('createAgentActor failed: account has no workspace')
 		const res = await fetch(`${this.baseURL}/api/actors`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ type: 'agent', name }),
+			headers: this.headers(),
+			body: JSON.stringify({ type: 'agent', name, workspace_id: targetWorkspaceId }),
 		})
 		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Adds a custom MCP server to the workspace. It reaches no agent until it is granted. */
+	async createCustomMcpServer(
+		workspaceId: string,
+		name: string,
+		server: Record<string, unknown>,
+	): Promise<{ id: string; name: string }> {
+		const res = await fetch(`${this.baseURL}/api/custom-mcp-servers`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ name, server }),
+		})
+		if (!res.ok) throw new Error(`createCustomMcpServer failed: ${res.status}`)
 		return res.json()
 	}
 
