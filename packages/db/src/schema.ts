@@ -591,11 +591,8 @@ export const triggers = pgTable('triggers', {
 	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
 	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
 	escalateAfterMs: integer('escalate_after_ms'),
-	// D6b idempotency guard: the last time the escalation reconciler posted
-	// an escalation comment for this step. The reconciler skips a step whose
-	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
-	// timestamp for the hands-off actor), so a new wait spell re-arms
-	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
 	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),

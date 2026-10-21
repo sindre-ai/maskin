@@ -29,7 +29,7 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
-import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -38,7 +38,7 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { isWaitingOnViewer, useWaitingOnViewer } from '@maskin/shared'
+import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -98,12 +98,6 @@ function LoopDetailRoute() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
-	// Loops v4 (D6c). Sub-flag gates the vertical-story renderer on this
-	// route; flag off keeps the shipped `status-columns` LoopFlow variant
-	// unchanged, and the extra /steps fetch never fires. One boundary at the
-	// route level per the feature-flag rule (`.claude/rules/feature-flags.md`).
-	const stepFlowEnabled = useFeatureFlag('loops-v4-polish.step_flow')
-	const { data: loopSteps } = useLoopSteps(loopId, workspaceId, { enabled: stepFlowEnabled })
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -113,41 +107,27 @@ function LoopDetailRoute() {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
-	// so `packages/shared` stays React-free. When the `step_flow` sub-flag is on
-	// the getter returns the real per-step array from `useLoopSteps` so the
-	// banner samples the actually-stalled step. When the sub-flag is off, fall
-	// back to the loop-level `waitingOnViewer` bit as a single synthetic step so
-	// the banner still renders. Every hook the
-	// banner needs is called unconditionally BEFORE the loading / error /
-	// not-found early-returns so hook order is stable across renders (React
-	// rules-of-hooks).
+	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
+	// is passed as a single synthetic step. Every hook the banner needs is
+	// called unconditionally BEFORE the loading / error / not-found early-returns
+	// so hook order is stable across renders (React rules-of-hooks).
 	const loopWaiting = loop?.waitingOnViewer === true
-	const getLoopStepsForBanner = useCallback(() => {
-		if (stepFlowEnabled) return loopSteps ?? []
-		return loopWaiting ? [{ waitingOnViewer: true }] : []
-	}, [stepFlowEnabled, loopSteps, loopWaiting])
+	const getLoopStepsForBanner = useCallback(
+		() => (loopWaiting ? [{ waitingOnViewer: true }] : []),
+		[loopWaiting],
+	)
 	const anyStepPending = useWaitingOnViewer(loop?.id ?? '', getLoopStepsForBanner)
 	const firstAgentIdForBanner = loop?.agentIds[0] ?? null
 	const firstAgentActor = useMemo(
 		() => (firstAgentIdForBanner ? actors?.find((a) => a.id === firstAgentIdForBanner) : undefined),
 		[actors, firstAgentIdForBanner],
 	)
-	const firstPendingStep = useMemo(
-		() => (stepFlowEnabled ? (loopSteps?.find(isWaitingOnViewer) ?? null) : null),
-		[stepFlowEnabled, loopSteps],
-	)
-	const pendingStepCount = useMemo(() => {
-		if (!stepFlowEnabled) return null
-		return (loopSteps ?? []).reduce((n, s) => (isWaitingOnViewer(s) ? n + 1 : n), 0)
-	}, [stepFlowEnabled, loopSteps])
 	const loopIdForBanner = loop?.id ?? ''
 	const askBannerVisible = !!loop && anyStepPending
 	// Real count, not a 0/1 flag — this is the dimension the bet's Won
 	// condition is measured on, so a constant 1 would make every session look
-	// identical in PostHog. When the step_flow sub-flag is on, count pending
-	// steps from the shared predicate; otherwise fall back to the loop-level
-	// waitingCount so the banner still emits a real number.
-	const pendingCount = askBannerVisible ? (pendingStepCount ?? loop?.waitingCount ?? 0) : 0
+	// identical in PostHog. Uses the loop-level waitingCount.
+	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-flow')
 		if (targetEl) {
@@ -284,17 +264,12 @@ function LoopDetailRoute() {
 	}
 
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
-	// D3 AskBanner content sourcing. When the `step_flow` sub-flag is on, sample
-	// the first pending step from `useLoopSteps` for `agentName`, `askText`, and
-	// the avatar so the banner surfaces the actually-stalled ask. With the
-	// sub-flag off the per-step feed is not fetched — fall back to the loop's
-	// first agent for the copy, matching the pre-D6a wiring so the banner still
-	// renders.
-	const askAgentActor = firstPendingStep?.agent ?? firstAgentActor ?? null
+	// D3 AskBanner content sourcing: the banner names the loop's first agent.
+	const askAgentActor = firstAgentActor ?? null
 	const askAgentName = askAgentActor?.name ?? 'This loop'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
-	const askText = firstPendingStep?.triggerActionPrompt ?? 'is waiting on your input.'
-	const askAvatarType = firstPendingStep ? 'agent' : firstAgentActor?.type
+	const askText = 'is waiting on your input.'
+	const askAvatarType = firstAgentActor?.type
 	const decideJumpHref = '#loop-flow'
 
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
@@ -486,8 +461,6 @@ function LoopDetailRoute() {
 						actors={actors}
 						childObjects={children ?? []}
 						loop={loop}
-						variant={stepFlowEnabled ? 'vertical-story' : 'status-columns'}
-						steps={loopSteps}
 					/>
 				</div>
 

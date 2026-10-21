@@ -28,13 +28,11 @@
 // first step of introducing a new flag.
 //
 // The `loops-v4-polish.*` sub-flags let a single Loops & Loop detail v4 delta be
-// reverted without dropping the rest: `.targets` for D5 (Loop targets),
-// `.step_flow` for D6 (vertical step flow + escalation reconciler), and
+// reverted without dropping the rest: `.targets` for D5 (Loop targets) and
 // `.unread` for D8 (unread boundary + Mark read). See
 // `.claude/rules/feature-flags.md` for the boundary rule.
 export const FLAGS = {
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
-	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
 	loopsV4PolishUnread: 'loops-v4-polish.unread',
 	/**
 	 * Gates the trigger-engine v2 rollout (bet

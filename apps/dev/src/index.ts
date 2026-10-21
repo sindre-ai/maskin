@@ -39,7 +39,6 @@ import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
-import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
@@ -317,13 +316,6 @@ migrateAgentToolServers(db)
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
-
-// D6b — Loops v4 escalation reconciler. Runs iff `loops-v4-polish.step_flow`
-// is in FF_TESTER_FEATURES; noop otherwise, so
-// unsetting the sub-flag from the env + restarting is the rollback path.
-const loopEscalationReconciler = new LoopEscalationReconciler(db)
-loopEscalationReconciler.start()
-logger.info('Loop escalation reconciler started')
 
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()

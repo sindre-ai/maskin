@@ -7,9 +7,7 @@ import type {
 	DisplaySettingsBody,
 	FileCommentDto,
 	FromSuggestedStep,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	NeededTool,
 	SafeMetadata,
@@ -29,9 +27,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	SendRoundInput,
 	SendRoundResponse,
@@ -536,8 +532,6 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
-		steps: (id: string, workspaceId: string) =>
-			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {

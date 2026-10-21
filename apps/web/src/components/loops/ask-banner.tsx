@@ -19,7 +19,7 @@ interface AskBannerProps {
 /**
  * The Loops-detail inline ask banner (D3 of the loops-v4-polish bet). Renders
  * "{agentName} asks — {askText}" plus a Decide ↓ CTA that jumps to the first
- * pending step in the vertical-story spine. Amber-tinted using the same
+ * loop flow section. Amber-tinted using the same
  * `bg-ask-surface` / `border-ask-border` / `text-warning` tokens as the Objects
  * ask banner and the "waiting on you" pill family.
  *
