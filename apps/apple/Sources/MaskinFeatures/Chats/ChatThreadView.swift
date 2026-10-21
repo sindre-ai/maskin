@@ -760,6 +760,13 @@ struct ChatThreadView: View {
 					store.isAtBottom = true
 					await store.markReadIfNeeded()
 				}
+				// The rows above the divider are estimates until the lazy stack has drawn them, so
+				// the first scrolls land short. Re-anchor as they measure, until the reader moves.
+				for delay in [250, 600] {
+					try? await Task.sleep(for: .milliseconds(delay))
+					if userScrolled { break }
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
 			}
 			return
 		}
