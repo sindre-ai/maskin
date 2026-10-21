@@ -130,7 +130,10 @@ function createSupervisor(options) {
 		})
 		const child = { proc, ids: new Set(), retiring: false }
 		proc.stdin.on('error', () => {})
-		proc.stdout.on('data', lineSplitter((line) => onChildLine(child, line)))
+		proc.stdout.on(
+			'data',
+			lineSplitter((line) => onChildLine(child, line)),
+		)
 		proc.stderr.on('data', (chunk) => errput.write(chunk))
 		proc.on('error', (err) => {
 			if (current === child) {
@@ -299,7 +302,11 @@ function createSupervisor(options) {
 		pumping = true
 		while (pending.length > 0 && !stopped) {
 			if (gate) await gate
-			await handleClientLine(pending.shift())
+			try {
+				await handleClientLine(pending.shift())
+			} catch {
+				log('error handling a client message')
+			}
 		}
 		pumping = false
 	}
@@ -363,10 +370,13 @@ function createSupervisor(options) {
 		if (refreshEnabled) log('env ok, refresh enabled')
 		else log(`refresh disabled: missing env ${missing.join(',')}`)
 		current = startChild()
-		input.on('data', lineSplitter((line) => {
-			pending.push(line)
-			pump()
-		}))
+		input.on(
+			'data',
+			lineSplitter((line) => {
+				pending.push(line)
+				pump()
+			}),
+		)
 		input.on('end', () => finish(0))
 		input.on('close', () => finish(0))
 	}

@@ -139,6 +139,11 @@ jobs:
 
       - run: pnpm test -- -- --run
 
+      # The GitHub MCP supervisor ships in the agent image (docker/agent-base), outside the pnpm
+      # workspace, so turbo does not see its tests. Plain node:test, no dependencies.
+      - name: GitHub MCP supervisor tests
+        run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs
+
   integration-tests:
     needs: changes
     # A skipped job counts as passing for the required check of the same name.
