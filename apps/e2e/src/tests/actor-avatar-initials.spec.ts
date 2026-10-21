@@ -35,6 +35,10 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 				status: 'signal',
 			})
 
+			await account.api.createComment(account.workspaceId, {
+				entity_id: bet.id,
+				content: 'Avatar slot check',
+			})
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			// The object title is a static <h1> on the v2 detail shell — wait on it
 			// to know the object has loaded.
@@ -44,19 +48,8 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 				timeout: 20000,
 			})
 
-			// Post a comment so the timeline renders an authored row — that row's
+			// The seeded comment renders an authored row on the timeline — that row's
 			// ActorAvatar is the slot under test, and it exists at every viewport.
-			const composer = page.getByPlaceholder(
-				viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions',
-			)
-			await composer.fill('Avatar slot check')
-			await page.getByRole('button', { name: 'Send comment' }).click()
-			// The composer clearing is the signal the post landed. Asserting on the
-			// comment's text instead would be ambiguous: the composer overlays a
-			// mirror div on its textarea, so the string matches twice while the
-			// draft is still in the field.
-			await expect(composer).toHaveValue('', { timeout: 10000 })
-
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
 				const raw = localStorage.getItem('maskin-actor') ?? '{}'
