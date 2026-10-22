@@ -183,6 +183,36 @@
 				"required": [
 					"reason"
 				]
+			},
+			"TranscribeResponse": {
+				"type": "object",
+				"properties": {
+					"text": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"text"
+				]
+			},
+			"TranscribeBody": {
+				"type": "object",
+				"properties": {
+					"audio": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 10000000,
+						"description": "Base64 of a WAV file (16 kHz mono recommended)."
+					},
+					"language": {
+						"type": "string",
+						"pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$",
+						"description": "Optional language hint, e.g. \"en\" or \"nb-NO\"."
+					}
+				},
+				"required": [
+					"audio"
+				]
 			}
 		},
 		"parameters": {}
@@ -36269,9 +36299,35 @@
 													"task"
 												]
 											},
+											"card_answer": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"outcome": {
+														"type": "string",
+														"enum": [
+															"declined",
+															"done"
+														]
+													}
+												},
+												"required": [
+													"message_id",
+													"outcome"
+												]
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"hidden_from_chat": {
+												"type": "boolean",
+												"enum": [
+													true
+												]
 											},
 											"delivery": {
 												"type": "object",
@@ -39095,9 +39151,35 @@
 													"task"
 												]
 											},
+											"card_answer": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"outcome": {
+														"type": "string",
+														"enum": [
+															"declined",
+															"done"
+														]
+													}
+												},
+												"required": [
+													"message_id",
+													"outcome"
+												]
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"hidden_from_chat": {
+												"type": "boolean",
+												"enum": [
+													true
+												]
 											},
 											"delivery": {
 												"type": "object",
@@ -43150,6 +43232,374 @@
 					},
 					"409": {
 						"description": "Session not interactive or not running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/continue": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Start a follow-up session for a helper that has ended",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"content": {
+										"type": "string",
+										"minLength": 1
+									},
+									"attachments": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"kind": {
+													"type": "string",
+													"minLength": 1
+												},
+												"id": {
+													"type": "string",
+													"minLength": 1
+												},
+												"name": {
+													"type": "string"
+												},
+												"mime_type": {
+													"type": "string"
+												},
+												"size_bytes": {
+													"type": "integer",
+													"minimum": 0
+												}
+											},
+											"required": [
+												"kind",
+												"id"
+											]
+										}
+									},
+									"question_answer": {
+										"type": "object",
+										"properties": {
+											"question_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"answers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"header": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 24
+														},
+														"selected": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 200
+															},
+															"minItems": 1,
+															"maxItems": 4
+														}
+													},
+													"required": [
+														"header",
+														"selected"
+													]
+												},
+												"minItems": 1,
+												"maxItems": 4
+											}
+										},
+										"required": [
+											"question_message_id",
+											"answers"
+										]
+									}
+								},
+								"required": [
+									"content"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Follow-up session started",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"session_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Refused",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not in the chat this session belongs to",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session has not ended",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -62986,6 +63436,323 @@
 					},
 					"404": {
 						"description": "Flag off, or no such voice session for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/transcriptions": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Transcriptions"
+				],
+				"summary": "Transcribe a short voice recording (chat dictation)",
+				"description": "Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.",
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/TranscribeBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Transcript; empty text when no speech was detected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/TranscribeResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing X-Workspace-Id or invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"413": {
+						"description": "Audio too large",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "The speech provider is rate limiting us",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Transcription is not configured on this server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "The speech provider failed",
 						"content": {
 							"application/json": {
 								"schema": {
