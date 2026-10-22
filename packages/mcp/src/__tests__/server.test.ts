@@ -5009,7 +5009,7 @@ describe('tool handlers', () => {
 			expect(obj && 'driver' in obj).toBe(false)
 		})
 
-		it('list_actors resolves connectedTriggers/connectedLoops when workspace_id is set (no url — webAppBaseUrl unset in this suite)', async () => {
+		it('list_actors resolves connectedTriggers/connectedLoops with include=triggers,loops (no url — webAppBaseUrl unset in this suite)', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/actors')) {
@@ -5041,7 +5041,7 @@ describe('tool handlers', () => {
 				return { ok: true, json: () => Promise.resolve([]) } as Response
 			})
 			const handler = getHandler('list_actors')
-			const result = (await handler({ workspace_id: 'ws-1' })) as {
+			const result = (await handler({ workspace_id: 'ws-1', include: 'triggers,loops' })) as {
 				structuredContent: {
 					heroCard: {
 						object?: {
@@ -5056,7 +5056,128 @@ describe('tool handlers', () => {
 			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
 		})
 
-		it('list_actors omits connectedTriggers/connectedLoops for the cross-workspace listing', async () => {
+		describe('list_actors slim default and include flag', () => {
+			const mockActorsWithLinks = (calls: string[]) =>
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const urlStr = url as string
+					calls.push(urlStr)
+					if (urlStr.includes('/api/actors')) {
+						return {
+							ok: true,
+							headers: new Headers({ 'X-Total-Count': '1' }),
+							json: () =>
+								Promise.resolve([
+									{
+										id: 'a-1',
+										type: 'agent',
+										name: 'Architect',
+										description: 'Owns architecture.',
+									},
+								]),
+						} as Response
+					}
+					if (urlStr.includes('/api/triggers')) {
+						return {
+							ok: true,
+							json: () =>
+								Promise.resolve([{ id: 't-1', name: 'On new bet', targetActorId: 'a-1' }]),
+						} as Response
+					}
+					if (urlStr.includes('/api/loops')) {
+						return {
+							ok: true,
+							json: () =>
+								Promise.resolve({
+									loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }],
+								}),
+						} as Response
+					}
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				})
+
+			type SlimResult = {
+				structuredContent: { heroCard: { object?: Record<string, unknown> } }
+			}
+
+			it('returns no connectedTriggers/connectedLoops by default and never fetches triggers or loops', async () => {
+				const calls: string[] = []
+				mockActorsWithLinks(calls)
+				const result = (await getHandler('list_actors')({ workspace_id: 'ws-1' })) as SlimResult
+				const obj = result.structuredContent.heroCard.object
+				expect(obj && 'connectedTriggers' in obj).toBe(false)
+				expect(obj && 'connectedLoops' in obj).toBe(false)
+				expect(calls.some((u) => u.includes('/api/triggers') || u.includes('/api/loops'))).toBe(
+					false,
+				)
+			})
+
+			it('keeps the slim row to the directory keys', async () => {
+				mockActorsWithLinks([])
+				const result = (await getHandler('list_actors')({ workspace_id: 'ws-1' })) as SlimResult
+				const keys = Object.keys(result.structuredContent.heroCard.object ?? {})
+				const allowed = new Set([
+					'id',
+					'type',
+					'title',
+					'status',
+					'role',
+					'description',
+					'url',
+					'connectedTriggers',
+					'connectedLoops',
+				])
+				expect(keys.filter((k) => !allowed.has(k))).toEqual([])
+				expect(keys).not.toContain('systemPrompt')
+				expect(keys).not.toContain('tools')
+			})
+
+			it('include=triggers returns connectedTriggers only and fetches no loops', async () => {
+				const calls: string[] = []
+				mockActorsWithLinks(calls)
+				const result = (await getHandler('list_actors')({
+					workspace_id: 'ws-1',
+					include: 'triggers',
+				})) as SlimResult
+				const obj = result.structuredContent.heroCard.object
+				expect(obj?.connectedTriggers).toEqual([{ name: 'On new bet' }])
+				expect(obj && 'connectedLoops' in obj).toBe(false)
+			})
+
+			it('include=loops returns connectedLoops only', async () => {
+				mockActorsWithLinks([])
+				const result = (await getHandler('list_actors')({
+					workspace_id: 'ws-1',
+					include: 'loops',
+				})) as SlimResult
+				const obj = result.structuredContent.heroCard.object
+				expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+				expect(obj && 'connectedTriggers' in obj).toBe(false)
+			})
+
+			it('defaults to a 25-row page (fetches 26 for the has-more sentinel)', async () => {
+				const calls: string[] = []
+				mockActorsWithLinks(calls)
+				await getHandler('list_actors')({ workspace_id: 'ws-1' })
+				const actorsCall = calls.find((u) => u.includes('/api/actors'))
+				expect(new URL(actorsCall as string, 'http://x').searchParams.get('limit')).toBe('26')
+			})
+
+			it('ignores include for the cross-workspace listing', async () => {
+				const calls: string[] = []
+				mockActorsWithLinks(calls)
+				const result = (await getHandler('list_actors')({
+					include: 'triggers,loops',
+				})) as SlimResult
+				const obj = result.structuredContent.heroCard.object
+				expect(obj && 'connectedTriggers' in obj).toBe(false)
+				expect(obj && 'connectedLoops' in obj).toBe(false)
+				expect(calls.some((u) => u.includes('/api/triggers') || u.includes('/api/loops'))).toBe(
+					false,
+				)
+			})
+		})
+
+		it('list_actors omits connectedTriggers/connectedLoops for the cross-workspace listing even with include', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/actors')) {
@@ -5071,7 +5192,7 @@ describe('tool handlers', () => {
 				throw new Error(`unexpected fetch: ${urlStr}`)
 			})
 			const handler = getHandler('list_actors')
-			const result = (await handler({})) as {
+			const result = (await handler({ include: 'triggers,loops' })) as {
 				structuredContent: {
 					heroCard: { object?: { connectedTriggers?: unknown; connectedLoops?: unknown } }
 				}
@@ -5110,7 +5231,7 @@ describe('tool handlers', () => {
 				return { ok: true, json: () => Promise.resolve([]) } as Response
 			})
 			const handler = getHandler('list_actors')
-			const result = (await handler({ workspace_id: 'ws-1' })) as {
+			const result = (await handler({ workspace_id: 'ws-1', include: 'triggers,loops' })) as {
 				structuredContent: {
 					heroCard: {
 						object?: { connectedTriggers?: unknown[]; connectedLoops?: unknown[] }
@@ -5122,7 +5243,7 @@ describe('tool handlers', () => {
 			expect(obj?.connectedLoops).toHaveLength(20)
 		})
 
-		it('list_actors still succeeds with links omitted when /api/triggers and /api/loops fail independently', async () => {
+		it('list_actors still succeeds with links omitted when /api/triggers and /api/loops fail independently (include=triggers,loops)', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/actors')) {
@@ -5149,7 +5270,7 @@ describe('tool handlers', () => {
 				return { ok: true, json: () => Promise.resolve([]) } as Response
 			})
 			const handler = getHandler('list_actors')
-			const result = (await handler({ workspace_id: 'ws-1' })) as {
+			const result = (await handler({ workspace_id: 'ws-1', include: 'triggers,loops' })) as {
 				structuredContent: {
 					heroCard: {
 						object?: { connectedTriggers?: unknown; connectedLoops?: Array<{ name: string }> }
@@ -6908,6 +7029,52 @@ describe('url field injection', () => {
 	})
 
 	describe('actor url', () => {
+		it('keeps a default 25-row page of slim rows at or under 15,000 characters', async () => {
+			// Fixture shaped like the measured roster (mean slim row about 304
+			// characters with its url): real-length names, 80-char descriptions, a
+			// row url. Every actor also has triggers wired up, which the default
+			// must not pay for.
+			const rows = Array.from({ length: 25 }, (_, i) => ({
+				id: `6b0a5c1e-0000-4000-8000-${String(i).padStart(12, '0')}`,
+				type: 'agent',
+				name: `Specialist Agent Number ${String(i).padStart(2, '0')}`,
+				role: 'member',
+				description: 'x'.repeat(80),
+				createdAt: new Date(2026, 0, 1, 0, 0, 100 - i).toISOString(),
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '62' }),
+						json: () => Promise.resolve([...rows, { ...rows[0], id: 'sentinel-row' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve(
+								rows.flatMap((r) =>
+									Array.from({ length: 3 }, (_, k) => ({
+										id: `t-${r.id}-${k}`,
+										name: `A trigger name of typical length ${k}`,
+										targetActorId: r.id,
+									})),
+								),
+							),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({ loops: [] }) } as Response
+			})
+			const result = (await getUrlHandler('list_actors')({ workspace_id: 'ws-1' })) as {
+				structuredContent: { heroCard: { objects?: unknown[]; totalCount?: number } }
+			}
+			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
+			expect(JSON.stringify(result.structuredContent).length).toBeLessThanOrEqual(15_000)
+		})
+
 		it('create_actor — url added to result', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
@@ -6957,7 +7124,7 @@ describe('url field injection', () => {
 			)
 		})
 
-		it('list_actors — connectedTriggers/connectedLoops carry deep links when webAppBaseUrl is configured', async () => {
+		it('list_actors — connectedTriggers/connectedLoops (include=triggers,loops) carry deep links when webAppBaseUrl is configured', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/actors')) {
@@ -6987,7 +7154,7 @@ describe('url field injection', () => {
 			})
 
 			const handler = getUrlHandler('list_actors')
-			const result = (await handler({ workspace_id: 'ws-1' })) as {
+			const result = (await handler({ workspace_id: 'ws-1', include: 'triggers,loops' })) as {
 				structuredContent: {
 					heroCard: {
 						object?: {
@@ -7276,5 +7443,23 @@ describe('X-Maskin-Session-Id source', () => {
 		expect(JSON.parse(text).unresolved_mentions).toEqual([
 			{ name: 'Nobody', reason: 'not_in_conversation' },
 		])
+	})
+
+	it('post_conversation_message rejects a card key with an error naming the tool that shows it', async () => {
+		build({})
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await expect(
+			handler({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				content: 'Here is your LinkedIn connect card',
+				metadata: {
+					integration_connect: { provider: 'linkedin', session_id: callerSession },
+					needed_tools: [{ provider: 'linkedin' }],
+				},
+			}),
+		).rejects.toThrow(/cannot render cards.*integration_connect: call connect_integration/)
+		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 })

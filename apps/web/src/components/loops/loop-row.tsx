@@ -41,8 +41,7 @@ export function LoopRow({
 	/** How many of this loop's agents have a live session right now — drives the
 	 *  green "busy" line under the stage label (mockup 1536). */
 	busyAgentCount?: number
-	/** Route-level composite from `useFeatureFlag('loops-v4-polish')` + the
-	 *  workspace's `credit_balance_cents`. When true and the loop's `pill` is
+	/** Derived from the workspace's `credit_balance_cents`. When true and the loop's `pill` is
 	 *  `paused`, the row renders the NO CREDITS overlay next to the state
 	 *  label — parity with the Objects PAUSED · NO CREDITS pill. */
 	showNoCreditsPill?: boolean
@@ -56,7 +55,7 @@ export function LoopRow({
 		.filter((a): a is ActorListItem => Boolean(a))
 	const lastActor = agentCards[0]
 	const activity = lastActivityText(loop)
-	// Route-level flag + workspace-credits check already gate this; a per-row
+	// The route's workspace-credits check already gates this; a per-row
 	// `loop.pill === 'paused'` is the last predicate that keeps the overlay off
 	// live and draft rows. Keeping it here (rather than in the parent) means the
 	// route hands one boolean per workspace, not one per row.
