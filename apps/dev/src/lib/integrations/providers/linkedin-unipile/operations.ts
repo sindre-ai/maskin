@@ -42,6 +42,7 @@ import {
 	deriveInmailBalance,
 	parseInmailCredits,
 } from './inmail'
+import { type SentInvitation, nextSentOffset, parseSentInvitations } from './invitations'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -2580,5 +2581,65 @@ function normalizeConnectionRequestResponse(
 		status: 'sent',
 		sent_at: sentAt,
 		...(invitationId ? { invitation_id: invitationId } : {}),
+	}
+}
+
+const SENT_INVITATIONS_DEFAULT_LIMIT = 50
+const SENT_INVITATIONS_MAX_LIMIT = 100
+
+/** An optional whole number within [min, max]; anything else is an input error naming the field. */
+function optionalInt(raw: unknown, field: string, min: number, max: number): number | undefined {
+	if (raw === undefined || raw === null) return undefined
+	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < min || raw > max) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`${field} must be a whole number from ${min} to ${max}`,
+		)
+	}
+	return raw
+}
+
+export type ListSentInvitationsResult = {
+	invitations: SentInvitation[]
+	total_pending: number | null
+	next_offset: number | null
+	/** Rows on this page with no date from LinkedIn. They never match older_than_days. */
+	rows_without_date: number
+}
+
+/**
+ * `list_sent_invitations`: the invitations this account sent that are still pending, one page
+ * at a time. A read of the account's own list, so it is neither capped nor flagged.
+ *
+ * `older_than_days` keeps rows at least that many days old and never matches a row with no
+ * date; `rows_without_date` says how many such rows the page held, so an empty result is not
+ * mistaken for "nothing is stale". `next_offset` moves by what LinkedIn returned, not by what
+ * the filter kept, so paging with a filter still walks the whole list.
+ */
+export async function listLinkedInSentInvitations(
+	ctx: LinkedInOperationContext,
+	input: { limit?: unknown; offset?: unknown; older_than_days?: unknown } = {},
+	now: () => Date = () => new Date(),
+): Promise<ListSentInvitationsResult> {
+	const limit =
+		optionalInt(input.limit, 'limit', 1, SENT_INVITATIONS_MAX_LIMIT) ??
+		SENT_INVITATIONS_DEFAULT_LIMIT
+	const offset = optionalInt(input.offset, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0
+	const olderThanDays = optionalInt(input.older_than_days, 'older_than_days', 0, 3650)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.listRelationRequests({ account_id: pre.credentials.account_id, offset, limit }),
+	)
+	const page = parseSentInvitations(upstream.body, now())
+	return {
+		invitations:
+			olderThanDays === undefined
+				? page.invitations
+				: page.invitations.filter((i) => i.age_days !== null && i.age_days >= olderThanDays),
+		total_pending: page.total,
+		next_offset: nextSentOffset(offset, limit, page),
+		rows_without_date: page.invitations.filter((i) => i.sent_at === null).length,
 	}
 }

@@ -23,6 +23,7 @@ import {
 	listLinkedInConnections,
 	listLinkedInConversations,
 	listLinkedInMessages,
+	listLinkedInSentInvitations,
 	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
@@ -497,6 +498,30 @@ export function registerLinkedInMcpInstance(
 					return jsonResult(await listLinkedInConnections(opCtx, args))
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_connections'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('list_sent_invitations')) {
+		server.registerTool(
+			toolName(cfg, 'list_sent_invitations'),
+			{
+				description: scopedDescription(
+					"List the connection invitations this account sent that are still pending, in the order LinkedIn lists them. Each row has invitation_id, recipient_provider_id, public_identifier, name, headline, sent_at, age_days and message. sent_at and age_days are null when LinkedIn gave no date. older_than_days keeps rows at least that many days old and never matches a row with no date; rows_without_date says how many rows on the page had none. Page with next_offset (null on the last page): it counts rows on LinkedIn's list, so it moves the same with or without older_than_days. total_pending is null when LinkedIn gave no total.",
+					cfg,
+				),
+				inputSchema: {
+					limit: z.number().int().min(1).max(100).optional(),
+					offset: z.number().int().min(0).optional(),
+					older_than_days: z.number().int().min(0).max(3650).optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(await listLinkedInSentInvitations(opCtx, args))
+				} catch (err) {
+					return toolError(toolName(cfg, 'list_sent_invitations'), err)
 				}
 			},
 		)

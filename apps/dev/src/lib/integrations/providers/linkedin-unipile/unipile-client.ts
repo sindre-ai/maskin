@@ -15,6 +15,12 @@
  * in a single spot.
  */
 import { type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
+import {
+	type LinkedInCancelRelationRequestPayload,
+	type LinkedInListRelationRequestsQuery,
+	cancelRelationRequestPath,
+	listRelationRequestsPath,
+} from './invitations'
 
 export type LinkedInHttpResult<TBody = unknown> = {
 	status: number
@@ -415,6 +421,13 @@ export interface LinkedInClient {
 	sendConnectionRequest(
 		payload: LinkedInConnectionRequestPayload,
 	): Promise<LinkedInHttpResult<LinkedInConnectionRequestResponse | Record<string, unknown>>>
+	// Bet aff468ba · sent invitations; the path builders live in invitations.ts.
+	listRelationRequests(
+		query: LinkedInListRelationRequestsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	cancelRelationRequest(
+		payload: LinkedInCancelRelationRequestPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	// Task 7b content/community verbs — see notes above the payload types.
 	publishPost(
 		payload: LinkedInPublishPostPayload,
@@ -647,6 +660,17 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const body: Record<string, unknown> = { user_id: payload.user_id }
 			if (payload.message !== undefined) body.message = payload.message
 			return call('POST', `/v2/${acc}/users/me/relation-requests`, body)
+		},
+		listRelationRequests(query) {
+			// GET /v2/{account_id}/users/me/relation-requests?type=sent&offset=&limit=.
+			// LinkedIn pages this with `offset`, not a cursor.
+			return call('GET', listRelationRequestsPath(query))
+		},
+		cancelRelationRequest(payload) {
+			// POST /v2/{account_id}/users/me/relation-requests/{request_id}/cancel.
+			// The same call withdraws a sent invite and refuses a received one, so a
+			// caller must have confirmed the id is in the sent list first.
+			return call('POST', cancelRelationRequestPath(payload))
 		},
 		publishPost(payload) {
 			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint

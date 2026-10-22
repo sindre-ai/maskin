@@ -55,7 +55,10 @@ const CONNECTIONS_SUITE: readonly LinkedInVerb[] = [
 const PROFILE_SUITE: readonly LinkedInVerb[] = ['search_people', 'get_profile'] as const
 
 /** Outreach-loop tools: personal identities only, never company pages. */
-const OUTREACH_SUITE: readonly LinkedInVerb[] = ['get_inmail_balance'] as const
+const OUTREACH_SUITE: readonly LinkedInVerb[] = [
+	'get_inmail_balance',
+	'list_sent_invitations',
+] as const
 
 /**
  * Return the subset of R11 verbs (Phase 1 + Phase 2) registered on the
