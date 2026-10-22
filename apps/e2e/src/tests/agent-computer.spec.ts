@@ -139,7 +139,9 @@ test.describe("An agent's computer", () => {
 
 			const dialog = page.getByRole('dialog')
 			await expect(dialog).toBeVisible()
-			await expect(dialog.getByRole('toolbar', { name: 'Computer controls' })).toBeVisible()
+			// The controls float under the picture once it is live; until then the collapse
+			// button in the corner is what is there.
+			await expect(dialog.getByRole('button', { name: 'Close popup' })).toBeVisible()
 			const box = await dialog.boundingBox()
 			if (!box) throw new Error('popup not laid out')
 			expect(box.width).toBeLessThanOrEqual(vp.width)

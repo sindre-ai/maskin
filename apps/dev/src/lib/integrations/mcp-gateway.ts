@@ -22,7 +22,8 @@ import { type ToolAnnotationsLike, type ToolKind, classifyTool } from './tool-ki
  * by itself: with the token in the container, "read" could not stop Resend sending email.
  *
  * Not here, on purpose:
- *  - slack, linkedin-unipile, google-meet: Maskin hosts the MCP, gated in-process.
+ *  - slack, linkedin-unipile, google-meet, google-search-console: Maskin hosts the MCP,
+ *    gated in-process.
  *  - github: a stdio server in the container that also needs the token for git itself.
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([

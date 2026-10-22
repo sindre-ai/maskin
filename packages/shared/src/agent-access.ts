@@ -3,17 +3,15 @@
  * the Integrations, Keychain and agent pages, the launch prompt, and the tool messages.
  * There is no write-only level: an agent that may change something may also look at it.
  *
- * `ask_first` sits between read and read & write, like "ask" in a coding agent's
- * permission modes: the agent may use the integration's tools, but an action that cannot
- * be undone waits for a person's yes. `read_write` is "always allow". Only a provider that
- * has such an action and a way to ask (see ASK_FIRST_PROVIDERS) offers it.
+ * `read_write` is the risky level, which is why agents only get `read` by default. Where an
+ * action cannot be undone (sending an email through Gmail) `read_write` does not mean "no
+ * questions asked": the tool still waits for a person's approval of that one action.
  */
-export type AgentAccessLevel = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentAccessLevel = 'none' | 'read' | 'read_write'
 
 export const AGENT_ACCESS_LABELS: Record<AgentAccessLevel, string> = {
 	none: 'No access',
 	read: 'Read',
-	ask_first: 'Ask first',
 	read_write: 'Read & write',
 }
 
@@ -21,15 +19,16 @@ export const AGENT_ACCESS_LABELS: Record<AgentAccessLevel, string> = {
 export const AGENT_ACCESS_EFFECT: Record<AgentAccessLevel, string> = {
 	none: 'no tools',
 	read: 'read tools only; write tools are refused',
-	ask_first: 'all tools, but sending needs a person to approve each one',
 	read_write: 'all tools',
 }
 
 /**
- * Providers with an irreversible action that can wait for a person's approval, so they can
- * offer "Ask first". Gmail: sending an email, approved on a For You approval card. Adding a provider
- * here is a promise that its tool refuses the action at this level and says how to ask.
+ * Providers with an irreversible action that always waits for a person's approval, even at
+ * `read_write`. Gmail: sending an email, approved on a For You approval card or on the draft.
+ * Adding a provider here is a promise that its tool refuses the action until a person has
+ * approved it and says how to ask.
  */
-export const ASK_FIRST_PROVIDERS: ReadonlySet<string> = new Set(['gmail'])
+export const APPROVAL_GATED_PROVIDERS: ReadonlySet<string> = new Set(['gmail'])
 
-export const supportsAskFirst = (provider: string): boolean => ASK_FIRST_PROVIDERS.has(provider)
+export const requiresApprovalToAct = (provider: string): boolean =>
+	APPROVAL_GATED_PROVIDERS.has(provider)

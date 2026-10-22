@@ -74,58 +74,6 @@ struct SystemLine: View {
 	}
 }
 
-/// How long a message may run before it folds to about six lines with "Show more".
-enum LongMessage {
-	static let characters = 320
-	static let lines = 7
-	static let collapsedHeight: CGFloat = 150
-
-	static func isLong(_ text: String) -> Bool {
-		text.count > characters || text.split(separator: "\n", omittingEmptySubsequences: false).count > lines
-	}
-}
-
-private struct FoldedMessage: ViewModifier {
-	let folded: Bool
-
-	func body(content: Content) -> some View {
-		if folded {
-			content
-				.frame(maxHeight: LongMessage.collapsedHeight, alignment: .top)
-				.clipped()
-				.mask(
-					LinearGradient(
-						stops: [.init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
-						startPoint: .top, endPoint: .bottom))
-		} else {
-			content
-		}
-	}
-}
-
-extension View {
-	fileprivate func folded(_ folded: Bool) -> some View { modifier(FoldedMessage(folded: folded)) }
-}
-
-private struct ShowMoreButton: View {
-	let expanded: Bool
-	var onInverse = false
-	let action: () -> Void
-
-	var body: some View {
-		Button {
-			withAnimation(MaskinMotion.standard) { action() }
-		} label: {
-			Text(expanded ? "Show less" : "Show more")
-				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
-				.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.sigInk)
-				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s4, alignment: .leading)
-				.contentShape(Rectangle())
-		}
-		.buttonStyle(.maskinPressed)
-	}
-}
-
 /// What a message attaches: photos as pictures (one large, several as tiles) and every other file
 /// as a chip. Each opens the file.
 struct MessageAttachments: View {
@@ -229,12 +177,14 @@ struct MessageRow: View {
 	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	var onSelectVersion: (Int) -> Void = { _ in }
+	/// A person approved a draft shown as a card in this message: its title and the text approved.
+	/// The thread tells the agent.
+	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	@Environment(\.linkedItems) private var linked
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var rowWidth: CGFloat = 0
-	/// A long message starts folded; the reader unfolds it here.
-	@State private var unfolded = false
 
 	/// An emoji-only message is set large; it follows Dynamic Type like the text around it.
 	@ScaledMetric(relativeTo: .largeTitle) private var emojiSize: CGFloat = 44
@@ -269,9 +219,6 @@ struct MessageRow: View {
 		}
 	}
 
-	private var isLong: Bool { LongMessage.isLong(bodyText) }
-	private var folded: Bool { isLong && !unfolded }
-
 	private var shownText: String { messageOverride.text(original: message.content) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
 	private var bodyText: String { quote?.body ?? shownText }
@@ -279,6 +226,45 @@ struct MessageRow: View {
 	/// The body with each tagged `@Name` marked so the renderer draws it bold.
 	private var markdownText: String {
 		mentions.isEmpty ? bodyText : MentionText.markdown(bodyText, mentions: mentions)
+	}
+
+	// MARK: Linked cards
+
+	/// Drafts and pages an agent links to are drawn as cards: in place where the link stands alone,
+	/// under the bubble where it sits in a sentence. Not for your own words, and only once the store
+	/// knows which links deserve a card (until then the link is just text).
+	private var linkedTargets: [LinkedTarget] {
+		guard linked != nil, !isOwn, message.kind == "message", !message.isEmojiOnly,
+			bodyText.contains("/objects/") || bodyText.contains("/files/")
+		else { return [] }
+		return LinkedTarget.extract(from: bodyText)
+	}
+
+	/// What to draw for the text, or nil when no link in it is a card (the text then renders as it
+	/// always did, folding included).
+	private func linkedLayout(for targets: [LinkedTarget]) -> (parts: [LinkedMessagePart], appended: [LinkedTarget])? {
+		guard let linked, !targets.isEmpty else { return nil }
+		let parts = LinkedMessageLayout.parts(segments: LinkedMessageSplitter.split(bodyText), isCard: linked.isCard)
+		let appended = LinkedMessageLayout.appended(message: bodyText, parts: parts, isCard: linked.isCard)
+		let hasCardInPlace = parts.contains { if case .card = $0 { true } else { false } }
+		return hasCardInPlace || !appended.isEmpty ? (parts, appended) : nil
+	}
+
+	private func linkedBody(_ parts: [LinkedMessagePart]) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			ForEach(parts.enumerated().map { (id: $1.stableID(at: $0), part: $1) }, id: \.id) { entry in
+				switch entry.part {
+				case .markdown(let text):
+					MarkdownContent(
+						mentions.isEmpty ? text : MentionText.markdown(text, mentions: mentions), style: .chat,
+						hardBreaks: message.author == .human
+					)
+					.textSelection(.enabled)
+				case .card(let target):
+					LinkedTargetCard(target: target, onApproved: onApprovedDraft)
+				}
+			}
+		}
 	}
 
 	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
@@ -319,8 +305,6 @@ struct MessageRow: View {
 									.textSelection(.enabled)
 								if message.editedAt != nil { EditedMark() }
 							}
-							.folded(folded)
-							if isLong { ShowMoreButton(expanded: unfolded, onInverse: true) { unfolded.toggle() } }
 						}
 					}
 					.environment(\.markdownHugsContent, true)
@@ -352,7 +336,10 @@ struct MessageRow: View {
 	// MARK: Theirs
 
 	private var theirs: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		// Read once per evaluation: finding the links costs a scan of the text.
+		let targets = linkedTargets
+		let layout = linkedLayout(for: targets)
+		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			if showsAuthor {
 				MessageHeader(
 					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
@@ -367,10 +354,12 @@ struct MessageRow: View {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
 						MessageAttachments(attachments: message.attachments)
 						if !bodyText.isEmpty {
-							MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
-								.textSelection(.enabled)
-								.folded(folded)
-							if isLong { ShowMoreButton(expanded: unfolded) { unfolded.toggle() } }
+							if let layout {
+								linkedBody(layout.parts)
+							} else {
+								MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
+									.textSelection(.enabled)
+							}
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
 						if message.isErrorReply, let onTryAgain = actions.onTryAgain {
@@ -389,6 +378,9 @@ struct MessageRow: View {
 			}
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: actions)
+			if let appended = layout?.appended {
+				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty {
@@ -398,6 +390,11 @@ struct MessageRow: View {
 			MentionLine(names: untaggedNames, isOwn: false)
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
+		// Which links are drafts or pages worth a card: asked once per target, cached by the store.
+		.task(id: targets.map(\.key)) {
+			guard let linked, !targets.isEmpty else { return }
+			await linked.resolveWithRetries(Array(targets.prefix(12)))
+		}
 	}
 
 	/// Versions pager and local feedback under an agent bubble.

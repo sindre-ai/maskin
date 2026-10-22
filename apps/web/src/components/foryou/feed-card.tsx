@@ -1,6 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { DecisionOptionCard, DecisionOptionGrid } from '@/components/shared/decision-option-card'
+import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -287,9 +287,12 @@ export function FeedCard({
 						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
 							{decision.ask}
 						</p>
-						{decision.draft ? <DraftPreview draft={decision.draft} /> : null}
+						{decision.draft ? (
+							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
+						) : null}
 						{decision.drafts?.length && onDraftAction && onDraftsDone ? (
 							<DraftStack
+								workspaceId={workspaceId}
 								drafts={decision.drafts}
 								onAction={onDraftAction}
 								onAllDone={onDraftsDone}
@@ -307,17 +310,11 @@ export function FeedCard({
 				)}
 
 				{options.length > 0 && (
-					<DecisionOptionGrid>
-						{options.map((option) => (
-							<DecisionOptionCard
-								key={option.id}
-								option={option}
-								pending={pendingId === option.id}
-								disabled={pendingId !== null}
-								onChoose={() => chooseOption(option)}
-							/>
-						))}
-					</DecisionOptionGrid>
+					<DecisionOptions
+						options={options}
+						pendingId={pendingId}
+						onChoose={(option) => chooseOption(option)}
+					/>
 				)}
 
 				<CommentInput

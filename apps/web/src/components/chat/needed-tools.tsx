@@ -1,7 +1,6 @@
 import { IntegrationConnectCard } from '@/components/chat/integration-connect-card'
 import { useActor } from '@/hooks/use-actors'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
-import { useProviderVisibility } from '@/hooks/use-provider-visibility'
 import { integrationToolState } from '@/lib/integration-tool-state'
 import type { NeededTool } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
@@ -35,11 +34,10 @@ export function NeededTools({
 	const { data: providers } = useProviders()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: agent } = useActor(agentId)
-	const isProviderVisible = useProviderVisibility()
 
 	// Until both lists have loaded there is nothing honest to draw, and a failed
 	// load draws nothing either. The card itself also draws nothing for an unknown
-	// or flag-hidden provider.
+	// provider.
 	if (!providers || !integrations) return null
 
 	const agentMcpServers = (agent?.tools as { mcpServers?: Record<string, unknown> } | undefined)
@@ -47,7 +45,7 @@ export function NeededTools({
 
 	const rows = tools.slice(0, MAX_ROWS).flatMap(({ provider }) => {
 		const info = providers.find((p) => p.name === provider)
-		if (!info || !isProviderVisible(provider)) return []
+		if (!info) return []
 		return [
 			{
 				info,

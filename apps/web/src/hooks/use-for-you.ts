@@ -16,10 +16,11 @@ export function forYouItemToFeedItem(item: ForYouItem): UnreadItem | null {
 		unread_count: 1,
 		mentioning_unread_count: 1,
 		max_unread_attention: item.latest_mention?.attention ?? null,
-		latest_event_id: item.latest_mention?.event_id ?? null,
+		latest_event_id: item.latest_mention?.event_id ?? item.latest_event_id,
 		latest_activity_at: item.latest_mention?.created_at ?? item.created_at,
 		object: item.object,
 		latest_mention: item.latest_mention,
+		curated: { headline: item.headline, rationale: item.rationale },
 	}
 }
 

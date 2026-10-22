@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects } from '@maskin/db/schema'
+import { events, actors, files, objects, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
@@ -227,7 +227,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(desc(events.createdAt))
+		.orderBy(desc(events.createdAt), desc(events.id))
 
 	return c.json(serializeArray(results) as z.infer<typeof eventResponseSchema>[])
 }) as RouteHandler<typeof eventHistoryRoute, Env>)
@@ -756,9 +756,18 @@ async function spawnThreadReplySessions(ctx: {
 	// (commenters were filtered by type at the join, mentions weren't).
 	const toResolve = Array.from(mentionedCandidateIds).filter((id) => !agentParticipantIds.has(id))
 	if (toResolve.length > 0) {
+		// Members of this workspace only: an actor named from another workspace
+		// never joins the fan-out.
 		const resolved = await ctx.db
 			.select({ id: actors.id, type: actors.type })
 			.from(actors)
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
 			.where(inArray(actors.id, toResolve))
 		for (const a of resolved) {
 			if (a.type === 'agent') agentParticipantIds.add(a.id)

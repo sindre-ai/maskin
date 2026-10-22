@@ -2,14 +2,8 @@ import { Composer } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
-
-const useFeatureFlagMock = vi.fn((_id: string) => false)
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => useFeatureFlagMock(id),
-}))
 
 vi.mock('@/hooks/use-files', () => ({
 	useUploadFile: () => vi.fn(),
@@ -17,10 +11,6 @@ vi.mock('@/hooks/use-files', () => ({
 
 vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: async () => 'AAAA',
-}))
-
-vi.mock('@/components/chat/slash-picker', () => ({
-	SlashPicker: () => null,
 }))
 
 vi.mock('@/lib/analytics', () => ({
@@ -50,31 +40,7 @@ function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {})
 	}
 }
 
-describe('Composer `+` menu — chat-plus-menu-attach-only OFF (legacy)', () => {
-	beforeEach(() => {
-		useFeatureFlagMock.mockReset()
-		useFeatureFlagMock.mockReturnValue(false)
-	})
-
-	it('renders the legacy three-item menu when the flag is off', async () => {
-		const user = userEvent.setup()
-		renderComposer()
-
-		await user.click(screen.getByRole('button', { name: 'Add an object, file, or mention' }))
-
-		expect(screen.getByRole('menuitem', { name: /Reference an object/i })).toBeInTheDocument()
-		expect(screen.getByRole('menuitem', { name: /Mention an agent/i })).toBeInTheDocument()
-		expect(screen.getByRole('menuitem', { name: /Create an object/i })).toBeInTheDocument()
-		expect(screen.queryByRole('menuitem', { name: /Attach a file/i })).not.toBeInTheDocument()
-	})
-})
-
-describe('Composer `+` menu — chat-plus-menu-attach-only ON (collapsed)', () => {
-	beforeEach(() => {
-		useFeatureFlagMock.mockReset()
-		useFeatureFlagMock.mockImplementation((id) => id === 'chat-plus-menu-attach-only')
-	})
-
+describe('Composer `+` menu', () => {
 	it('renders exactly one row (Attach a file) with PDF/image/doc sub-copy', async () => {
 		const user = userEvent.setup()
 		renderComposer()

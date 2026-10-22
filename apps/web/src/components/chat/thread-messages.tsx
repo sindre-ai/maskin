@@ -14,10 +14,18 @@ import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
-import type { MessageMetadata, SessionResponse } from '@/lib/api'
+import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import {
+	type RedoneTurns,
+	dropRedoneFailedTurns,
+	redoKey,
+	snapshotRedo,
+	supersededFailedReplyIds,
+} from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
@@ -42,19 +50,6 @@ interface ThreadMessagesProps {
 	workspaceId: string
 	conversationId: string
 	className?: string
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Threaded from the route
-	 *  boundary — the umbrella flag AND the `.banner` sub-flag — into the
-	 *  resume banner. */
-	v4PolishBanner?: boolean
-	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
-	 *  message bubble. */
-	v4PolishBubbles?: boolean
-	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
-	 *  a persistent vertical --brand bar to their right and a spawn chip below
-	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
-	 *  route boundary on `graph-provenance-writes` so the sessions query fires
-	 *  only for tester actors. */
-	producedEnabled?: boolean
 	/** Fills the composer with a fill step's prompt. */
 	onPickStep?: (prompt: string) => void
 	/** Sends a send step's label as the person's message, with the intro step marker. */
@@ -67,9 +62,6 @@ export function ThreadMessages({
 	workspaceId,
 	conversationId,
 	className,
-	v4PolishBanner = false,
-	v4PolishBubbles = false,
-	producedEnabled = false,
 	onPickStep,
 	onSendStep,
 	sendingStep = false,
@@ -108,20 +100,14 @@ export function ThreadMessages({
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
 	// the query cache-shared with useConversationActivity above (same key).
-	// Only fires when the S2 pane is enabled for the actor.
-	const { data: sessionList } = useActiveSessionsForConversation(
-		workspaceId,
-		producedEnabled ? conversationId : null,
-	)
+	const { data: sessionList } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
-		() =>
-			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
-		[sessionList, producedEnabled],
+		() => deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]),
+		[sessionList],
 	)
 
 	// Head/tail dividers for each run of voice-call messages. Derived from the
-	// messages themselves (metadata.source === 'voice'), so it needs no flag read
-	// of its own: no voice messages exist until a flagged call has written some.
+	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
 
 	// Which agent questions already have a human answer, so an answered set of
@@ -138,7 +124,22 @@ export function ThreadMessages({
 	const helperQuestionIds = new Set(
 		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
 	)
+	// Turns the person redid in this view, with what had already failed at that
+	// moment. Those failed notices leave the timeline so the new attempt takes
+	// their place; a later failure of the new attempt stays visible.
+	const [redoneTurns, setRedoneTurns] = useState<RedoneTurns>(new Map())
+	const supersededFailedIds = useMemo(
+		() => supersededFailedReplyIds(messages, redoneTurns),
+		[messages, redoneTurns],
+	)
+	const handleRetried = (retried: MessageResponse) => {
+		const key = redoKey(retried)
+		setRedoneTurns((prev) =>
+			new Map(prev).set(key, snapshotRedo(messages, byTriggerMessageId.get(key) ?? [])),
+		)
+	}
 	const visibleMessages = messages.filter((m) => {
+		if (supersededFailedIds.has(m.id)) return false
 		// A helper's result handed to the agent that started it: the agent gets it, the
 		// person reads it in the helper's thread as its final output.
 		if (m.metadata?.helper_return) return false
@@ -146,6 +147,18 @@ export function ThreadMessages({
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
 	})
+
+	// A linked object's card shows once, on the first message that links it; later
+	// messages keep the link but not another copy of the card.
+	const shownLinkedObjectIdsByMessage = useMemo(() => {
+		const seen = new Set<string>()
+		const byMessage = new Map<number, ReadonlySet<string>>()
+		for (const m of visibleMessages) {
+			byMessage.set(m.id, new Set(seen))
+			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
+		}
+		return byMessage
+	}, [visibleMessages])
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -312,7 +325,6 @@ export function ThreadMessages({
 				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
-				v4Polish={v4PolishBanner}
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
@@ -359,7 +371,11 @@ export function ThreadMessages({
 					// reply yet) render below it, in the gap before that reply
 					// lands — see useConversationActivity's doc comment.
 					const turnsAbove = byReplyMessageId.get(message.id) ?? []
-					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
+					const turnsBelow = dropRedoneFailedTurns(
+						byTriggerMessageId.get(message.id) ?? [],
+						message.id,
+						redoneTurns,
+					)
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
@@ -419,8 +435,9 @@ export function ThreadMessages({
 									workspaceId={workspaceId}
 									message={bubbleMessage}
 									questionAnswered={answeredQuestionIds.has(message.id)}
-									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
+									onRetried={handleRetried}
+									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
 									// Keyed by index as well as session: one session can put two
 									// turns under the same message (a result segment plus the
 									// live turn that follows it), so `sessionId` alone is not

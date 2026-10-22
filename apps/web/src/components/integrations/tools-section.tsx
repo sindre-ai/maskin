@@ -14,16 +14,8 @@ import { ApiError, type CustomMcpServerSpec, type IntegrationResponse } from '@/
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
-import { FileJson, Globe, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { FileJson, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { toast } from 'sonner'
-
-/** The Playwright browser server agents commonly want; added like any other custom server. */
-const BROWSER_SERVER: CustomMcpServerSpec = {
-	type: 'stdio',
-	command: 'npx',
-	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-}
 
 function errorText(err: unknown): string {
 	if (err instanceof ApiError) return err.message
@@ -57,7 +49,6 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 	)
 	const me = getStoredActor()
 	const isHuman = me?.type === 'human' && workspace.role !== 'viewer'
-	const hasBrowser = servers.some((s) => s.displayName === 'Browser')
 
 	const handleCreate = (name: string, server: CustomMcpServerSpec) =>
 		create.mutate({ name, server }, { onSuccess: () => setAdding(false) })
@@ -129,22 +120,6 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 						<Plus className="mr-1 h-3.5 w-3.5" />
 						Add server
 					</Button>
-					{!hasBrowser && (
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={create.isPending}
-							onClick={() =>
-								create.mutate(
-									{ name: 'Browser', server: BROWSER_SERVER },
-									{ onError: (err) => toast.error(errorText(err)) },
-								)
-							}
-						>
-							<Globe className="mr-1 h-3.5 w-3.5" />
-							Add Browser
-						</Button>
-					)}
 					<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
 						<FileJson className="mr-1 h-3.5 w-3.5" />
 						Import .mcp.json

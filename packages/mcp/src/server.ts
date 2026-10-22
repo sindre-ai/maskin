@@ -27,7 +27,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
+import { TOOL_ANNOTATIONS } from './annotations.js'
 import {
+	CURSOR_MAX_OFFSET,
 	type CursorState,
 	decodeCursor,
 	encodeCursor,
@@ -54,7 +56,9 @@ import {
 	safeBuildSetupBlock,
 } from './setup-guidance/index.js'
 import {
+	type ListActorsView,
 	MUTATION_TOOL_KINDS,
+	TELEMETRY_VIEW,
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
@@ -62,7 +66,7 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import { tools } from './tools.js'
+import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -198,6 +202,35 @@ function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>)
 	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
 }
 
+/**
+ * Card keys on message metadata, mapped to the tool that really shows that card.
+ * The server drops them from anything posted through post_conversation_message,
+ * so a call that carried one used to succeed with the card silently missing.
+ * A null tool means no agent tool shows that card at all.
+ */
+const CARD_METADATA_KEYS: Record<string, string | null> = {
+	integration_connect: 'connect_integration',
+	keychain_request: 'request_keychain_credential',
+	keychain_access_request: 'request_keychain_access',
+	computer_request: 'show_computer',
+	question: 'ask_user_question',
+	needed_tools: null,
+}
+
+/** Throws when message metadata carries a card key, naming the tool to use instead. */
+function rejectCardMetadata(metadata: Record<string, unknown> | undefined): void {
+	if (!metadata) return
+	const found = Object.keys(CARD_METADATA_KEYS).filter((key) => metadata[key] !== undefined)
+	if (found.length === 0) return
+	const advice = found.map((key) => {
+		const tool = CARD_METADATA_KEYS[key]
+		return tool ? `${key}: call ${tool}` : `${key}: no agent tool shows this card`
+	})
+	throw new Error(
+		`post_conversation_message cannot render cards, so nothing was posted. Remove ${found.join(', ')} from metadata (${advice.join('; ')}). Never write card text yourself or tell the user a card is shown.`,
+	)
+}
+
 /** Default page size when the caller did not pass an explicit limit. Kept
  *  in sync with `HERO_CARD_UI_PAGE_SIZE` — the UI has been paging at 25 for
  *  months, so an agent gets responses shaped like what a human sees in the
@@ -288,6 +321,47 @@ function encodeNextCursor<T extends { id: string; createdAt?: string | null }>(
 		k: { sortValue, id: last.id },
 	})
 	return { nextCursor, trimmed }
+}
+
+/**
+ * One page of /api/events/history. The route has no cursor of its own, only
+ * limit, offset and before, ordered newest first (createdAt desc, id desc). So
+ * the walk is frozen by sending before = the snapshot time on every hop, and
+ * the position travels in the cursor as an offset (n). Asks for one row past
+ * the page: if it comes back there is a next page.
+ */
+async function fetchEventHistoryPage(
+	config: McpConfig,
+	params: URLSearchParams,
+	pagination: ResolvedPagination,
+	workspaceId: string | undefined,
+) {
+	const offset = pagination.cursor?.n ?? 0
+	const query = new URLSearchParams(params)
+	query.set('limit', String(pagination.limit + 1))
+	query.set('offset', String(offset))
+	query.set('before', pagination.snapshotAt)
+	const result = await apiCall(config, 'GET', `/api/events/history?${query}`, undefined, {
+		workspaceId,
+	})
+	const rows = Array.isArray(result)
+		? (result as Array<{ id: number | string; createdAt?: string | null }>)
+		: []
+	const page = rows.slice(0, pagination.limit)
+	const last = page[page.length - 1]
+	const nextOffset = offset + page.length
+	// A next_cursor whose offset decodeCursor would refuse restarts the walk at the
+	// top, so stop instead of looping.
+	if (rows.length <= pagination.limit || !last?.createdAt || nextOffset > CURSOR_MAX_OFFSET) {
+		return { page, nextCursor: null }
+	}
+	const nextCursor = encodeCursor({
+		s: pagination.snapshotAt,
+		o: pagination.order,
+		k: { sortValue: last.createdAt, id: String(last.id) },
+		n: nextOffset,
+	})
+	return { page, nextCursor }
 }
 
 /** Read `.url` off an enriched row without paying the TS cost each time. */
@@ -1134,6 +1208,7 @@ async function createSessionAndWait(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
+	let stoppedBecause: 'waiting_for_input' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
@@ -1169,10 +1244,18 @@ async function createSessionAndWait(
 			settled = true
 			break
 		}
+		// A session parked on waiting_for_input will not progress until someone
+		// answers it, so polling on would only burn the whole wait. Stop early but
+		// leave settled false: the session is not finished.
+		if (current.status === 'waiting_for_input') {
+			stoppedBecause = 'waiting_for_input'
+			break
+		}
 	}
 
-	// The wait ran out with the helper still going: ask for its result to be sent
-	// back later. Never on the settled path, where the caller gets it inline.
+	// The wait ended with the helper still going (it ran out, or it stopped on
+	// waiting_for_input): ask for its result to be sent back later. Never on the
+	// settled path, where the caller gets it inline.
 	// If the helper ended in the gap, the PATCH sends the return itself.
 	// The server says what became of it: 'registered' (still running, it will
 	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
@@ -1220,6 +1303,11 @@ async function createSessionAndWait(
 		logsError = err instanceof Error ? err.message : String(err)
 	}
 
+	const stopMessage =
+		stoppedBecause === 'waiting_for_input'
+			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			: undefined
+
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
 		? addUrl(current as Record<string, unknown>, config, wsId, {
@@ -1248,6 +1336,7 @@ async function createSessionAndWait(
 					// above is final or just where the wait stopped.
 					session_id: sessionId,
 					settled,
+					...(stoppedBecause ? { stopped_because: stoppedBecause, message: stopMessage } : {}),
 					...(pollError ? { poll_error: pollError } : {}),
 					...(logsError ? { logs_error: logsError } : {}),
 					...(notifyOnComplete
@@ -1461,6 +1550,28 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 				],
 			}
 		},
+	)
+}
+
+const UPDATE_ENTRY_FIELDS =
+	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+
+/**
+ * True when an update_objects entry asks for at least one write: a field change,
+ * or a non-empty attach/detach list. An id on its own, or an id with only empty
+ * attach/detach arrays, writes nothing.
+ */
+function updateEntryHasChange(entry: {
+	id: string
+	attach_file_ids?: string[]
+	detach_file_ids?: string[]
+	[key: string]: unknown
+}): boolean {
+	const { id: _id, attach_file_ids, detach_file_ids, ...fields } = entry
+	return (
+		Object.values(fields).some((v) => v !== undefined) ||
+		Boolean(attach_file_ids?.length) ||
+		Boolean(detach_file_ids?.length)
 	)
 }
 
@@ -1916,6 +2027,26 @@ interface RawWorkspace {
 	isDefault?: boolean
 	createdAt?: string | null
 	updatedAt?: string | null
+	onboardingEnabled?: boolean | null
+}
+
+/**
+ * The default list_workspaces row: the five fields the heroCard renders plus
+ * the top-level onboarding flag the workspace-observer-onboarding skill reads
+ * (the API row carries it as `onboardingEnabled`), and the default-workspace
+ * marker `isDefault`. Always exactly these seven keys, so a missing value is
+ * null (false for isDefault) rather than a dropped key.
+ */
+function slimWorkspaceRow(workspace: RawWorkspace) {
+	return {
+		id: workspace.id,
+		name: workspace.name ?? null,
+		role: workspace.role ?? null,
+		createdAt: workspace.createdAt ?? null,
+		updatedAt: workspace.updatedAt ?? null,
+		onboardingEnabled: workspace.onboardingEnabled ?? null,
+		isDefault: workspace.isDefault ?? false,
+	}
 }
 
 function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
@@ -2488,6 +2619,12 @@ export function createMcpServer(config: McpConfig) {
 				transport: config.transport,
 			})
 
+			// Read before the cap below: applyResponseTokenCap may hand back a
+			// different object, and the symbol only lives on the handler's own.
+			const telemetryView = (response as { [TELEMETRY_VIEW]?: ListActorsView } | undefined)?.[
+				TELEMETRY_VIEW
+			]
+
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
 			// the wire response see the same, capped shape.
@@ -2519,6 +2656,7 @@ export function createMcpServer(config: McpConfig) {
 				seq: currentToolCallSeq(),
 				args,
 				transport: config.transport,
+				view: telemetryView,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
@@ -2539,8 +2677,25 @@ export function createMcpServer(config: McpConfig) {
 		// token-cap and mutation classification all apply.
 		handlers.set(name, wrappedHandler)
 
+		// Title and annotations come from the table in annotations.ts, so every
+		// tool gets them here and nowhere else. Extension tools have no row and
+		// pass through unannotated.
+		const annotation = TOOL_ANNOTATIONS[name]
+		const annotatedDefinition = annotation
+			? {
+					...definition,
+					title: annotation.title,
+					annotations: {
+						readOnlyHint: annotation.readOnlyHint,
+						destructiveHint: annotation.destructiveHint,
+						idempotentHint: annotation.idempotentHint,
+						openWorldHint: annotation.openWorldHint,
+					},
+				}
+			: definition
+
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
-		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		return _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
 		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	}) as any as typeof _registerAppTool
 
@@ -2873,6 +3028,23 @@ export function createMcpServer(config: McpConfig) {
 				error?: string
 			}> = []
 
+			// Refuse a call that would write nothing. The schema defaults both lists
+			// to [], so a missing list, an empty list and a list sent under the wrong
+			// name (the SDK drops unknown keys) all arrive here as []. Throw before
+			// any API call so the SDK reports isError and the caller cannot mistake
+			// an empty result for a finished write.
+			const hasWritableUpdate = args.updates?.some(updateEntryHasChange) ?? false
+			if (!hasWritableUpdate && !args.edges?.length) {
+				const idleIds = (args.updates ?? []).map((u) => u.id)
+				throw new Error(
+					`update_objects wrote nothing: ${
+						idleIds.length > 0
+							? `no entry in updates (${idleIds.join(', ')}) has a field to change`
+							: 'it received no updates and no edges'
+					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings, and name the list updates (not objects). Nothing was written.`,
+				)
+			}
+
 			// Update objects in parallel
 			if (args.updates?.length) {
 				const objectResults = await Promise.all(
@@ -2885,6 +3057,18 @@ export function createMcpServer(config: McpConfig) {
 							result?: unknown
 							error?: string
 						}> = []
+
+						// In a mixed call, an entry with nothing to write is reported, not
+						// dropped, so its id never silently vanishes from results.
+						if (!updateEntryHasChange({ id, attach_file_ids, detach_file_ids, ...body })) {
+							out.push({
+								type: 'object',
+								id,
+								success: false,
+								error: `No field to change. Allowed: ${UPDATE_ENTRY_FIELDS}. Empty attach_file_ids and detach_file_ids lists count as nothing.`,
+							})
+							return out
+						}
 
 						// Captured from the PATCH response (when present) so attach_file_ids
 						// can use the object's real type ('bet' | 'task' | 'insight') as
@@ -3514,6 +3698,18 @@ export function createMcpServer(config: McpConfig) {
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships, even on the final page where no cursor was emitted.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as (typeof raw)[number]
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
+				},
 			}
 		},
 	)
@@ -3796,24 +3992,32 @@ export function createMcpServer(config: McpConfig) {
 			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
 				? (enriched as Array<Record<string, unknown>>)
 				: []
-			// Connected triggers/loops only resolve for a single, known workspace —
+			// Connected triggers/loops are the bulk of a row (about 73% of the
+			// bytes), so they only come back when the caller asks for them with
+			// `include`. They also only resolve for a single, known workspace —
 			// the cross-workspace branch (no workspace_id) lists actors from many
-			// workspaces at once, and a trigger/loop belongs to exactly one.
-			const actorLinks = workspaceScoped
-				? await resolveActorLinks(config, args.workspace_id as string)
-				: null
+			// workspaces at once, and a trigger/loop belongs to exactly one, so
+			// `include` is ignored there.
+			const include = parseListActorsInclude(args.include)
+			const wantTriggers = workspaceScoped && include.includes('triggers')
+			const wantLoops = workspaceScoped && include.includes('loops')
+			const actorLinks =
+				wantTriggers || wantLoops
+					? await resolveActorLinks(config, args.workspace_id as string)
+					: null
 			const heroObjects = rows.map((a, idx) => {
 				let obj = buildActorHeroCardObject(a)
 				const url = pickUrl(enrichedRows[idx])
 				if (url) obj = { ...obj, url }
 				if (actorLinks) {
-					const connectedTriggers = actorLinks.triggersByActor.get(a.id)
-					const connectedLoops = actorLinks.loopsByActor.get(a.id)
+					const connectedTriggers = wantTriggers ? actorLinks.triggersByActor.get(a.id) : undefined
+					const connectedLoops = wantLoops ? actorLinks.loopsByActor.get(a.id) : undefined
 					if (connectedTriggers?.length) obj = { ...obj, connectedTriggers }
 					if (connectedLoops?.length) obj = { ...obj, connectedLoops }
 				}
 				return obj
 			})
+			const view: ListActorsView = wantTriggers || wantLoops ? 'full' : 'slim'
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			// heroCard.objects carries every row the API returned on this page —
 			// `structuredContent` has no separate rich row array for this tool, so
@@ -3837,6 +4041,9 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 			return {
+				// Read by the registerAppTool wrapper for the size event; a symbol
+				// never serializes onto the wire.
+				[TELEMETRY_VIEW]: view,
 				_meta: uiMeta(
 					'list_actors',
 					config,
@@ -4180,7 +4387,9 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.createdAt ?? null,
 				getId: (row) => row.id,
 			})
-			const safeRows = pagedRows.map(redactWorkspaceSettings)
+			const safeRows = (args as { include_settings?: boolean }).include_settings
+				? pagedRows.map(redactWorkspaceSettings)
+				: pagedRows.map(slimWorkspaceRow)
 			const heroObjects = pagedRows.map(buildWorkspaceHeroCardObject)
 			const webContextWorkspaceId = config.defaultWorkspaceId ?? pagedRows[0]?.id
 			const heroCard: HeroCardPayload =
@@ -4233,11 +4442,17 @@ export function createMcpServer(config: McpConfig) {
 				settings: Record<string, unknown>
 			}>
 			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace =
-				(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
-				workspaces[0]
+			// Only fall back to the first workspace when no id was asked for at all. An
+			// id that is not in the list must fail, not hand back another workspace's schema.
+			const workspace = effectiveWsId
+				? workspaces.find((w) => w.id === effectiveWsId)
+				: workspaces[0]
 			if (!workspace) {
-				throw new Error('No workspace found')
+				throw new Error(
+					effectiveWsId
+						? `Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`
+						: 'No workspace found',
+				)
 			}
 
 			const settings = workspace.settings ?? {}
@@ -4898,22 +5113,12 @@ export function createMcpServer(config: McpConfig) {
 			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			if (args.action) params.set('action', args.action)
-			if (args.limit) params.set('limit', String(args.limit))
-			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
-			const rows = Array.isArray(result)
-				? (result as Array<{ id: number | string; createdAt?: string | null }>)
-				: []
-			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
-				limit: pagination.limit,
-				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
-				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
-				getId: (row) => String(row.id).padStart(20, '0'),
-			})
+			const { page: pagedRows, nextCursor } = await fetchEventHistoryPage(
+				config,
+				params,
+				pagination,
+				args.workspace_id,
+			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
@@ -4943,22 +5148,12 @@ export function createMcpServer(config: McpConfig) {
 			params.set('entity_type', 'object')
 			params.set('entity_id', args.entity_id)
 			params.set('action', 'commented')
-			params.set('limit', String(args.limit))
-			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
-			const rows = Array.isArray(result)
-				? (result as Array<{ id: number | string; createdAt?: string | null }>)
-				: []
-			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
-				limit: pagination.limit,
-				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
-				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
-				getId: (row) => String(row.id).padStart(20, '0'),
-			})
+			const { page: pagedRows, nextCursor } = await fetchEventHistoryPage(
+				config,
+				params,
+				pagination,
+				args.workspace_id,
+			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
@@ -5076,6 +5271,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, conversation_id, mention_names, ...body } = args
+			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
 			let unresolvedMentions: MentionNameResolution['unresolved'] = []
@@ -7635,16 +7831,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [{ type: 'text' as const, text }],
 			})
 
-			// Resolve workspace
-			let workspace: { id: string; name: string } | undefined
+			// Resolve workspace. Only the API call sits in the try: a bad id thrown below
+			// must reach the caller as an error, not be mistaken for a connection problem.
+			let workspaces: Array<{ id: string; name: string }>
 			try {
-				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
 				})) as Array<{ id: string; name: string }>
-				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-				workspace =
-					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
-					workspaces[0]
 			} catch {
 				const setupSteps =
 					config.transport === 'http'
@@ -7655,9 +7848,28 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
+			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
+			const workspace = effectiveWsId
+				? workspaces.find((w) => w.id === effectiveWsId)
+				: workspaces[0]
+			if (effectiveWsId && !workspace) {
+				throw new Error(
+					`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
+				)
+			}
+
 			if (!workspace) {
 				return textResponse(
 					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
+				)
+			}
+
+			// INSTALL with no workspace chosen on a multi-workspace account: the install
+			// writes to a workspace, so do not guess. The preview below only reads.
+			if (args.loop_id && args.confirm && !effectiveWsId && workspaces.length > 1) {
+				const workspaceLines = workspaces.map((w) => `  • ${w.name} (id: ${w.id})`)
+				return textResponse(
+					`This account has more than one workspace, so nothing was installed.\n\n${workspaceLines.join('\n')}\n\nPass workspace_id to choose where to install.`,
 				)
 			}
 
