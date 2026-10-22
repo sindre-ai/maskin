@@ -11,7 +11,7 @@ import {
 	useContinueSession,
 	useSendSessionInput,
 	useSession,
-	useSessionLogs,
+	useSessionChainLogs,
 } from '@/hooks/use-sessions'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
@@ -40,48 +40,61 @@ export function SessionThread({
 	workspaceId,
 	conversationId,
 	thread,
-	onOpenThread,
 }: {
 	workspaceId: string
 	conversationId: string
 	thread: ConversationThread
-	/** Opens another thread: the follow-up a message to an ended one starts. */
-	onOpenThread: (sessionId: string) => void
 }) {
 	const pill = statusToPill(thread.status)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
-	const { data: session } = useSession(thread.id, workspaceId)
-	const { data: logs, isLoading } = useSessionLogs(thread.id, workspaceId, true, { live })
+	// The newest session is the one a message goes into and whose state the thread shows.
+	const { data: session } = useSession(thread.latestId, workspaceId)
+	const chainLogs = useSessionChainLogs(thread.sessionIds, workspaceId, { live })
+	const isLoading = chainLogs.some((q) => q.isLoading)
+	const logs = chainLogs[chainLogs.length - 1]?.data
 	const { data: pages } = useConversationMessages(conversationId, workspaceId)
 	const me = getStoredActor()
 
 	// Whoever handed the work off wrote the message the thread hangs from: that is who
 	// the first bubble belongs to.
-	// A follow-up the person started is their own message to begin with.
-	const isFollowUp = typeof session?.config?.continues_session_id === 'string'
+	const author = useMemo(
+		() => ({ id: me?.id ?? '', name: me?.name ?? 'You', type: 'human' as const }),
+		[me?.id, me?.name],
+	)
+	// Whoever handed the work off wrote the message the thread hangs from: that is who the
+	// first bubble belongs to.
 	const handedOffBy = useMemo(() => {
-		if (isFollowUp) return { id: me?.id ?? '', name: me?.name ?? 'You', type: 'human' as const }
 		const from = flattenMessagesOldestFirst(pages).find((m) => m.id === thread.messageId)
 		return from
 			? { id: from.actorId, name: from.actorName, type: from.actorType }
 			: { id: '', name: 'Handed off', type: 'agent' as const }
-	}, [pages, thread.messageId, isFollowUp, me?.id, me?.name])
+	}, [pages, thread.messageId])
 
-	const chat = useMemo(
-		() =>
-			buildThreadChat(logs ?? [], {
+	// One conversation: the first session, then each follow-up the person wrote, all in order.
+	const chainData = chainLogs.map((q) => q.data)
+	const chat = useMemo(() => {
+		const parts = thread.sessionIds.map((sessionId, i) => {
+			const follow = i > 0 ? thread.followUps[i - 1] : undefined
+			return buildThreadChat(chainData[i] ?? [], {
 				conversationId,
-				sessionId: thread.id,
+				sessionId,
 				agent: { id: thread.actorId, name: thread.actorName, type: 'agent' },
-				me: { id: me?.id ?? '', name: me?.name ?? 'You', type: 'human' },
-				prompt: {
-					author: handedOffBy,
-					content: promptText(thread.actionPrompt, isFollowUp),
-					createdAt: thread.createdAt,
-				},
-			}),
-		[logs, conversationId, thread, me?.id, me?.name, handedOffBy, isFollowUp],
-	)
+				me: author,
+				prompt: follow
+					? {
+							author,
+							content: promptText(follow.actionPrompt, true),
+							createdAt: follow.createdAt,
+						}
+					: { author: handedOffBy, content: thread.actionPrompt, createdAt: thread.createdAt },
+			})
+		})
+		let nextId = -1
+		const items = parts
+			.flatMap((p) => p.items)
+			.map((item) => ({ ...item, message: { ...item.message, id: nextId-- } }))
+		return { items, liveSteps: parts[parts.length - 1]?.liveSteps ?? [] }
+	}, [chainData, conversationId, thread, author, handedOffBy])
 
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const working = live && !idle && !thread.awaiting
@@ -170,7 +183,6 @@ export function SessionThread({
 				conversationId={conversationId}
 				thread={thread}
 				mode={mode}
-				onOpenThread={onOpenThread}
 			/>
 		</>
 	)
@@ -194,13 +206,11 @@ function SessionComposer({
 	conversationId,
 	thread,
 	mode,
-	onOpenThread,
 }: {
 	workspaceId: string
 	conversationId: string
 	thread: ConversationThread
 	mode: ComposerMode
-	onOpenThread: (sessionId: string) => void
 }) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
@@ -215,10 +225,9 @@ function SessionComposer({
 					setError(null)
 					try {
 						if (mode === 'live') {
-							await send.mutateAsync({ id: thread.id, content })
+							await send.mutateAsync({ id: thread.latestId, content })
 						} else {
-							const started = await carryOn.mutateAsync({ id: thread.id, content })
-							onOpenThread(started.session_id)
+							await carryOn.mutateAsync({ id: thread.latestId, content })
 						}
 					} catch (err) {
 						setError(err instanceof Error ? err.message : 'Failed to send message')

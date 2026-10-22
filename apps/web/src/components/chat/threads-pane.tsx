@@ -76,7 +76,6 @@ export function ThreadsPane({
 					conversationId={conversationId}
 					thread={open}
 					onBack={() => onOpenSession(null)}
-					onOpenThread={(id) => onOpenSession(id)}
 					onClose={onClose}
 				/>
 			) : (
@@ -167,21 +166,19 @@ function ThreadView({
 	conversationId,
 	thread,
 	onBack,
-	onOpenThread,
 	onClose,
 }: {
 	workspaceId: string
 	conversationId: string
 	thread: ConversationThread
 	onBack: () => void
-	onOpenThread: (sessionId: string) => void
 	onClose?: () => void
 }) {
 	const pill = statusToPill(thread.status)
 	const display = threadPill(thread.status, thread.awaiting !== null)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
-	const { data: session } = useSession(thread.id, workspaceId)
-	const { data: logs, isLoading } = useSessionLogs(thread.id, workspaceId, true, { live })
+	const { data: session } = useSession(thread.latestId, workspaceId)
+	const { data: logs, isLoading } = useSessionLogs(thread.latestId, workspaceId, true, { live })
 	const { producedObjects, producedFiles } = useSessionAffectedObjects(
 		thread.startedAt,
 		thread.completedAt,
@@ -241,12 +238,7 @@ function ThreadView({
 				) : null}
 			</div>
 
-			<SessionThread
-				workspaceId={workspaceId}
-				conversationId={conversationId}
-				thread={thread}
-				onOpenThread={onOpenThread}
-			/>
+			<SessionThread workspaceId={workspaceId} conversationId={conversationId} thread={thread} />
 		</>
 	)
 }

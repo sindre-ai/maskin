@@ -2300,9 +2300,15 @@ export class SessionManager extends EventEmitter {
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
 		const accessPreamble = buildAccessPreamble(accessRows)
+		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
+		// in its reply, and the later instruction is the one that is followed.
+		const askWithButtonsRule =
+			sessionConfig.conversation || sessionConfig.stop_on_result === true
+				? '\n\n## Asking the person\nWhen you want the person to choose, confirm or decide something that fits in 2 to 4 options, never write that question in your reply. Call the ask_user_question tool instead, with your recommended option first and the reason in its description, and end your turn without repeating the question. This overrides any instruction above to ask a follow-up question in your reply. A question that needs a free-text answer can still be written.'
+				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
