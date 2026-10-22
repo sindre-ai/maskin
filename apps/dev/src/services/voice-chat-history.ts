@@ -86,13 +86,14 @@ export function formatVoiceChatHistory(history: VoiceHistoryMessage[]): string {
 		lines.push(`${speaker}: ${clipped}`)
 	}
 
+	// Newest first, so the budget is spent on the latest lines.
+	const kept: string[] = []
 	let total = 0
-	let first = lines.length
-	while (first > 0 && total + lines[first - 1].length + 1 <= VOICE_HISTORY_TOTAL_MAX_CHARS) {
-		first--
-		total += lines[first].length + 1
+	for (const line of [...lines].reverse()) {
+		if (total + line.length + 1 > VOICE_HISTORY_TOTAL_MAX_CHARS) break
+		kept.unshift(line)
+		total += line.length + 1
 	}
-	const kept = lines.slice(first)
 	if (kept.length === 0) return ''
 
 	return [
