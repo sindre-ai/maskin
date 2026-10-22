@@ -204,12 +204,11 @@ export function createWriteGate(deps: {
 		noteUserLine(text, itemId) {
 			const action = pending
 			if (!action || action.state !== 'open' || action.answer !== null) return
-			if (itemId) {
-				// Only speech that began after the hold can answer it. A line we cannot
-				// place in time is ignored: no yes is heard rather than a wrong one.
-				const index = speechIndexByItem.get(itemId)
-				if (index === undefined || index <= action.speechMark) return
-			}
+			// Only speech that began after the hold can answer it. A line we cannot
+			// place in time (no item id, or one we never saw start) is ignored: no yes
+			// is heard rather than a wrong one.
+			const index = itemId ? speechIndexByItem.get(itemId) : undefined
+			if (index === undefined || index <= action.speechMark) return
 			if (isYes(text)) {
 				action.answer = 'yes'
 				for (const wake of action.waiters.splice(0)) wake()
