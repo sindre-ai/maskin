@@ -17,8 +17,8 @@ export default defineConfig({
 				// The bubble menu's ESM build does `import tippy from 'tippy.js'`, and tippy.js
 				// ships CommonJS as its main entry. Node hands that import the whole exports
 				// object, so the first editor transaction throws "tippy is not a function".
-				// Inline both, so Vite resolves tippy.js to its ESM build instead of leaving
-				// the import to Node.
+				// Inline both, and alias tippy.js to its ESM build below, so the import is
+				// resolved by Vite instead of being left to Node.
 				inline: ['@tiptap/extension-bubble-menu', 'tippy.js'],
 			},
 		},
@@ -35,8 +35,8 @@ export default defineConfig({
 		},
 	},
 	resolve: {
-		alias: {
-			'@': path.resolve(__dirname, './src'),
+		alias: [
+			{ find: '@', replacement: path.resolve(__dirname, './src') },
 			// Resolve module-sdk to its SOURCE, not its build output.
 			//
 			// `packages/module-sdk/package.json` maps `exports["."].types` to
@@ -51,7 +51,12 @@ export default defineConfig({
 			//
 			// See the "Verifying Against Stale State" entry in
 			// `.claude/rules/known-pitfalls.md`.
-			'@maskin/module-sdk': path.resolve(__dirname, '../../packages/module-sdk/src/index.ts'),
-		},
+			{
+				find: '@maskin/module-sdk',
+				replacement: path.resolve(__dirname, '../../packages/module-sdk/src/index.ts'),
+			},
+			// tippy.js: see server.deps.inline above. Exact match, so deep imports stay as they are.
+			{ find: /^tippy\.js$/, replacement: 'tippy.js/dist/tippy.esm.js' },
+		],
 	},
 })
