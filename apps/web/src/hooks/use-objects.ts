@@ -14,6 +14,7 @@ import {
 import type {
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
+	ChatCardRef,
 	MigrateObjectTypeInput,
 	ObjectResponse,
 } from '../lib/api'
@@ -21,7 +22,8 @@ import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 type CreateObjectInput = z.input<typeof createObjectSchema>
-type UpdateObjectInput = z.input<typeof updateObjectSchema>
+// `chat` rides along on a status change made from a chat card (see LinkedObjectCard).
+type UpdateObjectInput = z.input<typeof updateObjectSchema> & { chat?: ChatCardRef }
 
 // Derives the `object_updated` event's `mutation_type` from a patch shape.
 // A patch that touches `status` is classified as a status change; everything
@@ -67,9 +69,18 @@ export function useObject(id: string, options?: { enabled?: boolean }) {
 export function useApproveObject() {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ id, contentHash }: { id: string; contentHash?: string }) =>
-			api.objects.approve(id, contentHash),
-		onSuccess: (_data, { id }) => {
+		mutationFn: ({
+			id,
+			contentHash,
+			chat,
+		}: { id: string; contentHash?: string; chat?: ChatCardRef }) =>
+			api.objects.approve(id, contentHash, chat),
+		onSuccess: (data, { id }) => {
+			// The card reads Approved straight away instead of offering the button again
+			// until the refetch lands.
+			queryClient.setQueryData<ObjectResponse>(queryKeys.objects.detail(id), (cached) =>
+				cached ? { ...cached, preview: data.preview } : cached,
+			)
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 		},
 	})

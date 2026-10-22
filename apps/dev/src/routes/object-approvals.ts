@@ -8,6 +8,8 @@ import { recordObjectApproval, withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema } from '../lib/openapi-schemas'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { approvedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
+import type { SessionManager } from '../services/session-manager'
 
 /**
  * A person's yes to sending a drafted object (an email, a LinkedIn message) exactly as it
@@ -17,12 +19,16 @@ import { isWorkspaceWriter } from '../lib/workspace-auth'
  * Only a person can approve. An agent that calls this is refused, so an approval in the
  * log always means a human saw this text. The approval is bound to the preview's
  * `content_hash`; editing the draft changes the hash, which withdraws the approval.
+ *
+ * Approved from a card in a chat, the request names that chat and the agent behind the card,
+ * and the agent is told to send it there. No message is posted in the person's name.
  */
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -41,7 +47,13 @@ const approveRoute = createRoute({
 		body: {
 			content: {
 				'application/json': {
-					schema: z.object({ content_hash: z.string().min(1).max(100).optional() }),
+					schema: z.object({
+						content_hash: z.string().min(1).max(100).optional(),
+						/** The chat card this was approved from: the agent behind it is told to send. */
+						chat: z
+							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
+							.optional(),
+					}),
 				},
 			},
 			required: false,
@@ -128,6 +140,18 @@ app.openapi(approveRoute, async (c) => {
 		preview,
 		via: 'approval',
 	})
+
+	if (body.chat) {
+		// Not awaited: the approval is saved, and waking the agent may start its session.
+		void wakeAgentFromCard({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId: object.workspaceId,
+			callerId: actorId,
+			card: body.chat,
+			instruction: approvedInstruction(object, preview.body),
+		})
+	}
 
 	return c.json(
 		{
