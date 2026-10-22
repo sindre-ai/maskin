@@ -813,6 +813,12 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 		pause: (id: string, workspaceId: string) =>
@@ -2507,6 +2513,10 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
@@ -2558,6 +2568,8 @@ export interface SpawnedSession {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**

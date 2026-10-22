@@ -214,9 +214,7 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		expect(msgs[0]?.actorId).toBe(created.id)
 		expect(msgs[0]?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
 		expect(msgs[0]?.content).toContain(`I'm ${name}`)
-		expect(msgs[0]?.content).toContain(
-			"I'll reply here. Only things that need your decision go to For You.",
-		)
+		expect(msgs[0]?.content).not.toContain('go to For You')
 
 		// What the chat list shows the person.
 		const list = await createConversationsAppAs(human.id).request(
@@ -552,7 +550,7 @@ describe('Agent intro — render', () => {
 		const text = await introTextFor(ws, `NoKey ${randomUUID()}`, bearer(key))
 
 		expect(text).toContain("I can't run yet. Connect your Claude subscription or API key")
-		expect(text).toContain("I'll reply here. Only things that need your decision go to For You.")
+		expect(text).not.toContain('go to For You')
 	})
 })
 
