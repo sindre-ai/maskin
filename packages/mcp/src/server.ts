@@ -68,10 +68,12 @@ import {
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
+	recordAliasUse,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
+import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
 import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
@@ -2958,11 +2960,26 @@ export function createMcpServer(config: McpConfig) {
 			baseDefinition?.inputSchema && needsNormalise(name)
 				? {
 						...baseDefinition,
-						inputSchema: wrapInputSchema(
-							baseDefinition.inputSchema,
-							(raw) =>
-								normaliseArgs(name, raw, { defaultWorkspaceId: config.defaultWorkspaceId }).args,
-						),
+						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
+							const normalised = normaliseArgs(name, raw, {
+								defaultWorkspaceId: config.defaultWorkspaceId,
+							})
+							// One event per call that used at least one old name. Here, not in
+							// the handler, so it fires before validation and a call that then
+							// fails validation is still counted. Fire and forget; key names
+							// only. A separate event type from tool_call, so the server-side
+							// trace is not double counted.
+							if (normalised.renames.length > 0) {
+								recordAliasUse(telemetrySink, telemetryTarget, {
+									tool_name: name,
+									workspace_id: extractWorkspaceId(raw),
+									renames: normalised.renames,
+									both_sent: normalised.bothSent,
+									transport: config.transport,
+								})
+							}
+							return normalised.args
+						}),
 					}
 				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
@@ -7306,6 +7323,70 @@ export function createMcpServer(config: McpConfig) {
 			},
 		)
 	}
+
+	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
+	// through the same wrapper as a real tool, so it gets the same tool_call row,
+	// size event, token cap and mutation event. The handler calls the wait path of
+	// create_session directly rather than the registered create_session handler,
+	// which would record a second tool_call row for one call.
+	//
+	// Argument mapping, derived from run_agent as it was before PR 1986:
+	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
+	//   workspace_id                                    filled from the default when absent
+	//   notify_on_complete                              accepted and ignored: create_session no longer
+	//                                                   takes it and registers the same fallback itself
+	//                                                   when the wait times out
+	//   config, poll_interval_seconds, timeout_seconds,
+	//   depends_on_session_ids                          no equivalent, dropped, names recorded
+	// The upstream signature accepts a raw shape; this tool passes a schema object
+	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
+	// here. It is still registered through the same wrapper as every other tool.
+	const registerWrappedSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: z.ZodTypeAny
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerWrappedSchemaTool(
+		server,
+		'run_agent',
+		{
+			description: tools.run_agent.description,
+			// The dropped key names are read in this preprocess step, before the
+			// schema strips them, and before validation, so a call that then fails
+			// validation is still counted. Same wrapper the alias rows use; this
+			// tool has no alias rows, so registerAppTool leaves the schema as given.
+			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
+				const sent =
+					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+						? (raw as Record<string, unknown>)
+						: {}
+				recordAliasUse(telemetrySink, telemetryTarget, {
+					tool_name: 'run_agent',
+					workspace_id: extractWorkspaceId(raw),
+					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
+					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+					transport: config.transport,
+				})
+				return raw
+			}),
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
+			return createSessionAndWait(config, {
+				workspace_id: workspace_id ?? config.defaultWorkspaceId,
+				actor_id,
+				action_prompt,
+				spawned_by_message_id,
+				wait: true,
+			})
+		},
+	)
 
 	registerAppTool(
 		server,

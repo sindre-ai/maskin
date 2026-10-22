@@ -1706,6 +1706,23 @@ export const tools = {
 			"Hand a task to another agent from inside the chat you are in. It works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. Returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take); set `wait: true` to hold until the agent has finished and get its output. When it finishes, its final message comes back to you as a new turn in your own chat, so you do not need to poll. Check on it with get_chat_activity, stop it with stop_chat_agent, talk to it with send_session_message. Give `action_prompt` a clear first line: it becomes the card's title. Same as create_session, which still works.",
 		inputSchema: startAgentInputSchema,
 	},
+	// Deprecated alias of create_session with wait on, restored after PR 1986 because
+	// stored prompts in other workspaces still tell agents to call it. Registered
+	// like any tool; the handler maps the arguments (see TOOL_NAME_ALIASES).
+	// Minimal on purpose, as every listed alias costs tokens in every tool list.
+	// The keys the old tool took and create_session has no equivalent for (config,
+	// poll_interval_seconds, timeout_seconds, depends_on_session_ids) are stripped
+	// by this schema; their names are read before that, in the registration's
+	// preprocess step in server.ts.
+	run_agent: {
+		description: 'Deprecated, use create_session with wait true.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().optional(),
+			actor_id: z.string().uuid(),
+			action_prompt: z.string().min(1),
+			spawned_by_message_id: z.number().int().positive().optional(),
+		}),
+	},
 	list_sessions: {
 		description:
 			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row returned. To continue, call again with the same filters, before set to next_cursor and offset left at 0; repeat until next_cursor is absent.",

@@ -97,7 +97,8 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).not.toContain('run_agent')
+		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
+		expect(registeredNames).toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
