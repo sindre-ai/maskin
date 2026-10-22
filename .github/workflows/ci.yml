@@ -7,6 +7,10 @@ on:
   # Without it they report nothing until the aggregate bet -> main PR.
   pull_request:
     branches: [main, 'bet/**']
+  # GitHub's merge queue runs the required checks on a temporary gh-readonly-queue/*
+  # branch (main plus the PRs ahead). Without this trigger nothing reports there and
+  # the queue entry waits on the required checks until it times out.
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,7 +21,8 @@ jobs:
   # Lint, type-check and unit tests always run: they are cheap and cover every package.
   # Integration tests and e2e are skipped only when every changed file is one the script
   # lists as unable to affect them (docs, the Apple app, other apps' workflows, ...);
-  # anything unknown, a push to main, or a diff that cannot be computed runs everything.
+  # anything unknown, a push to main, a merge_group run, or a diff that cannot be computed
+  # runs everything.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -35,6 +40,8 @@ jobs:
         id: areas
         run: |
           : > changed.txt
+          # Only a pull_request has a base_ref (it is empty on merge_group). push and
+          # merge_group leave the list empty on purpose, which runs every area.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt || : > changed.txt
           fi

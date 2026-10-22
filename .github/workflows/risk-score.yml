@@ -5,9 +5,14 @@ on:
     branches:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
+  # The merge queue needs maskin/risk-score on its temporary merge commit too, or the
+  # required check never arrives there. See the risk-score-merge-group job.
+  merge_group:
 
 concurrency:
-  group: risk-score-${{ github.event.pull_request.number }}
+  # pull_request.number is empty on merge_group; without the ref fallback every queue
+  # entry would share one group and cancel the others.
+  group: risk-score-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -15,7 +20,10 @@ permissions:
   checks: write
 
 jobs:
+  # Scores the PR diff. pull_request only: it reads the PR's base and head shas,
+  # which a merge_group event does not carry.
   risk-score:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -89,3 +97,29 @@ jobs:
             if (result.conclusion === 'failure') {
               core.setFailed(`Risk score requires human review: ${result.summary}`)
             }
+
+  # A PR reaches the merge queue only after its score was read on the PR (a failure
+  # there means a person had to review it), so the queue entry is not scored again:
+  # the merge group diff also holds the PRs ahead of it and would flag them to this
+  # one. This job only posts the required maskin/risk-score check run, as a pass, on
+  # the merge group commit so the queue can proceed.
+  risk-score-merge-group:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post maskin/risk-score check run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'maskin/risk-score',
+              head_sha: context.payload.merge_group.head_sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: 'Risk score: scored on the pull request',
+                summary: 'Merge queue entry. The risk score was computed on the pull request and is not recomputed on the merge group.',
+              },
+            })
