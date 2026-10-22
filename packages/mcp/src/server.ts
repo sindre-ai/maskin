@@ -31,6 +31,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
+import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
 import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -2949,7 +2950,21 @@ export function createMcpServer(config: McpConfig) {
 	// without losing the per-tool input schema inference; the wrapper is purely
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+	const registerAppTool = ((s: any, name: string, baseDefinition: any, handler: any) => {
+		// Old parameter spellings are rewritten inside the input schema, because the
+		// SDK validates arguments before our handler runs. A tool with no alias
+		// rows passes through untouched, so its tools/list entry is unchanged.
+		const definition =
+			baseDefinition?.inputSchema && needsNormalise(name)
+				? {
+						...baseDefinition,
+						inputSchema: wrapInputSchema(
+							baseDefinition.inputSchema,
+							(raw) =>
+								normaliseArgs(name, raw, { defaultWorkspaceId: config.defaultWorkspaceId }).args,
+						),
+					}
+				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 		const isReadTool = READ_TOOL_NAMES.has(name)
