@@ -163,7 +163,7 @@ export async function planLift(db: Database, workspaceId: string): Promise<LiftP
 							agentGrants.integrationId,
 							rows.map((r) => r.id),
 						),
-						inArray(agentGrants.access, ['read', 'ask_first', 'read_write']),
+						inArray(agentGrants.access, ['read', 'read_write']),
 					),
 				)
 		: []
