@@ -1,3 +1,5 @@
+const UUID_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+
 // Not followed by more id-like characters, so `/objects/<uuid>x` or a longer slug is no match.
 const OBJECT_LINK =
 	/\/objects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\w-])/gi
@@ -77,6 +79,60 @@ export interface LinkedTarget {
 	id: string
 }
 
+const BARE_URL = /https?:\/\/[^\s<>]+/gi
+// What can trail an address in a sentence without belonging to it.
+const URL_TAIL = /[.,;:!?)\]}'"]+$/
+const APP_PATH = new RegExp(`^/([^/]+)/(objects|files)/(${UUID_SRC})/?$`, 'i')
+
+function isAppHost(host: string): boolean {
+	const current = typeof window === 'undefined' ? '' : window.location.host
+	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
+}
+
+/** One run of a message you wrote: words, or a link to an object or file in this workspace. */
+export type OwnSegment = { kind: 'text'; text: string } | { kind: 'object' | 'file'; id: string }
+
+/**
+ * Your own message as an ordered run of words and links to this workspace's objects and files,
+ * so each link can be drawn inline as a chip with the thing's name instead of a long address.
+ * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
+ * the punctuation that trails one, stays in the words.
+ */
+export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[] {
+	const segments: OwnSegment[] = []
+	let cursor = 0
+	const pushText = (text: string) => {
+		if (!text) return
+		const last = segments[segments.length - 1]
+		if (last?.kind === 'text') last.text += text
+		else segments.push({ kind: 'text', text })
+	}
+	for (const m of content.matchAll(BARE_URL)) {
+		const raw = m[0]
+		const tail = URL_TAIL.exec(raw)?.[0] ?? ''
+		const address = tail ? raw.slice(0, -tail.length) : raw
+		let url: URL
+		try {
+			url = new URL(address)
+		} catch {
+			continue
+		}
+		const match = APP_PATH.exec(url.pathname)
+		if (!match || !isAppHost(url.host) || match[1].toLowerCase() !== workspaceId.toLowerCase()) {
+			continue
+		}
+		const at = m.index ?? 0
+		pushText(content.slice(cursor, at))
+		segments.push({
+			kind: match[2].toLowerCase() === 'files' ? 'file' : 'object',
+			id: match[3].toLowerCase(),
+		})
+		cursor = at + address.length
+	}
+	pushText(content.slice(cursor))
+	return segments
+}
+
 /** The few fields of a hast node the placement rules read; `react-markdown` hands these out. */
 export interface HastNode {
 	type: string
@@ -87,7 +143,7 @@ export interface HastNode {
 	children?: HastNode[]
 }
 
-const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const UUID = UUID_SRC
 const OBJECT_HREF = new RegExp(`/objects/(${UUID})(?:[/?#]|$)`, 'i')
 const FILE_HREF = new RegExp(`/files/(${UUID})(?:[/?#]|$)`, 'i')
 

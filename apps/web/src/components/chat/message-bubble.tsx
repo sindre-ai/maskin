@@ -9,12 +9,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useObject } from '@/hooks/use-objects'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { splitOwnLinks } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Bell, Box, Copy, Link2, Pencil, RotateCcw } from 'lucide-react'
+import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
@@ -111,6 +113,12 @@ export function MessageBubble({
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
 	const isVoice = message.metadata?.source === 'voice'
+	// Links to objects and files in your own message are drawn inline as chips with the thing's
+	// name. Only your own words: another author's links are handled by `linkedCards` on their markdown.
+	const ownSegments = useMemo(
+		() => (isOwn ? splitOwnLinks(message.content, workspaceId) : []),
+		[isOwn, message.content, workspaceId],
+	)
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -213,7 +221,21 @@ export function MessageBubble({
 						// `min-w-0` bounds the box, this bounds the ink. Without it an
 						// unbroken token (a long URL) raises this span's min-content and
 						// paints past the bubble's `max-w` cap, out to the viewport edge.
-						<span className="whitespace-pre-wrap text-balance break-words">{message.content}</span>
+						<span className="whitespace-pre-wrap text-balance break-words">
+							{ownSegments.map((segment, index) =>
+								segment.kind === 'text' ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+									<Fragment key={index}>{segment.text}</Fragment>
+								) : (
+									<OwnLinkChip
+										// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+										key={index}
+										workspaceId={workspaceId}
+										segment={segment}
+									/>
+								),
+							)}
+						</span>
 					) : null}
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
@@ -459,6 +481,65 @@ export function MessageBubble({
 				) : null}
 			</div>
 		</div>
+	)
+}
+
+const MAX_CHIP_TITLE = 30
+
+function chipTitle(title: string): string {
+	const trimmed = title.trim()
+	return trimmed.length > MAX_CHIP_TITLE
+		? `${trimmed.slice(0, MAX_CHIP_TITLE).trimEnd()}…`
+		: trimmed
+}
+
+/**
+ * A link to an object or file in your own message, drawn inline where it was typed as a chip with
+ * the thing's name (cut at 30 characters; the full name is the tooltip). Until the name is known
+ * the chip says what kind of thing it is, so the link never reads as an address.
+ */
+function OwnLinkChip({
+	workspaceId,
+	segment,
+}: {
+	workspaceId: string
+	segment: { kind: 'object' | 'file'; id: string }
+}) {
+	const isObject = segment.kind === 'object'
+	const { data: object } = useObject(segment.id, { enabled: isObject })
+	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
+	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
+	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
+	const className =
+		'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	const content = (
+		<>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{label}</span>
+		</>
+	)
+	return isObject ? (
+		<Link
+			to="/$workspaceId/objects/$objectId"
+			params={{ workspaceId, objectId: segment.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={className}
+		>
+			{content}
+		</Link>
+	) : (
+		<Link
+			to="/$workspaceId/files/$fileId"
+			params={{ workspaceId, fileId: segment.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={className}
+		>
+			{content}
+		</Link>
 	)
 }
 
