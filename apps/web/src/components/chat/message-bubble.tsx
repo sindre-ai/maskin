@@ -386,6 +386,7 @@ export function MessageBubble({
 					<KeychainAccessRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_access_request}
 					/>
@@ -396,6 +397,7 @@ export function MessageBubble({
 					<ComputerRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						agentId={message.actorId}
 						agentName={message.actorName}
 						request={message.metadata.computer_request}

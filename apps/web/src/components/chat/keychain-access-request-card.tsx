@@ -1,7 +1,7 @@
 import { keychainEnvNames } from '@/components/chat/keychain-request-card'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
+import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { ApiError, type MessageKeychainAccessRequest, api } from '@/lib/api'
@@ -16,6 +16,8 @@ import { useState } from 'react'
 interface KeychainAccessRequestCardProps {
 	workspaceId: string
 	conversationId: string
+	/** The message this card is drawn in. */
+	messageId: number
 	/** The agent that asked: the one an Allow gives the credential to. */
 	askingAgentId: string
 	request: MessageKeychainAccessRequest
@@ -34,6 +36,7 @@ interface KeychainAccessRequestCardProps {
 export function KeychainAccessRequestCard({
 	workspaceId,
 	conversationId,
+	messageId,
 	askingAgentId,
 	request,
 }: KeychainAccessRequestCardProps) {
@@ -45,7 +48,9 @@ export function KeychainAccessRequestCard({
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const [declined, setDeclined] = useState(false)
+	const [declinedNow, setDeclinedNow] = useState(false)
+	const declined =
+		declinedNow || useCardAnswer(conversationId, workspaceId, messageId) === 'declined'
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
 	const [allowedNow, setAllowedNow] = useState<'chat' | 'always' | null>(null)
 
@@ -105,10 +110,13 @@ export function KeychainAccessRequestCard({
 	}
 
 	const decline = () => {
-		setDeclined(true)
+		setDeclinedNow(true)
 		sendMessage.mutate({
 			content: `Not now: please don't use ${request.credential_name}. Carry on without it, or tell me what you need instead.`,
-			metadata: { hidden_from_chat: true },
+			metadata: {
+				hidden_from_chat: true,
+				card_answer: { message_id: messageId, outcome: 'declined' },
+			},
 		})
 	}
 

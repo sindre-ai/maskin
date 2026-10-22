@@ -1,6 +1,6 @@
 import { ExpandableDesktop } from '@/components/desktop/expandable-desktop'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
+import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import type { MessageComputerRequest } from '@/lib/api'
 import { Monitor } from 'lucide-react'
 import { useState } from 'react'
@@ -8,6 +8,8 @@ import { useState } from 'react'
 interface ComputerRequestCardProps {
 	workspaceId: string
 	conversationId: string
+	/** The message this card is drawn in. */
+	messageId: number
 	/** The agent that asked. Its own computer is the one shown: the card cannot name another. */
 	agentId: string
 	agentName: string
@@ -32,19 +34,25 @@ type Phase = 'idle' | 'open' | 'done'
 export function ComputerRequestCard({
 	workspaceId,
 	conversationId,
+	messageId,
 	agentId,
 	agentName,
 	request,
 }: ComputerRequestCardProps) {
 	const sendMessage = useSendMessage(conversationId, workspaceId)
-	const [phase, setPhase] = useState<Phase>('idle')
+	const [localPhase, setPhase] = useState<Phase>('idle')
+	const answered = useCardAnswer(conversationId, workspaceId, messageId) === 'done'
+	const phase: Phase = answered ? 'done' : localPhase
 
 	const done = () => {
 		setPhase('done')
 		sendMessage.mutate({
 			// Plain text: a person's own message is not rendered as markdown.
 			content: COMPUTER_DONE_MESSAGE,
-			metadata: { hidden_from_chat: true },
+			metadata: {
+				hidden_from_chat: true,
+				card_answer: { message_id: messageId, outcome: 'done' },
+			},
 		})
 	}
 

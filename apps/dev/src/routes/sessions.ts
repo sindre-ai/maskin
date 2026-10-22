@@ -1109,27 +1109,18 @@ app.openapi(continueSessionRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
+	// The person's words are the session's prompt, as in any chat: that is what its first
+	// message and its title show. What the agent did before reaches it through the system
+	// prompt at launch (config.continues_*), not through this text.
 	const earlier = (session.actionPrompt ?? '').trim().slice(0, 600)
-	const said = body.content.trim()
-	const headline = said.replace(/\s+/g, ' ').slice(0, 70)
-	const actionPrompt = [
-		`Follow-up: "${headline}"`,
-		'',
-		'You finished some work earlier in this chat and the person is now writing to you about it.',
-		earlier ? `What you were asked then:\n${earlier}` : '',
-		`The full log of that session is available with get_session_logs (session ${id}) if you need it.`,
-		'',
-		'What the person says now:',
-		said,
-	]
-		.filter((line, i, all) => line !== '' || all[i - 1] !== '')
-		.join('\n')
+	const actionPrompt = body.content.trim()
 
 	const origin = (session.config ?? {}) as { origin_conversation_id?: unknown; hop_depth?: unknown }
 	const config = {
 		interactive: true,
 		sent_by_actor_id: actorId,
 		continues_session_id: id,
+		continues_prompt: earlier,
 		...(askConversationId ? { ask_conversation_id: askConversationId } : {}),
 		...(typeof origin.origin_conversation_id === 'string'
 			? { origin_conversation_id: origin.origin_conversation_id }

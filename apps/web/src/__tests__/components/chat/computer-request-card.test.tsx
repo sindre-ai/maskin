@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const sendMutate = vi.fn()
-vi.mock('@/hooks/use-conversation', () => ({ useSendMessage: () => ({ mutate: sendMutate }) }))
+let cardAnswer: 'declined' | 'done' | null = null
+vi.mock('@/hooks/use-conversation', () => ({
+	useSendMessage: () => ({ mutate: sendMutate }),
+	useCardAnswer: () => cardAnswer,
+}))
 
 // The live view needs noVNC; the card only decides WHEN and for WHOM to show it.
 const mounted = vi.fn()
@@ -29,6 +33,7 @@ const renderCard = () =>
 			<ComputerRequestCard
 				workspaceId="ws-1"
 				conversationId="conv-1"
+				messageId={7}
 				agentId={AGENT}
 				agentName="Ledger"
 				request={request}
@@ -39,6 +44,7 @@ const renderCard = () =>
 describe('ComputerRequestCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		cardAnswer = null
 	})
 
 	it('says what to do, and does not connect to the computer by itself', () => {
@@ -100,5 +106,13 @@ describe('ComputerRequestCard', () => {
 
 		const sent = JSON.stringify(sendMutate.mock.calls[0]?.[0])
 		expect(sent).not.toContain('e-conomic')
+	})
+
+	it('reads as handed back when the chat already holds the person’s Done', () => {
+		cardAnswer = 'done'
+		renderCard()
+
+		expect(screen.getByText('Handed back to Ledger.')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Open computer' })).not.toBeInTheDocument()
 	})
 })

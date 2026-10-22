@@ -2294,7 +2294,7 @@ export class SessionManager extends EventEmitter {
 		// can ask the person something, and it ends the moment it gives a result.
 		const helperPreamble =
 			sessionConfig.stop_on_result === true
-				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself.\n\n'
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
@@ -2406,7 +2406,27 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.INTERACTIVE = '1'
 			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
 			// through the system prompt instead.
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
+			// A follow-up to a helper that ended: say what the agent did before, so the person's
+			// message (the prompt) can be read as what it is, a reply to that work.
+			const cont = session.config as {
+				continues_session_id?: unknown
+				continues_prompt?: unknown
+			} | null
+			const continuation =
+				typeof cont?.continues_session_id === 'string'
+					? `
+
+## Earlier work
+You finished some work earlier in this chat and the person is now writing to you about it. ${
+							typeof cont.continues_prompt === 'string' && cont.continues_prompt
+								? `What you were asked then:
+${cont.continues_prompt}
+
+`
+								: ''
+						}The full log of that session is available with get_session_logs (session ${cont.continues_session_id}) if you need it.`
+					: ''
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id

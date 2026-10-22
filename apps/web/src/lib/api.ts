@@ -2513,6 +2513,8 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
 	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
 	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */

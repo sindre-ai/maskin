@@ -19,6 +19,19 @@ import { failureText, statusToPill } from '@/lib/handed-off-strip'
 import { buildThreadChat } from '@/lib/session-thread'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
+const OLD_FOLLOW_UP_MARK = 'What the person says now:
+'
+
+/**
+ * The text of a thread's first message. Follow-ups started before the person's own words
+ * became the prompt carry a wrapper around them: only what the person said is theirs.
+ */
+function promptText(prompt: string, isFollowUp: boolean): string {
+	if (!isFollowUp) return prompt
+	const at = prompt.indexOf(OLD_FOLLOW_UP_MARK)
+	return at === -1 ? prompt : prompt.slice(at + OLD_FOLLOW_UP_MARK.length)
+}
+
 /**
  * A sub-session drawn as a normal chat: the same bubbles and composer as the main chat,
  * with the agent's replies, its steps, and anything the person sent into it. The
@@ -45,12 +58,15 @@ export function SessionThread({
 
 	// Whoever handed the work off wrote the message the thread hangs from: that is who
 	// the first bubble belongs to.
+	// A follow-up the person started is their own message to begin with.
+	const isFollowUp = typeof session?.config?.continues_session_id === 'string'
 	const handedOffBy = useMemo(() => {
+		if (isFollowUp) return { id: me?.id ?? '', name: me?.name ?? 'You', type: 'human' as const }
 		const from = flattenMessagesOldestFirst(pages).find((m) => m.id === thread.messageId)
 		return from
 			? { id: from.actorId, name: from.actorName, type: from.actorType }
 			: { id: '', name: 'Handed off', type: 'agent' as const }
-	}, [pages, thread.messageId])
+	}, [pages, thread.messageId, isFollowUp, me?.id, me?.name])
 
 	const chat = useMemo(
 		() =>
@@ -61,7 +77,7 @@ export function SessionThread({
 				me: { id: me?.id ?? '', name: me?.name ?? 'You', type: 'human' },
 				prompt: {
 					author: handedOffBy,
-					content: thread.actionPrompt,
+					content: promptText(thread.actionPrompt, isFollowUp),
 					createdAt: thread.createdAt,
 				},
 			}),

@@ -302,6 +302,16 @@ export const messageMetadataSchema = z.object({
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
 	computer_request: messageComputerRequestSchema.optional(),
+	/**
+	 * Client-supplied: this message is the person's answer to a card (a message id), so the
+	 * card reads as answered whenever the chat is opened again.
+	 */
+	card_answer: z
+		.object({
+			message_id: z.number().int().positive(),
+			outcome: z.enum(['declined', 'done']),
+		})
+		.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**
