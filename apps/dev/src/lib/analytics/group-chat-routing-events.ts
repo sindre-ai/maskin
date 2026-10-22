@@ -3,11 +3,7 @@ import { capturePosthogEvent } from './posthog'
 
 export type GroupChatRoutingTrigger = 'new_message' | 'edit' | 'retry' | 'redo'
 
-/**
- * Why one candidate agent was woken or skipped. Legacy path only (the model
- * relevance check); the wake-rule slice adds its own values later.
- * `direct_1to1` is kept as a name but never emitted: direct chats do not emit.
- */
+/** Why one candidate was woken or skipped (legacy path). `direct_1to1` is never emitted. */
 export type GroupChatWakeReason =
 	| 'tagged'
 	| 'forced_retry'
@@ -19,11 +15,7 @@ export type GroupChatWakeReason =
 	| 'model_no_decision'
 	| 'dropped_agent_cap'
 
-/**
- * How a wake reached the agent. `start_failed` means nothing was delivered
- * (the session could not start, or the race winner could not be written to).
- * `none` is every skipped agent.
- */
+/** How a wake reached the agent. `start_failed` means nothing was delivered. */
 export type GroupChatDelivery =
 	| 'wrote_to_running_session'
 	| 'buffered_for_booting_session'
@@ -52,23 +44,16 @@ export interface GroupChatMessageRoutedProps {
 	taggedActorIds: string[]
 	taggedAgentIds: string[]
 	taggedHumanCount: number
-	/** Latest message writer other than the author; empty string when there is none. */
 	previousOtherActorId: string
 	outcomes: AgentRoutingOutcome[]
 	capHit: boolean
 }
 
 /**
- * One event per group-chat message handled by the responder, after every
- * candidate settled (also on the cap path and when nobody was woken, so silence
- * is visible). Ids and counts only, never message text or titles. PostHog props
- * must be flat, so per-agent detail is one `agentId|decision|reason|delivery`
- * string per candidate.
- *
- * Distinct id is the message author.
- *
- * Best-effort: never throws and never rejects, so callers can fire it without
- * awaiting. A slow or failing capture can never delay a wake.
+ * One event per group-chat message, after every candidate settled (also on the cap path
+ * and when nobody was woken). Ids and counts only, never message text. Per-agent detail
+ * is one `agentId|decision|reason|delivery` string per candidate. Distinct id is the
+ * author. Best-effort: never throws or rejects, so callers fire it without awaiting.
  */
 export async function trackGroupChatMessageRouted(p: GroupChatMessageRoutedProps): Promise<void> {
 	try {
@@ -79,7 +64,6 @@ export async function trackGroupChatMessageRouted(p: GroupChatMessageRoutedProps
 			conversation_id: p.conversationId,
 			message_id: p.messageId,
 			trigger: p.trigger,
-			// The wake-rule flag does not exist yet: every event is the legacy path.
 			flag_on: false,
 			rule: 'legacy',
 			author_actor_id: p.authorActorId,

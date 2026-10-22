@@ -147,7 +147,6 @@ export async function evaluateAndRespond(ctx: {
 		)
 	const participantCount = totalParticipantsRow[0]?.value ?? 0
 	const isDirectConversation = participantCount === 2
-	// Direct chats emit no routing event; a group chat has 3 or more people.
 	const emitsRoutingEvent = participantCount >= 3
 	const trigger: GroupChatRoutingTrigger = options?.isEdit
 		? 'edit'
@@ -249,8 +248,7 @@ export async function evaluateAndRespond(ctx: {
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
 
-	// Reason of every candidate that decided to wake, recorded before delivery so
-	// a delivery that throws still reports why the agent was woken.
+	// Recorded before delivery so a delivery that throws still reports the reason.
 	const wokenReasons = new Map<string, GroupChatWakeReason>()
 	const settled = await Promise.allSettled(
 		candidates.map(async (agent): Promise<AgentRoutingOutcome> => {
@@ -386,9 +384,7 @@ export async function evaluateAndRespond(ctx: {
 			candidateCount: candidates.length,
 			outcomes: settled.map((result, i): AgentRoutingOutcome => {
 				if (result.status === 'fulfilled') return result.value
-				// The candidate threw. A wake that already decided keeps its reason and
-				// reports that nothing was delivered. One that never decided is a
-				// skip: the swallowed rejection used to leave it silent too.
+				// The candidate threw: a decided wake reports nothing delivered, else it is a skip.
 				const agentId = candidates[i]?.id ?? ''
 				const woken = wokenReasons.get(agentId)
 				return woken
@@ -401,12 +397,7 @@ export async function evaluateAndRespond(ctx: {
 	return undefined
 }
 
-/**
- * Fire-and-forget: assembles and emits group_chat_message_routed. Not awaited
- * by the caller and never throws, so a slow or failing lookup or capture can
- * never delay or block a wake. The two small lookups (who the tagged ids are,
- * who spoke last besides the author) run here, off the wake path.
- */
+/** Fire-and-forget, never throws: its lookups and the capture can never delay a wake. */
 function emitGroupChatRouting(ctx: {
 	db: Database
 	workspaceId: string
@@ -447,8 +438,7 @@ function emitGroupChatRouting(ctx: {
 					eq(actors.type, 'agent'),
 				),
 			)
-		// Latest writer other than the author, before this message. An auto-posted
-		// end-of-turn reply counts as that agent speaking.
+		// Latest writer other than the author (an auto-posted end-of-turn reply counts).
 		const [previous] = await db
 			.select({ actorId: messages.actorId })
 			.from(messages)
