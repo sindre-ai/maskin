@@ -605,8 +605,10 @@ function buildMaskinPlanEnv(
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
  * (the routes that don't already carry an explicit model of their own). Route
- * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
- * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
+ * #4 falls back to CLAUDE_SUBSCRIPTION_MODEL when the agent sets none, so a
+ * workspace key never runs the CLI's default model. Route #2 (Claude
+ * subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL at
+ * CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
  * workspace/operator config and are left as-is.
  */
 /**
@@ -786,9 +788,11 @@ export async function resolveLlmRoute(params: {
 		// 4. Workspace anthropic api key
 		const wsAnthropic = wsSettings.llm_keys?.anthropic
 		if (wsAnthropic) {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
+			// An unset model is not "no preference": the CLI then runs its own default,
+			// which is Opus. Fall back to the model the subscription route pins.
+			const envVars: Record<string, string> = {
+				ANTHROPIC_API_KEY: wsAnthropic,
+				ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 			}
 			return { route: LLM_ROUTE_API_KEY, envVars }
 		}
