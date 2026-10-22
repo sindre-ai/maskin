@@ -43,19 +43,6 @@ interface ThreadMessagesProps {
 	workspaceId: string
 	conversationId: string
 	className?: string
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Threaded from the route
-	 *  boundary — the umbrella flag AND the `.banner` sub-flag — into the
-	 *  resume banner. */
-	v4PolishBanner?: boolean
-	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
-	 *  message bubble. */
-	v4PolishBubbles?: boolean
-	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
-	 *  a persistent vertical --brand bar to their right and a spawn chip below
-	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
-	 *  route boundary on `graph-provenance-writes` so the sessions query fires
-	 *  only for tester actors. */
-	producedEnabled?: boolean
 	/** Fills the composer with a fill step's prompt. */
 	onPickStep?: (prompt: string) => void
 	/** Sends a send step's label as the person's message, with the intro step marker. */
@@ -68,9 +55,6 @@ export function ThreadMessages({
 	workspaceId,
 	conversationId,
 	className,
-	v4PolishBanner = false,
-	v4PolishBubbles = false,
-	producedEnabled = false,
 	onPickStep,
 	onSendStep,
 	sendingStep = false,
@@ -109,20 +93,14 @@ export function ThreadMessages({
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
 	// the query cache-shared with useConversationActivity above (same key).
-	// Only fires when the S2 pane is enabled for the actor.
-	const { data: sessionList } = useActiveSessionsForConversation(
-		workspaceId,
-		producedEnabled ? conversationId : null,
-	)
+	const { data: sessionList } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
-		() =>
-			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
-		[sessionList, producedEnabled],
+		() => deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]),
+		[sessionList],
 	)
 
 	// Head/tail dividers for each run of voice-call messages. Derived from the
-	// messages themselves (metadata.source === 'voice'), so it needs no flag read
-	// of its own: no voice messages exist until a flagged call has written some.
+	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
 
 	// Which agent questions already have a human answer, so an answered set of
@@ -325,7 +303,6 @@ export function ThreadMessages({
 				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
-				v4Polish={v4PolishBanner}
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
@@ -432,7 +409,6 @@ export function ThreadMessages({
 									workspaceId={workspaceId}
 									message={bubbleMessage}
 									questionAnswered={answeredQuestionIds.has(message.id)}
-									v4Polish={v4PolishBubbles}
 									spawnInfo={spawnByMessageId.get(message.id)}
 									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
 									// Keyed by index as well as session: one session can put two

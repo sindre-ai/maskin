@@ -56,29 +56,14 @@ const props = {
 }
 
 describe('OverviewPane tabs', () => {
-	it('always offers Linked, with its count, and hides Produced without the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="linked"
-				producedEnabled={false}
-			/>,
-		)
+	it('offers Linked with its count and renders its body', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="linked" />)
 		expect(screen.getByRole('tab', { name: /Linked/ })).toHaveTextContent('3')
-		expect(screen.queryByRole('tab', { name: /Produced/ })).toBeNull()
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Threads, Produced and Linked with the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="threads"
-				producedEnabled
-			/>,
-		)
+	it('offers Threads, Produced and Linked', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="threads" />)
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
 			'Threads',
 			'Produced',
