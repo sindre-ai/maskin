@@ -44,7 +44,12 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import {
+	canControlSession,
+	canReadSession,
+	helperAskConversationId,
+	sessionListVisibility,
+} from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
@@ -311,6 +316,15 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the detail route, applied in the query so the page cut and the
+	// `before` cursor only ever see sessions this caller may read.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
