@@ -2417,6 +2417,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 			const cont = session.config as {
 				continues_session_id?: unknown
 				continues_prompt?: unknown
+				continues_chain?: unknown
 			} | null
 			const continuation =
 				typeof cont?.continues_session_id === 'string'
@@ -2430,7 +2431,7 @@ ${cont.continues_prompt}
 
 `
 								: ''
-						}The full log of that session is available with get_session_logs (session ${cont.continues_session_id}) if you need it.`
+						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
 					: ''
 			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
 		} else {

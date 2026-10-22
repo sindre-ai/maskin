@@ -1135,8 +1135,19 @@ app.openapi(continueSessionRoute, (async (c) => {
 	const origin = (session.config ?? {}) as { origin_conversation_id?: unknown; hop_depth?: unknown }
 	const config = {
 		interactive: true,
+		// Ends after its reply, like the helper it continues, so the thread reads Done between
+		// messages; the next message starts the next follow-up.
+		stop_on_result: true,
 		sent_by_actor_id: actorId,
 		continues_session_id: id,
+		continues_chain: [
+			...(Array.isArray((session.config as { continues_chain?: unknown } | null)?.continues_chain)
+				? ((session.config as { continues_chain: unknown[] }).continues_chain.filter(
+						(x) => typeof x === 'string',
+					) as string[])
+				: []),
+			id,
+		],
 		continues_prompt: earlier,
 		...(helperAskConversationId(session)
 			? { ask_conversation_id: helperAskConversationId(session) }
