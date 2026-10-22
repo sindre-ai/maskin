@@ -264,7 +264,7 @@ export async function withActionLog<T>(
 		result = await run(recorder)
 	} catch (err) {
 		let outcome: ActionOutcome = 'error'
-		let errorCode: string = 'LINKEDIN_UNAVAILABLE'
+		let errorCode = 'LINKEDIN_UNAVAILABLE'
 		if (err instanceof LinkedInActionRefusal) {
 			outcome = err.outcome
 			errorCode = err.code
