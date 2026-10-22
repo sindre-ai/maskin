@@ -152,8 +152,9 @@ test.describe('Chat — drafts a message links to', () => {
 			})
 			await thread.getByText('Post: the handoff problem').click()
 			await expect(thread.getByText('Most agent demos fail on the handoff.')).toBeVisible()
-			await expect(thread.getByText('Scheduled')).toBeVisible()
-			await expect(thread.getByText('2026-10-27')).toBeVisible()
+			// Exact: the card's property line under the title also reads "Scheduled date: …".
+			await expect(thread.getByText('Scheduled', { exact: true })).toBeVisible()
+			await expect(thread.getByText('2026-10-27', { exact: true })).toBeVisible()
 			// The header above the copy is not what goes out, so it is not on the card.
 			await expect(thread.getByText('Voice: sebastian-voice')).toHaveCount(0)
 			await expect(thread.getByText('--- POST ---')).toHaveCount(0)
