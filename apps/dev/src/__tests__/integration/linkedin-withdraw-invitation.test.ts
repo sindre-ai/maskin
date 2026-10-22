@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { INTEGRATION_STATUS_ACTIVE, integrations, linkedinActions } from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { toolName } from '@maskin/mcp/linkedin'
@@ -106,13 +107,16 @@ function stubClient(rows: Row[]) {
 async function connect(opts: { flag?: boolean } = {}) {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
+	// The sent-list cache is per account and per process, so each connection gets its own
+	// account id; otherwise a test would read the list an earlier test left in the cache.
+	const accountId = `acc-${randomUUID()}`
 	const [integration] = await db
 		.insert(integrations)
 		.values({
 			workspaceId: ws.id,
 			provider: 'linkedin-unipile',
 			status: INTEGRATION_STATUS_ACTIVE,
-			credentials: encrypt(JSON.stringify({ account_id: 'acc-1', account_status: 'OK' })),
+			credentials: encrypt(JSON.stringify({ account_id: accountId, account_status: 'OK' })),
 			actorId,
 			createdBy: actorId,
 		})
@@ -132,7 +136,7 @@ async function connect(opts: { flag?: boolean } = {}) {
 		workspaceId: ws.id,
 		actorId,
 		integrationId: integration.id,
-		unipileAccountId: 'acc-1',
+		unipileAccountId: accountId,
 	}
 	const server = new McpServer({ name: 'test', version: '1.0.0' })
 	registerLinkedInMcpInstance(server, cfg, { db, actorId, workspaceId: ws.id })
@@ -148,7 +152,16 @@ async function connect(opts: { flag?: boolean } = {}) {
 		identityType: 'personal',
 	}
 	const opCtx: LinkedInOperationContext = { db, actorId, workspaceId: ws.id, identity: cfg }
-	return { cfg, mcp, workspaceId: ws.id, actorId, integrationId: integration.id, logCtx, opCtx }
+	return {
+		cfg,
+		mcp,
+		accountId,
+		workspaceId: ws.id,
+		actorId,
+		integrationId: integration.id,
+		logCtx,
+		opCtx,
+	}
 }
 
 type Harness = Awaited<ReturnType<typeof connect>>
@@ -231,7 +244,10 @@ describe('withdraw_invitation: what may be withdrawn', () => {
 			can_reinvite_after: new Date(+now + 21 * DAY).toISOString(),
 		})
 		expect(cancelRelationRequest).toHaveBeenCalledTimes(1)
-		expect(cancelRelationRequest).toHaveBeenCalledWith({ account_id: 'acc-1', request_id: 'ripe' })
+		expect(cancelRelationRequest).toHaveBeenCalledWith({
+			account_id: h.accountId,
+			request_id: 'ripe',
+		})
 	})
 
 	it('refuses an invitation with no date when the list never showed it before, and notes it', async () => {
