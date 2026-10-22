@@ -1031,6 +1031,24 @@ describe('create_loop schema', () => {
 		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
 	})
 
+	it('accepts closed_when rules as field=value strings', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			name: 'Candidate loop',
+			closed_when: { insight: ['loop_stage=live'] },
+		})
+		expect(result.closed_when).toEqual({ insight: ['loop_stage=live'] })
+	})
+
+	it.each(['loop_stage', '=live', 'loop_stage=', 'bad field=live', '1stage=live'])(
+		'rejects the malformed closed_when rule %j',
+		(rule) => {
+			expect(() =>
+				schema.parse({ workspace_id: uuid, name: 'X', closed_when: { insight: [rule] } }),
+			).toThrow()
+		},
+	)
+
 	it('rejects a step with an invalid event action', () => {
 		expect(() =>
 			schema.parse({

@@ -2081,6 +2081,25 @@ describe('tool handlers', () => {
 				).rejects.toThrow(/unknown status/)
 			})
 
+			it('rejects closed_when referencing an object type the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad type',
+						closed_when: { nonexistent: ['loop_stage=live'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/closed_when references unknown object type/)
+			})
+
 			it('deletes just-created step triggers when the graph insert fails', async () => {
 				const deleted: string[] = []
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
