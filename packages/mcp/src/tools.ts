@@ -210,6 +210,17 @@ const metadataEqSchema = z
 		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"}. Call get_workspace_schema first to see which fields exist per object type.',
 	)
 
+const LIST_ACTORS_INCLUDE_VALUES = ['triggers', 'loops']
+const LIST_ACTORS_INCLUDE_PATTERN = /^(triggers|loops)(\s*,\s*(triggers|loops))*$/
+
+/** Split a list_actors `include` string ("triggers,loops") into its values. */
+export function parseListActorsInclude(include: string | undefined): string[] {
+	return (include ?? '')
+		.split(',')
+		.map((v) => v.trim())
+		.filter(Boolean)
+}
+
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
@@ -743,7 +754,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row is short: id, type, `title` (the actor's name), status, role, the actor's one-line `description` and a link. Call `get_actor` for the full `system_prompt` (instructions) and for one agent's triggers and loops, which is also how to pick up context on a human teammate @mentioned in a comment. To get `connectedTriggers`/`connectedLoops` for many agents at once, pass `include=triggers,loops` together with a `workspace_id`: each is then a list of `{ name, url }` (omitted when there are none; never returned for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -772,6 +783,15 @@ export const tools = {
 				.optional()
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. Only meaningful when `workspace_id` is set — the cross-workspace listing (no `workspace_id`) does not support cursor pagination and never returns a `next_cursor`; use `offset` to page it instead. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
+			include: z
+				.string()
+				.regex(LIST_ACTORS_INCLUDE_PATTERN, {
+					message: `include must be a comma-separated list of: ${LIST_ACTORS_INCLUDE_VALUES.join(', ')}`,
+				})
+				.optional()
+				.describe(
+					'Comma-separated extra fields to add to each row: `triggers` (connectedTriggers), `loops` (connectedLoops) or `triggers,loops`. Omit for the short default row. Only used when `workspace_id` is set; ignored for the cross-workspace listing.',
 				),
 		}),
 	},
@@ -1172,7 +1192,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1791,7 +1811,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. This is the only way to show a Connect card: post_conversation_message cannot render one, so never write card text or claim a card is shown without calling this tool. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z

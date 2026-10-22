@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
-import { type events, actors, subscriptions } from '@maskin/db/schema'
+import { type events, subscriptions, workspaceMembers } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
-import { inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { mirrorCommentIntoChat } from '../services/object-chat-sync'
 import { recordEventReturning } from './events/record-event'
 
@@ -41,7 +41,7 @@ export interface PostCommentInput {
 export interface PostCommentResult {
 	comment: typeof events.$inferSelect
 	/**
-	 * Mention ids from the request that matched no row in `actors`. Callers
+	 * Mention ids from the request that matched no member of the workspace. Callers
 	 * surface these back to the client — an agent posting over MCP typically
 	 * transcribed a UUID out of its system prompt and fumbled a character, and
 	 * silently dropping the mention means the human it was trying to reach is
@@ -87,19 +87,26 @@ export async function postComment(
 		})
 
 		// Mention ids come straight off the request body, so they can reference
-		// actors that never existed or were deleted since the client rendered the
-		// composer. Resolve them against `actors` here so callers can surface
-		// unresolved ids back to the client and so the auto-subscribe below never
-		// tries to insert an unknown id into `subscriptions.actor_id` (which
-		// would violate its FK and abort the whole comment).
+		// actors that never existed, were deleted since the client rendered the
+		// composer, or belong to another workspace. Resolve them against this
+		// workspace's members here so callers can surface unresolved ids back to
+		// the client, so the auto-subscribe below never tries to insert an unknown
+		// id into `subscriptions.actor_id` (which would violate its FK and abort
+		// the whole comment), and so an actor from another workspace is never
+		// subscribed to this object.
 		let existingMentionedIds: string[] = []
 		let unresolvedMentions: string[] = []
 
 		if (input.mentions?.length) {
 			const mentionedActors = await tx
-				.select({ id: actors.id })
-				.from(actors)
-				.where(inArray(actors.id, input.mentions))
+				.select({ id: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, input.workspaceId),
+						inArray(workspaceMembers.actorId, input.mentions),
+					),
+				)
 
 			existingMentionedIds = mentionedActors.map((a) => a.id)
 			const existingSet = new Set(existingMentionedIds)
