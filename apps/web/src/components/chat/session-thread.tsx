@@ -99,17 +99,19 @@ export function SessionThread({
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const working = live && !idle && !thread.awaiting
 	const failed = pill === 'FAILED'
-	// Whoever started the session, or anyone in the chat it asks its questions in, may write
-	// into it: the same rule as `POST /sessions/:id/input`.
-	const mine =
+	// The thread is shown in this chat, so anyone who can see it may carry on with it. Writing
+	// into a running session has the server's stricter rule: whoever started it, or the chat
+	// it asks its questions in.
+	const canWriteLive =
 		!!session &&
+		session.config?.interactive === true &&
+		session.status === 'running' &&
 		(session.createdBy === me?.id || session.config?.ask_conversation_id === conversationId)
-	const mode: ComposerMode =
-		session?.config?.interactive === true && session.status === 'running' && mine
-			? 'live'
-			: ENDED.has(thread.status) && mine
-				? 'continue'
-				: 'closed'
+	const mode: ComposerMode = canWriteLive
+		? 'live'
+		: ENDED.has(thread.status)
+			? 'continue'
+			: 'closed'
 
 	const endRef = useRef<HTMLDivElement>(null)
 	const size = chat.items.length + chat.liveSteps.length

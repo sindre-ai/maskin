@@ -115,9 +115,18 @@ export function MessageBubble({
 	const isVoice = message.metadata?.source === 'voice'
 	// Links to objects and files in your own message are drawn inline as chips with the thing's
 	// name. Only your own words: another author's links are handled by `linkedCards` on their markdown.
+	// A tapped answer reaches the agent with its question for context; the person's own bubble
+	// shows only what they picked (one question: just the pick, several: header and pick).
+	const answers = message.metadata?.question_answer?.answers
+	const shownContent =
+		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
+			? answers
+					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
+					.join('\n')
+			: message.content
 	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(message.content, workspaceId) : []),
-		[isOwn, message.content, workspaceId],
+		() => (isOwn ? splitOwnLinks(shownContent, workspaceId) : []),
+		[isOwn, shownContent, workspaceId],
 	)
 
 	if (message.kind === 'system') {

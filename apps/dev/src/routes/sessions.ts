@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import { events, integrations, messages, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -1084,14 +1084,31 @@ app.openapi(continueSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	// Same entitlement as writing into the live session: whoever started it, or anyone
-	// in the chat it asks its questions in.
-	const askConversationId = helperAskConversationId(session)
+	// Whoever started it, or anyone in a chat it belongs to: the one it asks its questions in,
+	// the one it came from, or the one holding the message it was handed off from.
 	if (session.createdBy !== actorId) {
-		const inAskChat = askConversationId
-			? await isConversationParticipant(db, askConversationId, actorId)
-			: false
-		if (!inAskChat) {
+		const cfg = (session.config ?? {}) as { origin_conversation_id?: unknown }
+		const chatIds = new Set<string>()
+		const ask = helperAskConversationId(session)
+		if (ask) chatIds.add(ask)
+		if (typeof cfg.origin_conversation_id === 'string') chatIds.add(cfg.origin_conversation_id)
+		if (session.conversationId) chatIds.add(session.conversationId)
+		if (session.spawnedByMessageId) {
+			const [anchor] = await db
+				.select({ conversationId: messages.conversationId })
+				.from(messages)
+				.where(eq(messages.id, session.spawnedByMessageId))
+				.limit(1)
+			if (anchor) chatIds.add(anchor.conversationId)
+		}
+		let entitled = false
+		for (const chatId of chatIds) {
+			if (await isConversationParticipant(db, chatId, actorId)) {
+				entitled = true
+				break
+			}
+		}
+		if (!entitled) {
 			return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 		}
 	}
@@ -1121,7 +1138,9 @@ app.openapi(continueSessionRoute, (async (c) => {
 		sent_by_actor_id: actorId,
 		continues_session_id: id,
 		continues_prompt: earlier,
-		...(askConversationId ? { ask_conversation_id: askConversationId } : {}),
+		...(helperAskConversationId(session)
+			? { ask_conversation_id: helperAskConversationId(session) }
+			: {}),
 		...(typeof origin.origin_conversation_id === 'string'
 			? { origin_conversation_id: origin.origin_conversation_id }
 			: {}),
