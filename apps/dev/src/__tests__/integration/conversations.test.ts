@@ -770,9 +770,12 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
 			await new Promise((resolve) => setTimeout(resolve, 50))
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			// Count only this test's agents. startSession reads the module-wide session
+			// manager, so a responder still running from an earlier test in this file can
+			// land its createSession on this test's mock.
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
+				.filter((actorId) => actorId === agentA.id || actorId === agentB.id)
 				.sort()
 			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
 

@@ -213,9 +213,9 @@ test.describe('Keychain chat capture: vault, relaunch, undo', () => {
 	})
 })
 
-test.describe('Keychain scope editor: paste, assign, see scope', () => {
+test.describe('Keychain agent access: paste, assign, see who has it', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`ticking an agent in Edit access shows it in the Agents block and the audit log @ ${vp.label}`, async ({
+		test(`adding an agent under Agent access gives it the key @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -230,30 +230,30 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 			await page.getByLabel('Name').fill(name)
 			await page.getByLabel('Secret').fill(FAKE_KEY)
 			await page.getByRole('button', { name: 'Save' }).click()
-			await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 })
-			const block = page.getByRole('region', { name: 'Details' })
-			await expect(block).toContainText('No agent can use this key yet.')
+			await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 15_000 })
 
-			// Assign, in the access sheet.
-			await page.getByRole('button', { name: 'Edit access' }).click()
-			const sheet = page.getByRole('dialog', { name: 'Edit access' })
-			await expect(sheet).toBeVisible()
-			await sheet.getByRole('checkbox', { name: new RegExp(agent.name) }).click()
-			await expect(sheet).toContainText('Available to 1 agent')
+			// A new key starts closed to every agent.
+			const access = page.getByRole('button', { name: /Agent access/ })
+			await expect(access).toContainText('No agents have access')
+			await access.click()
+			await expect(
+				page.getByRole('combobox', { name: 'Access for all other agents' }),
+			).toContainText('No access')
+
+			// Add the agent: it gets Full access of its own.
 			const saved = page.waitForResponse(
-				(r) => r.url().includes('/grants') && r.request().method() === 'PUT',
+				(r) => r.url().includes('/grants/') && r.request().method() === 'PUT',
 			)
-			await sheet.getByRole('button', { name: 'Save access' }).click()
+			await page.getByRole('combobox', { name: 'Add an agent' }).click()
+			await page.getByRole('option', { name: agent.name }).click()
 			const response = await saved
 			expect(response.status()).toBe(200)
 			expect(JSON.stringify(await response.json())).not.toContain(FAKE_KEY)
 
-			// See the scope: the sheet closes, the block lists the agent, the log has the row.
-			await expect(sheet).toBeHidden()
-			await expect(block).toContainText('Available to 1 agent')
-			await expect(block).toContainText(agent.name)
-			const log = page.getByRole('region', { name: 'Audit log' })
-			await expect(log).toContainText('SCOPE CHANGED')
+			await expect(access).toContainText('1 agent has access')
+			await expect(page.getByRole('combobox', { name: `Access for ${agent.name}` })).toContainText(
+				'Full access',
+			)
 
 			const list = await page.request.get(`${BASE}/api/integrations`, {
 				headers: authHeaders(account.apiKey, account.workspaceId),
@@ -262,7 +262,7 @@ test.describe('Keychain scope editor: paste, assign, see scope', () => {
 				displayName: string | null
 				agentGrants: Array<{ actorId: string; access: string }>
 			}>
-			// Only the ticked agent holds it: a person needs no grant of their own.
+			// Only that agent holds it: a person needs no grant of their own.
 			const grants = rows.find((r) => r.displayName === name)?.agentGrants
 			expect(grants).toEqual([{ actorId: agent.id, access: 'read_write' }])
 			const overflow = await page.evaluate(

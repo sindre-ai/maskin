@@ -18,6 +18,7 @@ import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { CommentDispatcher } from '../../services/trigger-runner'
 import {
+	ensureWorkspaceMember,
 	insertActor,
 	insertConversation,
 	insertObject,
@@ -141,6 +142,10 @@ async function seed() {
 			apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
 		})
 	const [agent, other] = await Promise.all([mkAgent('Chief'), mkAgent('Other')])
+	// Both agents belong to the workspace, as they would in a real one: starting a
+	// session for an agent requires membership.
+	await ensureWorkspaceMember(db, ws.id, agent.id)
+	await ensureWorkspaceMember(db, ws.id, other.id)
 	const chat = await insertConversation(db, ws.id, human.id)
 	await db.insert(conversationParticipants).values([
 		{ conversationId: chat.id, actorId: human.id, addedBy: human.id },

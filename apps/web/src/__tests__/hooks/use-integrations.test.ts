@@ -9,7 +9,6 @@ vi.mock('@/lib/api', () => ({
 			providers: vi.fn(),
 			disconnect: vi.fn(),
 			connect: vi.fn(),
-			replaceGrants: vi.fn(),
 		},
 	},
 }))
@@ -23,7 +22,6 @@ import {
 	useDisconnectIntegration,
 	useIntegrations,
 	useProviders,
-	useUpdateKeyScope,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { api } from '@/lib/api'
@@ -165,22 +163,5 @@ describe('useIntegrations', () => {
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('Disconnect failed')
 		})
-	})
-})
-
-describe('useUpdateKeyScope', () => {
-	it('shows a failed save inside the sheet, not as a second global toast', async () => {
-		vi.mocked(api.integrations.replaceGrants).mockRejectedValue(new Error('nope'))
-
-		const { result } = renderHook(
-			() => ({ save: useUpdateKeyScope('ws-1', 'int-1'), queryClient: useQueryClient() }),
-			{ wrapper: TestWrapper },
-		)
-
-		result.current.save.mutate([])
-
-		await waitFor(() => expect(result.current.save.isError).toBe(true))
-		const [mutation] = result.current.queryClient.getMutationCache().getAll()
-		expect(mutation.meta).toEqual({ handlesOwnErrors: true })
 	})
 })

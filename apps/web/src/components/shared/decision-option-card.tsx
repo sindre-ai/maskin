@@ -1,4 +1,4 @@
-import { cn } from '@/lib/cn'
+import { Button } from '@/components/ui/button'
 
 /**
  * One option of an agent's decision, as the reader taps it.
@@ -16,84 +16,79 @@ export interface DecisionOption {
 	recommended?: boolean
 }
 
+/** "Suggested: Ship. Goes out tonight. No rollback." — the agent's reasons, kept to two. */
+export function suggestedLine(options: readonly DecisionOption[]): string | null {
+	const option = options.find((candidate) => candidate.recommended)
+	if (!option) return null
+	const reasons = option.consequences.slice(0, 2).map((line) => {
+		const trimmed = line.trim()
+		return trimmed.endsWith('.') ? trimmed : `${trimmed}.`
+	})
+	return [`Suggested: ${option.label}.`, ...reasons].join(' ')
+}
+
 /**
- * One answer, drawn as its own small card: what taking it means, then a
- * full-width bar that commits it. The recommended option is the filled dark
- * bar on the right (mockup's `o.rec`).
+ * The answers to an ask, drawn the way the iOS card draws them (mockup v6): the
+ * recommended option is one full-width dark bar with a small "Recommended" tag,
+ * the rest share one quiet row beneath, and what the agent expects to happen
+ * is one line of small print instead of a box of bullets per option.
  *
  * Shared by the For You card and the object timeline. An ask that renders one
  * way in the feed and another way on the object it was posted to is two asks as
  * far as the reader is concerned, so both surfaces draw it from here.
  */
-export function DecisionOptionCard({
-	option,
-	pending,
-	disabled,
+export function DecisionOptions({
+	options,
+	pendingId,
 	onChoose,
 }: {
-	option: DecisionOption
-	pending: boolean
-	// Set while a sibling option is being posted, so the reader cannot answer
-	// the same question twice while the first answer is still in flight.
-	disabled?: boolean
-	onChoose: () => void
+	options: readonly DecisionOption[]
+	/** The option being posted. Every button is held until it settles, so the question cannot be answered twice. */
+	pendingId: string | null
+	onChoose: (option: DecisionOption) => void
 }) {
-	const recommended = Boolean(option.recommended)
+	const primary = options.filter((option) => option.recommended)
+	const others = options.filter((option) => !option.recommended)
+	const line = suggestedLine(options)
+	const label = (option: DecisionOption) =>
+		pendingId === option.id ? `${option.label}…` : option.label
+
 	return (
-		<div
-			className={cn(
-				'flex flex-col overflow-hidden rounded-[13px] border border-border bg-card transition-opacity duration-150 hover:opacity-100',
-				recommended ? 'opacity-100' : 'opacity-[0.82]',
-			)}
-		>
-			{option.consequences.length > 0 && (
-				<div className="flex flex-col gap-1.5 px-[13px] pb-2.5 pt-[11px]">
-					{option.consequences.map((consequence) => (
-						<div
-							key={consequence}
-							className="flex gap-[7px] text-[11.5px] leading-[1.45] text-muted-foreground"
+		<div className="flex flex-col gap-2">
+			{primary.map((option) => (
+				<Button
+					key={option.id}
+					type="button"
+					data-action-id={option.id}
+					disabled={pendingId !== null}
+					onClick={() => onChoose(option)}
+					className="h-auto min-h-12 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left text-[14px] font-bold"
+				>
+					<span className="min-w-0">{label(option)}</span>
+					{/* Out of the accessible name on purpose: the button is its label. */}
+					<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
+						Recommended
+					</span>
+				</Button>
+			))}
+			{others.length > 0 && (
+				<div className="flex flex-wrap gap-2">
+					{others.map((option) => (
+						<Button
+							key={option.id}
+							type="button"
+							variant="secondary"
+							data-action-id={option.id}
+							disabled={pendingId !== null}
+							onClick={() => onChoose(option)}
+							className="h-auto min-h-11 min-w-[8rem] flex-1 whitespace-normal rounded-xl px-3 py-2.5 text-center text-[13px] font-semibold"
 						>
-							<span aria-hidden className="shrink-0 text-border">
-								·
-							</span>
-							<span className="min-w-0 text-pretty">{consequence}</span>
-						</div>
+							{label(option)}
+						</Button>
 					))}
 				</div>
 			)}
-			<button
-				type="button"
-				data-action-id={option.id}
-				onClick={onChoose}
-				disabled={pending || disabled}
-				className={cn(
-					'mt-auto flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 text-right transition-[background,transform] duration-150 hover:opacity-90 active:scale-[0.985] disabled:cursor-not-allowed',
-					recommended
-						? 'bg-primary text-primary-foreground'
-						: 'bg-card text-foreground hover:bg-secondary',
-				)}
-			>
-				<span
-					className={cn(
-						'min-w-0 flex-1 text-right tracking-[-0.01em]',
-						recommended ? 'text-[13.5px] font-bold' : 'text-[12.5px] font-semibold',
-					)}
-				>
-					{pending ? `${option.label}…` : option.label}
-				</span>
-			</button>
-		</div>
-	)
-}
-
-/**
- * The options grid. Auto-fit so three options sit in a row on a wide object
- * page and stack at 375px without a breakpoint of their own.
- */
-export function DecisionOptionGrid({ children }: { children: React.ReactNode }) {
-	return (
-		<div className="grid gap-[9px] [grid-template-columns:repeat(auto-fit,minmax(190px,1fr))]">
-			{children}
+			{line && <p className="text-[12px] leading-[1.45] text-muted-foreground">{line}</p>}
 		</div>
 	)
 }

@@ -53,6 +53,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
@@ -391,8 +392,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// reading the `X-Maskin-Session-Id` header once at the boundary and
 	// stashing it on the context. Any route that then calls `recordEvent`
 	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
-	// gets a `session → object|file` `produced_by` edge for free (gated on
-	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// gets a `session → object|file` `produced_by` edge for free. Non-mutating
 	// requests are unaffected; requests without the header — human writes
 	// direct from the UI — leave the context value undefined and no edge
 	// lands, exactly the intended contract.
@@ -442,6 +442,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)

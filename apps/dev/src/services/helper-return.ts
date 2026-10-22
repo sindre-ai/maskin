@@ -157,11 +157,13 @@ async function doReturn(
 
 	// A mention-spawned helper that completed has already answered in the thread:
 	// that reply is its return. Failures and timeouts leave no reply, so they return.
+	// Not when it was flagged to report to the sender's chat: the thread reply never
+	// reaches that chat, so the person would be left asking whether it finished.
 	const cfg = (helper.config ?? {}) as {
 		trigger_source?: unknown
 		mention?: { object_id?: unknown }
 	}
-	if (kind === 'completed' && cfg.trigger_source === 'comment_fallback' && cfg.mention) {
+	if (!notify && kind === 'completed' && cfg.trigger_source === 'comment_fallback' && cfg.mention) {
 		return skip('mention_reply_is_the_return')
 	}
 

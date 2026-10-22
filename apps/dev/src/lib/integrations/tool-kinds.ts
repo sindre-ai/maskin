@@ -7,7 +7,8 @@
  * never allowed to.
  *
  * Order of evidence, strongest first:
- *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet);
+ *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet,
+ *      Search Console);
  *   2. the server's own MCP annotation (readOnlyHint), for hosted servers we do not
  *      control, and only when it says read-only — destructiveHint or a missing hint
  *      never makes a tool a read;
@@ -37,6 +38,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_meet__get_transcript_entries',
 		'google_meet__list_recordings',
 	]),
+	'google-search-console': new Set(['inspect_url', 'list_sites']),
 	// Matched on the verb: LinkedIn tool names carry a per-identity prefix.
 	'linkedin-unipile': new Set([
 		'read_post_comments',

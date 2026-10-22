@@ -1,4 +1,3 @@
-import type { CredentialAuditEntry, CredentialAuditLogPage } from '@/lib/api'
 import { ApiError } from '@/lib/api'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -7,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildIntegrationResponse } from '../factories'
 
 const mockNavigate = vi.fn()
-const mockParams = vi.fn<() => Record<string, string>>(() => ({}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -15,10 +13,7 @@ vi.mock('@tanstack/react-router', async () => {
 		...mockTanStackRouter(),
 		useNavigate: () => mockNavigate,
 		Outlet: () => <p>child route</p>,
-		createFileRoute: () => (options: Record<string, unknown>) => ({
-			...options,
-			useParams: () => mockParams(),
-		}),
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -36,8 +31,6 @@ vi.mock('@/lib/auth', async (importOriginal) => ({
 	getStoredActor: () => mockActor(),
 }))
 
-const mockFlag = vi.fn<() => boolean>(() => true)
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => mockFlag() }))
 vi.mock('@/hooks/use-document-title', () => ({ useDocumentTitle: () => {} }))
 
 const mockUseIntegrations = vi.fn()
@@ -46,10 +39,10 @@ const mockCreateLogin = vi.fn()
 const mockRemove = vi.fn()
 const mockRemoveReset = vi.fn()
 const removeState = vi.fn<() => Record<string, unknown>>(() => ({}))
-const mockUseAuditLog = vi.fn()
-const mockUpdateScope = vi.fn()
-const mockResetScope = vi.fn()
-const scopeMutation = vi.fn<() => Record<string, unknown>>(() => ({}))
+const mockSetGrant = vi.fn()
+const mockUpdate = vi.fn()
+const updateState = vi.fn<() => Record<string, unknown>>(() => ({}))
+const mockRemoveGrant = vi.fn()
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => mockUseIntegrations(),
 	useCreateByoApiKey: () => ({ mutateAsync: mockCreate, isPending: false }),
@@ -61,15 +54,16 @@ vi.mock('@/hooks/use-integrations', () => ({
 		isError: false,
 		...removeState(),
 	}),
-	useCredentialAuditLog: () => mockUseAuditLog(),
-	useUpdateKeyScope: () => ({
-		mutate: mockUpdateScope,
-		reset: mockResetScope,
+	useUpdateCredential: () => ({
+		mutate: mockUpdate,
 		isPending: false,
 		isError: false,
 		error: null,
-		...scopeMutation(),
+		...updateState(),
 	}),
+	useSetAgentGrant: () => ({ mutate: mockSetGrant, isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: mockRemoveGrant, isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -83,14 +77,12 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 import { Route as LayoutRoute } from '@/routes/_authed/$workspaceId/settings/keychain'
-import { Route as DetailRoute } from '@/routes/_authed/$workspaceId/settings/keychain/$integrationId'
 import { Route as ListRoute } from '@/routes/_authed/$workspaceId/settings/keychain/index'
 import { Route as NewRoute } from '@/routes/_authed/$workspaceId/settings/keychain/new'
 
 const Layout = (LayoutRoute as unknown as { component: React.FC }).component
 const KeychainPage = (ListRoute as unknown as { component: React.FC }).component
 const AddCredentialPage = (NewRoute as unknown as { component: React.FC }).component
-const CredentialDetailPage = (DetailRoute as unknown as { component: React.FC }).component
 
 // Obviously fake. Built at runtime so no token-shaped literal sits in the repo.
 const SECRET = `lin_${'CANARY0123'.repeat(4)}`
@@ -122,13 +114,11 @@ const captured = (over = {}) =>
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mockFlag.mockReturnValue(true)
-	mockParams.mockReturnValue({})
 	mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
-	scopeMutation.mockReturnValue({})
 	removeState.mockReturnValue({})
+	updateState.mockReturnValue({})
 })
 
 describe('Keychain layout route', () => {
@@ -139,6 +129,23 @@ describe('Keychain layout route', () => {
 })
 
 describe('KeychainPage', () => {
+	it('sorts credentials A to Z by name, whichever was added last', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				pasted({ id: 'c-new', displayName: 'Zapier key', createdAt: '2026-10-10T10:00:00.000Z' }),
+				pasted({ id: 'c-old', displayName: 'apple login', createdAt: '2026-10-01T10:00:00.000Z' }),
+				pasted({ id: 'c-mid', displayName: 'Mailgun key', createdAt: '2026-10-05T10:00:00.000Z' }),
+			],
+			isLoading: false,
+		})
+		render(<KeychainPage />)
+
+		const names = screen
+			.getAllByText(/^(Zapier key|apple login|Mailgun key)$/)
+			.map((n) => n.textContent)
+		expect(names).toEqual(['apple login', 'Mailgun key', 'Zapier key'])
+	})
+
 	it('names the three paths and offers the first add when there are no credentials', () => {
 		render(<KeychainPage />)
 		expect(
@@ -153,7 +160,7 @@ describe('KeychainPage', () => {
 		)
 	})
 
-	it('lists held credentials newest first, with who can read each and the chat badge only where it applies', () => {
+	it('lists held credentials alphabetically as cards, with the chat caption only where it applies', () => {
 		mockUseIntegrations.mockReturnValue({
 			data: [
 				pasted({ agentGrants: [{ actorId: 'agent-2', access: 'read_write' }] }),
@@ -166,33 +173,13 @@ describe('KeychainPage', () => {
 		})
 		render(<KeychainPage />)
 
-		const rows = screen
-			.getAllByRole('link')
-			.filter((l) => l.getAttribute('href')?.endsWith('$integrationId'))
-		expect(rows).toHaveLength(2)
-		expect(rows[0]).toHaveTextContent('Cloudflare deploy')
-		expect(rows[0]).toHaveTextContent('Captured via chat')
-		expect(rows[0]).toHaveTextContent('Infra & DevOps')
-		expect(rows[1]).toHaveTextContent('Linear · Sindre AI')
-		expect(rows[1]).not.toHaveTextContent('Captured via chat')
-		expect(rows[1]).toHaveTextContent('Code Reviewer')
+		const names = screen
+			.getAllByText(/^(Cloudflare deploy|Linear · Sindre AI)$/)
+			.map((n) => n.textContent)
+		expect(names).toEqual(['Cloudflare deploy', 'Linear · Sindre AI'])
+		expect(screen.getAllByText(/Captured via chat/)).toHaveLength(1)
 		expect(screen.queryByText('Undone key')).not.toBeInTheDocument()
 		expect(screen.queryByText(/slack/i)).not.toBeInTheDocument()
-		// The footer helper line appears because a chat-captured row is on the page.
-		expect(screen.getByText(/were vaulted from a live session/)).toBeInTheDocument()
-	})
-
-	it('marks a credential nobody can read as unassigned and fail-closed', () => {
-		mockUseIntegrations.mockReturnValue({ data: [pasted({ agentGrants: [] })], isLoading: false })
-		render(<KeychainPage />)
-		expect(screen.getByText('Unassigned')).toBeInTheDocument()
-		expect(screen.getByText(/No agents — fail-closed/)).toBeInTheDocument()
-	})
-
-	it('leaves the chat helper line out when nothing was captured via chat', () => {
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		render(<KeychainPage />)
-		expect(screen.queryByText(/were vaulted from a live session/)).not.toBeInTheDocument()
 	})
 
 	it('says the list could not load instead of showing the first-run empty state', () => {
@@ -219,16 +206,6 @@ describe('KeychainPage', () => {
 })
 
 describe('AddCredentialPage', () => {
-	it('shows the two entry cards, with chat capture linking to chats', () => {
-		render(<AddCredentialPage />)
-		expect(screen.getByText('Paste a secret')).toBeInTheDocument()
-		expect(screen.queryByText('Connect via OAuth')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Capture from a chat/ })).toHaveAttribute(
-			'href',
-			'/$workspaceId/chats',
-		)
-	})
-
 	it('cannot save until a name and a secret are both there', async () => {
 		const user = userEvent.setup()
 		render(<AddCredentialPage />)
@@ -252,7 +229,7 @@ describe('AddCredentialPage', () => {
 		expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-pressed', 'true')
 	})
 
-	it('sends the trimmed name and the secret, clears the field and opens the new credential', async () => {
+	it('sends the trimmed name and the secret, clears the field and goes back to the list', async () => {
 		mockCreate.mockResolvedValue({ integrationId: 'new-id' })
 		const user = userEvent.setup()
 		render(<AddCredentialPage />)
@@ -271,8 +248,8 @@ describe('AddCredentialPage', () => {
 			}),
 		)
 		expect(mockNavigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/settings/keychain/$integrationId',
-			params: { workspaceId: 'ws-1', integrationId: 'new-id' },
+			to: '/$workspaceId/settings/keychain',
+			params: { workspaceId: 'ws-1' },
 		})
 		expect(screen.getByLabelText('Secret')).toHaveValue('')
 	})
@@ -330,8 +307,8 @@ describe('AddCredentialPage', () => {
 			)
 			expect(mockCreate).not.toHaveBeenCalled()
 			expect(mockNavigate).toHaveBeenCalledWith({
-				to: '/$workspaceId/settings/keychain/$integrationId',
-				params: { workspaceId: 'ws-1', integrationId: 'login-id' },
+				to: '/$workspaceId/settings/keychain',
+				params: { workspaceId: 'ws-1' },
 			})
 			expect(screen.getByLabelText('Password')).toHaveValue('')
 		})
@@ -394,265 +371,162 @@ describe('AddCredentialPage', () => {
 	})
 })
 
-function auditPage(entries: Partial<CredentialAuditEntry>[], next: string | null = null) {
-	return {
-		integrationId: 'x',
-		source: 'admin_ui',
-		originSessionId: null,
-		nextBeforeId: next,
-		entries: entries.map((e, i) => ({
-			id: String(100 - i),
-			actorId: 'actor-1',
-			sessionId: null,
-			outboundTarget: null,
-			action: 'create',
-			source: 'admin_ui',
-			readAt: '2026-10-04T10:00:00.000Z',
-			...e,
-		})),
-	} satisfies CredentialAuditLogPage
-}
-
-function auditLog(pages: CredentialAuditLogPage[], extra = {}) {
-	return {
-		data: { pages },
-		isLoading: false,
-		isError: false,
-		hasNextPage: false,
-		isFetchingNextPage: false,
-		fetchNextPage: vi.fn(),
-		...extra,
+describe('KeychainPage: credential cards', () => {
+	const open = (over = {}, ...more: unknown[]) => {
+		mockUseIntegrations.mockReturnValue({ data: [pasted(over), ...more], isLoading: false })
+		return render(<KeychainPage />)
 	}
-}
+	const agentAccess = () => screen.getByRole('button', { name: /Agent access/ })
 
-describe('CredentialDetailPage', () => {
-	it('says not found for an id that is not a held credential', () => {
-		mockParams.mockReturnValue({ integrationId: 'slack' })
-		mockUseAuditLog.mockReturnValue(auditLog([]))
-		mockUseIntegrations.mockReturnValue({
-			data: [buildIntegrationResponse({ id: 'slack', providerMode: 'registered' })],
-			isLoading: false,
+	describe('Agent access', () => {
+		it('starts collapsed with a one-line summary, and says plainly when no agent has the key', () => {
+			open()
+			expect(agentAccess()).toHaveAttribute('aria-expanded', 'false')
+			expect(agentAccess()).toHaveTextContent('No agents have access')
 		})
-		render(<CredentialDetailPage />)
-		expect(screen.getByText('Credential not found')).toBeInTheDocument()
+
+		it('counts the agents that can use the key', () => {
+			open({
+				agentGrants: [
+					{ actorId: 'agent-1', access: 'read_write' },
+					{ actorId: 'agent-2', access: 'read_write' },
+				],
+			})
+			expect(agentAccess()).toHaveTextContent('2 agents have access')
+		})
+
+		it('says every agent has it when the default is Full access, and counts the ones set to No access', () => {
+			open({
+				defaultAgentAccess: 'read',
+				agentGrants: [{ actorId: 'agent-1', access: 'none' }],
+			})
+			expect(agentAccess()).toHaveTextContent('All agents have access · 1 has no access')
+		})
+
+		it('lists the agents with an entry alphabetically, under an All other agents row', async () => {
+			const user = userEvent.setup()
+			open({
+				agentGrants: [
+					{ actorId: 'agent-1', access: 'read_write' },
+					{ actorId: 'agent-2', access: 'read_write' },
+				],
+			})
+			await user.click(agentAccess())
+
+			const names = screen
+				.getAllByText(/^(Code Reviewer|Infra & DevOps)$/)
+				.map((n) => n.textContent)
+			expect(names).toEqual(['Code Reviewer', 'Infra & DevOps'])
+			expect(screen.getByText('All other agents')).toBeInTheDocument()
+			expect(
+				screen.getByRole('combobox', { name: 'Access for all other agents' }),
+			).toHaveTextContent('No access')
+			expect(screen.getByRole('combobox', { name: 'Access for Code Reviewer' })).toHaveTextContent(
+				'Full access',
+			)
+			// Both agents already have an entry, so there is nobody left to add.
+			expect(screen.queryByRole('combobox', { name: 'Add an agent' })).not.toBeInTheDocument()
+			expect(
+				screen.getByText(
+					'Applies to new sessions. A session already running keeps the key until it ends.',
+				),
+			).toBeInTheDocument()
+		})
+
+		it('puts an agent back with the others when it is set to what they get', async () => {
+			const user = userEvent.setup()
+			open({ agentGrants: [{ actorId: 'agent-1', access: 'read_write' }] })
+			await user.click(agentAccess())
+			// No remove button: choosing the default's level is how an entry goes away.
+			expect(
+				screen.queryByRole('button', { name: 'Remove Infra & DevOps' }),
+			).not.toBeInTheDocument()
+			await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+			await user.click(await screen.findByRole('option', { name: 'No access' }))
+			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1')
+			expect(mockSetGrant).not.toHaveBeenCalled()
+		})
+
+		it('drops the entry when the default is Full access and the agent is set to Full access', async () => {
+			const user = userEvent.setup()
+			open({ defaultAgentAccess: 'read', agentGrants: [{ actorId: 'agent-1', access: 'none' }] })
+			await user.click(agentAccess())
+			await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+			await user.click(await screen.findByRole('option', { name: 'Full access' }))
+			// Full access is the default here, so there is nothing of its own to keep.
+			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1')
+		})
+
+		it('is read-only for a plain member who did not save the key', async () => {
+			mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+			const user = userEvent.setup()
+			open({ agentGrants: [{ actorId: 'agent-1', access: 'read_write' }] })
+			await user.click(agentAccess())
+			expect(
+				screen.queryByRole('button', { name: 'Remove Infra & DevOps' }),
+			).not.toBeInTheDocument()
+			expect(screen.queryByRole('combobox', { name: 'Add an agent' })).not.toBeInTheDocument()
+			expect(screen.getByText(/Only the person who saved this key/)).toBeInTheDocument()
+		})
+
+		it('is left out for a key still in its undo window and for an OAuth connection', () => {
+			mockUseIntegrations.mockReturnValue({
+				data: [captured(), pasted({ id: 'cred-oauth', providerMode: 'byo_oauth' })],
+				isLoading: false,
+			})
+			render(<KeychainPage />)
+			expect(screen.queryByRole('button', { name: /Agent access/ })).not.toBeInTheDocument()
+		})
 	})
 
-	it('shows the chat chip, the CREATE via chat audit row with its session, and the details', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-chat' })
-		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(
-			auditLog([
-				auditPage([
-					{
-						action: 'read',
-						source: 'chat_capture',
-						actorId: 'agent-1',
-						sessionId: 'aaaaaaaa-1',
-						outboundTarget: 'api.cloudflare.com',
-					},
-					{
-						action: 'create',
-						source: 'chat_capture',
-						sessionId: '9f2a3c1d-0000-4000-8000-000000000000',
-					},
-				]),
-			]),
-		)
-		render(<CredentialDetailPage />)
+	describe('Remove', () => {
+		const removeButton = () => screen.queryByRole('button', { name: 'Remove Linear · Sindre AI' })
 
-		expect(screen.getByRole('heading', { name: 'Cloudflare deploy' })).toBeInTheDocument()
-		expect(screen.getAllByText(/Captured via chat/).length).toBeGreaterThan(0)
-
-		const log = screen.getByRole('region', { name: 'Audit log' })
-		const items = within(log).getAllByRole('listitem')
-		expect(items).toHaveLength(2)
-		expect(items[0]).toHaveTextContent('Infra & DevOps read this credential for session aaaaaaaa')
-		expect(items[0]).toHaveTextContent('api.cloudflare.com')
-		expect(items[0]).toHaveTextContent('READ')
-		expect(items[1]).toHaveTextContent('Captured via chat in session 9f2a3c1d')
-		expect(items[1]).toHaveTextContent('vaulted, redacted from transcript')
-		expect(items[1]).toHaveTextContent('CREATE')
-
-		const details = screen.getByRole('region', { name: 'Details' })
-		expect(details).toHaveTextContent('Cloudflare')
-		expect(details).toHaveTextContent('API key')
-		expect(details).toHaveTextContent('via chat')
-		expect(details).toHaveTextContent('Infra & DevOps')
-	})
-
-	it('shows a pasted key without the chat chip and with a plain create row', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-		render(<CredentialDetailPage />)
-
-		expect(screen.queryByText(/Captured via chat/)).not.toBeInTheDocument()
-		expect(screen.getByText('Magnus added this credential.')).toBeInTheDocument()
-		expect(screen.getByRole('region', { name: 'Details' })).toHaveTextContent('Custom')
-	})
-
-	it('loads more entries on request', async () => {
-		const fetchNextPage = vi.fn()
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(
-			auditLog([auditPage([{ action: 'create' }], '99')], { hasNextPage: true, fetchNextPage }),
-		)
-		const user = userEvent.setup()
-		render(<CredentialDetailPage />)
-		await user.click(screen.getByRole('button', { name: 'Load more entries' }))
-		expect(fetchNextPage).toHaveBeenCalledTimes(1)
-	})
-
-	it('says No reads yet when a credential has no audit rows', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([])]))
-		render(<CredentialDetailPage />)
-		expect(screen.getByText('No reads yet')).toBeInTheDocument()
-	})
-
-	it('says No reads yet under the created row when nothing has read the credential', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-		render(<CredentialDetailPage />)
-		expect(screen.getByText('Magnus added this credential.')).toBeInTheDocument()
-		expect(screen.getByText('No reads yet')).toBeInTheDocument()
-	})
-
-	it('does not say No reads yet once a read row exists', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(
-			auditLog([auditPage([{ action: 'read', actorId: 'agent-1', sessionId: 'aaaaaaaa-1' }])]),
-		)
-		render(<CredentialDetailPage />)
-		expect(screen.queryByText('No reads yet')).not.toBeInTheDocument()
-	})
-
-	it('says so when the audit log cannot load, without hiding the credential', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([], { isError: true, data: undefined }))
-		render(<CredentialDetailPage />)
-		expect(screen.getByRole('alert')).toHaveTextContent('Could not load the audit log.')
-		expect(screen.getByRole('heading', { name: 'Linear · Sindre AI' })).toBeInTheDocument()
-	})
-})
-
-describe('CredentialDetailPage: who can use this key', () => {
-	function openPasted(over = {}) {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted(over)], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-		return render(<CredentialDetailPage />)
-	}
-	const agentsBlock = () =>
-		screen.getByRole('heading', { name: 'Agents' }).parentElement?.parentElement
-
-	it('lists the agents the key is granted to, and says so when there are none', () => {
-		openPasted({ agentGrants: [{ actorId: 'agent-1', access: 'read_write' }] })
-		expect(agentsBlock()).toHaveTextContent('Available to 1 agent')
-		expect(agentsBlock()).toHaveTextContent('Infra & DevOps')
-	})
-
-	it('says no agent can use a key nobody has granted', () => {
-		openPasted()
-		expect(agentsBlock()).toHaveTextContent('No agent can use this key yet.')
-	})
-
-	it('shows Edit access to the person who saved the key, and to an admin', () => {
-		const { unmount } = openPasted()
-		expect(screen.getByRole('button', { name: 'Edit access' })).toBeInTheDocument()
-		unmount()
-		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
-		mockRole.mockReturnValue('admin')
-		openPasted()
-		expect(screen.getByRole('button', { name: 'Edit access' })).toBeInTheDocument()
-	})
-
-	it('hides Edit access from a plain member, an agent and a key that is not active', () => {
-		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
-		const { unmount } = openPasted()
-		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
-		unmount()
-
-		mockActor.mockReturnValue({ id: 'actor-1', type: 'agent' })
-		mockRole.mockReturnValue('owner')
-		const second = openPasted()
-		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
-		second.unmount()
-
-		mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
-		mockParams.mockReturnValue({ integrationId: 'cred-chat' })
-		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-		render(<CredentialDetailPage />)
-		expect(screen.queryByRole('button', { name: 'Edit access' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument()
-	})
-
-	describe('Remove credential', () => {
 		it('is offered to the person who saved it and to an admin, for a key and for a login', () => {
-			const { unmount } = openPasted()
-			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			const { unmount } = open()
+			expect(removeButton()).toBeInTheDocument()
 			unmount()
 
 			mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
 			mockRole.mockReturnValue('admin')
-			const second = openPasted()
-			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			const second = open()
+			expect(removeButton()).toBeInTheDocument()
 			second.unmount()
 
 			mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
 			mockRole.mockReturnValue('member')
-			mockParams.mockReturnValue({ integrationId: 'cred-login' })
-			mockUseIntegrations.mockReturnValue({
-				data: [pasted({ id: 'cred-login', providerMode: 'byo_login', displayName: 'e-conomic' })],
-				isLoading: false,
-			})
-			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-			render(<CredentialDetailPage />)
-			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			open({ providerMode: 'byo_login' })
+			expect(removeButton()).toBeInTheDocument()
 		})
 
 		it('is offered even inside the undo window, because removing is allowed at any time', () => {
-			mockParams.mockReturnValue({ integrationId: 'cred-chat' })
 			mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
-			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-			render(<CredentialDetailPage />)
-			expect(screen.getByRole('button', { name: 'Remove credential' })).toBeInTheDocument()
+			render(<KeychainPage />)
+			expect(screen.getByRole('button', { name: 'Remove Cloudflare deploy' })).toBeInTheDocument()
 		})
 
 		it('is hidden from a plain member who did not save it, and from an agent', () => {
 			mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
-			const { unmount } = openPasted()
-			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+			const { unmount } = open()
+			expect(removeButton()).not.toBeInTheDocument()
 			unmount()
 
 			mockActor.mockReturnValue({ id: 'actor-1', type: 'agent' })
 			mockRole.mockReturnValue('owner')
-			openPasted()
-			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+			open()
+			expect(removeButton()).not.toBeInTheDocument()
 		})
 
 		it('is hidden for an OAuth connection, which is disconnected on the Integrations page', () => {
-			mockParams.mockReturnValue({ integrationId: 'cred-oauth' })
-			mockUseIntegrations.mockReturnValue({
-				data: [pasted({ id: 'cred-oauth', providerMode: 'byo_oauth' })],
-				isLoading: false,
-			})
-			mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'create' }])]))
-			render(<CredentialDetailPage />)
-			expect(screen.queryByRole('button', { name: 'Remove credential' })).not.toBeInTheDocument()
+			open({ providerMode: 'byo_oauth' })
+			expect(removeButton()).not.toBeInTheDocument()
 		})
 
 		it('asks first, says the secret is destroyed, and removes nothing on Cancel', async () => {
 			const user = userEvent.setup()
-			openPasted()
+			open()
 
-			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+			await user.click(removeButton() as HTMLElement)
 
 			const dialog = await screen.findByRole('dialog')
 			expect(within(dialog).getByText(/can't be recovered/)).toBeInTheDocument()
@@ -660,65 +534,145 @@ describe('CredentialDetailPage: who can use this key', () => {
 			expect(mockRemove).not.toHaveBeenCalled()
 		})
 
-		it('removes the credential on confirm and goes back to the list', async () => {
+		it('removes the credential on confirm and closes the dialog', async () => {
 			mockRemove.mockImplementation((_id: string, opts?: { onSuccess?: () => void }) =>
 				opts?.onSuccess?.(),
 			)
 			const user = userEvent.setup()
-			openPasted()
+			open()
 
-			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+			await user.click(removeButton() as HTMLElement)
 			await user.click(
 				within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }),
 			)
 
 			expect(mockRemove).toHaveBeenCalledWith('cred-paste', expect.any(Object))
-			expect(mockNavigate).toHaveBeenCalledWith({
-				to: '/$workspaceId/settings/keychain',
-				params: { workspaceId: 'ws-1' },
-			})
+			await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 		})
 
 		it('keeps the dialog open and says so when removing fails', async () => {
 			removeState.mockReturnValue({ isError: true })
 			const user = userEvent.setup()
-			openPasted()
+			open()
 
-			await user.click(screen.getByRole('button', { name: 'Remove credential' }))
+			await user.click(removeButton() as HTMLElement)
 
 			expect(await screen.findByRole('alert')).toHaveTextContent('Could not remove this credential')
-			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
+})
 
-	it('saves the ticked agent from the sheet', async () => {
+describe('KeychainPage: edit a credential', () => {
+	const open = (over = {}) => {
+		mockUseIntegrations.mockReturnValue({ data: [pasted(over)], isLoading: false })
+		return render(<KeychainPage />)
+	}
+	const editButton = () => screen.queryByRole('button', { name: 'Edit Linear · Sindre AI' })
+	const dialog = async () => within(await screen.findByRole('dialog'))
+	const save = (d: ReturnType<typeof within>) => d.getByRole('button', { name: 'Save' })
+
+	it('is offered to the person who saved it and to an admin, and hidden from everyone else', () => {
+		const { unmount } = open()
+		expect(editButton()).toBeInTheDocument()
+		unmount()
+
+		mockActor.mockReturnValue({ id: 'someone-else', type: 'human' })
+		const plain = open()
+		expect(editButton()).not.toBeInTheDocument()
+		plain.unmount()
+
+		mockRole.mockReturnValue('admin')
+		open()
+		expect(editButton()).toBeInTheDocument()
+	})
+
+	it('is hidden for an OAuth connection and for a key still in its undo window', () => {
+		open({ providerMode: 'byo_oauth' })
+		expect(editButton()).not.toBeInTheDocument()
+		mockUseIntegrations.mockReturnValue({ data: [captured()], isLoading: false })
+		render(<KeychainPage />)
+		expect(screen.queryByRole('button', { name: 'Edit Cloudflare deploy' })).not.toBeInTheDocument()
+	})
+
+	it('starts on the saved name with an empty secret, and cannot save until something changes', async () => {
 		const user = userEvent.setup()
-		openPasted()
-		await user.click(screen.getByRole('button', { name: 'Edit access' }))
-		await user.click(screen.getByRole('checkbox', { name: 'Code Reviewer' }))
-		await user.click(screen.getByRole('button', { name: 'Save access' }))
-		expect(mockUpdateScope).toHaveBeenCalledWith(
-			['agent-2'],
-			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		expect(d.getByLabelText('Name')).toHaveValue('Linear · Sindre AI')
+		expect(d.getByLabelText('New secret')).toHaveValue('')
+		expect(save(d)).toBeDisabled()
+	})
+
+	it('renames without sending a secret, and warns that agents using the old name need the new one', async () => {
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		const name = d.getByLabelText('Name')
+		await user.clear(name)
+		await user.type(name, 'Linear production')
+		expect(d.getByText(/use this by its old name need the new one/)).toBeInTheDocument()
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith(
+			{ displayName: 'Linear production' },
+			expect.any(Object),
 		)
 	})
 
-	it('shows the failure inside the sheet and keeps it open', async () => {
-		scopeMutation.mockReturnValue({ isError: true, error: new ApiError(500, 'boom') })
+	it('replaces the key without renaming, and clears the field once saved', async () => {
+		mockUpdate.mockImplementation((_b: unknown, opts?: { onSuccess?: () => void }) =>
+			opts?.onSuccess?.(),
+		)
 		const user = userEvent.setup()
-		openPasted()
-		await user.click(screen.getByRole('button', { name: 'Edit access' }))
-		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't save access. Nothing changed.")
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New secret'), SECRET)
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith({ rawSecret: SECRET }, expect.any(Object))
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+		expect(JSON.stringify({ ...localStorage })).not.toContain(SECRET)
 	})
 
-	it('shows the audit row for a scope change with who made it', () => {
-		mockParams.mockReturnValue({ integrationId: 'cred-paste' })
-		mockUseIntegrations.mockReturnValue({ data: [pasted()], isLoading: false })
-		mockUseAuditLog.mockReturnValue(auditLog([auditPage([{ action: 'scope_changed' }])]))
-		render(<CredentialDetailPage />)
-		const log = screen.getByRole('region', { name: 'Audit log' })
-		const row = within(log).getAllByRole('listitem')[0]
-		expect(row).toHaveTextContent('Magnus changed which agents can use this credential.')
-		expect(row).toHaveTextContent('SCOPE CHANGED')
+	it('replaces a login as a whole: both fields together, never one alone', async () => {
+		const user = userEvent.setup()
+		open({ providerMode: 'byo_login' })
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New username or email'), 'me@example.test')
+		expect(save(d)).toBeDisabled()
+		expect(d.getByText(/together to replace the login/)).toBeInTheDocument()
+		await user.type(d.getByLabelText('New password'), 'p4ss"word')
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith(
+			{ username: 'me@example.test', password: 'p4ss"word' },
+			expect.any(Object),
+		)
+	})
+
+	it('refuses a name the server would refuse, before any request', async () => {
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		const name = d.getByLabelText('Name')
+		await user.clear(name)
+		await user.click(name)
+		await user.paste('bad [name]')
+		expect(
+			d.getByText("Names can't contain square brackets or control characters."),
+		).toBeInTheDocument()
+		expect(save(d)).toBeDisabled()
+	})
+
+	it('shows the server message when the name is taken, and keeps the dialog open', async () => {
+		const taken = new ApiError(409, 'Another key in this workspace already has this name.')
+		taken.code = 'NAME_TAKEN'
+		updateState.mockReturnValue({ isError: true, error: taken })
+		const user = userEvent.setup()
+		open()
+		await user.click(editButton() as HTMLElement)
+		expect(await screen.findByRole('alert')).toHaveTextContent('already has this name')
 	})
 })
