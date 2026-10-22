@@ -217,9 +217,13 @@ describe('T2 read by ids', () => {
 		const note = obj({ id: 'n', type: 'knowledge', title: `Eval codes ${short}` })
 		state.objects.push(note)
 		note.content = [seed.code1, seed.code2].join('\n')
-		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
+		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [seed.code1, seed.code2, seed.code3].join('\n')
-		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(true)
+		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -228,10 +232,14 @@ describe('T3 set driver', () => {
 		const state = new FakeState()
 		const ctx = ctxFor(state, new FakeSeeder(state))
 		const seed = await task('T3-set-driver').setup(ctx)
-		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
+		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		const row = state.objects.find((candidate) => candidate.id === seed.taskId) as ObjectRow
 		row.driver = seed.helperId as string
-		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(true)
+		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -246,11 +254,17 @@ describe('T4 list links', () => {
 		const b = `Eval link ${short} B`
 		const c = `Eval link ${short} C`
 		note.content = [a, b].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [a, b, c, `Eval decoy ${short} 1`].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [a, b, c].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(true)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -259,14 +273,18 @@ describe('T5 start session', () => {
 		const state = new FakeState()
 		const ctx = ctxFor(state, new FakeSeeder(state))
 		const seed = await task('T5-start-session').setup(ctx)
-		expect((await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
+		expect(
+			(await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed,
+		).toBe(false)
 		state.sessions.push({
 			id: 's1',
 			actorId: seed.helperId as string,
 			initiatedFromObjectId: seed.taskId as string,
 			actionPrompt: `eval-handoff-${short}, please look at this task.`,
 		})
-		expect((await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(true)
+		expect(
+			(await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed,
+		).toBe(true)
 	})
 })
 
