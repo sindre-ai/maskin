@@ -8,7 +8,7 @@
 
 import { Extension } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { type EditorState, Plugin, PluginKey } from '@tiptap/pm/state'
+import { type EditorState, Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { type RenderedText, type TextAnchor, findAnchorRange, renderedText } from './text-anchor'
 
@@ -154,7 +154,32 @@ export function setTextComments(
 	activeId: string | null,
 ): void {
 	const meta: HighlightMeta = { comments, activeId }
-	view.dispatch(view.state.tr.setMeta(commentHighlightsKey, meta).setMeta('addToHistory', false))
+	const tr = view.state.tr.setMeta(commentHighlightsKey, meta).setMeta('addToHistory', false)
+	view.dispatch(withPageSelection(view, tr))
+}
+
+/**
+ * A click moves the selection on the page before the editor reads it. A redraw
+ * dispatched from that click (clicking off a highlight clears the active one)
+ * would otherwise carry the old selection and put it back on the page.
+ */
+function withPageSelection(view: EditorView, tr: Transaction): Transaction {
+	if (!view.hasFocus() || !(tr.selection instanceof TextSelection)) return tr
+	const page = view.dom.ownerDocument.getSelection()
+	const { anchorNode, focusNode } = page ?? {}
+	if (!page || !anchorNode || !focusNode) return tr
+	if (!view.dom.contains(anchorNode) || !view.dom.contains(focusNode)) return tr
+	try {
+		const anchor = view.posAtDOM(anchorNode, page.anchorOffset)
+		const head = view.posAtDOM(focusNode, page.focusOffset)
+		if (anchor === tr.selection.anchor && head === tr.selection.head) return tr
+		if (!tr.doc.resolve(anchor).parent.inlineContent || !tr.doc.resolve(head).parent.inlineContent) {
+			return tr
+		}
+		return tr.setSelection(TextSelection.create(tr.doc, anchor, head))
+	} catch {
+		return tr
+	}
 }
 
 /** The document range a comment is currently drawn at, or null when orphaned or unknown. */
