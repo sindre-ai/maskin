@@ -51,7 +51,7 @@ interface MessageBubbleProps {
 	/** Linked objects an earlier message already shows a card for. */
 	shownLinkedObjectIds?: ReadonlySet<string>
 	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
-	onRetried?: (messageId: number) => void
+	onRetried?: (message: MessageResponse) => void
 }
 
 /**
@@ -252,7 +252,7 @@ export function MessageBubble({
 								onClick={() =>
 									retryMessage.mutate(
 										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message.id) },
+										{ onSuccess: () => onRetried?.(message) },
 									)
 								}
 								disabled={retryMessage.isPending}
@@ -452,7 +452,7 @@ export function MessageBubble({
 								onClick={() =>
 									retryMessage.mutate(
 										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message.id) },
+										{ onSuccess: () => onRetried?.(message) },
 									)
 								}
 								disabled={retryMessage.isPending}

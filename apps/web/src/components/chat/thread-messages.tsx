@@ -14,9 +14,15 @@ import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
-import type { MessageMetadata, SessionResponse } from '@/lib/api'
+import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { dropRedoneFailedTurns, supersededFailedReplyIds } from '@/lib/failed-turns'
+import {
+	type RedoneTurns,
+	dropRedoneFailedTurns,
+	redoKey,
+	snapshotRedo,
+	supersededFailedReplyIds,
+} from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -118,13 +124,20 @@ export function ThreadMessages({
 	const helperQuestionIds = new Set(
 		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
 	)
-	// Messages the person redid in this view. The failed reply and failed session
-	// notice of such a turn leave the timeline so the new attempt takes their place.
-	const [redoneMessageIds, setRedoneMessageIds] = useState<ReadonlySet<number>>(new Set())
+	// Turns the person redid in this view, with what had already failed at that
+	// moment. Those failed notices leave the timeline so the new attempt takes
+	// their place; a later failure of the new attempt stays visible.
+	const [redoneTurns, setRedoneTurns] = useState<RedoneTurns>(new Map())
 	const supersededFailedIds = useMemo(
-		() => supersededFailedReplyIds(messages, redoneMessageIds),
-		[messages, redoneMessageIds],
+		() => supersededFailedReplyIds(messages, redoneTurns),
+		[messages, redoneTurns],
 	)
+	const handleRetried = (retried: MessageResponse) => {
+		const key = redoKey(retried)
+		setRedoneTurns((prev) =>
+			new Map(prev).set(key, snapshotRedo(messages, byTriggerMessageId.get(key) ?? [])),
+		)
+	}
 	const visibleMessages = messages.filter((m) => {
 		if (supersededFailedIds.has(m.id)) return false
 		// A helper's result handed to the agent that started it: the agent gets it, the
@@ -361,7 +374,7 @@ export function ThreadMessages({
 					const turnsBelow = dropRedoneFailedTurns(
 						byTriggerMessageId.get(message.id) ?? [],
 						message.id,
-						redoneMessageIds,
+						redoneTurns,
 					)
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
@@ -423,7 +436,7 @@ export function ThreadMessages({
 									message={bubbleMessage}
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									spawnInfo={spawnByMessageId.get(message.id)}
-									onRetried={(id) => setRedoneMessageIds((prev) => new Set(prev).add(id))}
+									onRetried={handleRetried}
 									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
 									// Keyed by index as well as session: one session can put two
 									// turns under the same message (a result segment plus the
