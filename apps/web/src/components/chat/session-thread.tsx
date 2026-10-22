@@ -19,8 +19,7 @@ import { failureText, statusToPill } from '@/lib/handed-off-strip'
 import { buildThreadChat } from '@/lib/session-thread'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
-const OLD_FOLLOW_UP_MARK = 'What the person says now:
-'
+const OLD_FOLLOW_UP_MARK = 'What the person says now:\n'
 
 /**
  * The text of a thread's first message. Follow-ups started before the person's own words
@@ -81,7 +80,7 @@ export function SessionThread({
 					createdAt: thread.createdAt,
 				},
 			}),
-		[logs, conversationId, thread, me?.id, me?.name, handedOffBy],
+		[logs, conversationId, thread, me?.id, me?.name, handedOffBy, isFollowUp],
 	)
 
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
