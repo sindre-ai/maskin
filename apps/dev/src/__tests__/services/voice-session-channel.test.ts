@@ -130,7 +130,7 @@ describe('voice channel — tool proxy', () => {
 		})
 	})
 
-	it('fills in workspace_id when the model leaves it out, and keeps one it passes', async () => {
+	it('fills in workspace_id when the model leaves it out, and overrides one it passes', async () => {
 		const invoke = vi.fn().mockResolvedValue(textResult('ok'))
 		const { toolCall } = setup(invoke)
 		await toolCall('list_objects', { type: 'bet', cursor: 'abc' })
@@ -140,7 +140,8 @@ describe('voice channel — tool proxy', () => {
 			type: 'bet',
 			cursor: 'abc',
 		})
-		expect(invoke.mock.calls[1]?.[1]).toMatchObject({ workspace_id: OTHER_WORKSPACE })
+		expect(invoke.mock.calls[1]?.[1]).toEqual({ workspace_id: WORKSPACE })
+		expect(invoke.mock.calls[1]?.[2]).toMatchObject({ workspaceId: WORKSPACE })
 	})
 
 	it('runs any tool the model asks for, with no allow-list in front of it', async () => {
