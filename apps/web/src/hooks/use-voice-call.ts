@@ -60,7 +60,12 @@ function isMicMissing(err: unknown): boolean {
 	)
 }
 
-export function useVoiceCall(agentActorId: string, agentName: string, open: boolean): VoiceCall {
+export function useVoiceCall(
+	agentActorId: string,
+	agentName: string,
+	open: boolean,
+	conversationId?: string,
+): VoiceCall {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	// The toast reads these at call end. Held in a ref so finish() keeps a stable
@@ -267,7 +272,10 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		// voice-enabled, 429) returns the dialog to Permission with a notice.
 		let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
 		try {
-			session = await api.voiceSessions.create(workspaceId, { agent_actor_id: agentActorId })
+			session = await api.voiceSessions.create(workspaceId, {
+				agent_actor_id: agentActorId,
+				...(conversationId ? { conversation_id: conversationId } : {}),
+			})
 		} catch (err) {
 			teardown()
 			if (err instanceof ApiError && err.status === 429) {
@@ -391,7 +399,7 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			setNotice(message)
 			setState('permission')
 		}
-	}, [agentActorId, clearReconnectTimer, finish, teardown, workspaceId])
+	}, [agentActorId, clearReconnectTimer, conversationId, finish, teardown, workspaceId])
 
 	const retryMic = useCallback(async () => {
 		try {

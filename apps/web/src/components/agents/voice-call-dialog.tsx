@@ -20,7 +20,10 @@ import {
 import { useEffect, useState } from 'react'
 
 /** The slice of an actor the call dialog needs; agent rows pass list items, the detail header passes the full record. */
-export type VoiceCallAgent = Pick<ActorResponse, 'id' | 'name' | 'type'>
+export type VoiceCallAgent = Pick<ActorResponse, 'id' | 'name' | 'type'> & {
+	/** Set when the call starts from a chat: the agent gets its recent messages and the transcript lands in it. */
+	conversationId?: string
+}
 
 // Verbatim strings — the SPEC's §Copy table is authoritative. A prototype
 // string not listed there is a bug.
@@ -54,7 +57,7 @@ export function VoiceCallDialog({
 	onOpenChange: (open: boolean) => void
 }) {
 	const isMobile = useIsMobile()
-	const call = useVoiceCall(agent.id, agent.name, open)
+	const call = useVoiceCall(agent.id, agent.name, open, agent.conversationId)
 	// Minimized, the call collapses to a floating bar so the page behind it is
 	// usable. The call itself (mic, connection) is untouched: this component, and
 	// so its useVoiceCall state, stays mounted either way.

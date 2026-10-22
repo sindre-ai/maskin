@@ -78,8 +78,10 @@ export function ThreadHeader({
 	const voiceAgent = useMemo(() => {
 		const agents = (conversation?.participants ?? []).filter((p) => p.actorType === 'agent')
 		const only = agents.length === 1 ? agents[0] : null
-		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
-	}, [conversation?.participants])
+		return only
+			? { id: only.actorId, name: only.actorName, type: only.actorType, conversationId }
+			: null
+	}, [conversation?.participants, conversationId])
 	const { data: loop } = useLoop(loopId ?? '', workspaceId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')

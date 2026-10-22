@@ -1117,7 +1117,7 @@ export const api = {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,

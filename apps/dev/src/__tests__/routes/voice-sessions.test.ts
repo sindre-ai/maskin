@@ -148,6 +148,24 @@ describe('POST /api/voice-sessions', () => {
 		expect(await res.json()).toEqual({ voice_session_id: insertedId })
 	})
 
+	it('404s when the caller is not a participant of the chat the call starts from', async () => {
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[membershipRow()],
+			[{ role: 'member' }], // writer-role check
+			[agentRow()],
+			[{ seconds: '0' }], // daily minutes used
+			[], // participant lookup: no row
+		]
+		const res = await app.request(
+			jsonRequest('POST', '/api/voice-sessions', {
+				agent_actor_id: AGENT,
+				conversation_id: '22222222-2222-4222-8222-222222222222',
+			}),
+		)
+		expect(res.status).toBe(404)
+	})
+
 	it('rejects a body missing agent_actor_id with 400 VALIDATION_ERROR', async () => {
 		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		const res = await app.request(jsonRequest('POST', '/api/voice-sessions', {}))
@@ -271,6 +289,49 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(sent.model).toBe('gpt-realtime-2.1')
 		expect(sent.tools).toEqual(VOICE_TOOLS)
 		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('gives the agent the chat the call started from as context', async () => {
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow({ conversationId: '22222222-2222-4222-8222-222222222222' })],
+			[memberRow()],
+			[offerAgent()],
+			[], // agentSkills
+			// newest first, as the query orders them
+			[
+				{ content: 'Sounds good, ship it', actorName: 'Chief of Staff', kind: 'message' },
+				{ content: 'Draft the launch plan', actorName: 'Sindre', kind: 'message' },
+			],
+			[{ settings: null }], // transcript persistence
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(200)
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		const sent = JSON.parse((init.body as FormData).get('session') as string) as {
+			instructions: string
+		}
+		expect(sent.instructions).toContain('## Chat so far')
+		expect(sent.instructions.indexOf('Sindre: Draft the launch plan')).toBeLessThan(
+			sent.instructions.indexOf('Chief of Staff: Sounds good, ship it'),
+		)
 	})
 
 	it('reports tools_available false when the server socket cannot attach', async () => {
