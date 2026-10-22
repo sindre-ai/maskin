@@ -270,6 +270,8 @@ const CLIENT_SUPPLIED_KEYS = [
 	'context_objects',
 	'context_notifications',
 	'question_answer',
+	'card_answer',
+	'hidden_from_chat',
 	'from_suggested_step',
 ]
 
