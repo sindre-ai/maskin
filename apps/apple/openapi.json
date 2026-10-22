@@ -62453,11 +62453,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-<<<<<<< HEAD
 				"description": "Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
-=======
-				"description": "Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
->>>>>>> origin/main
 				"requestBody": {
 					"required": true,
 					"content": {
