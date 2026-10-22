@@ -238,7 +238,22 @@ describe('MessageBubble — agent hover row (v4)', () => {
 	it('triggers the existing regenerate mutation with the message id when Retry is clicked', () => {
 		renderBubble(buildMessage({ id: 42 }))
 		fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-		expect(retryMutate).toHaveBeenCalledWith({ messageId: 42 })
+		expect(retryMutate).toHaveBeenCalledWith(
+			{ messageId: 42 },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+	})
+
+	it('tells the thread about the redo once the retry is accepted', () => {
+		const onRetried = vi.fn()
+		const message = buildMessage({ id: 42 })
+		retryMutate.mockImplementation((_variables, options) => options?.onSuccess?.())
+		render(<MessageBubble workspaceId="ws-1" message={message} onRetried={onRetried} />, {
+			wrapper: TestWrapper,
+		})
+		expect(onRetried).not.toHaveBeenCalled()
+		fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+		expect(onRetried).toHaveBeenCalledWith(message)
 	})
 
 	it('adds Copy to the user branch alongside Edit + Retry', async () => {
