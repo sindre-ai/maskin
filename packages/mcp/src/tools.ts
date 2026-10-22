@@ -210,6 +210,17 @@ const metadataEqSchema = z
 		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"}. Call get_workspace_schema first to see which fields exist per object type.',
 	)
 
+const LIST_ACTORS_INCLUDE_VALUES = ['triggers', 'loops']
+const LIST_ACTORS_INCLUDE_PATTERN = /^(triggers|loops)(\s*,\s*(triggers|loops))*$/
+
+/** Split a list_actors `include` string ("triggers,loops") into its values. */
+export function parseListActorsInclude(include: string | undefined): string[] {
+	return (include ?? '')
+		.split(',')
+		.map((v) => v.trim())
+		.filter(Boolean)
+}
+
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
@@ -743,7 +754,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row is short: id, type, `title` (the actor's name), status, role, the actor's one-line `description` and a link. Call `get_actor` for the full `system_prompt` (instructions) and for one agent's triggers and loops, which is also how to pick up context on a human teammate @mentioned in a comment. To get `connectedTriggers`/`connectedLoops` for many agents at once, pass `include=triggers,loops` together with a `workspace_id`: each is then a list of `{ name, url }` (omitted when there are none; never returned for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -772,6 +783,15 @@ export const tools = {
 				.optional()
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. Only meaningful when `workspace_id` is set — the cross-workspace listing (no `workspace_id`) does not support cursor pagination and never returns a `next_cursor`; use `offset` to page it instead. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
+			include: z
+				.string()
+				.regex(LIST_ACTORS_INCLUDE_PATTERN, {
+					message: `include must be a comma-separated list of: ${LIST_ACTORS_INCLUDE_VALUES.join(', ')}`,
+				})
+				.optional()
+				.describe(
+					'Comma-separated extra fields to add to each row: `triggers` (connectedTriggers), `loops` (connectedLoops) or `triggers,loops`. Omit for the short default row. Only used when `workspace_id` is set; ignored for the cross-workspace listing.',
 				),
 		}),
 	},

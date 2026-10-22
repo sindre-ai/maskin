@@ -109,8 +109,7 @@ export function AgentDetailHeader({
 					</p>
 				</div>
 				{/* Voice call entry point. Sits right of the identity block on the same
-				    row; hidden by AgentCallButton when the `voice-mode-v1` flag is off,
-				    so this line is a no-op for non-testers. */}
+				    row. */}
 				<AgentCallButton agent={agent} />
 			</div>
 		</header>
