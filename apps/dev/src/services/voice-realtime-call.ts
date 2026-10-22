@@ -14,9 +14,9 @@ import type { VoiceSessionRow } from './voice-transcript'
  * posts it to POST /v1/realtime/calls with the operator key, then attaches a
  * server-side WebSocket to the new call (wss://.../v1/realtime?call_id=...)
  * with the same key. Tool calls, transcript lines and turn telemetry all run
- * over that socket, through the same channel logic the whitelist, attention
- * cap, mentions refusal and bet refusal already live in
- * (services/voice-session-channel.ts).
+ * over that socket, through the channel logic in
+ * (services/voice-session-channel.ts). Tool calls run as the agent with the
+ * call's workspace; there is no tool allow-list in front of them.
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
