@@ -89,7 +89,7 @@ export const config: ProviderConfig = {
 	// What agents can draft here for a person to read, edit and approve. The send tools are
 	// served per identity, so each is prefixed `linkedin-{account}-{identity}__`; `sendTool`
 	// names the verb. Limits mirror operations.ts (8000-character messages, 3000-character
-	// posts, the 200-character invite note).
+	// posts, the 300-character invite note).
 	deliverables: [
 		{
 			kind: 'linkedin_message',
@@ -117,7 +117,7 @@ export const config: ProviderConfig = {
 			kind: 'linkedin_connection_request',
 			label: 'LinkedIn connection request',
 			sendTool: 'send_connection_request',
-			bodyMaxLength: 200,
+			bodyMaxLength: 300,
 			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
 		},
 		{

@@ -202,13 +202,13 @@ describe('buildObjectPreview, other channels', () => {
 		expect(preview?.missing).toEqual(['To'])
 	})
 
-	it('warns when a connection note is over the 200 character invite limit', () => {
+	it('warns when a connection note is over the 300 character invite limit', () => {
 		const preview = buildObjectPreview({
-			content: 'x'.repeat(205),
+			content: 'x'.repeat(305),
 			metadata: { kind: 'linkedin_connection_request', to: 'Dan Jensen' },
 		})
 		expect(preview?.label).toBe('LinkedIn connection request')
-		expect(preview?.warnings).toEqual(['The text is 5 characters over the 200 limit.'])
+		expect(preview?.warnings).toEqual(['The text is 5 characters over the 300 limit.'])
 	})
 
 	it('previews a Slack message with its channel as a detail line', () => {
