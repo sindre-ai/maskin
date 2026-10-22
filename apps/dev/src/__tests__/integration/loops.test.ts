@@ -664,10 +664,12 @@ describe('Loops read API integration', () => {
 				createdAt,
 				updatedAt: new Date(createdAt.getTime() + 86_400_000),
 			})
-			await db.insert(events).values([
-				statusChange(task.id, 'in_progress', new Date(createdAt.getTime() + 500), 'todo'),
-				statusChange(task.id, 'done', closedAt),
-			])
+			await db
+				.insert(events)
+				.values([
+					statusChange(task.id, 'in_progress', new Date(createdAt.getTime() + 500), 'todo'),
+					statusChange(task.id, 'done', closedAt),
+				])
 
 			const app = makeApp(actorId)
 			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
