@@ -326,7 +326,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it('tells the caller voice is unavailable, not rate limited, when the vendor 429 is a quota error', async () => {
-		enableFlagFor(HUMAN)
 		setCreateRealtimeCallFn(async () => ({
 			kind: 'quota_exhausted',
 			vendorBody: '{"error":{"code":"insufficient_quota"}}',
