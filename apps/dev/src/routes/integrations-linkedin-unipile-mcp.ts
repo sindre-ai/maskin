@@ -89,6 +89,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Set by the global X-Maskin-Session-Id middleware in app-factory.ts. */
+		maskinSessionId?: string
 		storageProvider: StorageProvider
 	}
 }
@@ -236,7 +238,13 @@ app.post('/:instanceSlug', async (c) => {
 		providerLabel: 'LinkedIn',
 	})
 	const mcpServer = createLinkedInMcpServer(
-		{ db, actorId, workspaceId, storage: c.get('storageProvider') },
+		{
+			db,
+			actorId,
+			workspaceId,
+			storage: c.get('storageProvider'),
+			sessionId: c.get('maskinSessionId'),
+		},
 		scoped,
 		gate,
 	)

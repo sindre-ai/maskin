@@ -35,7 +35,15 @@ import {
  */
 export async function sendApprovedLinkedInObject(
 	ctx: LinkedInOperationContext,
-	input: { object_id: string; thread_id?: string },
+	input: {
+		object_id: string
+		thread_id?: string
+		/**
+		 * Called once the draft is approved and its recipient is known, before anything is sent. The
+		 * action log uses it to record who the message goes to and which approval released it.
+		 */
+		onResolved?: (resolved: { targetProviderId?: string; approvalId: string }) => void
+	},
 ): Promise<{
 	message_id: string
 	chat_id?: string
@@ -96,6 +104,11 @@ export async function sendApprovedLinkedInObject(
 			'A conversation or a recipient is required: pass thread_id, or file thread_id or recipient_provider_id on the object.',
 		)
 	}
+
+	input.onResolved?.({
+		targetProviderId: threadId ? undefined : recipient,
+		approvalId: String(approval.id),
+	})
 
 	const fileId = optionalString(filed.attachment_file_id)
 	if (
