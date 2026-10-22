@@ -7,9 +7,7 @@ import type {
 	DisplaySettingsBody,
 	FileCommentDto,
 	FromSuggestedStep,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	NeededTool,
 	SafeMetadata,
@@ -29,9 +27,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	SendRoundInput,
 	SendRoundResponse,
@@ -536,8 +532,6 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
-		steps: (id: string, workspaceId: string) =>
-			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -1496,9 +1490,8 @@ export interface BillingUsageResponse {
 	// "Buy usage credits" entry points are hidden in that case.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
-	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
-	// `linkedin-addon-visible` flag is off OR the workspace has no connected
-	// linkedin-unipile credentials. Deliberately separate from
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
+	// connected linkedin-unipile credentials or is enterprise. Deliberately separate from
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null

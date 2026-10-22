@@ -25,7 +25,6 @@ import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import type { MessageMetadata } from '@/lib/api'
@@ -76,23 +75,8 @@ function ConversationThreadPage() {
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
-	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
-	// Read once at this route per the feature-flags rule
-	// (`.claude/rules/feature-flags.md`) and threaded down as boolean props. Each
-	// delta is additionally gated by its own sub-flag (`.header` / `.banner` /
-	// `.bubbles`) so a single delta can be reverted without dropping the rest.
-	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
-	const headerV4Enabled = useFeatureFlag('chats-v4-polish.header')
-	const bannerV4Enabled = useFeatureFlag('chats-v4-polish.banner')
-	const bubblesV4Enabled = useFeatureFlag('chats-v4-polish.bubbles')
-	// S2 · Produced pane boundary (bet 34706e2f, task 5). One flag read at
-	// this route — the ThreadHeader toggle mounts iff on, the ProducedPane
-	// mounts iff on, and the P shortcut only registers iff on. Shares the
-	// bet's writer flag (`graph-provenance-writes`) so a tester actor gets
-	// writes AND read UI in one flip, per bet spec §Slice 2 §Feature flag.
-	const producedEnabled = useFeatureFlag('graph-provenance-writes')
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
-	const producedRequested = producedEnabled && !!producedSearch
+	const producedRequested = !!producedSearch
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A fill step asks the composer to take its prompt; a send step asks it only to
 	// take focus, so the person can follow up (the tapped button is gone by then).
@@ -173,7 +157,7 @@ function ConversationThreadPage() {
 		producedFiles,
 		totalCount,
 		isLoading: producedLoading,
-	} = useConversationProduced(workspaceId, conversationId, producedEnabled)
+	} = useConversationProduced(workspaceId, conversationId)
 
 	const toggleOverview = useCallback(() => {
 		setOverview((prev) => (prev ? null : { tab: 'threads', sessionId: null }))
@@ -287,7 +271,6 @@ function ConversationThreadPage() {
 			conversationId={conversationId}
 			tab={overview.tab}
 			onTabChange={(tab) => setOverview({ tab, sessionId: null })}
-			producedEnabled={producedEnabled}
 			threadsCount={threads.length}
 			computersCount={computersCount}
 			producedCount={totalCount}
@@ -319,7 +302,6 @@ function ConversationThreadPage() {
 						<ThreadHeader
 							workspaceId={workspaceId}
 							conversationId={conversationId}
-							v4Polish={chatsV4Enabled && headerV4Enabled}
 							overviewOpen={overview !== null}
 							overviewHasNew={overviewHasNew}
 							onToggleOverview={toggleOverview}
@@ -327,9 +309,6 @@ function ConversationThreadPage() {
 						<ThreadMessages
 							workspaceId={workspaceId}
 							conversationId={conversationId}
-							v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
-							v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
-							producedEnabled={producedEnabled}
 							onPickStep={requestComposer}
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}

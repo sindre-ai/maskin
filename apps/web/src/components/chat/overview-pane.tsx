@@ -16,8 +16,6 @@ interface OverviewPaneProps {
 	conversationId: string
 	tab: OverviewTab
 	onTabChange: (tab: OverviewTab) => void
-	/** Whether the actor has access to the Produced tab; it is not offered otherwise. */
-	producedEnabled: boolean
 	threadsCount: number
 	/** How many agents in the chat have a computer to show. */
 	computersCount: number
@@ -58,7 +56,6 @@ export function OverviewPane({
 	conversationId,
 	tab,
 	onTabChange,
-	producedEnabled,
 	threadsCount,
 	computersCount,
 	producedCount,
@@ -91,13 +88,11 @@ export function OverviewPane({
 								Threads
 								<CountPill n={threadsCount} />
 							</TabsTrigger>
-							{producedEnabled ? (
-								<TabsTrigger value="produced" className="gap-1">
-									<Layers size={13} aria-hidden />
-									Produced
-									<CountPill n={producedCount} />
-								</TabsTrigger>
-							) : null}
+							<TabsTrigger value="produced" className="gap-1">
+								<Layers size={13} aria-hidden />
+								Produced
+								<CountPill n={producedCount} />
+							</TabsTrigger>
 							<TabsTrigger value="computers" className="gap-1">
 								<Monitor size={13} aria-hidden />
 								Computers

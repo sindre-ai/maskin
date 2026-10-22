@@ -44,10 +44,17 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import {
+	canControlSession,
+	canReadSession,
+	canUpdateSessionActivity,
+	helperAskConversationId,
+	sessionListVisibility,
+} from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
@@ -132,6 +139,21 @@ app.openapi(createSessionRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Every other id in the body must belong to the caller's workspace before
+	// anything is written or started with it. A miss is a 404, the same as an id
+	// that does not exist. The agent (body.actor_id) is checked inside
+	// startSession(), which every caller of a session start goes through.
+	await assertInWorkspace(db, workspaceId, {
+		objects: [
+			body.initiated_from_object_id,
+			body.config.mention?.object_id,
+			body.config.thread_reply?.object_id,
+		],
+		conversations: [body.config.conversation?.conversation_id],
+		triggers: [body.trigger_id],
+		sessions: [body.source_session_id, ...(body.depends_on_session_ids ?? [])],
+	})
 
 	// Stash entry_agent_role inside the existing config JSON blob so downstream
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
@@ -295,6 +317,15 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the detail route, applied in the query so the page cut and the
+	// `before` cursor only ever see sessions this caller may read.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
@@ -672,6 +703,13 @@ app.openapi(patchSessionRoute, (async (c) => {
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (
+		body.current_activity !== undefined &&
+		!(await canUpdateSessionActivity(db, session, actorId))
+	) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
 
 	// Only whoever started the helper can ask for its result to come back.
 	if (body.notify_on_complete && session.createdBy !== actorId) {

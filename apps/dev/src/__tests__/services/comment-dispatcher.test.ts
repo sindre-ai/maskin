@@ -14,6 +14,13 @@ import {
 import { buildActor, buildNotification } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
 
+// startSession() checks that the agent is a member of the workspace. These tests script the mock DB's selects one by one, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../lib/analytics/comment-responder-events', () => ({
 	trackCommentResponderResolved: vi.fn().mockResolvedValue(undefined),
 }))
@@ -122,6 +129,21 @@ describe('CommentDispatcher', () => {
 			case: 'case_1_mention',
 			resolved_actor_id: agent.id,
 		})
+	})
+
+	it('mention of an agent outside the workspace → no notification, no session', async () => {
+		const foreignAgent = buildActor({ type: 'agent' })
+		mockResults.selectQueue = [
+			[{ actorId: 'commenter-1', data: { content: 'Please look', mentions: [foreignAgent.id] } }],
+			// mentioned-actor lookup: the actor exists, but its workspace_members join is empty
+			[{ id: foreignAgent.id, type: foreignAgent.type, memberWorkspaceId: null }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(calls.inserts).toHaveLength(0)
 	})
 
 	it('human-actor mention → notification sent, no session', async () => {

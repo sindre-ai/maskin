@@ -3,7 +3,6 @@ import { events, relationships, sessions } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { evictBillingUsage } from '../billing-usage-cache'
-import { FLAGS, isFlagEnabled } from '../feature-flags'
 import { logger } from '../logger'
 
 // Accepts both a `Database` (top-level connection) and a `Transaction`
@@ -49,8 +48,7 @@ export type ProvenanceEndpointKind = 'object' | 'file'
 
 /**
  * Opt-in provenance context. Pass only when the mutation is on a row in
- * `objects` or `files`. When both `sessionId` and `entityKind` are set AND
- * the `graph-provenance-writes` flag is on for the session's actor, the
+ * `objects` or `files`. When both `sessionId` and `entityKind` are set, the
  * helper upserts a `session → entity` `produced_by` relationship after the
  * event row lands. Any other combination is a no-op — the mutation still
  * succeeds silently, no lineage rows land (spec §Rabbit holes:
@@ -185,9 +183,7 @@ export async function recordEventReturning(
  * Upsert a `session → object|file` `produced_by` relationship — the S2
  * writer hook's core write. Idempotent on `(source_id, target_id, type)`
  * per the unique index, so a re-run over the same mutation (retry, restart)
- * never double-writes. Flag-gated on the session's actor:
- * `graph-provenance-writes` OFF for that actor means the function is a
- * no-op and no PostHog event fires.
+ * never double-writes.
  */
 async function writeProducedByEdge(
 	dbOrTx: EventsWriter,
@@ -198,19 +194,15 @@ async function writeProducedByEdge(
 		entityId: string
 	},
 ): Promise<void> {
-	// Look up the session's actor to evaluate the flag against — the header
-	// promises the sessionId, and the flag is per-driver-actor. A session
-	// whose row was deleted (rare: cascade from actor delete) is treated as
-	// flag-off; no edge is written.
+	// Look up the session's actor — the header promises the sessionId. A
+	// session whose row was deleted (rare: cascade from actor delete) gets no
+	// edge written.
 	const [session] = await dbOrTx
 		.select({ actorId: sessions.actorId })
 		.from(sessions)
 		.where(eq(sessions.id, params.sessionId))
 		.limit(1)
 	if (!session) return
-
-	const flagOn = isFlagEnabled(session.actorId, FLAGS.GRAPH_PROVENANCE_WRITES)
-	if (!flagOn) return
 
 	const [inserted] = await dbOrTx
 		.insert(relationships)
@@ -274,9 +266,6 @@ export async function writeSpawnedEdge(
 		messageId: number | null
 	},
 ): Promise<void> {
-	const flagOn = isFlagEnabled(params.sessionActorId, FLAGS.GRAPH_PROVENANCE_WRITES)
-	if (!flagOn) return
-
 	try {
 		const [inserted] = await dbOrTx
 			.insert(relationships)

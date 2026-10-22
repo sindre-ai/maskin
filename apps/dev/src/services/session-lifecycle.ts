@@ -30,6 +30,7 @@ import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
@@ -183,6 +184,12 @@ export async function startSession(
 	outcomeStreamCallback?: OutcomeStreamCallback,
 ): Promise<StartSessionHandle> {
 	const { db, sessionManager } = getDeps()
+
+	// Fail closed on the one id every caller supplies: the agent must be a member
+	// of the workspace the session runs in. The session runs with that agent's own
+	// key, prompt and tools, so a foreign agent id must never get this far. Throws
+	// NotInWorkspaceError (404) before any row is written.
+	await assertInWorkspace(db, input.workspaceId, { actors: [input.actorId] })
 
 	// §14.5 — opt-in idempotency via input.config.idempotencyKey. Duplicate
 	// submits from a jittery MCP client hit the same live row instead of

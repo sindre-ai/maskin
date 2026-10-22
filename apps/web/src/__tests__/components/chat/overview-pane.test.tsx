@@ -60,29 +60,14 @@ const props = {
 }
 
 describe('OverviewPane tabs', () => {
-	it('always offers Linked, with its count, and hides Produced without the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="linked"
-				producedEnabled={false}
-			/>,
-		)
+	it('offers Linked with its count and renders its body', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="linked" />)
 		expect(screen.getByRole('tab', { name: /Linked/ })).toHaveTextContent('3')
-		expect(screen.queryByRole('tab', { name: /Produced/ })).toBeNull()
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Threads, Produced, Computers and Linked with the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="threads"
-				producedEnabled
-			/>,
-		)
+	it('offers Threads, Produced, Computers and Linked', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="threads" />)
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
 			'Threads',
 			'Produced',
@@ -92,14 +77,7 @@ describe('OverviewPane tabs', () => {
 	})
 
 	it('offers a Computers tab with one entry per agent and shows its pane', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="computers"
-				producedEnabled={false}
-			/>,
-		)
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="computers" />)
 		expect(screen.getByRole('tab', { name: /Computers/ })).toHaveTextContent('2')
 		expect(screen.getByText('computers body')).toBeInTheDocument()
 	})

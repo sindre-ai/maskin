@@ -24,7 +24,6 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutate: sendMutate }),
 	useCardAnswer: () => cardAnswer,
 }))
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => true }))
 vi.mock('@/hooks/use-integrations', () => ({ useIntegrations: () => ({ data: integrations }) }))
 
 let role = 'member'
