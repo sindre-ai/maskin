@@ -716,7 +716,11 @@ function TopBarActions({
 				variant={panelOpen ? 'secondary' : 'ghost'}
 				size="sm"
 				onClick={onTogglePanel}
-				aria-label="Toggle review panel"
+				aria-label={
+					commentCount === null
+						? 'Toggle review panel'
+						: `Comments ${commentCount}, toggle review panel`
+				}
 				aria-pressed={panelOpen}
 				title="Toggle review panel (C)"
 			>
