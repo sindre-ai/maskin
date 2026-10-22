@@ -88,6 +88,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Set by the global X-Maskin-Session-Id middleware in app-factory.ts. */
+		maskinSessionId?: string
 	}
 }
 
