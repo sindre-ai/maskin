@@ -68,15 +68,19 @@ describe('deriveInmailBalance', () => {
 
 	it('keeps the floor back: 2 credits send nothing, 3 send one', () => {
 		expect(INMAIL_CREDIT_FLOOR).toBe(2)
-		expect(deriveInmailBalance({ classic: 2, sales_navigator: null, recruiter: null })).toMatchObject({
+		expect(
+			deriveInmailBalance({ classic: 2, sales_navigator: null, recruiter: null }),
+		).toMatchObject({
 			sendable_now: 0,
 		})
-		expect(deriveInmailBalance({ classic: 3, sales_navigator: null, recruiter: null })).toMatchObject({
+		expect(
+			deriveInmailBalance({ classic: 3, sales_navigator: null, recruiter: null }),
+		).toMatchObject({
 			sendable_now: 1,
 		})
-		expect(deriveInmailBalance({ classic: 0, sales_navigator: null, recruiter: null })).toMatchObject(
-			{ seat: 'premium', sendable_now: 0 },
-		)
+		expect(
+			deriveInmailBalance({ classic: 0, sales_navigator: null, recruiter: null }),
+		).toMatchObject({ seat: 'premium', sendable_now: 0 })
 	})
 
 	it('maps a sales_navigator or recruiter key to that seat only when no classic key is present', () => {
@@ -91,7 +95,8 @@ describe('deriveInmailBalance', () => {
 			'recruiter',
 		)
 		expect(
-			deriveInmailBalance(parseInmailCredits({ credits: { classic: 5, sales_navigator: 30 } })).seat,
+			deriveInmailBalance(parseInmailCredits({ credits: { classic: 5, sales_navigator: 30 } }))
+				.seat,
 		).toBe('premium')
 	})
 
@@ -107,9 +112,9 @@ describe('deriveInmailBalance', () => {
 	})
 
 	it('ignores keys that are not a count', () => {
-		expect(parseInmailCredits({ credits: { classic: 'many', recruiter: -1, sales_navigator: null } })).toEqual(
-			{ classic: null, sales_navigator: null, recruiter: null },
-		)
+		expect(
+			parseInmailCredits({ credits: { classic: 'many', recruiter: -1, sales_navigator: null } }),
+		).toEqual({ classic: null, sales_navigator: null, recruiter: null })
 	})
 })
 
