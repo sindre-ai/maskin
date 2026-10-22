@@ -17,8 +17,9 @@ export default defineConfig({
 				// The bubble menu's ESM build does `import tippy from 'tippy.js'`, and tippy.js
 				// ships CommonJS as its main entry. Node hands that import the whole exports
 				// object, so the first editor transaction throws "tippy is not a function".
-				// Inlining lets Vite resolve tippy.js to its ESM build instead.
-				inline: ['@tiptap/extension-bubble-menu'],
+				// Inline both, so Vite resolves tippy.js to its ESM build instead of leaving
+				// the import to Node.
+				inline: ['@tiptap/extension-bubble-menu', 'tippy.js'],
 			},
 		},
 		coverage: {
