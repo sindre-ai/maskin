@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
 import { shouldReloadForStaleBuild } from '@/lib/stale-build-reload'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 describe('shouldReloadForStaleBuild', () => {
 	beforeEach(() => {
