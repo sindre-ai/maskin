@@ -226,6 +226,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		setVoiceInvokeToolFactory(async () => ({
 			tools: VOICE_TOOLS,
 			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
 			unreachableServers: [],
 			close: async () => {},
 		}))
@@ -286,6 +287,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		setVoiceInvokeToolFactory(async () => ({
 			tools: VOICE_TOOLS,
 			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
 			unreachableServers: [],
 			close: async () => {},
 		}))
