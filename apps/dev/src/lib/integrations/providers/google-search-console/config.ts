@@ -16,8 +16,11 @@ import type { ProviderConfig } from '../../types'
  * ops can point Search Console at a different client later without
  * touching Gmail/Calendar wiring.
  *
- * MCP wiring, daily sync, backfill, and PostHog emission are out of scope
- * for task 1 and land in tasks 2–4.
+ * MCP is Maskin-hosted, like Google Meet: two read-only tools (inspect_url,
+ * list_sites) served at `${MASKIN_API_URL}/api/integrations/google-search-console/mcp`.
+ * The spec references only MASKIN_API_KEY, so the Search Console token is never
+ * injected into a session; the route resolves it server-side. `autoInject: false`
+ * so each agent opts in (or gets it through an access grant).
  */
 export const config: ProviderConfig = {
 	name: 'google-search-console',
@@ -42,6 +45,19 @@ export const config: ProviderConfig = {
 			},
 			clientIdEnv: 'GOOGLE_SEARCH_CONSOLE_CLIENT_ID',
 			clientSecretEnv: 'GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET',
+		},
+	},
+
+	mcp: {
+		envKey: 'GOOGLE_SEARCH_CONSOLE_TOKEN',
+		autoInject: false,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/google-search-console/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
 		},
 	},
 }

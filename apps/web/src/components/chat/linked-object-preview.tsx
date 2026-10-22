@@ -1,36 +1,53 @@
+import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
+import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
+import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
-import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ArrowUpRight, ChevronDown } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 
 interface PreviewProps {
 	workspaceId: string
 	objectId: string
+	/** Open straight away instead of contracted (the drawer's working view). */
+	defaultExpanded?: boolean
+	className?: string
 	/** The chat the message is in and the agent that wrote it; together they let a
 	 *  status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
 }
 
-function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }: PreviewProps) {
+/** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
+export function LinkedObjectCard({
+	workspaceId,
+	objectId,
+	conversationId,
+	agentId,
+	defaultExpanded = false,
+	className,
+}: PreviewProps) {
 	const { data: object } = useObject(objectId)
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
+	const approve = useApproveObject()
+	const linkedPanel = useLinkedPanel()
 	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
-	const [expanded, setExpanded] = useState(false)
+	const [expanded, setExpanded] = useState(defaultExpanded)
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -43,6 +60,19 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
+	const properties = describeObjectProperties(object.metadata)
+	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
+	// has a preview. Its card says what it is, shows where it goes and ends in an approval
+	// instead of the next phase: the person's yes to this exact text, after which the agent is
+	// told to send it. Which objects qualify, and how they are sent, is the integration's own
+	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
+	const preview = object.preview ?? null
+	const delivery = preview?.delivery?.state
+	// What would go out. For most drafts that is the whole text; for one that carries a header
+	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
+	// what the card shows. Such a text is edited on the object page, where the header is.
+	const shown = preview ? preview.body : body
+	const editable = canAct && (!preview || preview.body.trim() === body)
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -67,22 +97,59 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 		)
 	}
 
+	// The person's yes to this exact text. The agent is told with the text it can send, the same
+	// way a status change tells it, so it does not have to guess what was approved.
+	const approveDraft = () => {
+		if (!preview) return
+		approve.mutate(
+			{ id: object.id, contentHash: preview.content_hash },
+			{
+				onSuccess: () => {
+					if (!conversationId || !agentId) return
+					sendMessage.mutate({
+						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
+							.split('\n')
+							.map((line) => `> ${line}`)
+							.join('\n')}`,
+						metadata: { mentions: [agentId] },
+					})
+				},
+			},
+		)
+	}
+
 	return (
-		<div className="mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card">
+		<div
+			data-linked-card=""
+			className={cn(
+				'@container not-prose mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card',
+				className,
+			)}
+		>
 			{/* The whole top (header and title) toggles the card. The status menu and
 			    Open stop the click so they keep doing their own job; the status menu's
 			    dropdown is portalled but still bubbles through React, so it is covered too. */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the chevron button inside is the keyboard path; its click bubbles here */}
 			<div className="cursor-pointer" onClick={() => setExpanded((open) => !open)}>
 				<div
-					className={cn('flex items-center gap-2 px-3 py-2', expanded && 'border-b border-border')}
+					className={cn(
+						'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2',
+						expanded && 'border-b border-border',
+					)}
 				>
-					<span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
-						{typeLabel(object.type)}
+					{/* The chip yields first: it shrinks and truncates so the icon controls stay on this row. */}
+					<span className="min-w-0 flex-1">
+						<span className="inline-block max-w-full truncate rounded-md bg-secondary px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
+							{preview?.label ?? typeLabel(object.type)}
+						</span>
 					</span>
-					<span className="flex-1" />
 					{canAct && statuses.length > 0 ? (
-						<span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+						// On a narrow card the status menu takes a row of its own instead of being cut off.
+						<span
+							className="order-last w-full @sm:order-none @sm:w-auto"
+							onClick={(e) => e.stopPropagation()}
+							onKeyDown={(e) => e.stopPropagation()}
+						>
 							<StatusSelect
 								current={object.status}
 								options={statuses}
@@ -91,13 +158,27 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 							/>
 						</span>
 					) : null}
+					{linkedPanel ? (
+						<button
+							type="button"
+							aria-label="Show in panel"
+							title="Show in panel"
+							onClick={(e) => {
+								e.stopPropagation()
+								linkedPanel.openLinked({ kind: 'object', id: object.id })
+							}}
+							className="inline-flex shrink-0 items-center rounded p-1 text-muted-foreground hover:text-foreground"
+						>
+							<PanelRight size={14} aria-hidden />
+						</button>
+					) : null}
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: object.id }}
 						onClick={(e) => e.stopPropagation()}
 						className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
 					>
-						Open
+						<span className="sr-only @sm:not-sr-only">Open</span>
 						<ArrowUpRight size={13} aria-hidden />
 					</Link>
 					<button
@@ -116,11 +197,23 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 				<p
 					className={cn(
 						'px-3 text-sm font-semibold leading-snug text-foreground',
-						expanded ? 'pt-3' : 'truncate pb-3 pt-1',
+						expanded ? 'pt-3' : 'truncate pt-1',
+						!expanded && properties.length === 0 && 'pb-3',
 					)}
 				>
 					{object.title || 'Untitled'}
 				</p>
+				{/* What the object is about, from its metadata: "LinkedIn message · P1". */}
+				{properties.length > 0 ? (
+					<p
+						className={cn(
+							'truncate px-3 pt-0.5 text-xs text-muted-foreground',
+							!expanded && 'pb-3',
+						)}
+					>
+						{properties.join(' · ')}
+					</p>
+				) : null}
 			</div>
 			{expanded ? (
 				<>
@@ -133,16 +226,42 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					    A very long text scrolls inside the card instead of being cut off. */}
 					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
 						<MarkdownContent
-							content={body}
+							content={shown}
 							size="sm"
-							editable={canAct}
+							editable={editable}
 							editorLabel="Edit the text"
 							onChange={async (value) => {
 								await update.mutateAsync({ id: object.id, data: { content: value } })
 							}}
 						/>
 					</div>
-					{canAct && nextStatus ? (
+					{preview ? (
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							{delivery === 'sent' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Sent
+								</span>
+							) : delivery === 'approved' ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Approved
+								</span>
+							) : (
+								<Button
+									type="button"
+									size="sm"
+									disabled={
+										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+									}
+									onClick={approveDraft}
+								>
+									Approve and send
+									<ArrowRight size={14} aria-hidden />
+								</Button>
+							)}
+						</div>
+					) : canAct && nextStatus ? (
 						<div className="flex items-center justify-end px-3 pb-3 pt-1">
 							<Button
 								type="button"
@@ -164,40 +283,124 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					Could not save: {update.error.message}
 				</p>
 			) : null}
+			{approve.error ? (
+				<p role="alert" className="px-3 pb-2 text-xs text-destructive">
+					Could not approve: {approve.error.message}
+				</p>
+			) : null}
 		</div>
 	)
 }
 
 /**
- * Shows the objects a message links to as cards: what they say, their status
- * (changeable from the card, with the writing agent told), a button for the
- * next phase, and the text editable in place. Works for any agent and any object
- * type, because it reads the link, not a tool call.
+ * A link's card once it is known to deserve one, otherwise `fallback` (the original link or
+ * paragraph; nothing for a card that is only ever added). While the object or file is loading,
+ * missing, in another workspace or not worth a card, the fallback stays, so a link never vanishes.
  */
-export function LinkedObjectPreviews({
+export function LinkedCardOrLink({
 	workspaceId,
-	content,
+	target,
 	conversationId,
 	agentId,
+	fallback = null,
+	label,
 }: {
 	workspaceId: string
-	content: string
+	target: LinkedTarget
 	conversationId?: string
 	agentId?: string
+	fallback?: ReactNode
+	/** Text that led the link ("Draft:"); kept above the card once it replaces the link. */
+	label?: string
 }) {
-	const ids = extractLinkedObjectIds(content)
-	if (ids.length === 0) return null
-	return (
+	return target.kind === 'object' ? (
+		<ObjectCardOrLink
+			workspaceId={workspaceId}
+			objectId={target.id}
+			conversationId={conversationId}
+			agentId={agentId}
+			fallback={fallback}
+			label={label}
+		/>
+	) : (
+		<FileCardOrLink
+			workspaceId={workspaceId}
+			fileId={target.id}
+			fallback={fallback}
+			label={label}
+		/>
+	)
+}
+
+function withLabel(label: string | undefined, card: ReactNode): ReactNode {
+	return label ? (
 		<>
-			{ids.map((id) => (
-				<LinkedObjectPreview
-					key={id}
-					workspaceId={workspaceId}
-					objectId={id}
-					conversationId={conversationId}
-					agentId={agentId}
-				/>
-			))}
+			<p>{label}</p>
+			{card}
 		</>
+	) : (
+		card
+	)
+}
+
+/** `MarkdownContent`'s `linkedCards.renderCard`: it cannot import the cards, which render markdown. */
+export function renderLinkedCard(
+	target: LinkedTarget,
+	fallback: ReactNode,
+	context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+): ReactNode {
+	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+function ObjectCardOrLink({
+	workspaceId,
+	objectId,
+	conversationId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	objectId: string
+	conversationId?: string
+	agentId?: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: object } = useObject(objectId)
+	if (!showsObjectCard(object, workspaceId)) return <>{fallback}</>
+	return withLabel(
+		label,
+		<LinkedObjectCard
+			workspaceId={workspaceId}
+			objectId={objectId}
+			conversationId={conversationId}
+			agentId={agentId}
+		/>,
+	)
+}
+
+function FileCardOrLink({
+	workspaceId,
+	fileId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	fileId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	// A list row is a few hundred bytes; the file itself may be megabytes and is fetched by the card.
+	const { data } = useFiles(workspaceId, { ids: [fileId] })
+	const file = data?.[0]
+	if (!file || !isPreviewableFile(file.mimeType)) return <>{fallback}</>
+	return withLabel(
+		label,
+		<FilePreview
+			workspaceId={workspaceId}
+			fileId={fileId}
+			meta={{ name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes }}
+		/>,
 	)
 }
