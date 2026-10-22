@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { actors, deviceTokens, events, liveActivityTokens } from '@maskin/db/schema'
+import { events, actors, deviceTokens, liveActivityTokens } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { validationFailureHook } from '../../lib/errors'
 import { type ApnsRequest, ApnsSender } from '../../services/apns'
