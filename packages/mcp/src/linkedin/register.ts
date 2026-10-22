@@ -59,6 +59,9 @@ const OUTREACH_SUITE: readonly LinkedInVerb[] = [
 	'get_inmail_balance',
 	'list_sent_invitations',
 	'withdraw_invitation',
+	'list_user_posts',
+	'get_company',
+	'react_to_post',
 ] as const
 
 /**

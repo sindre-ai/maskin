@@ -109,7 +109,7 @@ let clientOverride: ClientOverride | null = null
  * `__setLinkedInClientForTests` so the routes don't have to touch the real
  * fetch during unit tests.
  */
-function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
+export function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
 	if (clientOverride) return clientOverride.build(credentials)
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
@@ -180,7 +180,7 @@ type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
 
-async function preamble(
+export async function preamble(
 	db: Database,
 	actorId: string,
 	workspaceId: string,
@@ -382,7 +382,7 @@ async function markIntegrationRevoked(
  * success. 429 stays retryable either way — a rate-limited request is
  * rejected before execution, so replaying it cannot duplicate anything.
  */
-async function callLinkedInWithRetry<T>(
+export async function callLinkedInWithRetry<T>(
 	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
 	opts: { mutating?: boolean } = {},
 ): Promise<{ status: number; body: T; headers: Record<string, string> }> {

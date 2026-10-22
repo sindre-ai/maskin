@@ -49,6 +49,8 @@ import {
 	sendLinkedInMessage,
 	withdrawLinkedInInvitation,
 } from './operations'
+import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
+import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
 import { sendApprovedLinkedInObject } from './send-object'
 
 /**
@@ -226,6 +228,17 @@ export function registerLinkedInMcpInstance(
 		run: (rec: ActionRecorder) => Promise<T>,
 		cap?: CapSpec,
 	) => withActionLog(logCtx, { tool: verb, kind, targetProviderId: target, cap }, run)
+	/**
+	 * A handle or slug that list_user_posts must turn into a provider id is a profile view of its
+	 * own: it takes a slot from the same daily budget and is logged as a get_profile or
+	 * get_company row.
+	 */
+	const viewLookup: PostsToolDeps['lookup'] = (tool, run) =>
+		withActionLog(logCtx, { tool, kind: 'read', cap: PROFILE_VIEW_CAP }, async (rec) => {
+			const author = await run()
+			rec.set({ targetProviderId: author.provider_id })
+			return author
+		})
 	/** Records what a finished call learned, and that a replay or already-gone result changed nothing. */
 	const learned = <T extends object>(rec: ActionRecorder, result: T, fields: ActionFields): T => {
 		rec.set(fields)
@@ -759,13 +772,130 @@ export function registerLinkedInMcpInstance(
 			async (args) => {
 				try {
 					return jsonResult(
-						await logged('get_profile', 'read', undefined, async (rec) => {
-							const profile = await getLinkedInProfile(opCtx, args)
-							return learned(rec, profile, { targetProviderId: profile.recipient_urn })
-						}),
+						await logged(
+							'get_profile',
+							'read',
+							undefined,
+							async (rec) => {
+								const profile = await getLinkedInProfile(opCtx, args)
+								return learned(rec, profile, { targetProviderId: profile.recipient_urn })
+							},
+							PROFILE_VIEW_CAP,
+						),
 					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_profile'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('list_user_posts')) {
+		server.registerTool(
+			toolName(cfg, 'list_user_posts'),
+			{
+				description: scopedDescription(
+					'List the recent posts of one person or one company. Pass exactly one of person (public handle, provider id or member URN) or company (numeric id, slug or company URL). Returns author (provider_id, type, name, public_identifier), posts (post_id, posted_at, text cut to 500 characters, is_repost, reactions, comments, already_liked, url) and next_cursor. Use post_id exactly as returned for react_to_post and read_post_comments. A handle or slug costs two profile views, a provider id or numeric company id costs one; profile views share a budget of 100 a day with get_profile and get_company.',
+					cfg,
+				),
+				inputSchema: {
+					person: z.string().min(1).optional(),
+					company: z.string().min(1).optional(),
+					limit: z.number().int().min(1).max(20).optional(),
+					cursor: z.string().optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'list_user_posts',
+							'read',
+							undefined,
+							async (rec) => {
+								const result = await listLinkedInUserPosts(opCtx, args, viewLookup)
+								return learned(rec, result, { targetProviderId: result.author.provider_id })
+							},
+							PROFILE_VIEW_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'list_user_posts'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('get_company')) {
+		server.registerTool(
+			toolName(cfg, 'get_company'),
+			{
+				description: scopedDescription(
+					'Look up one LinkedIn company: company_id, name, public_identifier, industry, size_band, headcount, headquarters, website, follower_count, description (cut to 500 characters) and url. Pass company as a numeric id, a slug or a linkedin.com/company URL. Costs one profile view of the 100 a day shared with get_profile and list_user_posts.',
+					cfg,
+				),
+				inputSchema: { company: z.string().min(1) },
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'get_company',
+							'read',
+							undefined,
+							async (rec) => {
+								const company = await getLinkedInCompany(opCtx, args)
+								return learned(rec, company, { targetProviderId: company.company_id })
+							},
+							PROFILE_VIEW_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'get_company'), err)
+				}
+			},
+		)
+	}
+
+	// A write tool the outreach flag gates is not registered while the flag is off. The server
+	// is built per request, so switching the flag needs no other code.
+	if (
+		allowed.has('react_to_post') &&
+		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
+			actorId: ctx.actorId,
+		})
+	) {
+		server.registerTool(
+			toolName(cfg, 'react_to_post'),
+			{
+				description: scopedDescription(
+					'Like one LinkedIn post. Pass post_id exactly as list_user_posts returned it and author_provider_id (author.provider_id from the same call). Only a like is supported. Limits: 15 likes a day, and one like per author per 7 days; a post this account already liked returns already_liked: true and sends nothing.',
+					cfg,
+				),
+				inputSchema: {
+					post_id: z.string().trim().min(1),
+					author_provider_id: z.string().trim().min(1),
+					reaction: z.enum(['like']).optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'react_to_post',
+							'write',
+							args.author_provider_id,
+							async (rec) => {
+								const result = await reactToLinkedInPost(opCtx, logCtx, args)
+								rec.set({ refId: result.post_id })
+								if (result.already_liked) rec.markNoop()
+								return result
+							},
+							REACT_TO_POST_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'react_to_post'), err)
 				}
 			},
 		)
