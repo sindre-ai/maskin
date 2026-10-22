@@ -233,7 +233,11 @@ app.post('/:instanceSlug', async (c) => {
 		provider: PROVIDER,
 		providerLabel: 'LinkedIn',
 	})
-	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped, gate)
+	const mcpServer = createLinkedInMcpServer(
+		{ db, actorId, workspaceId, sessionId: c.get('maskinSessionId') },
+		scoped,
+		gate,
+	)
 	if (routeError) serveRouteError(mcpServer, routeError)
 
 	const transport = new StreamableHTTPServerTransport({

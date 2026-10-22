@@ -10,6 +10,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
 import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
+import {
+	type ActionFields,
+	type ActionLogContext,
+	type ActionRecorder,
+	type LinkedInToolKind,
+	withActionLog,
+} from './action-log'
 import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
 import {
 	commentOnLinkedInPost,
@@ -62,6 +69,8 @@ export interface LinkedInMcpContext {
 	/** Calling actor — used as the ledger key by the operations layer. */
 	actorId: string
 	workspaceId: string
+	/** The Maskin session making the call (X-Maskin-Session-Id), for the tool-call event only. */
+	sessionId?: string | null
 }
 
 /**
@@ -175,6 +184,32 @@ export function registerLinkedInMcpInstance(
 ): void {
 	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg))
 	const opCtx = { db: ctx.db, actorId: ctx.actorId, workspaceId: ctx.workspaceId, identity: cfg }
+	const logCtx: ActionLogContext = {
+		db: ctx.db,
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		integrationId: cfg.integrationId,
+		identityType: cfg.identityType,
+		sessionId: ctx.sessionId,
+	}
+	/**
+	 * Every handler below runs inside this: one linkedin_actions row and one linkedin_tool_called
+	 * event per call, whatever the outcome. `target` is the person or company known before the
+	 * call; `run` adds what the call learns through the recorder.
+	 */
+	const logged = <T>(
+		verb: LinkedInVerb,
+		kind: LinkedInToolKind,
+		target: string | undefined,
+		run: (rec: ActionRecorder) => Promise<T>,
+	) => withActionLog(logCtx, { tool: verb, kind, targetProviderId: target }, run)
+	/** Records what a finished call learned, and that a replay or already-gone result changed nothing. */
+	const learned = <T extends object>(rec: ActionRecorder, result: T, fields: ActionFields): T => {
+		rec.set(fields)
+		const flags = result as { replayed?: unknown; already_deleted?: unknown }
+		if (flags.replayed === true || flags.already_deleted === true) rec.markNoop()
+		return result
+	}
 
 	if (allowed.has('publish_post')) {
 		server.registerTool(
@@ -205,7 +240,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await publishLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('publish_post', 'write', undefined, async (rec) => {
+							const result = await publishLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.post_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'publish_post'), err)
 				}
@@ -226,7 +266,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await readLinkedInPostComments(opCtx, args))
+					return jsonResult(
+						await logged('read_post_comments', 'read', undefined, () =>
+							readLinkedInPostComments(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'read_post_comments'), err)
 				}
@@ -246,7 +290,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await commentOnLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('comment_on_post', 'write', undefined, async (rec) => {
+							const result = await commentOnLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.comment_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'comment_on_post'), err)
 				}
@@ -266,7 +315,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await replyToLinkedInComment(opCtx, args))
+					return jsonResult(
+						await logged('reply_to_comment', 'write', undefined, async (rec) => {
+							const result = await replyToLinkedInComment(opCtx, args)
+							return learned(rec, result, { refId: result.comment_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply_to_comment'), err)
 				}
@@ -286,7 +340,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await editLinkedInPost(opCtx, args))
+					// No ref id: the same post can be edited many times and each edit is a real action,
+					// so it must not collide on the one-ok-row-per-ref index.
+					return jsonResult(
+						await logged('edit_post', 'write', undefined, () => editLinkedInPost(opCtx, args)),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'edit_post'), err)
 				}
@@ -306,7 +364,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await deleteLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('delete_post', 'write', undefined, async (rec) => {
+							const result = await deleteLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.post_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'delete_post'), err)
 				}
@@ -326,7 +389,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await getLinkedInPostEngagement(opCtx, args))
+					return jsonResult(
+						await logged('get_post_engagement', 'read', undefined, () =>
+							getLinkedInPostEngagement(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_post_engagement'), err)
 				}
@@ -353,16 +420,22 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return await sendForObject(
-						ctx,
-						args.object_id,
-						() => sendLinkedInMessage(opCtx, args),
-						(sent) => ({
-							message_id: sent.message_id,
-							chat_id: sent.chat_id,
-							sent_at: sent.sent_at,
-						}),
-					)
+					return await logged('send_message', 'send', args.recipient_urn, (rec) => {
+						rec.set({ objectId: args.object_id })
+						return sendForObject(
+							ctx,
+							args.object_id,
+							async () => {
+								const sent = await sendLinkedInMessage(opCtx, args)
+								return learned(rec, sent, { refId: sent.message_id })
+							},
+							(sent) => ({
+								message_id: sent.message_id,
+								chat_id: sent.chat_id,
+								sent_at: sent.sent_at,
+							}),
+						)
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_message'), err)
 				}
@@ -401,21 +474,24 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					if (args.object_id) {
-						if (args.body !== undefined) {
-							throw new LinkedInIntegrationError(
-								'INVALID_INPUT',
-								'Do not pass body with object_id: the text sent is the approved text on the object.',
-							)
-						}
-						return jsonResult(
-							await replyWithApprovedObject(opCtx, {
+					return await logged('reply', 'send', undefined, async (rec) => {
+						if (args.object_id) {
+							rec.set({ objectId: args.object_id })
+							if (args.body !== undefined) {
+								throw new LinkedInIntegrationError(
+									'INVALID_INPUT',
+									'Do not pass body with object_id: the text sent is the approved text on the object.',
+								)
+							}
+							const sent = await replyWithApprovedObject(opCtx, {
 								object_id: args.object_id,
 								thread_id: args.thread_id,
-							}),
-						)
-					}
-					return jsonResult(await replyToLinkedInThread(opCtx, args))
+							})
+							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						}
+						const sent = await replyToLinkedInThread(opCtx, args)
+						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply'), err)
 				}
@@ -435,7 +511,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInConversations(opCtx, args))
+					return jsonResult(
+						await logged('list_conversations', 'read', undefined, () =>
+							listLinkedInConversations(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_conversations'), err)
 				}
@@ -456,7 +536,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInMessages(opCtx, args))
+					return jsonResult(
+						await logged('list_messages', 'read', undefined, () =>
+							listLinkedInMessages(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_messages'), err)
 				}
@@ -476,7 +560,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInConnections(opCtx, args))
+					return jsonResult(
+						await logged('list_connections', 'read', undefined, () =>
+							listLinkedInConnections(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_connections'), err)
 				}
@@ -498,7 +586,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await searchLinkedInPeople(opCtx, args))
+					return jsonResult(
+						await logged('search_people', 'read', undefined, () =>
+							searchLinkedInPeople(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'search_people'), err)
 				}
@@ -519,12 +611,18 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return await sendForObject(
-						ctx,
-						args.object_id,
-						() => sendLinkedInConnectionRequest(opCtx, args),
-						(sent) => ({ invitation_id: sent.invitation_id, sent_at: sent.sent_at }),
-					)
+					return await logged('send_connection_request', 'send', args.user_id, (rec) => {
+						rec.set({ objectId: args.object_id })
+						return sendForObject(
+							ctx,
+							args.object_id,
+							async () => {
+								const sent = await sendLinkedInConnectionRequest(opCtx, args)
+								return learned(rec, sent, { refId: sent.invitation_id })
+							},
+							(sent) => ({ invitation_id: sent.invitation_id, sent_at: sent.sent_at }),
+						)
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_connection_request'), err)
 				}
@@ -547,7 +645,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await getLinkedInProfile(opCtx, args))
+					return jsonResult(
+						await logged('get_profile', 'read', undefined, async (rec) => {
+							const profile = await getLinkedInProfile(opCtx, args)
+							return learned(rec, profile, { targetProviderId: profile.recipient_urn })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_profile'), err)
 				}

@@ -72,6 +72,17 @@ export const FLAGS = {
 	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
 	 */
 	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
+	/**
+	 * Gates the LinkedIn outreach writes added by the bet [Sales Reps close the LinkedIn outreach
+	 * loop](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aff468ba-2519-4401-836e-2251c9560e5b):
+	 * withdraw_invitation, react_to_post, send_inmail and attachment sends. Read per call with
+	 * isFlagEnabledForWorkspace(workspaceId, flag, { actorId }). The reads, the action log
+	 * (linkedin_actions) and the linkedin_tool_called event are NOT flagged: they carry no
+	 * content and are safe for everyone. Off preserves today's behaviour. Env + restart; the
+	 * fast stop for every LinkedIn write is setting the rep's LinkedIn access to Read. Retire
+	 * once the bet is won.
+	 */
+	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

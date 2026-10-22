@@ -48,6 +48,12 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'list_connections',
 		'search_people',
 		'get_profile',
+		// Outreach reads. The writes beside them (withdraw_invitation, react_to_post,
+		// send_inmail) are deliberately absent: outside this set a tool is a write.
+		'list_sent_invitations',
+		'list_user_posts',
+		'get_company',
+		'get_inmail_balance',
 	]),
 }
 
