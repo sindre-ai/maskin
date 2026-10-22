@@ -1,0 +1,46 @@
+[Unit]
+Description=Maskin Agent Server, STAGING (microsandbox runtime)
+After=network-online.target
+Wants=network-online.target
+Requires=network-online.target
+
+# Second agent server on the production agent host. It shares the host's msb
+# runtime with production and nothing else: own checkout, own port, own env
+# file, own session root, own relay key.
+#
+# DO NOT set AGENT_SERVER_ID anywhere for this unit (not here, not in the env
+# file). With it unset, reconcileOnBoot is skipped. With it set, the boot pass
+# runs a host-wide `msb list`, posts every sandbox name to the staging backend,
+# and `msb remove -f`s whatever the staging database does not own, which is
+# every live production sandbox. The deploy workflow refuses to install if the
+# env file contains it.
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/maskin-staging
+EnvironmentFile=/etc/maskin-staging/agent-server.env
+Environment=NODE_ENV=production
+Environment=PORT=3002
+# 0 disables the loopback metrics listener, so it cannot collide with
+# production's 9464.
+Environment=METRICS_PORT=0
+Environment=DEPLOY_ENV=staging
+Environment=AGENT_SERVER_INSTANCE=staging
+Environment=AGENT_SESSION_ROOT=/agent/sessions-staging
+Environment=AGENT_SERVER_SSH_KEY_PATH=/root/.agent-server-staging/ssh/relay_key
+Environment=SESSION_MAX_DURATION=30m
+ExecStart=/usr/bin/node apps/agent-server/dist/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maskin-agent-server-staging
+LogRateLimitIntervalSec=0
+
+# Same reasoning as the production unit: a restart must replace only the
+# dispatcher and leave session microVMs running.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
