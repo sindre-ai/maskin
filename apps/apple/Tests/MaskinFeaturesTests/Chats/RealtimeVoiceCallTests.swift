@@ -185,6 +185,21 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.micEnabled.last == true)
 	}
 
+	@Test("the agent is asked to greet once, also when muted and after an ICE restart")
+	func greetsOnce() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.toggleMute()
+		await settle()
+		transport.receive("session.created")
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		transport.onConnection?(.failed)
+		transport.onConnection?(.connected)
+		transport.receive("session.created")
+		#expect(transport.iceRestarts == 1)
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+	}
+
 	@Test("tapping to interrupt cancels the response")
 	func interrupts() async {
 		let (call, _, transport) = make()
