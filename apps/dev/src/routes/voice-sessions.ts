@@ -39,6 +39,7 @@ import {
 	setCloseVendorSessionFn,
 } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
+import { withConfirmationArg } from '../services/voice-write-gate'
 
 type Env = {
 	Variables: {
@@ -511,7 +512,7 @@ app.openapi(postOfferRoute, async (c) => {
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: toolkit.tools,
+			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,

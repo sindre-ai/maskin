@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createWriteGate, isRiskyTool, isYes } from '../../services/voice-write-gate'
+import {
+	VOICE_CONFIRM_ARG,
+	createWriteGate,
+	isRiskyTool,
+	isYes,
+	withConfirmationArg,
+} from '../../services/voice-write-gate'
 
 describe('isYes', () => {
 	it.each([
@@ -35,12 +41,19 @@ describe('isYes', () => {
 })
 
 describe('isRiskyTool', () => {
-	it.each(['gmail_send_email', 'delete_object', 'desktop_run', 'update_actor', 'gmail__send'])(
-		'puts %s in the risky class',
-		(name) => {
-			expect(isRiskyTool(name)).toBe(true)
-		},
-	)
+	it.each([
+		'gmail_send_email',
+		'delete_object',
+		'desktop_run',
+		'update_actor',
+		'gmail__send',
+		'desktop_type',
+		'update_workspace',
+		'create_extension',
+		'update_workspace_skill',
+	])('puts %s in the risky class', (name) => {
+		expect(isRiskyTool(name)).toBe(true)
+	})
 
 	it.each(['create_comment', 'update_objects', 'create_objects'])(
 		'leaves %s as an ordinary write',
@@ -48,6 +61,28 @@ describe('isRiskyTool', () => {
 			expect(isRiskyTool(name)).toBe(false)
 		},
 	)
+})
+
+describe('withConfirmationArg', () => {
+	const tools = [
+		{ name: 'list_objects', parameters: { type: 'object', properties: { cursor: { type: 'string' } } } },
+		{ name: 'create_comment', parameters: { type: 'object', properties: { content: { type: 'string' } } } },
+		{ name: 'ping', parameters: { type: 'object' } },
+	]
+	const out = withConfirmationArg(tools, new Set(['list_objects']))
+
+	it('lists the repeat argument on a tool that can be held, next to its own', () => {
+		const props = out[1].parameters.properties as Record<string, unknown>
+		expect(Object.keys(props)).toEqual(['content', VOICE_CONFIRM_ARG])
+	})
+
+	it('adds it to a held tool that had no properties', () => {
+		expect(Object.keys(out[2].parameters.properties as object)).toEqual([VOICE_CONFIRM_ARG])
+	})
+
+	it('leaves a read-only tool as it was', () => {
+		expect(out[0]).toBe(tools[0])
+	})
 })
 
 describe('createWriteGate', () => {

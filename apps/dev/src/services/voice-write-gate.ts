@@ -80,6 +80,14 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'create_actor',
 	'update_actor',
 	'stop_session',
+	'desktop_type',
+	'desktop_key',
+	'desktop_click',
+	'update_workspace',
+	'create_extension',
+	'update_extension',
+	'create_workspace_skill',
+	'update_workspace_skill',
 ])
 
 /**
@@ -89,6 +97,36 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
  */
 export function isRiskyTool(name: string): boolean {
 	return RISKY_TOOLS.has(name) || name.startsWith('delete_') || name.includes('__')
+}
+
+/**
+ * The tool list the model is offered, with the repeat argument added to every
+ * tool the gate can hold. Without it the model is told to send an argument its
+ * tool definition does not list, which a strict vendor would refuse.
+ */
+export function withConfirmationArg<T extends { name: string; parameters: Record<string, unknown> }>(
+	tools: T[],
+	readOnlyTools: ReadonlySet<string>,
+): T[] {
+	return tools.map((tool) => {
+		if (readOnlyTools.has(tool.name)) return tool
+		const properties = (tool.parameters.properties ?? {}) as Record<string, unknown>
+		return {
+			...tool,
+			parameters: {
+				...tool.parameters,
+				type: 'object',
+				properties: {
+					...properties,
+					[VOICE_CONFIRM_ARG]: {
+						type: 'string',
+						description:
+							'Only when repeating a call you were told is not done yet: the id from that answer. Never set it on a first call.',
+					},
+				},
+			},
+		}
+	})
 }
 
 /** Same JSON whatever the key order, so "the same arguments" can be compared. */
