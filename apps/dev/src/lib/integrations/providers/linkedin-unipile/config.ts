@@ -94,7 +94,7 @@ export const config: ProviderConfig = {
 		{
 			kind: 'linkedin_message',
 			label: 'LinkedIn message',
-			// `reply` with the object's id sends the approved text; see send-object.ts.
+			// `reply` or `send_message` with the object's id sends the approved text; see send-object.ts.
 			sendTool: 'reply',
 			// Mirrors the limit in operations.ts.
 			bodyMaxLength: 8000,
@@ -111,6 +111,12 @@ export const config: ProviderConfig = {
 				{ key: 'thread_id', label: 'Conversation', type: 'text', slot: 'hidden' },
 				// The message being answered, shown above the draft so it is read in context.
 				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+				// A first message has no conversation yet: the person it goes to, by LinkedIn id.
+				// Shown, not hidden, so it is part of what an approval is bound to.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text' },
+				// The one workspace file (PDF, PNG or JPEG) sent with the message. Shown for the
+				// same reason: swapping the file withdraws the approval.
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
 			],
 		},
 		{
