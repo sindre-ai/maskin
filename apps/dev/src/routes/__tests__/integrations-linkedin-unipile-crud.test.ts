@@ -117,6 +117,8 @@ function makeStubClient() {
 		getManagedCompanyPages: vi.fn(),
 		getInmailCredits: vi.fn(),
 		sendConnectionRequest: vi.fn(),
+		listRelationRequests: vi.fn(),
+		cancelRelationRequest: vi.fn(),
 		publishPost: vi.fn(),
 		commentOnPost: vi.fn(),
 		replyToComment: vi.fn(),
