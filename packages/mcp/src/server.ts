@@ -3683,6 +3683,18 @@ export function createMcpServer(config: McpConfig) {
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships, even on the final page where no cursor was emitted.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as (typeof raw)[number]
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
+				},
 			}
 		},
 	)
