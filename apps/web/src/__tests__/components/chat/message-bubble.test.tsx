@@ -24,6 +24,21 @@ vi.mock('@/hooks/use-objects', () => ({
 			status: 'active',
 			content: 'The retry window text.',
 			metadata: { channel: 'linkedin_dm', priority: 'P1' },
+			// A draft an integration can deliver: only those get a card in chat.
+			preview: {
+				kind: 'linkedin_message',
+				label: 'LinkedIn message',
+				provider: 'linkedin-unipile',
+				recipients: [],
+				subject: null,
+				details: [],
+				body: 'The retry window text.',
+				maxLength: null,
+				missing: [],
+				warnings: [],
+				content_hash: 'hash-1',
+				delivery: { state: 'draft', at: null },
+			},
 		},
 		isLoading: false,
 	}),
@@ -99,7 +114,7 @@ describe('MessageBubble', () => {
 		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 		renderBubble(
 			buildMessage({
-				content: `Before the link.\n\nDraft is at /ws-1/objects/${id}\n\nAfter the link.`,
+				content: `Before the link.\n\nThe draft is [here](/ws-1/objects/${id}) for you.\n\nAfter the link.`,
 			}),
 		)
 		const before = screen.getByText('Before the link.')

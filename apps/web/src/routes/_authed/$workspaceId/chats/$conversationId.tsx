@@ -1,3 +1,5 @@
+import type { LinkedFocus } from '@/components/chat/linked-pane'
+import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
@@ -18,6 +20,7 @@ import {
 	useSendMessage,
 } from '@/hooks/use-conversation'
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
+import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conversation-linked'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
@@ -28,6 +31,7 @@ import type { MessageMetadata } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { z } from 'zod'
 
 // `?msg=<message id>` is the Origin block's deep-link — see `<Origin>` at
@@ -108,6 +112,31 @@ function ConversationThreadPage() {
 		sessionId: string | null
 	}>(() => (producedRequested ? { tab: 'produced', sessionId: null } : null))
 	const threads = useConversationThreads(workspaceId, conversationId)
+	const messagesOldestFirst = useMemo(
+		() => flattenMessagesOldestFirst(messagesData),
+		[messagesData],
+	)
+	const derivedLinked = useConversationLinked(messagesOldestFirst)
+	const { items: linkedItems, count: linkedCount } = useResolvedLinkedItems(
+		derivedLinked,
+		workspaceId,
+	)
+	const [linkedFocus, setLinkedFocus] = useState<LinkedFocus | null>(null)
+	const focusNonceRef = useRef(0)
+	const linkedPanel = useMemo(
+		() => ({
+			openLinked: (target: { kind: 'object' | 'file'; id: string }) => {
+				focusNonceRef.current += 1
+				setLinkedFocus({ ...target, nonce: focusNonceRef.current })
+				setOverview({ tab: 'linked', sessionId: null })
+			},
+		}),
+		[],
+	)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
+	useEffect(() => {
+		setLinkedFocus(null)
+	}, [conversationId])
 	const threadsContext = useMemo(
 		() => ({
 			openThread: (sessionId: string) => setOverview({ tab: 'threads', sessionId }),
@@ -136,8 +165,8 @@ function ConversationThreadPage() {
 	// re-announce what the person already looked at.
 	const overviewSignature = useMemo(
 		() =>
-			`${threads.map((t) => `${t.id}:${t.status}:${t.awaiting ? 'w' : ''}`).join('|')}#${totalCount}`,
-		[threads, totalCount],
+			`${threads.map((t) => `${t.id}:${t.status}:${t.awaiting ? 'w' : ''}`).join('|')}#${totalCount}#${linkedCount}`,
+		[threads, totalCount, linkedCount],
 	)
 	const [seenSignature, setSeenSignature] = useState<string | null>(() =>
 		readSeenOverview(conversationId),
@@ -151,7 +180,9 @@ function ConversationThreadPage() {
 		writeSeenOverview(conversationId, overviewSignature)
 	}, [overview, overviewSignature, conversationId])
 	const overviewHasNew =
-		!overview && (threads.length > 0 || totalCount > 0) && overviewSignature !== seenSignature
+		!overview &&
+		(threads.length > 0 || totalCount > 0 || linkedCount > 0) &&
+		overviewSignature !== seenSignature
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
@@ -191,6 +222,46 @@ function ConversationThreadPage() {
 		dataTrigger: messagesData,
 	})
 
+	// Jump to message: the same pulse the Origin deep-link uses, set directly because that hook
+	// fires once per message id. On a bottom sheet the sheet closes first so the transcript is
+	// in view.
+	const jumpTimerRef = useRef<number | null>(null)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
+	useEffect(
+		() => () => {
+			if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current)
+		},
+		[conversationId],
+	)
+	const jumpToMessage = useCallback(
+		(messageId: number) => {
+			if (!isDesktop) setOverview(null)
+			if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current)
+			jumpTimerRef.current = window.setTimeout(
+				() => {
+					jumpTimerRef.current = null
+					const node = document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`)
+					if (!node) {
+						// Older than the pages loaded so far; the transcript loads more as it scrolls up.
+						toast.info('That message is further up. Scroll up in the chat to load it.')
+						return
+					}
+					node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+					node.dataset.originPulse = 'true'
+					window.setTimeout(() => delete node.dataset.originPulse, 2200)
+				},
+				isDesktop ? 0 : 300,
+			)
+		},
+		[isDesktop],
+	)
+	const consumeLinkedFocus = useCallback(() => setLinkedFocus(null), [])
+	// A focus request that was never acted on (item not listed) must not linger into a later open.
+	const linkedTabOpen = overview?.tab === 'linked'
+	useEffect(() => {
+		if (!linkedTabOpen) setLinkedFocus(null)
+	}, [linkedTabOpen])
+
 	const overviewNode = overview ? (
 		<OverviewPane
 			workspaceId={workspaceId}
@@ -204,78 +275,85 @@ function ConversationThreadPage() {
 			producedObjects={producedObjects}
 			producedFiles={producedFiles}
 			producedLoading={producedLoading}
+			linkedItems={linkedItems}
+			linkedCount={linkedCount}
+			linkedFocus={linkedFocus}
+			onFocusConsumed={consumeLinkedFocus}
+			onJumpToMessage={jumpToMessage}
 			onClose={() => setOverview(null)}
 			className="h-full"
 		/>
 	) : null
 
 	return (
-		<ThreadsPaneContext.Provider value={threadsContext}>
-			<div className="flex min-h-0 flex-1">
-				{/* `min-w-0` caps min-content on the cross axis so a wide descendant
+		<LinkedPanelContext.Provider value={linkedPanel}>
+			<ThreadsPaneContext.Provider value={threadsContext}>
+				<div className="flex min-h-0 flex-1">
+					{/* `min-w-0` caps min-content on the cross axis so a wide descendant
 			    (markdown table, long unbroken URL) can't widen this column past the
 			    viewport. Without it the column — and its header/composer children —
 			    blow out past the phone's right edge, which `overflow-x: clip` on
 			    html/body then hides instead of surfacing as a scrollbar. */}
-				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-					<ThreadHeader
-						workspaceId={workspaceId}
-						conversationId={conversationId}
-						overviewOpen={overview !== null}
-						overviewHasNew={overviewHasNew}
-						onToggleOverview={toggleOverview}
-					/>
-					<ThreadMessages
-						workspaceId={workspaceId}
-						conversationId={conversationId}
-						onPickStep={requestComposer}
-						onSendStep={sendStep}
-						sendingStep={sendMessage.isPending}
-					/>
-					{/* Live region for the Origin deep-link jump — announced once per
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+						<ThreadHeader
+							workspaceId={workspaceId}
+							conversationId={conversationId}
+							overviewOpen={overview !== null}
+							overviewHasNew={overviewHasNew}
+							onToggleOverview={toggleOverview}
+						/>
+						<ThreadMessages
+							workspaceId={workspaceId}
+							conversationId={conversationId}
+							onPickStep={requestComposer}
+							onSendStep={sendStep}
+							sendingStep={sendMessage.isPending}
+						/>
+						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
 				    it isn't torn down when the message list scrolls. `<output>` has
 				    an implicit `role="status"` + `aria-live="polite"`. */}
-					<output className="sr-only">{announcement}</output>
-					{/* No rule above the composer (mockup 517): the composer draws its own
+						<output className="sr-only">{announcement}</output>
+						{/* No rule above the composer (mockup 517): the composer draws its own
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
-					<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
-						<ThreadComposer
-							workspaceId={workspaceId}
-							conversationId={conversationId}
-							fillRequest={fillRequest}
-						/>
+						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
+							<ThreadComposer
+								workspaceId={workspaceId}
+								conversationId={conversationId}
+								fillRequest={fillRequest}
+							/>
+						</div>
 					</div>
-				</div>
-				{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
+					{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
 			    in on --duration-slide + ease-emphasized. Reduced motion drops the
 			    animation via `motion-reduce:animate-none` — the underlying
 			    Tailwind utility zeros the duration to the base ~0ms, matching
 			    the "Reduced motion drops to 0.001ms" requirement. */}
-				{overview && isDesktop ? (
-					<aside
-						aria-label="Overview pane"
-						className="duration-slide ease-emphasized w-[400px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none xl:w-[440px]"
-					>
-						{overviewNode}
-					</aside>
-				) : null}
-				{overview && !isDesktop ? (
-					<Sheet open onOpenChange={(open) => !open && setOverview(null)}>
-						<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
-							<SheetHeader className="sr-only">
-								<SheetTitle>Overview</SheetTitle>
-								<SheetDescription>
-									Work this chat handed to other agents, and what it produced.
-								</SheetDescription>
-							</SheetHeader>
+					{overview && isDesktop ? (
+						<aside
+							aria-label="Overview pane"
+							className="duration-slide ease-emphasized w-[400px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none xl:w-[440px]"
+						>
 							{overviewNode}
-						</SheetContent>
-					</Sheet>
-				) : null}
-			</div>
-		</ThreadsPaneContext.Provider>
+						</aside>
+					) : null}
+					{overview && !isDesktop ? (
+						<Sheet open onOpenChange={(open) => !open && setOverview(null)}>
+							<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
+								<SheetHeader className="sr-only">
+									<SheetTitle>Overview</SheetTitle>
+									<SheetDescription>
+										Work this chat handed to other agents, what it produced, and what it links to.
+									</SheetDescription>
+								</SheetHeader>
+								{overviewNode}
+							</SheetContent>
+						</Sheet>
+					) : null}
+				</div>
+			</ThreadsPaneContext.Provider>
+		</LinkedPanelContext.Provider>
 	)
 }

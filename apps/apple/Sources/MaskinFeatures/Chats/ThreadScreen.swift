@@ -16,6 +16,7 @@ struct ThreadScreen: View {
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
 	@FocusState private var focused: Bool
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	private var rootID: Int? { root.serverID }
 
@@ -62,6 +63,7 @@ struct ThreadScreen: View {
 			replyBar
 		}
 		.background(MaskinSurface.grouped)
+		.linkedItems(runtime)
 		.navigationTitle("Thread")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
@@ -130,7 +132,14 @@ struct ThreadScreen: View {
 			},
 			sendStatus: message.isPending ? MessageSendStatus.of(message, readBy: nil) : nil,
 			actions: actions, onRetrySend: { store.retrySend(message.id) },
-			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } })
+			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
+			onApprovedDraft: { title, body in
+				// The yes goes back into this thread, to the agent that wrote the draft.
+				guard let rootID else { return }
+				store.reply(
+					LinkedDraftMessage.approved(title: title, body: body), in: rootID,
+					to: message.author == .agent ? store.participant(for: message.actorID) : nil, alsoInChannel: false)
+			})
 	}
 
 	// MARK: Reply bar

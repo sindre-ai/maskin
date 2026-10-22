@@ -53,6 +53,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
@@ -441,6 +442,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
