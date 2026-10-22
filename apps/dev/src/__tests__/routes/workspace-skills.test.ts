@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import AdmZip from 'adm-zip'
 import {
 	buildCreateWorkspaceSkillBody,
@@ -87,6 +88,146 @@ describe('Workspace Skills Routes', () => {
 			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/my-skill`))
 
 			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('skill id or name in the :name path segment', () => {
+		const notFoundText = (ref: string) =>
+			`No skill with id or name '${ref}' in this workspace. Call list_workspace_skills for valid ids and names.`
+
+		it('GET by id and GET by name return the same row', async () => {
+			const skill = buildWorkspaceSkill({ workspaceId, name: 'my-skill' })
+
+			const byId = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			byId.mockResults.selectQueue = [[buildWorkspaceMember()], [skill]]
+			const idRes = await byId.app.request(
+				jsonGet(`/api/workspaces/${workspaceId}/skills/${skill.id}`),
+			)
+
+			const byName = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			byName.mockResults.selectQueue = [[buildWorkspaceMember()], [skill]]
+			const nameRes = await byName.app.request(
+				jsonGet(`/api/workspaces/${workspaceId}/skills/my-skill`),
+			)
+
+			expect(idRes.status).toBe(200)
+			expect(nameRes.status).toBe(200)
+			expect(await idRes.json()).toEqual(await nameRes.json())
+		})
+
+		it('GET falls back to the name when a UUID-shaped ref matches no id', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const uuidName = randomUUID()
+			const skill = buildWorkspaceSkill({ workspaceId, name: uuidName })
+			// membership, id lookup (no row), name lookup (row)
+			mockResults.selectQueue = [[buildWorkspaceMember()], [], [skill]]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/${uuidName}`))
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).id).toBe(skill.id)
+		})
+
+		it('GET returns 404 with the id-or-name text for an unknown name', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/missing`))
+
+			expect(res.status).toBe(404)
+			const json = await res.json()
+			expect(json.error.code).toBe('NOT_FOUND')
+			expect(json.error.message).toBe(notFoundText('missing'))
+		})
+
+		it('GET returns 404 for a skill id that is not in this workspace', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const otherWorkspaceSkillId = randomUUID()
+			// membership, id lookup (scoped to this workspace: no row), name lookup (no row)
+			mockResults.selectQueue = [[buildWorkspaceMember()], [], []]
+
+			const res = await app.request(
+				jsonGet(`/api/workspaces/${workspaceId}/skills/${otherWorkspaceSkillId}`),
+			)
+
+			expect(res.status).toBe(404)
+			expect((await res.json()).error.message).toBe(notFoundText(otherWorkspaceSkillId))
+		})
+
+		it('GET returns 403 before any lookup when the caller is not a member', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const skill = buildWorkspaceSkill({ workspaceId })
+			// First select is the membership check; a skill row waits behind it.
+			mockResults.selectQueue = [[], [skill]]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/${skill.id}`))
+
+			expect(res.status).toBe(403)
+		})
+
+		it('PUT by id writes to that row only', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({ workspaceId, name: 'my-skill' })
+			const body = { content: '---\nname: my-skill\ndescription: Updated\n---\n\nNew body' }
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			mockResults.update = [{ ...existing, content: body.content }]
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/${existing.id}`, body),
+			)
+
+			expect(res.status).toBe(200)
+			expect(vi.mocked(agentStorage.putWorkspaceSkill).mock.calls).toHaveLength(1)
+			expect(vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]?.[1]).toBe(existing.id)
+		})
+
+		it('PUT returns 404 with the id-or-name text for an unknown id', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const unknownId = randomUUID()
+			mockResults.selectQueue = [[buildWorkspaceMember()], [], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					`/api/workspaces/${workspaceId}/skills/${unknownId}`,
+					buildUpdateWorkspaceSkillBody(),
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect((await res.json()).error.message).toBe(notFoundText(unknownId))
+		})
+
+		it('DELETE by id removes that row and its stored object', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({ workspaceId, name: 'my-skill' })
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing]]
+
+			const res = await app.request(
+				jsonRequest('DELETE', `/api/workspaces/${workspaceId}/skills/${existing.id}`, undefined),
+			)
+
+			expect(res.status).toBe(200)
+			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, existing.id)
+		})
+
+		it('DELETE returns 404 with the id-or-name text for an unknown id', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const unknownId = randomUUID()
+			mockResults.selectQueue = [[buildWorkspaceMember()], [], []]
+
+			const res = await app.request(
+				jsonRequest('DELETE', `/api/workspaces/${workspaceId}/skills/${unknownId}`, undefined),
+			)
+
+			expect(res.status).toBe(404)
+			expect((await res.json()).error.message).toBe(notFoundText(unknownId))
 		})
 	})
 

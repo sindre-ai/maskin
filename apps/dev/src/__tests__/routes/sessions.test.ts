@@ -428,7 +428,7 @@ describe('Sessions Routes', () => {
 
 	describe('PATCH /api/sessions/:id', () => {
 		it('writes currentActivity, fires session_updated event, and returns updated session', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const updated = { ...session, currentActivity: 'Searching codebase' }
 			const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
@@ -456,7 +456,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('clears currentActivity to null', async () => {
-			const session = buildSession({ workspaceId: wsId, currentActivity: 'Old activity' })
+			const session = buildOwnSession({ currentActivity: 'Old activity' })
 			const updated = { ...session, currentActivity: null }
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
@@ -474,6 +474,119 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.currentActivity).toBeNull()
+		})
+
+		describe('who may change current_activity', () => {
+			const patchActivity = (sessionId: string) =>
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${sessionId}`,
+					{ current_activity: 'Searching codebase' },
+					{ 'x-workspace-id': wsId },
+				)
+
+			it('lets the agent running the session write it with its own key', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+					'test-actor-id',
+					'agent',
+				)
+				mockResults.selectQueue = [[session]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+				expect((await res.json()).currentActivity).toBe('Searching codebase')
+			})
+
+			it('lets the person who started the session write it', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'test-actor-id',
+				})
+				const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+			})
+
+			it('lets a human admin or owner write it', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], [{ role: 'owner', type: 'human' }]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+			})
+
+			it('refuses a member who is neither the actor nor the starter, and stores nothing', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+					currentActivity: 'Original line',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], [{ role: 'member', type: 'human' }]]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
+
+			it('refuses an agent holding an admin role that is not the session actor', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+					'test-actor-id',
+					'agent',
+				)
+				mockResults.selectQueue = [[session], [{ role: 'admin', type: 'agent' }]]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
+
+			it('applies the same rule to a session started by a trigger', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					triggerId: 'some-trigger',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], []]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
 		})
 
 		it('returns 404 when session not found', async () => {
