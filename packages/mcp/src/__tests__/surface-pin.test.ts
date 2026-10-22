@@ -349,9 +349,10 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
 			const expected = [
 				'create_session',
+				'run_agent',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',
