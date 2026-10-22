@@ -14,6 +14,10 @@ interface ComputerRequestCardProps {
 	request: MessageComputerRequest
 }
 
+/** What a Done press tells the agent. Sent as a hidden nudge, so the chat does not show it. */
+export const COMPUTER_DONE_MESSAGE =
+	"Done: I've finished on the computer. Please take a screenshot and carry on."
+
 type Phase = 'idle' | 'open' | 'done'
 
 /**
@@ -39,7 +43,7 @@ export function ComputerRequestCard({
 		setPhase('done')
 		sendMessage.mutate({
 			// Plain text: a person's own message is not rendered as markdown.
-			content: "Done: I've finished on the computer. Please take a screenshot and carry on.",
+			content: COMPUTER_DONE_MESSAGE,
 			metadata: { hidden_from_chat: true },
 		})
 	}

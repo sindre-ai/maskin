@@ -6,6 +6,9 @@ vi.mock('@/components/chat/threads-pane', () => ({ ThreadsPane: () => <div>threa
 vi.mock('@/components/objects/produced-pane', () => ({
 	ProducedPane: () => <div>produced body</div>,
 }))
+vi.mock('@/components/chat/computers-pane', () => ({
+	ComputersPane: () => <div>computers body</div>,
+}))
 vi.mock('@/components/chat/linked-pane', () => ({ LinkedPane: () => <div>linked body</div> }))
 
 const props = {
@@ -13,6 +16,7 @@ const props = {
 	conversationId: 'c1',
 	onTabChange: vi.fn(),
 	threadsCount: 1,
+	computersCount: 2,
 	producedCount: 2,
 	openSessionId: null,
 	onOpenSession: vi.fn(),
@@ -70,7 +74,7 @@ describe('OverviewPane tabs', () => {
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Threads, Produced and Linked with the flag', () => {
+	it('offers Threads, Produced, Computers and Linked with the flag', () => {
 		render(
 			<OverviewPane
 				{...props}
@@ -82,7 +86,21 @@ describe('OverviewPane tabs', () => {
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
 			'Threads',
 			'Produced',
+			'Computers',
 			'Linked',
 		])
+	})
+
+	it('offers a Computers tab with one entry per agent and shows its pane', () => {
+		render(
+			<OverviewPane
+				{...props}
+				linkedItems={[...props.linkedItems]}
+				tab="computers"
+				producedEnabled={false}
+			/>,
+		)
+		expect(screen.getByRole('tab', { name: /Computers/ })).toHaveTextContent('2')
+		expect(screen.getByText('computers body')).toBeInTheDocument()
 	})
 })

@@ -128,6 +128,9 @@ function ConversationThreadPage() {
 		sessionId: string | null
 	}>(() => (producedRequested ? { tab: 'produced', sessionId: null } : null))
 	const threads = useConversationThreads(workspaceId, conversationId)
+	const computersCount = (conversation?.participants ?? []).filter(
+		(p) => p.actorType === 'agent',
+	).length
 	const messagesOldestFirst = useMemo(
 		() => flattenMessagesOldestFirst(messagesData),
 		[messagesData],
@@ -286,6 +289,7 @@ function ConversationThreadPage() {
 			onTabChange={(tab) => setOverview({ tab, sessionId: null })}
 			producedEnabled={producedEnabled}
 			threadsCount={threads.length}
+			computersCount={computersCount}
 			producedCount={totalCount}
 			openSessionId={overview.sessionId}
 			onOpenSession={(sessionId) => setOverview({ tab: 'threads', sessionId })}

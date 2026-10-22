@@ -213,7 +213,7 @@ function isConversationReplyTool(name: string): boolean {
 	return name === 'post_conversation_message' || name.endsWith('__post_conversation_message')
 }
 
-function describeEvent(event: ChatEvent): string | null {
+export function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
 			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
