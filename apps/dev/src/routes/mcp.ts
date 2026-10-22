@@ -281,7 +281,7 @@ const MAX_SESSION_ID_LEN = 128
 // every workspace, into one bucket with interleaved seq numbers, labelled
 // `maskin-session`: the tag that means "this is a real sessions.id". Wrong data
 // wearing the highest-confidence label is worse than no data, so these fall
-// through to `unknown`. agent-run.sh guards BROWSER_CDP_URL the same way.
+// through to `unknown`. agent-run.sh guards unexpanded placeholders the same way.
 const UNEXPANDED_PLACEHOLDER_RE = /^\$\{[^}]*\}$/
 
 // `sessions.id` is a uuid. `X-Maskin-Session-Id` is the only header that earns
@@ -596,6 +596,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
+				errorMessage: error.message ?? '',
 				sessionId: misfireSessionId,
 				agentActorId,
 			}

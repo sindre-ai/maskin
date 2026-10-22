@@ -770,9 +770,12 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
 			await new Promise((resolve) => setTimeout(resolve, 50))
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			// Count only this test's agents. startSession reads the module-wide session
+			// manager, so a responder still running from an earlier test in this file can
+			// land its createSession on this test's mock.
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
+				.filter((actorId) => actorId === agentA.id || actorId === agentB.id)
 				.sort()
 			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
 
@@ -1048,6 +1051,74 @@ describe('Conversations Integration', () => {
 			expect(body.metadata?.source).toBeUndefined()
 			expect(body.metadata?.final_output).toBeUndefined()
 			expect(body.metadata?.mentions).toEqual([])
+		})
+
+		it('strips a client-claimed delivery marker, so a person cannot forge one', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Delivery', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really an intro',
+						metadata: { delivery: { kind: 'agent_intro', version: 1 }, mentions: [] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// A forged marker would poison the intro cap and the dedupe checks, which
+			// count messages by metadata.delivery.kind.
+			const [stored] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored?.metadata).toEqual({ mentions: [] })
+		})
+
+		it('strips a client-claimed helper_return marker, so a person cannot hide a message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Helper return', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really a helper result',
+						metadata: { helper_return: '11111111-1111-4111-8111-111111111111', mentions: [] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// The web thread hides any message carrying this key, so a forged one would
+			// let a client post a message the other participants never see.
+			const [stored] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored?.metadata).toEqual({ mentions: [] })
 		})
 
 		it('still posts the message, bumps lastMessageAt and logs the event', async () => {

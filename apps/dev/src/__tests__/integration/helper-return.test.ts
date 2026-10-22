@@ -250,6 +250,8 @@ describe('Helper return (integration)', () => {
 			expect(msgs).toHaveLength(1)
 			expect(msgs[0].actorId).toBe(helper.id)
 			expect(msgs[0].content).toContain('Helper stopped with an error')
+			// The server-written marker is not stripped (only client input is).
+			expect(msgs[0].metadata).toMatchObject({ helper_return: h.id })
 		})
 
 		it('with no destination it posts nothing and records no_destination', async () => {
@@ -330,6 +332,24 @@ describe('Helper return (integration)', () => {
 			} as unknown as SessionManager
 			return { manager, writeInput }
 		}
+
+		it('a flagged mention-spawned helper that completed still reports to the sender’s chat', async () => {
+			const conv = await newChat()
+			const s = await senderSession({ conversationId: conv.id })
+			const h = await flagged(s, {
+				config: {
+					notify_on_complete: true,
+					trigger_source: 'comment_fallback',
+					mention: { object_id: objectId, commenter_actor_id: sender.id, comment_event_id: 1 },
+				},
+			})
+			await logResult(h.id, 'Cover attached.')
+			const { manager } = fakeManager({ id: s.id })
+			expect(await returnToSender(db, h.id, { sessionManager: manager })).toEqual({
+				returned: true,
+				destination: 'conversation',
+			})
+		})
 
 		it('quotes the helper’s final message and posts on the sender’s object, never the helper’s', async () => {
 			const helperObject = await insertObject(db, workspaceId, human, { type: 'task', title: 'h' })

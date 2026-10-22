@@ -105,7 +105,6 @@ RUN --mount=type=cache,id=turbo,target=/app/.turbo \
 	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/web
 
 COPY docker/agent-base/ docker/agent-base/
-COPY docker/browser-sidecar/ docker/browser-sidecar/
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist

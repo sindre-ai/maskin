@@ -32,17 +32,33 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 
 /// The call an agent cannot make alone (`decision` on the comment that put a card in the feed).
 /// An outbound message the agent drafted and wants approved (an email, a post). Shown as a bordered
-/// preview inside the decision card. Nothing in the API sends this yet, so it is nil in practice.
+/// preview inside the decision card. It carries the server's `preview` (recipients, subject, details,
+/// approval state) when the draft is an object, or a `file` when the card is about a file.
 public struct DecisionDraft: Sendable, Equatable, Codable {
+	/// The agent's key for this message when one card carries several (`drafts`). Echoed back in
+	/// the reply so the agent can tell which message was sent or skipped.
+	public var id: String?
 	/// What kind of draft it is ("Draft email").
 	public var label: String
 	public var to: String?
 	public var body: String
+	/// The object that holds the draft text.
+	public var objectId: String?
+	public var preview: ObjectPreview?
+	/// Set when the card is about a file; such a draft has no body.
+	public var file: FileReference?
 
-	public init(label: String, to: String? = nil, body: String) {
+	public init(
+		id: String? = nil, label: String, to: String? = nil, body: String,
+		objectId: String? = nil, preview: ObjectPreview? = nil, file: FileReference? = nil
+	) {
+		self.id = id
 		self.label = label
 		self.to = to
 		self.body = body
+		self.objectId = objectId
+		self.preview = preview
+		self.file = file
 	}
 }
 
@@ -54,16 +70,30 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var ask: String
 	public var options: [DecisionOption]
 	public var draft: DecisionDraft?
+	/// One card, several messages: each is shown as its own preview with its own Send and Skip.
+	public var drafts: [DecisionDraft]
 
 	public init(
 		title: String, summary: String, ask: String, options: [DecisionOption],
-		draft: DecisionDraft? = nil
+		draft: DecisionDraft? = nil, drafts: [DecisionDraft] = []
 	) {
 		self.title = title
 		self.summary = summary
 		self.ask = ask
 		self.options = options
 		self.draft = draft
+		self.drafts = drafts
+	}
+
+	// Hand-written so caches written before `drafts` existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		title = try c.decode(String.self, forKey: .title)
+		summary = try c.decode(String.self, forKey: .summary)
+		ask = try c.decode(String.self, forKey: .ask)
+		options = try c.decode([DecisionOption].self, forKey: .options)
+		draft = try c.decodeIfPresent(DecisionDraft.self, forKey: .draft)
+		drafts = try c.decodeIfPresent([DecisionDraft].self, forKey: .drafts) ?? []
 	}
 
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }

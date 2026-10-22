@@ -24,8 +24,9 @@ private final class FeedTransport: ClientTransport, @unchecked Sendable {
 @Suite("Decision draft on the For You card")
 struct DecisionDraftMappingTests {
 	/// One card whose decision carries `draft` (or none), shaped the way the server sends it.
-	private func feed(draft: String?, destructive: Bool = false) -> String {
-		let draftField = draft.map { #","draft":\#($0)"# } ?? ""
+	private func feed(draft: String?, drafts: String? = nil, destructive: Bool = false) -> String {
+		let draftField =
+			(draft.map { #","draft":\#($0)"# } ?? "") + (drafts.map { #","drafts":\#($0)"# } ?? "")
 		return """
 			{"items":[{
 			  "notification_id":"11111111-1111-4111-8111-111111111111","rank":1,
@@ -61,7 +62,9 @@ struct DecisionDraftMappingTests {
 
 		#expect(
 			decision.draft
-				== DecisionDraft(label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?"))
+				== DecisionDraft(
+					label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?",
+					objectId: "task-1"))
 	}
 
 	@Test("falls back to the label Draft")
@@ -89,6 +92,51 @@ struct DecisionDraftMappingTests {
 
 		#expect(decision.draft == nil)
 		#expect(decision.options.count == 2)
+	}
+
+	@Test("maps a stack of messages in order, keeping each id, label and recipient")
+	func mapsDrafts() async throws {
+		let drafts = """
+			[{"id":"kenneth","label":"LinkedIn DM","to":"Kenneth Krog Madsen","body":"Hej Kenneth."},\
+			 {"id":"dan","to":"Dan Højgaard Jensen","body":"Hej Dan."}]
+			"""
+
+		let decision = try #require(try await card(feed(draft: nil, drafts: drafts)).mention?.decision)
+
+		#expect(
+			decision.drafts == [
+				DecisionDraft(
+					id: "kenneth", label: "LinkedIn DM", to: "Kenneth Krog Madsen", body: "Hej Kenneth."),
+				DecisionDraft(id: "dan", label: "Draft", to: "Dan Højgaard Jensen", body: "Hej Dan."),
+			])
+	}
+
+	@Test("leaves out a message with no text and keeps the rest of the stack")
+	func dropsEmptyMessages() async throws {
+		let drafts = #"[{"id":"gone","object_id":"gone"},{"id":"blank","body":""},{"id":"dan","body":"Hej Dan."}]"#
+
+		let decision = try #require(try await card(feed(draft: nil, drafts: drafts)).mention?.decision)
+
+		#expect(decision.drafts.map(\.id) == ["dan"])
+	}
+
+	@Test("a card without a stack has an empty one")
+	func noStack() async throws {
+		let decision = try #require(try await card(feed(draft: nil)).mention?.decision)
+
+		#expect(decision.drafts.isEmpty)
+	}
+
+	@Test("a card cached before stacks existed still decodes")
+	func oldCacheDecodes() throws {
+		let old = """
+			{"title":"t","summary":"s","ask":"a",
+			 "options":[{"label":"Hold","consequences":[],"recommended":true}]}
+			"""
+		let decision = try JSONDecoder().decode(DecisionPrompt.self, from: Data(old.utf8))
+
+		#expect(decision.drafts.isEmpty)
+		#expect(decision.draft == nil)
 	}
 
 	@Test("carries the destructive flag so Send asks for a confirm")

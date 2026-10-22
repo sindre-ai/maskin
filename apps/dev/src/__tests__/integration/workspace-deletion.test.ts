@@ -636,10 +636,9 @@ describe('workspace deletion (integration)', () => {
 
 		for (const table of ['credential_access_log', 'credential_chain_snapshots']) {
 			const rows = await sql.unsafe(`SELECT workspace_id FROM ${table}`)
-			expect(
-				rows.map((r) => r.workspace_id),
-				table,
-			).toEqual([bystander.ws.id])
+			// seedWorkspace gives every workspace a row of its own, so the bystander keeps more than one.
+			expect(rows.length, table).toBeGreaterThan(0)
+			expect(new Set(rows.map((r) => r.workspace_id)), table).toEqual(new Set([bystander.ws.id]))
 		}
 	})
 })

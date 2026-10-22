@@ -29,6 +29,7 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
@@ -2596,6 +2597,8 @@ export class CommentDispatcher {
 		// so its outcome can be sent back. A return never links: the session it wakes
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
+		let originConversationId: string | null = null
+		let notifyOnComplete = false
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2606,6 +2609,15 @@ export class CommentDispatcher {
 			if (link.linked) {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
+				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
 			}
 		}
 
@@ -2632,6 +2644,8 @@ export class CommentDispatcher {
 					...(isHelperReturn ? { helper_return: true } : {}),
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
+				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',

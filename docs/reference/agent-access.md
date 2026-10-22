@@ -2,7 +2,7 @@
 title: Agent access (grants)
 slug: agent-access
 description: Which agents may use an integration or a saved credential, and how — read, read & write, or none — how it is enforced, and how an agent is told.
-last_updated: 2026-10-20
+last_updated: 2026-10-21
 ---
 
 # Agent access (grants)
@@ -50,7 +50,7 @@ An MCP server a person adds by hand (a command to run, or a URL to call) is a wo
 ## The model
 
 - `agent_grants` holds one row per `(integration, agent)` with `access` = `none`, `read` or `read_write`. `none` is an explicit no that beats a `read` default, so one agent can be taken off an integration the others can read. Unique on `(integration_id, actor_id)`; cascades when either side is deleted.
-- `integrations.default_agent_access` is what an agent with **no row** gets: `read` (the default for every ordinary integration) or `none`.
+- `integrations.default_agent_access` is what an agent with **no row** gets: `read` (the default for every ordinary integration), `read_write` (every agent may also write) or `none`. A per-agent row still beats the default in both directions, e.g. one agent held to `read` while the rest write. Read & write is the risky level, which is why the default for an ordinary integration is `read`.
 - A **Keychain credential** (a saved API key or login) has no default and no read/write split: an agent has it or it does not. A grant row means on (stored as `read_write`, never `none`); no row means off. This holds for people too — only ordinary integrations let a person through.
 - Resolution lives in one place: `apps/dev/src/lib/integrations/agent-access.ts`. Do not re-derive it.
 
@@ -62,6 +62,24 @@ An MCP server a person adds by hand (a command to run, or a URL to call) is a wo
 | Saved key or login, no row | off |
 | Actor that does not exist | none |
 
+## Read & write and actions that cannot be undone
+
+`read_write` lets an agent use every tool of the integration. Where a tool does something that cannot be undone, the tool itself still waits for a person's yes, whatever the level: a person approves that one action, the agent cannot approve it for itself.
+
+- **Which providers:** `APPROVAL_GATED_PROVIDERS` in `packages/shared/src/agent-access.ts`, today Gmail (sending an email, approved on the draft or on a For You approval card, see "Sending email through Gmail" below). Adding a provider is a promise that its tool refuses the action until a person has approved it and says how to ask.
+- **What it means in code:** `canWrite` is true for `read_write`, and the tool does the asking. There is no separate level for it: an earlier "Ask first" level was folded into Read & write.
+- **Migration 0107** turned every `ask_first` grant into `read_write` (same behaviour: those agents already needed approval to send). Its down migration puts Gmail `read_write` grants back on `ask_first` so a rollback does not let an agent send on its own.
+
+## Sending email through Gmail
+
+Google's hosted Gmail tool can only create drafts, so Maskin serves the send itself: the `gmail_send_email` MCP tool, `POST /api/integrations/gmail/send` (`apps/dev/src/routes/integrations-gmail.ts`).
+
+- **Sending needs both Read & write and a person's approval of that exact email.** An agent with **Read** or no access cannot send, not even an approved email. An agent with Read & write may draft freely, but a direct send (`to`/`subject`/`body`) is refused with instructions to ask: no email goes out on an agent's own say-so. There is no "send on its own" setting and so no per-recipient exception (a protected contact, an opt-out) to make: a person looked at every email.
+- **Asking is the For You approval card.** The agent posts a comment with a `decision` whose `draft` is the email (`to` with a real address, the text starting with a "Subject: ..." line so the person approves the subject too) and exactly one `destructive` option, the send. A person's tap is stored as a reply under the card. The agent then calls the tool with `approval_comment_id`.
+- **The server reads the approval back rather than trusting the agent.** The card must be the caller's own. The latest answer under it must come from a person (an agent's reply never counts) and equal the send option. The draft's text must not have changed since that answer, because the person approved other text: only a logged edit to its content counts (moving the task to another status or changing its driver does not), and an object that moved on with no logged reason is treated as changed. Then the email goes out exactly as the card shows it.
+- **One approval, one email.** The send claims the approval before calling Gmail (`send_claim` events on the integration, serialised with an advisory lock). Gmail refusing it releases the claim; an unclear failure (5xx, dropped connection) locks it, since sending again could deliver it twice. A direct send is also refused if the same email went out in the last 24 hours.
+- No new OAuth scope: `gmail.compose` is already requested and covers sending.
+
 ## API
 
 All humans-only, writer role, and only the person who connected the integration or a workspace admin/owner. Each change writes an `events` row (and a `scope_changed` audit row for a Keychain credential).
@@ -70,7 +88,7 @@ All humans-only, writer role, and only the person who connected the integration 
 - `PUT  /api/integrations/:id/grants` — replace every explicit grant at once.
 - `PUT  /api/integrations/:id/grants/:actorId` — set one agent's access.
 - `DELETE /api/integrations/:id/grants/:actorId` — remove it; the agent falls back to the default.
-- `PUT  /api/integrations/:id/default-access` — `read` or `none`. Not allowed for a saved key or login.
+- `PUT  /api/integrations/:id/default-access` — `read`, `read_write` or `none`. Not allowed for a saved key or login.
 
 `GET /api/integrations` returns `defaultAgentAccess` and `agentGrants` on each row. Chat capture takes `agentIds` (omitted: the session's agent; `[]`: nobody).
 

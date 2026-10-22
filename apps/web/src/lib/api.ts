@@ -6,13 +6,16 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FromSuggestedStep,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	NeededTool,
 	SafeMetadata,
 	SendRoundInput,
 	SendRoundResponse,
+	SuggestedStep,
 	TriggerResponse,
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
@@ -39,6 +42,15 @@ export type {
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
+
+import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+
+export interface DesktopConnectResponse {
+	ticket: string
+	// Path of the stream WebSocket on the API origin; the ticket goes in `?ticket=`.
+	path: string
+	password: string
+}
 
 export interface PlanCapContext {
 	plan: string
@@ -292,6 +304,13 @@ export const api = {
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
+		// hash is the preview's `content_hash`, so a draft that changed since is refused.
+		approve: (id: string, contentHash?: string) =>
+			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
+				method: 'POST',
+				body: contentHash ? { content_hash: contentHash } : {},
+			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
 				method: 'POST',
@@ -340,6 +359,23 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
+	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
+	// run as the signed-in person and carry no workspace, like the invite calls below.
+	deviceAuth: {
+		preview: (userCode: string) =>
+			request<DeviceAuthPreview>(`/device-auth/preview?user_code=${encodeURIComponent(userCode)}`),
+		approve: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/approve', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
+		deny: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/deny', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
 	},
 
 	// Email invites. `preview` and `accept` are mounted outside the membership
@@ -567,6 +603,20 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		updateCredential: (
+			id: string,
+			workspaceId: string,
+			body: {
+				displayName?: string
+				rawSecret?: string
+				username?: string
+				password?: string
+			},
+		) =>
+			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
+				`/integrations/${id}/update`,
+				{ method: 'POST', body, workspaceId },
+			),
 		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
 			request<CredentialAuditLogPage>(
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
@@ -603,8 +653,8 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
-		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
-			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: DefaultAgentAccess) =>
+			request<{ defaultAgentAccess: DefaultAgentAccess }>(`/integrations/${id}/default-access`, {
 				method: 'PUT',
 				body: { defaultAgentAccess },
 				workspaceId,
@@ -1014,8 +1064,53 @@ export const api = {
 		},
 	},
 
+	desktop: {
+		// Idempotent: starts the workspace desktop if needed (slow the first time) and
+		// returns a one-time ticket for the stream WebSocket plus the VNC password.
+		// Every agent has its own computer: say whose.
+		connect: (workspaceId: string, agentId: string) =>
+			request<DesktopConnectResponse>(`/desktop/connect?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (workspaceId: string, agentId: string) =>
+			request<{ removed: boolean }>(`/desktop?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		// Which agents have a computer and whether it is asleep. Never wakes one.
+		list: (workspaceId: string) =>
+			request<{ desktops: Array<{ agent_id: string; status: 'running' | 'suspended' }> }>(
+				'/desktop',
+				{ workspaceId },
+			),
+		// "Teach a task": hands a recorded demonstration to the chosen agent, which
+		// writes a draft skill from it.
+		teach: (workspaceId: string, body: TeachRequest) =>
+			request<TeachResponse>('/desktop/teach', { method: 'POST', body, workspaceId }),
+		// The recording is an input; the page deletes it once the agent's session ends.
+		deleteTeaching: (workspaceId: string, recordingId: string, agentId: string) =>
+			request<{ deleted: number }>(
+				`/desktop/teach/${recordingId}?agent_id=${encodeURIComponent(agentId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
+	},
+
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+	},
+
+	webPush: {
+		// Per-actor, not per-workspace — no workspaceId. `public_key` is the VAPID application
+		// server key (public by design); `enabled` is false when the server has no VAPID keys.
+		config: () => request<{ enabled: boolean; public_key: string | null }>('/web-push/config'),
+		subscribe: (body: {
+			endpoint: string
+			keys: { p256dh: string; auth: string }
+			user_agent?: string
+		}) => request<{ id: string }>('/web-push/subscriptions', { method: 'POST', body }),
+		unsubscribe: (id: string) =>
+			request<{ deleted: boolean }>(`/web-push/subscriptions/${id}`, { method: 'DELETE' }),
 	},
 
 	featureFlags: {
@@ -1237,7 +1332,7 @@ export const api = {
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
 			const { ids, ...rest } = params
@@ -1434,6 +1529,9 @@ export interface ObjectResponse {
 	// endpoints — create / update / verify / undo-write / bulk — omit it, so
 	// the field is optional here and every reader defaults to `false`.
 	is_starred_by_me?: boolean
+	// Detail endpoint only: present when `metadata.kind` is something an integration
+	// delivers (an email, a LinkedIn message). Computed on read, never stored.
+	preview?: ObjectPreview | null
 }
 
 export interface StarToggleResponse {
@@ -1476,12 +1574,17 @@ export interface UnreadItem {
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
 	latest_mention?: LatestMention
+	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
+	// shows when there is no source comment to lead with.
+	curated?: { headline: string; rationale: string | null }
 }
 
 export interface LatestMentionDecisionOption {
 	label: string
 	consequences: string[]
 	recommended?: boolean
+	/** The option that sends or otherwise reaches real people. */
+	destructive?: boolean
 }
 
 /**
@@ -1490,7 +1593,14 @@ export interface LatestMentionDecisionOption {
  * here; `object_id` says which object it came from.
  */
 export interface LatestMentionDecisionDraft {
+	/** The projection of the object behind the draft, when it is a kind an integration delivers. */
+	preview?: ObjectPreview
+	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
+	id?: string
 	object_id?: string
+	/** The card is about a file (an HTML page, a document, a picture); the card draws the file. */
+	file_id?: string
+	file?: { id: string; name: string; mime_type: string; size_bytes: number }
 	label?: string
 	to?: string
 	body?: string
@@ -1502,6 +1612,8 @@ export interface LatestMentionDecision {
 	ask: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
+	/** One card, several messages: each shows as its own preview with Send and Skip. */
+	drafts?: LatestMentionDecisionDraft[]
 }
 
 export interface LatestMention {
@@ -1522,8 +1634,12 @@ export interface UnreadResponse {
 
 /** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
 export interface ForYouItem {
-	notification_id: string
+	/** Null for a decision card an agent addressed to the person directly. */
+	notification_id: string | null
+	source: 'curated' | 'decision'
 	rank: number
+	/** What marking the item read moves the read position to. Null when there is nothing to mark. */
+	latest_event_id: number | null
 	headline: string
 	rationale: string | null
 	created_at: string | null
@@ -1721,6 +1837,12 @@ export type CreateInviteResponse =
 	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
 	| { status: 'pending'; invite: InviteSummary }
 
+export interface DeviceAuthPreview {
+	client: 'tvos'
+	device_name: string | null
+	created_at: string
+}
+
 export interface InvitePreview {
 	status: 'pending'
 	workspaceId: string
@@ -1865,7 +1987,7 @@ export interface IntegrationResponse {
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
 	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
-	defaultAgentAccess?: 'read' | 'none'
+	defaultAgentAccess?: DefaultAgentAccess
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
@@ -1875,6 +1997,9 @@ export interface IntegrationResponse {
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
 export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
+/** What an agent with no grant of its own gets. */
+export type DefaultAgentAccess = 'read' | 'read_write' | 'none'
+
 export interface AgentGrant {
 	actorId: string
 	access: AgentGrantAccess
@@ -1883,7 +2008,7 @@ export interface AgentGrant {
 export interface IntegrationGrants {
 	integrationId: string
 	mode: 'keychain' | 'standard'
-	defaultAgentAccess: 'read' | 'none'
+	defaultAgentAccess: DefaultAgentAccess
 	grants: AgentGrant[]
 }
 
@@ -2095,6 +2220,8 @@ export interface FileListItem {
 	workspaceId: string
 	name: string
 	description: string | null
+	/** What the file is for. `briefing` puts an HTML page in the For you row. */
+	kind?: 'briefing' | null
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
@@ -2303,7 +2430,7 @@ export interface AgentAccessView {
 		name: string
 		access: 'none' | 'read' | 'read_write'
 		source: 'grant' | 'default'
-		default_access: 'read' | 'none'
+		default_access: DefaultAgentAccess
 		server_attached: boolean
 		created_by: string
 		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
@@ -2316,6 +2443,8 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access). */
+		default_access: 'read' | 'none'
 		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
 		scope: 'always' | 'this_chat' | null
 		/** In how many chats it is shared with this agent, apart from any grant. */
@@ -2330,6 +2459,12 @@ export interface MessageKeychainAccessRequest {
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
+}
+
+/** An agent asking the person to act on its own computer (the card opens it). */
+export interface MessageComputerRequest {
+	session_id: string
+	task: string
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2369,8 +2504,17 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
+	suggested_steps?: SuggestedStep[]
+	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
+	needed_tools?: NeededTool[]
+	/** Backend-owned: how many trailing paragraphs of an intro the web drops when it draws the steps and tool rows. */
+	plain_tail?: number
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step?: FromSuggestedStep
 }
 
 export interface MessageResponse {

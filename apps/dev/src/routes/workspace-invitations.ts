@@ -10,6 +10,7 @@ import {
 } from '@maskin/db/schema'
 import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
 import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
+import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
@@ -104,7 +105,7 @@ function stripActorSecretsForResponse(
 		...serialize(rest),
 		system_prompt: systemPrompt,
 		llm_provider: llmProvider,
-		llm_config: llmConfig,
+		llm_config: maskLlmConfigSecrets(llmConfig),
 		api_key: apiKey ?? '',
 	} as z.infer<typeof actorResponseInAcceptSchema>
 }

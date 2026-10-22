@@ -2,6 +2,7 @@ import {
 	HUMAN_MESSAGE_STYLE_SHORT,
 	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
+	firstStepSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -52,6 +53,16 @@ const notificationMetadataInput = z
 		tags: z.array(z.string()).optional(),
 	})
 	.passthrough()
+
+// Only people need this: an agent always gets its own computer, and naming another
+// agent's is refused (403).
+const optionalDesktopAgentId = z
+	.string()
+	.uuid()
+	.optional()
+	.describe(
+		'Whose computer. Leave out if you are an agent (you always get your own). A person must pass the agent ID.',
+	)
 
 const optionalWorkspaceId = z
 	.string()
@@ -488,7 +499,7 @@ export const tools = {
 	},
 	create_relationship: {
 		description:
-			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. For edge deletion, use the UI's DELETE /api/relationships/:id — the MCP surface does not expose delete_relationship for file endpoints on purpose.",
+			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. To remove an edge, call delete_relationship with the relationship id. It works for edges between objects and for edges that have a file at either end.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			source_id: z
@@ -542,7 +553,8 @@ export const tools = {
 		}),
 	},
 	delete_relationship: {
-		description: 'Delete a relationship by ID',
+		description:
+			'Delete a relationship (graph edge) by ID. Destructive and permanent: the edge is removed and cannot be restored (call create_relationship to make a new one). The objects or files at either end are not touched.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -604,7 +616,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. The person who asked you gets a "Meet {name}" chat from the new agent automatically, so do not send them a second hello. Pass first_steps with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent. Use action "send" only for a step that reads and reports (a tap sends it as written, so prompt must equal label) and "fill" for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes. Pass needed_integrations for the tools the agent cannot do the job without.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -648,6 +660,22 @@ export const tools = {
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job. To give the agent the tools of a connected integration, call list_integration_providers and copy the `mcp.server` of that provider in under the provider name; connecting the integration by itself does NOT expose any tools unless its `mcp.autoInject` is true. `type` is required on each entry ("stdio" or "http") — omitting it fails validation with a bare "Invalid input".',
 				),
 			llm_config: actorLlmConfigSchema,
+			first_steps: z
+				.array(firstStepSchema)
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. 2 to 3 steps specific to this agent\'s job, shown to the person as buttons in the new agent\'s intro chat. Each is { label (max 60), prompt (max 200), action }. action "send" sends the prompt as written when tapped, so prompt must equal label and not end in a space; use it only for steps that read and report. action "fill" puts the prompt in the message box for the person to finish; it may end in a space. Plain text, no line breaks. Nothing is stored on the agent.',
+				),
+			needed_integrations: z
+				.array(z.string().min(1).max(100))
+				.min(1)
+				.max(4)
+				.optional()
+				.describe(
+					'Agents only. Provider names of the integrations this agent cannot do its job without, for example "linear", "gmail", "slack", "github". The intro names up to 3 of them and points the person to Settings, Integrations. Names with no tools an agent could use are ignored.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
@@ -749,7 +777,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. For an agent, `access` lists what it can use: each integration with its level (`none`, `read`, `write`, `read_write`), whether the level is the agent's own (`grant`) or the integration's default, and whether its MCP server is attached, plus each saved Keychain credential and whether it has access. It is the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
+			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. For an agent, `access` lists what it can use: each integration with its level (`none`, `read`, `read_write`), whether the level is the agent's own (`grant`) or the integration's default, and whether its MCP server is attached, plus each saved Keychain credential and whether it has access. It is the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -784,7 +812,7 @@ export const tools = {
 	},
 	list_workspaces: {
 		description:
-			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Each row carries `isDefault`: true for the one workspace the user chose as their default in Settings (at most one row; none if they have not chosen). Prefer it when the user does not name a workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			"List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Each row has id, name, role, createdAt, updatedAt, onboardingEnabled and isDefault; pass include_settings: true to also get each workspace's settings (secrets redacted). isDefault is true for the one workspace the user chose as their default in Settings (at most one row; none if they have not chosen). Prefer it when the user does not name a workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
 		inputSchema: z.object({
 			limit: z
 				.number()
@@ -798,6 +826,12 @@ export const tools = {
 				.optional()
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
+			include_settings: z
+				.boolean()
+				.optional()
+				.describe(
+					'When true, rows are the full workspace records including settings (statuses, field definitions, display names), with secrets redacted. Defaults to false.',
 				),
 		}),
 	},
@@ -1381,7 +1415,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. If the response says `settled: false` the agent is still going; check it later with get_session, or set `notify_on_complete` to have its result sent to you. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. The wait also ends early if the agent is waiting for input or was stopped. If the response says `settled: false` the agent is not finished (still going, or waiting for input); check it later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1412,7 +1446,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Wait for the agent to finish and return the session together with the first 500 lines of its output, instead of returning straight away.',
+					'Wait for the agent to finish and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input or was stopped; settled false means the agent is not finished.',
 				),
 		}),
 	},
@@ -1564,7 +1598,7 @@ export const tools = {
 	},
 	ask_user_question: {
 		description:
-			'Ask the person you are working with a question and wait for their answer. Use it when you cannot continue without a decision or a detail only they can give, and a sensible default would be a guess. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. Inside a chat session the answer comes back as your next turn. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, and the answer goes there too, so do not wait: decide for yourself, state the assumption you made, and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 options each; a person can always type something else.',
+			'Ask the person you are working with anything they can answer by tapping a button, and wait for their answer. Prefer this over a free-text question in your message whenever the reply fits in a few options: confirmations and approvals, timing, choosing between alternatives, picking a direction or a default, resolving ambiguity, and permission before something risky, expensive or hard to undo. Also use it for any detail only they can give when a sensible default would be a guess. Do not ask in prose when buttons would do, and do not ask when you can reasonably decide yourself. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question in your own words. Inside a chat session the answer comes back as your next turn. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, and the answer goes there too, so do not wait: decide for yourself, state the assumption you made, and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 short options each (a one- or two-word label is ideal, with a description only when the label alone is unclear). Write options that fit the question; there is no fixed set. Common ones such as "Yes" / "No", "Proceed" / "Cancel", "Approve" / "Request changes" or "Now" / "Wait" / "Later" are only examples. A person can always type something else. For a simple yes/no, put the one-line question in `question` and a short `header` such as "Confirm" or "Proceed?". Set `multi_select` to let them pick several, and ask up to 4 related questions in one call instead of several calls.',
 		inputSchema: z.object({
 			questions: z
 				.array(
@@ -1773,6 +1807,63 @@ export const tools = {
 				),
 		}),
 	},
+	gmail_send_email: {
+		description:
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. Sending needs "Read & write" access to Gmail AND a person\'s approval of each email: with "Read" or no access you cannot send, and even with "Read & write" nothing goes out until a person has approved that exact email. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The older way still works: send an email a person approved on a card: post a comment with `decision` (create_comment, the person in `mentions`) whose `draft` holds the email, with `to` set to the real address ("Mette Holm <mette@northwind.dk>") and the draft text starting with a line "Subject: ..." followed by the body, so the person approves the actual recipient and subject. Mark the option that sends as destructive (exactly one). End your turn. When the person has chosen that option, call this tool with only `approval_comment_id`, the id of your comment. It sends exactly the draft as the card shows it, once, and only if a person chose the send option and the draft was not changed afterwards. For several emails on one card, put them in `decision.drafts` instead of `draft` (each with its own `id`, `to` and a Subject line); the person approves each message with its own Send, and you call this tool once per message with `approval_comment_id` and that message\'s `draft_id`. Never pass `to`, `subject` or `body`: a new email cannot be sent directly, it always needs a person\'s approval first. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			to: z
+				.string()
+				.optional()
+				.describe(
+					'Recipient address, or several separated by commas. "Mette Holm <mette@northwind.dk>" or "mette@northwind.dk". Not used with approval_comment_id.',
+				),
+			cc: z
+				.string()
+				.optional()
+				.describe('Cc addresses, comma separated. Not used with approval_comment_id.'),
+			subject: z.string().optional().describe('Subject line. Not used with approval_comment_id.'),
+			body: z
+				.string()
+				.optional()
+				.describe('The email text, plain text. Not used with approval_comment_id.'),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now. Use alone; not with to, subject, body or approval_comment_id.',
+				),
+			approval_comment_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'The id of the decision comment you posted (create_comment returns it) after a person chose its send option. Sends the draft attached to that card.',
+				),
+			draft_id: z
+				.string()
+				.optional()
+				.describe(
+					'Only with approval_comment_id, for a card whose `decision.drafts` carries several messages: the `id` of the one message to send. Each message is approved and sent on its own. Leave out for a card with a single `draft`.',
+				),
+		}),
+	},
+	approve_object_draft: {
+		description:
+			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The draft object.'),
+			content_hash: z
+				.string()
+				.optional()
+				.describe(
+					"The preview's content_hash, so a draft that changed since it was shown is refused.",
+				),
+		}),
+	},
 	request_keychain_credential: {
 		description:
 			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with the credential in your environment: an API key is the env var `KEYCHAIN_BYO_APIKEY_<NAME>`, a login is `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `KEYCHAIN_BYO_LOGIN_<NAME>_PASSWORD`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
@@ -1828,9 +1919,23 @@ export const tools = {
 				),
 		}),
 	},
+	show_computer: {
+		description:
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, solving a CAPTCHA, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			task: z
+				.string()
+				.min(1)
+				.max(500)
+				.describe(
+					'What the user should do on the computer, in one or two sentences, e.g. "Approve the 2FA prompt on e-conomic, then press Done."',
+				),
+		}),
+	},
 	update_integration_access: {
 		description:
-			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
+			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read", "read_write" (every agent may also write) or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write; an action that cannot be undone, such as sending an email through Gmail, still waits for a person to approve it), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			integration_id: z
@@ -1838,7 +1943,7 @@ export const tools = {
 				.uuid()
 				.describe('The integration or saved credential, from list_integrations.'),
 			default_agent_access: z
-				.enum(['read', 'none'])
+				.enum(['read', 'read_write', 'none'])
 				.optional()
 				.describe('What agents without their own entry get. Not allowed for a saved key or login.'),
 			agent_access: z
@@ -1984,6 +2089,125 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
+		}),
+	},
+	// Agent computer: every agent has its own long-lived Linux desktop (1280x720,
+	// Chromium + xterm) that it drives and humans can watch and take over from the
+	// Desktop page. An agent always gets ITS OWN; only a person calling these
+	// tools has to say whose (agent_id). Behind the `workspace-desktop` flag.
+	desktop_screenshot: {
+		description:
+			'Take a screenshot of your computer (a 1280x720 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_click: {
+		description:
+			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+			button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+			double: z.boolean().optional().describe('Double-click. Defaults to false.'),
+		}),
+	},
+	desktop_move: {
+		description: 'Move the pointer to a pixel position on your computer without clicking (hover).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_drag: {
+		description:
+			'Press at one pixel position on your computer, drag, and release at another (select text, move a window, drag a slider).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			from_x: z.number().int().min(0).max(1279),
+			from_y: z.number().int().min(0).max(719),
+			to_x: z.number().int().min(0).max(1279),
+			to_y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_scroll: {
+		description:
+			'Scroll the mouse wheel on your computer. Optionally move the pointer to (x, y) first so the right window receives it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			direction: z.enum(['up', 'down']),
+			amount: z.number().int().min(1).max(20).optional().describe('Wheel clicks. Defaults to 3.'),
+			x: z.number().int().min(0).max(1279).optional(),
+			y: z.number().int().min(0).max(719).optional(),
+		}),
+	},
+	desktop_type: {
+		description:
+			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type secrets you would not show them.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			text: z.string().min(1).max(2000),
+		}),
+	},
+	desktop_key: {
+		description:
+			'Press key combinations on your computer, in order. Each entry is an xdotool key name or "+"-joined combo, e.g. ["ctrl+l"], ["Tab", "Return"], ["alt+Tab"], ["ctrl+shift+t"].',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			keys: z
+				.array(z.string().regex(/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/))
+				.min(1)
+				.max(20),
+		}),
+	},
+	desktop_run: {
+		description:
+			'Run a shell command inside your computer (the desktop VM) (not on the host and not in your own sandbox). DISPLAY is already set, so GUI programs launched here appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each truncated to 20,000 characters). Default timeout 30s, max 120s. Anything meant to keep running after the command returns must be backgrounded with `&`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			command: z.string().min(1).max(10000),
+			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
+		}),
+	},
+	desktop_expose_port: {
+		description:
+			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			guest_port: z
+				.number()
+				.int()
+				.min(1)
+				.max(65535)
+				.describe('The port your server listens on inside your sandbox, e.g. 5173.'),
+		}),
+	},
+	desktop_list_ports: {
+		description:
+			'List the dev-server ports currently open from your computer: your sandbox port, the URL to open on your computer, and the session it belongs to. Does not start your computer.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_close_port: {
+		description:
+			'Close one open dev-server port to free a slot. Pass the number after the colon in the URL desktop_expose_port or desktop_list_ports gave you (relay_port).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			relay_port: z.number().int().min(1).max(65535),
 		}),
 	},
 } as const

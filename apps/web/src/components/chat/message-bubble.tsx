@@ -1,4 +1,4 @@
-import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
+import { renderLinkedCard } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -16,6 +16,7 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationConnectCard } from './integration-connect-card'
@@ -52,6 +53,8 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
+	/** Linked objects an earlier message already shows a card for. */
+	shownLinkedObjectIds?: ReadonlySet<string>
 }
 
 /**
@@ -68,6 +71,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	v4Polish = false,
 	spawnInfo,
+	shownLinkedObjectIds,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -301,18 +305,25 @@ export function MessageBubble({
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
 						    parser backs object comments — no new payload, just the render
-						    path the chat surface was missing. */}
-						<MarkdownContent content={message.content} size="sm" renderVisuals />
+						    path the chat surface was missing. `linkedCards` draws a link to a
+						    draft or a page as its card, where the link stands, so it can be read
+						    (and a draft approved) without leaving the chat. A link in a sentence
+						    gets its card right after that paragraph; an id an earlier message
+						    already shows is not drawn again. */}
+						<MarkdownContent
+							content={message.content}
+							size="sm"
+							renderVisuals
+							linkedCards={{
+								workspaceId,
+								conversationId: message.conversationId,
+								agentId: message.actorId,
+								skipIds: shownLinkedObjectIds,
+								renderCard: renderLinkedCard,
+							}}
+						/>
 					</div>
 				) : null}
-				{/* What the objects this message links to say, so a draft or a page can be
-				    read without leaving the chat. */}
-				<LinkedObjectPreviews
-					workspaceId={workspaceId}
-					content={message.content}
-					conversationId={message.conversationId}
-					agentId={message.actorId}
-				/>
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The
 				    message's own content already renders the questions as markdown
 				    above, so this adds the affordance rather than the information —
@@ -355,6 +366,17 @@ export function MessageBubble({
 						conversationId={message.conversationId}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's show_computer call: a card that opens the agent's own computer so
+				    the person can act on it, then hands control back with Done. */}
+				{message.metadata?.computer_request ? (
+					<ComputerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						agentId={message.actorId}
+						agentName={message.actorName}
+						request={message.metadata.computer_request}
 					/>
 				) : null}
 				{/* Chat thread `HANDED OFF` sub-agent delegation strip
