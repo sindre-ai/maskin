@@ -208,7 +208,7 @@ function ToolbarButton({
 
 /** The 1px rule between the marks and the Comment action. */
 function ToolbarDivider() {
-	return <div role="separator" aria-orientation="vertical" className="mx-0.5 h-5 w-px bg-border" />
+	return <div aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
 }
 
 /** Clamp to the 0 to 1 range the pin position takes, rounded to four places. */
@@ -441,7 +441,14 @@ export function EditorToolbar({
 		if (!editor) return
 		setEditorFocused(editor.isFocused)
 		const onSelection = () => {
-			if (editor.state.selection.empty) setLinkOpen(false)
+			const { from, to, empty } = editor.state.selection
+			if (empty) setLinkOpen(false)
+			// Any move off the commented range forgets it, so selecting the same
+			// passage again later brings the menu back.
+			const commented = commentedRangeRef.current
+			if (commented && (commented.from !== from || commented.to !== to)) {
+				commentedRangeRef.current = null
+			}
 		}
 		const onFocus = () => setEditorFocused(true)
 		const onBlur = ({ event }: { event: FocusEvent }) => {
