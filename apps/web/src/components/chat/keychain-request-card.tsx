@@ -137,7 +137,7 @@ export function KeychainRequestCard({
 			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've saved ${displayName} to the Keychain${where}. Please carry on.`,
+				content: `I've saved ${displayName} to the Keychain${where}. Reply with one short line to say you have it, then carry on.`,
 				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {

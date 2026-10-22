@@ -22,7 +22,7 @@ vi.mock('@/hooks/use-objects', () => ({
 			id: 'obj-1',
 			workspaceId: 'ws-1',
 			type: 'bet',
-			title: 'Retry window',
+			title: objectState.title,
 			status: 'active',
 			content: 'The retry window text.',
 			metadata: { channel: 'linkedin_dm', priority: 'P1' },

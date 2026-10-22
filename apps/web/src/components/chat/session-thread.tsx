@@ -7,7 +7,12 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Spinner } from '@/components/ui/spinner'
 import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
 import type { ConversationThread } from '@/hooks/use-conversation-threads'
-import { useSendSessionInput, useSession, useSessionLogs } from '@/hooks/use-sessions'
+import {
+	useContinueSession,
+	useSendSessionInput,
+	useSession,
+	useSessionLogs,
+} from '@/hooks/use-sessions'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { failureText, statusToPill } from '@/lib/handed-off-strip'
@@ -23,10 +28,13 @@ export function SessionThread({
 	workspaceId,
 	conversationId,
 	thread,
+	onOpenThread,
 }: {
 	workspaceId: string
 	conversationId: string
 	thread: ConversationThread
+	/** Opens another thread: the follow-up a message to an ended one starts. */
+	onOpenThread: (sessionId: string) => void
 }) {
 	const pill = statusToPill(thread.status)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
@@ -63,11 +71,17 @@ export function SessionThread({
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const working = live && !idle && !thread.awaiting
 	const failed = pill === 'FAILED'
-	const canReply =
+	// Whoever started the session, or anyone in the chat it asks its questions in, may write
+	// into it: the same rule as `POST /sessions/:id/input`.
+	const mine =
 		!!session &&
-		session.status === 'running' &&
-		session.config?.interactive === true &&
-		session.createdBy === me?.id
+		(session.createdBy === me?.id || session.config?.ask_conversation_id === conversationId)
+	const mode: ComposerMode =
+		session?.config?.interactive === true && session.status === 'running' && mine
+			? 'live'
+			: ENDED.has(thread.status) && mine
+				? 'continue'
+				: 'closed'
 
 	const endRef = useRef<HTMLDivElement>(null)
 	const size = chat.items.length + chat.liveSteps.length
@@ -136,34 +150,47 @@ export function SessionThread({
 				) : null}
 				<div ref={endRef} />
 			</div>
-			<SessionComposer workspaceId={workspaceId} thread={thread} canReply={canReply} />
+			<SessionComposer
+				workspaceId={workspaceId}
+				conversationId={conversationId}
+				thread={thread}
+				mode={mode}
+				onOpenThread={onOpenThread}
+			/>
 		</>
 	)
 }
 
+const ENDED: ReadonlySet<string> = new Set(['completed', 'failed', 'timeout', 'user_stopped'])
+
 /**
- * The main chat's composer, sending into the session. It mirrors the
- * `POST /sessions/:id/input` gates (interactive, running, started by the caller) so a
- * message the server would refuse is explained instead of failing after it was typed.
- * Only the text is sent: the session input takes no attachments or references.
+ * live: the session is open, so the message goes into it. continue: it has ended, so the
+ * message starts a follow-up session for the same agent. closed: neither is possible
+ * yet (still starting, or not the person's to write to).
+ */
+type ComposerMode = 'live' | 'continue' | 'closed'
+
+/**
+ * The main chat's composer, sending into the thread. Only the text is sent: a session
+ * takes no attachments or references.
  */
 function SessionComposer({
 	workspaceId,
+	conversationId,
 	thread,
-	canReply,
-}: { workspaceId: string; thread: ConversationThread; canReply: boolean }) {
+	mode,
+	onOpenThread,
+}: {
+	workspaceId: string
+	conversationId: string
+	thread: ConversationThread
+	mode: ComposerMode
+	onOpenThread: (sessionId: string) => void
+}) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const send = useSendSessionInput(workspaceId)
-
-	if (!canReply) {
-		return (
-			<p className="shrink-0 border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
-				{thread.actorName} isn't taking messages in this thread. Ask the agent that handed this off
-				to pass your feedback on.
-			</p>
-		)
-	}
+	const carryOn = useContinueSession(workspaceId, conversationId)
 
 	return (
 		<div className="shrink-0 px-3 pt-2.5 pb-3.5">
@@ -172,16 +199,25 @@ function SessionComposer({
 				onSend={async (content) => {
 					setError(null)
 					try {
-						await send.mutateAsync({ id: thread.id, content })
+						if (mode === 'live') {
+							await send.mutateAsync({ id: thread.id, content })
+						} else {
+							const started = await carryOn.mutateAsync({ id: thread.id, content })
+							onOpenThread(started.session_id)
+						}
 					} catch (err) {
 						setError(err instanceof Error ? err.message : 'Failed to send message')
 						throw err
 					}
 				}}
-				disabled={false}
-				pending={send.isPending}
+				disabled={mode === 'closed'}
+				pending={send.isPending || carryOn.isPending}
 				surface="sheet"
-				placeholder={`Message ${thread.actorName}…`}
+				placeholder={
+					mode === 'closed'
+						? `${thread.actorName} is getting started…`
+						: `Message ${thread.actorName}…`
+				}
 				selection={selection}
 				onDispatchSelection={dispatch}
 				onRemoveAgent={(id) => dispatch({ type: 'remove_agent', id })}

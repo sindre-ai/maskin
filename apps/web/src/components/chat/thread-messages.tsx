@@ -10,7 +10,10 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import {
+	type MessageTurnActivity,
+	useConversationActivity,
+} from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
@@ -149,6 +152,23 @@ export function ThreadMessages({
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
 	})
+
+	// A turn a hidden nudge started (a card's Done or Save) has no bubble to hang under, so it
+	// hangs under the last message the person can see. Without it the wait for the agent's
+	// answer would show nothing at all.
+	const turnsFromHidden = new Map<number, MessageTurnActivity[]>()
+	const visibleIds = new Set(visibleMessages.map((m) => m.id))
+	let lastVisibleId: number | null = null
+	for (const m of messages) {
+		if (visibleIds.has(m.id)) {
+			lastVisibleId = m.id
+			continue
+		}
+		const turns = m.metadata?.hidden_from_chat ? byTriggerMessageId.get(m.id) : undefined
+		if (turns && lastVisibleId !== null) {
+			turnsFromHidden.set(lastVisibleId, [...(turnsFromHidden.get(lastVisibleId) ?? []), ...turns])
+		}
+	}
 
 	// A linked object's card shows once, on the first message that links it; later
 	// messages keep the link but not another copy of the card.
@@ -374,7 +394,10 @@ export function ThreadMessages({
 					// reply yet) render below it, in the gap before that reply
 					// lands — see useConversationActivity's doc comment.
 					const turnsAbove = byReplyMessageId.get(message.id) ?? []
-					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
+					const turnsBelow = [
+						...(byTriggerMessageId.get(message.id) ?? []),
+						...(turnsFromHidden.get(message.id) ?? []),
+					]
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.

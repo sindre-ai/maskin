@@ -92,7 +92,7 @@ export function KeychainAccessRequestCard({
 			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've allowed you to use ${request.credential_name} from the Keychain${scope === 'chat' ? ' in this chat only' : ''}${where}. Please carry on.`,
+				content: `I've allowed you to use ${request.credential_name} from the Keychain${scope === 'chat' ? ' in this chat only' : ''}${where}. Reply with one short line to say you have it, then carry on.`,
 				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {

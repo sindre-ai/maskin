@@ -266,3 +266,20 @@ export function useSendSessionInput(workspaceId: string) {
 		},
 	})
 }
+
+/**
+ * Carries on with a helper that has already ended: starts a follow-up session for the
+ * same agent from the person's message. Resolves with the new session's id.
+ */
+export function useContinueSession(workspaceId: string, conversationId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, content }: { id: string; content: string }) =>
+			api.sessions.continue(id, content, workspaceId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.conversations.messagesPrefix(conversationId),
+			})
+		},
+	})
+}
