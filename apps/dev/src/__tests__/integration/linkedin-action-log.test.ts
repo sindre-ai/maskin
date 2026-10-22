@@ -266,8 +266,12 @@ describe('every LinkedIn tool call is logged once', () => {
 			},
 		})
 
-		expect(captureMock).toHaveBeenCalledTimes(1)
-		const [event, distinctId, props] = captureMock.mock.calls[0] as unknown as [
+		// Other code paths (the credential read) capture their own events through the same mock.
+		const toolCalls = (captureMock.mock.calls as unknown as unknown[][]).filter(
+			(call) => call[0] === 'linkedin_tool_called',
+		)
+		expect(toolCalls).toHaveLength(1)
+		const [event, distinctId, props] = toolCalls[0] as unknown as [
 			string,
 			string,
 			Record<string, unknown>,
