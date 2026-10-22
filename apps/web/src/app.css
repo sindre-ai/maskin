@@ -688,6 +688,29 @@
 		color: var(--brand);
 	}
 
+	/* Comment highlight in the markdown file editor (a ProseMirror decoration
+	   from packages/markdown/src/comment-highlights.ts, never saved in the
+	   file). Default = the base mark look; hover and the open card add a 1px
+	   brand ring; a resolved comment loses the background but stays clickable.
+	   Text colour is left alone so contrast against body text holds. */
+	.maskin-comment-highlight {
+		background-color: color-mix(in oklab, var(--brand) 12%, transparent);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		transition: box-shadow 120ms ease;
+	}
+	.dark .maskin-comment-highlight {
+		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
+	}
+	.maskin-comment-highlight:hover,
+	.maskin-comment-highlight--active {
+		box-shadow: 0 0 0 1px var(--brand);
+	}
+	.maskin-comment-highlight--resolved,
+	.dark .maskin-comment-highlight--resolved {
+		background-color: transparent;
+	}
+
 	/* Reduced motion — kill animations and transitions, don't just slow
 	   them. Mirrors .claude/skills/maskin-design/tokens/motion.css so every
 	   animated surface (Tailwind utilities, Radix data-state animations,

@@ -8,6 +8,7 @@ import type { ActorListItem, FileCommentDto } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import type { FileCommentDraft } from '@/lib/file-comments-context'
+import { textCommentCardId } from '@/lib/text-comments-context'
 import type { AttachingObject, ProvenanceResolution } from '@/lib/viewer-provenance'
 import { Check } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -62,6 +63,14 @@ export interface ReviewPanelProps {
 	// 344px width and left border in sheet mode so the sheet primitive owns
 	// framing.
 	layout?: ReviewPanelLayout
+	// Comments on selected text. `textMode` is true when the file opens in the
+	// document editor, where comments are made by selecting text; it only
+	// changes the empty-state line. The active id is the comment whose card is
+	// open, the orphaned ids are the ones whose quote no longer matches the text.
+	textMode?: boolean
+	activeCommentId?: string | null
+	orphanedIds?: ReadonlySet<string>
+	onActivateComment?: (id: string, options?: { focus?: boolean }) => void
 }
 
 const FILTER_LABELS: Record<ReviewFilter, string> = {
@@ -89,6 +98,10 @@ export function ReviewPanel(props: ReviewPanelProps) {
 		roundFilter,
 		onClearRoundFilter,
 		layout = 'inline',
+		textMode = false,
+		activeCommentId = null,
+		orphanedIds,
+		onActivateComment,
 	} = props
 
 	const { data: actors } = useActors(workspaceId, { enabled: true })
@@ -123,12 +136,19 @@ export function ReviewPanel(props: ReviewPanelProps) {
 		return subset
 	}, [roundComments, filter])
 
+	// Comments on selected text sit together under "In text", ahead of the
+	// pinned ones. Replies stay with the comment they answer.
+	const { textGroup, pinned } = useMemo(() => splitTextComments(filtered), [filtered])
+
 	// Group by page — comments carrying `page: null` (unpaged files, or legacy
 	// pins that lost their page during migration) get their own "No page" bucket
 	// pinned at the end.
-	const groups = useMemo(() => groupByPage(filtered), [filtered])
+	const groups = useMemo(() => {
+		const byPage = groupByPage(pinned)
+		return textGroup ? [textGroup, ...byPage] : byPage
+	}, [pinned, textGroup])
 
-	const emptyCopy = emptyStateCopy(filter, roundComments.length, roundFilter !== null)
+	const emptyCopy = emptyStateCopy(filter, roundComments.length, roundFilter !== null, textMode)
 
 	const draftsForFile = useMemo(() => drafts.filter((d) => d.fileId === fileId), [drafts, fileId])
 
@@ -204,11 +224,17 @@ export function ReviewPanel(props: ReviewPanelProps) {
 								actorsById={actorsById}
 								onResolve={onResolveComment}
 								onReopen={onReopenComment}
+								activeId={activeCommentId}
+								orphanedIds={orphanedIds}
+								onActivate={onActivateComment}
 							/>
 						))}
 						{draftsForFile.length > 0 && (
 							<DraftGroup
 								drafts={draftsForFile}
+								activeId={activeCommentId}
+								orphanedIds={orphanedIds}
+								onActivate={onActivateComment}
 								onUpdateDraftBody={onUpdateDraftBody}
 								onRemoveDraft={onRemoveDraft}
 								onPostDraft={onPostDraft}
@@ -217,12 +243,16 @@ export function ReviewPanel(props: ReviewPanelProps) {
 					</>
 				)}
 			</div>
-			<PanelFoot
-				unsentCount={draftsForFile.length + comments.filter((c) => c.roundId === null).length}
-				provenance={provenance}
-				sendState={sendState}
-				onSendRound={onSendRound}
-			/>
+			{/* Text comments are not handed to an agent in this bet, so the document
+			    editor has no Send round foot (its Sent state would imply they are). */}
+			{!textMode && (
+				<PanelFoot
+					unsentCount={draftsForFile.length + comments.filter((c) => c.roundId === null).length}
+					provenance={provenance}
+					sendState={sendState}
+					onSendRound={onSendRound}
+				/>
+			)}
 		</aside>
 	)
 }
@@ -290,6 +320,24 @@ interface PageGroupData {
 	comments: FileCommentDto[]
 }
 
+// The text group is the one group that is not a page: comments anchored to a
+// passage, with their replies. Null when there are none.
+function splitTextComments(comments: FileCommentDto[]): {
+	textGroup: PageGroupData | null
+	pinned: FileCommentDto[]
+} {
+	const textRoots = new Set(comments.filter((c) => c.textAnchor && !c.parentId).map((c) => c.id))
+	const inText = comments.filter(
+		(c) => textRoots.has(c.id) || (c.parentId && textRoots.has(c.parentId)),
+	)
+	if (inText.length === 0) return { textGroup: null, pinned: comments }
+	const inTextIds = new Set(inText.map((c) => c.id))
+	return {
+		textGroup: { key: '__text', pageLabel: 'In text', comments: inText },
+		pinned: comments.filter((c) => !inTextIds.has(c.id)),
+	}
+}
+
 function groupByPage(comments: FileCommentDto[]): PageGroupData[] {
 	const byPage = new Map<string, FileCommentDto[]>()
 	for (const c of comments) {
@@ -325,11 +373,17 @@ function PageGroup({
 	actorsById,
 	onResolve,
 	onReopen,
+	activeId,
+	orphanedIds,
+	onActivate,
 }: {
 	group: PageGroupData
 	actorsById: Map<string, ActorListItem>
 	onResolve: (c: FileCommentDto) => void
 	onReopen: (c: FileCommentDto) => void
+	activeId: string | null
+	orphanedIds?: ReadonlySet<string>
+	onActivate?: (id: string, options?: { focus?: boolean }) => void
 }) {
 	// Thread rendering: any comment with `parentId === null` is a root; its
 	// replies are children (recursively). We flatten only one level here — the
@@ -357,6 +411,9 @@ function PageGroup({
 							actorsById={actorsById}
 							onResolve={onResolve}
 							onReopen={onReopen}
+							active={activeId === root.id}
+							orphaned={orphanedIds?.has(root.id) ?? false}
+							onActivate={onActivate}
 						/>
 						{(repliesByParent.get(root.id) ?? []).map((reply) => (
 							<div key={reply.id} className="pl-8">
@@ -382,27 +439,48 @@ function CommentCard({
 	isReply,
 	onResolve,
 	onReopen,
+	active,
+	orphaned,
+	onActivate,
 }: {
 	comment: FileCommentDto
 	actorsById: Map<string, ActorListItem>
 	isReply?: boolean
 	onResolve: (c: FileCommentDto) => void
 	onReopen: (c: FileCommentDto) => void
+	active?: boolean
+	orphaned?: boolean
+	onActivate?: (id: string, options?: { focus?: boolean }) => void
 }) {
 	const author = actorsById.get(comment.authorId)
 	const resolvedActor = comment.resolvedBy ? actorsById.get(comment.resolvedBy) : null
 	const isResolved = Boolean(comment.resolvedAt)
 
+	const textAnchor = comment.textAnchor ?? null
+
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: a click on the card supplements the quote button, which is the keyboard way to the same highlight
 		<article
+			id={textCommentCardId(comment.id)}
 			data-comment-card
 			data-comment-id={comment.id}
 			data-resolved={isResolved || undefined}
 			data-reply={isReply || undefined}
+			data-active={active || undefined}
+			data-orphaned={orphaned || undefined}
 			className={cn(
 				'group flex flex-col gap-1.5 px-3 py-2 text-xs',
 				isResolved && 'text-muted-foreground',
+				active && 'bg-brand-subtle',
 			)}
+			onClick={
+				textAnchor && !orphaned && onActivate
+					? (event) => {
+							if ((event.target as HTMLElement).closest('button, a')) return
+							onActivate(comment.id)
+						}
+					: undefined
+			}
 		>
 			<header className="flex items-center gap-2">
 				<ActorAvatar
@@ -427,6 +505,13 @@ function CommentCard({
 					</span>
 				) : null}
 			</header>
+			{textAnchor && (
+				<CommentQuote
+					quote={textAnchor.quote}
+					orphaned={orphaned ?? false}
+					onGo={() => onActivate?.(comment.id, { focus: true })}
+				/>
+			)}
 			<p className="whitespace-pre-wrap text-foreground/90">{comment.body}</p>
 			<footer className="flex items-center gap-2">
 				{isResolved ? (
@@ -460,13 +545,66 @@ function CommentCard({
 	)
 }
 
+// A draft on selected text reuses the compose box's own line; the pin draft's
+// line speaks of what the driver sees, which a text comment does not promise.
+const TEXT_DRAFT_PLACEHOLDER = 'Add a comment…'
+
+export const ORPHANED_NOTE = 'The commented text was edited. The comment is kept here.'
+
+const QUOTE_CLASS =
+	'line-clamp-2 w-full rounded-md bg-secondary px-2 py-1 text-left text-[11px] text-muted-foreground'
+
+// The quoted passage on a card. A live quote is the way to its highlight in the
+// document; a quote whose text was edited away stays, struck through, with a
+// note, and has nowhere to go.
+function CommentQuote({
+	quote,
+	orphaned,
+	onGo,
+}: {
+	quote: string
+	orphaned: boolean
+	onGo: () => void
+}) {
+	if (orphaned) {
+		return (
+			<>
+				<p className={cn(QUOTE_CLASS, 'line-through')} data-testid="comment-quote-orphaned">
+					{quote}
+				</p>
+				<p className="text-[11px] text-warning">{ORPHANED_NOTE}</p>
+			</>
+		)
+	}
+	return (
+		<button
+			type="button"
+			aria-label="Go to commented text"
+			title={quote}
+			onClick={onGo}
+			className={cn(
+				QUOTE_CLASS,
+				'transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+			)}
+		>
+			{quote}
+		</button>
+	)
+}
+
 function DraftGroup({
 	drafts,
+	activeId,
+	orphanedIds,
+	onActivate,
 	onUpdateDraftBody,
 	onRemoveDraft,
 	onPostDraft,
 }: {
 	drafts: FileCommentDraft[]
+	activeId: string | null
+	orphanedIds?: ReadonlySet<string>
+	onActivate?: (id: string, options?: { focus?: boolean }) => void
 	onUpdateDraftBody: (tempId: string, body: string) => void
 	onRemoveDraft: (tempId: string) => void
 	onPostDraft: (draft: FileCommentDraft) => void
@@ -487,6 +625,9 @@ function DraftGroup({
 					<li key={draft.tempId} className="border-b last:border-b-0 px-3 py-2">
 						<DraftCard
 							draft={draft}
+							active={activeId === draft.tempId}
+							orphaned={orphanedIds?.has(draft.tempId) ?? false}
+							onActivate={onActivate}
 							onUpdateDraftBody={onUpdateDraftBody}
 							onRemoveDraft={onRemoveDraft}
 							onPostDraft={onPostDraft}
@@ -500,34 +641,65 @@ function DraftGroup({
 
 function DraftCard({
 	draft,
+	active,
+	orphaned,
+	onActivate,
 	onUpdateDraftBody,
 	onRemoveDraft,
 	onPostDraft,
 }: {
 	draft: FileCommentDraft
+	active: boolean
+	orphaned: boolean
+	onActivate?: (id: string, options?: { focus?: boolean }) => void
 	onUpdateDraftBody: (tempId: string, body: string) => void
 	onRemoveDraft: (tempId: string) => void
 	onPostDraft: (draft: FileCommentDraft) => void
 }) {
 	const [localBody, setLocalBody] = useState(draft.body)
+	const textAnchor = draft.textAnchor
 	return (
-		<article data-comment-draft className="flex flex-col gap-2">
+		// biome-ignore lint/a11y/useKeyWithClickEvents: a click on the card supplements the quote button, which is the keyboard way to the same highlight
+		<article
+			id={textCommentCardId(draft.tempId)}
+			data-comment-draft
+			data-comment-id={draft.tempId}
+			data-active={active || undefined}
+			className={cn('flex flex-col gap-2', active && '-mx-3 bg-brand-subtle px-3 py-2')}
+			onClick={
+				textAnchor && !orphaned && onActivate
+					? (event) => {
+							if ((event.target as HTMLElement).closest('button, a, textarea')) return
+							onActivate(draft.tempId)
+						}
+					: undefined
+			}
+		>
 			<header className="flex items-center gap-2 text-[11px] text-muted-foreground">
 				<span className="rounded-sm bg-warning/20 px-1.5 py-0.5 text-[9px] font-medium uppercase text-warning">
 					Draft
 				</span>
-				<span>
-					{draft.page !== null ? `Page ${draft.page + 1}` : 'Unpaged'} · pin (
-					{Math.round(draft.positionDoc.x * 100)}%, {Math.round(draft.positionDoc.y * 100)}%)
-				</span>
+				{!textAnchor && (
+					<span>
+						{draft.page !== null ? `Page ${draft.page + 1}` : 'Unpaged'} · pin (
+						{Math.round(draft.positionDoc.x * 100)}%, {Math.round(draft.positionDoc.y * 100)}%)
+					</span>
+				)}
 			</header>
+			{textAnchor && (
+				<CommentQuote
+					quote={textAnchor.quote}
+					orphaned={orphaned}
+					onGo={() => onActivate?.(draft.tempId, { focus: true })}
+				/>
+			)}
 			<Textarea
 				value={localBody}
 				onChange={(e) => {
 					setLocalBody(e.target.value)
 					onUpdateDraftBody(draft.tempId, e.target.value)
 				}}
-				placeholder="What should the driver see?"
+				placeholder={textAnchor ? TEXT_DRAFT_PLACEHOLDER : 'What should the driver see?'}
 				className="min-h-[80px] text-xs"
 			/>
 			<div className="flex items-center gap-1">
@@ -628,6 +800,7 @@ function emptyStateCopy(
 	filter: ReviewFilter,
 	totalCommentCount: number,
 	roundScoped: boolean,
+	textMode: boolean,
 ): { title: string; description: string } {
 	// With a round filter active, the counts below are for that round only, so
 	// the copy names the round instead of claiming something about the file.
@@ -654,7 +827,9 @@ function emptyStateCopy(
 	if (totalCommentCount === 0) {
 		return {
 			title: 'No review comments yet',
-			description: 'Click on the stage to place a pin and start a round.',
+			description: textMode
+				? 'Select text in the document to comment on it.'
+				: 'Click on the stage to place a pin and start a round.',
 		}
 	}
 	if (filter === 'resolved') {

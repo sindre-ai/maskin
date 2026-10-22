@@ -94,6 +94,7 @@ const draft: FileCommentDraft = {
 	page: 0,
 	positionDoc: { x: 0.4, y: 0.4 },
 	selector: null,
+	textAnchor: null,
 	parentId: null,
 	body: 'Draft body',
 	roundId: 'round-uuid-1',
@@ -111,6 +112,10 @@ interface Overrides {
 	attachers?: AttachingObject[]
 	layout?: ReviewPanelLayout
 	lockedDriverType?: 'human' | 'agent'
+	textMode?: boolean
+	activeCommentId?: string | null
+	orphanedIds?: string[]
+	onActivateComment?: (id: string, options?: { focus?: boolean }) => void
 }
 
 function renderPanel(overrides: Overrides = {}) {
@@ -143,6 +148,10 @@ function renderPanel(overrides: Overrides = {}) {
 				roundFilter={overrides.roundFilter ?? null}
 				onClearRoundFilter={() => {}}
 				layout={overrides.layout}
+				textMode={overrides.textMode}
+				activeCommentId={overrides.activeCommentId}
+				orphanedIds={overrides.orphanedIds ? new Set(overrides.orphanedIds) : undefined}
+				onActivateComment={overrides.onActivateComment}
 			/>
 		</QueryClientProvider>,
 	)
@@ -374,5 +383,109 @@ describe('ReviewPanel — Slice 4 responsive layout prop', () => {
 		const { container } = renderPanel({})
 		const panel = container.querySelector('[data-review-panel]')
 		expect(panel?.getAttribute('data-layout')).toBe('inline')
+	})
+})
+
+describe('ReviewPanel — comments on selected text', () => {
+	const anchor = { quote: 'the quoted passage', prefix: 'before ', suffix: ' after' }
+	const textComment: FileCommentDto = {
+		...freshComment,
+		id: 't1',
+		page: null,
+		textAnchor: anchor,
+		body: 'A comment on text',
+	}
+	const textDraft: FileCommentDraft = {
+		...draft,
+		tempId: 'draft-text',
+		page: null,
+		textAnchor: anchor,
+		body: 'Draft on text',
+	}
+
+	it('lists text comments under a group labelled In text, ahead of the pinned ones', () => {
+		const { container } = renderPanel({ comments: [freshComment, textComment] })
+		const labels = Array.from(
+			container.querySelectorAll('div.sticky span:first-child'),
+			(el) => el.textContent,
+		)
+		expect(labels).toEqual(['In text', 'Page 2'])
+		const group = screen.getByText('In text').closest('div.sticky')?.parentElement as HTMLElement
+		expect(within(group).getByText('A comment on text')).toBeInTheDocument()
+		expect(within(group).queryByText('Fresh viewer comment')).toBeNull()
+	})
+
+	it('shows the quote on the card as a button named Go to commented text', () => {
+		const onActivateComment = vi.fn()
+		renderPanel({ comments: [textComment], onActivateComment })
+		const quote = screen.getByRole('button', { name: 'Go to commented text' })
+		expect(quote).toHaveTextContent('the quoted passage')
+		fireEvent.click(quote)
+		expect(onActivateComment).toHaveBeenCalledWith('t1', { focus: true })
+	})
+
+	it('clicking the card marks it and asks for its highlight', () => {
+		const onActivateComment = vi.fn()
+		const { container } = renderPanel({ comments: [textComment], onActivateComment })
+		fireEvent.click(container.querySelector('[data-comment-card]') as HTMLElement)
+		expect(onActivateComment).toHaveBeenCalledWith('t1')
+	})
+
+	it('marks the open card with the brand-subtle background and a stable id for aria-describedby', () => {
+		const { container } = renderPanel({ comments: [textComment], activeCommentId: 't1' })
+		const card = container.querySelector('[data-comment-card]') as HTMLElement
+		expect(card.className).toContain('bg-brand-subtle')
+		expect(card.id).toBe('file-comment-card-t1')
+	})
+
+	it('shows an orphaned comment with the quote struck through and the note, still resolvable', () => {
+		const onResolveComment = vi.fn()
+		renderPanel({ comments: [textComment], orphanedIds: ['t1'], onResolveComment })
+		expect(screen.getByTestId('comment-quote-orphaned').className).toContain('line-through')
+		expect(
+			screen.getByText('The commented text was edited. The comment is kept here.'),
+		).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Go to commented text' })).toBeNull()
+		fireEvent.click(screen.getByRole('button', { name: /resolve/i }))
+		expect(onResolveComment).toHaveBeenCalledWith(textComment)
+	})
+
+	it('keeps an orphaned comment in the list under every filter that matches it', () => {
+		renderPanel({ comments: [textComment], orphanedIds: ['t1'], filter: 'open' })
+		expect(screen.getByText('A comment on text')).toBeInTheDocument()
+	})
+
+	it('shows a text draft under Drafts with its quote and the compose line as its placeholder', () => {
+		renderPanel({ comments: [], drafts: [textDraft] })
+		const drafts = screen.getByText('Drafts').closest('div.sticky')?.parentElement as HTMLElement
+		expect(within(drafts).getByRole('button', { name: 'Go to commented text' })).toHaveTextContent(
+			'the quoted passage',
+		)
+		expect(within(drafts).getByPlaceholderText('Add a comment…')).toBeInTheDocument()
+		expect(within(drafts).queryByText(/pin \(/)).toBeNull()
+	})
+
+	it('shows an orphaned text draft with the quote struck through and no quote button', () => {
+		renderPanel({ comments: [], drafts: [textDraft], orphanedIds: ['draft-text'] })
+		expect(screen.getByTestId('comment-quote-orphaned').className).toContain('line-through')
+		expect(
+			screen.getByText('The commented text was edited. The comment is kept here.'),
+		).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Go to commented text' })).toBeNull()
+	})
+
+	it('has no Send round foot in the document editor, and keeps it elsewhere', () => {
+		const { unmount } = renderPanel({ comments: [textComment], textMode: true })
+		expect(screen.queryByTestId('panel-send-round')).toBeNull()
+		unmount()
+		renderPanel({ comments: [textComment], textMode: false })
+		expect(screen.getByTestId('panel-send-round')).toBeInTheDocument()
+	})
+
+	it('reads Select text in the document to comment on it when empty in the document editor', () => {
+		renderPanel({ comments: [], filter: 'all', textMode: true })
+		expect(screen.getByText('No review comments yet')).toBeInTheDocument()
+		expect(screen.getByText('Select text in the document to comment on it.')).toBeInTheDocument()
+		expect(screen.queryByText(/click on the stage to place a pin/i)).toBeNull()
 	})
 })
