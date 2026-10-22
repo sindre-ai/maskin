@@ -5,7 +5,7 @@ import SwiftUI
 /// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.

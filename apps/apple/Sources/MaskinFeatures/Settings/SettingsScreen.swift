@@ -6,7 +6,8 @@ import SwiftUI
 /// Settings, presented by the shell as a sheet or destination. Owns its `NavigationStack` and a
 /// Done button.
 ///
-/// ACCOUNT: your profile. SETUP: the workspace's name, skills, object types and extensions (web).
+/// ACCOUNT: your profile. NOTIFICATIONS: push permission, preferences and Lock Screen flows
+/// (`NotificationsPage`). SETUP: the workspace's name, skills, object types and extensions (web).
 /// Members, Integrations, Billing and Keys & MCP are not here: they live in the profile sheet's
 /// WORKSPACE group (handoff `7-Chat.md` §10). Log out at the end.
 public struct SettingsScreen: View {
@@ -49,6 +50,11 @@ public struct SettingsScreen: View {
 					NavigationLink(value: SettingsRoute.deleteAccount) {
 						SettingsRow(
 							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
+					}
+				}
+				Section("Notifications") {
+					NavigationLink(value: SettingsRoute.notifications) {
+						SettingsRow(symbol: "bell", title: "Notifications")
 					}
 				}
 				if services.workspaceId != nil {
@@ -122,6 +128,7 @@ public struct SettingsScreen: View {
 			.navigationDestination(for: SettingsRoute.self) { route in
 				switch route {
 				case .profile: ProfileView(store: services.profileStore())
+				case .notifications: SettingsNotificationsPage(environment: environment)
 				case .workspace:
 					WorkspaceSettingsView(
 						store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
@@ -169,5 +176,27 @@ public struct SettingsScreen: View {
 		let version = info?["CFBundleShortVersionString"] as? String ?? "dev"
 		let build = info?["CFBundleVersion"] as? String
 		return build.map { "\(version) (\($0))" } ?? version
+	}
+}
+
+/// Notifications, pushed from Settings. Loads the workspace's flows itself for the Lock Screen
+/// group, since Settings has no flows list of its own.
+private struct SettingsNotificationsPage: View {
+	let environment: AppEnvironment
+	@State private var loops: LoopsStore?
+
+	init(environment: AppEnvironment) {
+		self.environment = environment
+		if let workspaceID = environment.workspaceId {
+			_loops = State(
+				initialValue: LoopsStore(
+					api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+					events: nil, cache: environment.snapshotCache))
+		}
+	}
+
+	var body: some View {
+		NotificationsPage(flows: loops?.loops ?? [], workspaces: environment.workspaces.workspaces)
+			.task { await loops?.refresh() }
 	}
 }

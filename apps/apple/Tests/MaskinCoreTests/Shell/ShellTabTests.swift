@@ -49,13 +49,13 @@ struct ProfileMenuTests {
 				])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings", "Notifications", "Autonomy"])
+				== ["Settings", "Autonomy"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.artefacts])
-		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
+		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings])
 	}
 
 	@Test func keysAndMCPAreForEveryMember() {

@@ -9,7 +9,7 @@ import UserNotifications
 import UIKit
 #endif
 
-/// Notifications, pushed onto the profile sheet. Whether this device can notify is the system's
+/// Notifications, pushed from Settings. Whether this device can notify is the system's
 /// call, so this shows its answer and leads to the system Settings page to change it.
 struct NotificationsPage: View {
 	/// The running flows the person can follow on the Lock Screen. Empty hides the group.
