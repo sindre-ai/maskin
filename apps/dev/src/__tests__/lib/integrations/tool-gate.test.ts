@@ -37,6 +37,7 @@ describe('classifyTool', () => {
 
 	it('matches a LinkedIn verb behind its per-identity prefix', () => {
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__get_profile')).toBe('read')
+		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__get_inmail_balance')).toBe('read')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__publish_post')).toBe('write')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__send_connection_request')).toBe(
 			'write',

@@ -34,6 +34,12 @@ import {
 	isAccountStatusRevoked,
 	isLinkedInIntegrationError,
 } from './errors'
+import {
+	type InmailBalance,
+	UNKNOWN_INMAIL_BALANCE,
+	deriveInmailBalance,
+	parseInmailCredits,
+} from './inmail'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -2447,6 +2453,30 @@ export async function getLinkedInProfile(
 	if (!wantsExperience) return person
 	const experience = experienceFailed ? null : toExperience(upstream.body)
 	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
+}
+
+/**
+ * `get_inmail_balance`: the connected account's InMail credits and what is still sendable
+ * above the floor we keep back. A failed credits call answers `seat: unknown` instead of an
+ * error, so an agent that only wants to know whether to try an InMail gets an answer it can
+ * act on. A missing or revoked credential still throws, as for every other tool.
+ */
+export async function getLinkedInInmailBalance(
+	ctx: LinkedInOperationContext,
+): Promise<InmailBalance> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	try {
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getInmailCredits({ account_id: pre.credentials.account_id }),
+		)
+		return deriveInmailBalance(parseInmailCredits(upstream.body))
+	} catch (err) {
+		if (!isLinkedInIntegrationError(err)) throw err
+		logger.warn('linkedin-unipile get_inmail_balance: credits read failed', { code: err.code })
+		return UNKNOWN_INMAIL_BALANCE
+	}
 }
 
 /**

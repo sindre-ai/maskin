@@ -121,6 +121,22 @@ export const config: ProviderConfig = {
 			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
 		},
 		{
+			kind: 'linkedin_inmail',
+			label: 'LinkedIn InMail',
+			sendTool: 'send_inmail',
+			// Classic InMail takes no subject (Unipile only takes one for Sales Navigator and
+			// Recruiter), and the limit is the one LinkedIn gives a classic InMail.
+			bodyMaxLength: 1900,
+			fields: [
+				{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' },
+				// The id the send goes to. A detail line, not hidden, so it is part of what a person
+				// approves: hidden fields are not hashed, and an edited recipient must withdraw the approval.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text', required: true },
+				// One approved workspace file; a detail line too, so it is hashed into the approval.
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
+			],
+		},
+		{
 			kind: 'linkedin_post',
 			label: 'LinkedIn post',
 			sendTool: 'publish_post',

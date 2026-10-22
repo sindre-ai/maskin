@@ -15,6 +15,7 @@ import {
 	commentOnLinkedInPost,
 	deleteLinkedInPost,
 	editLinkedInPost,
+	getLinkedInInmailBalance,
 	getLinkedInPostEngagement,
 	getLinkedInProfile,
 	listLinkedInConnections,
@@ -550,6 +551,26 @@ export function registerLinkedInMcpInstance(
 					return jsonResult(await getLinkedInProfile(opCtx, args))
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_profile'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('get_inmail_balance')) {
+		server.registerTool(
+			toolName(cfg, 'get_inmail_balance'),
+			{
+				description: scopedDescription(
+					'Read the InMail credits of this account. Returns seat (premium, sales_navigator, recruiter, free or unknown when the credits call failed), credits_classic, credits_sales_navigator, and sendable_now: classic credits above the 2 we always keep back, never below 0. Check it before drafting an InMail; at sendable_now 0 do not draft one.',
+					cfg,
+				),
+				inputSchema: {},
+			},
+			async () => {
+				try {
+					return jsonResult(await getLinkedInInmailBalance(opCtx))
+				} catch (err) {
+					return toolError(toolName(cfg, 'get_inmail_balance'), err)
 				}
 			},
 		)

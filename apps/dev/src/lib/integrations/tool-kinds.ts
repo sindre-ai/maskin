@@ -48,6 +48,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'list_connections',
 		'search_people',
 		'get_profile',
+		'get_inmail_balance',
 	]),
 }
 
