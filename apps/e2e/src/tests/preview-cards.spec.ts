@@ -78,12 +78,12 @@ test.describe('Chat — drafts a message links to', () => {
 			await expect(thread.getByText(/Hvad arbejder I med/)).toBeVisible()
 
 			await thread.getByRole('button', { name: 'Approve' }).click()
-			await expect(thread.getByText('Approved', { exact: true })).toBeVisible()
+			await expect(thread.getByText('Approved, sending', { exact: true })).toBeVisible()
 			await expect(thread.getByRole('button', { name: 'Approve' })).toHaveCount(0)
 
 			for (const colorScheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme })
-				await expect(thread.getByText('Approved', { exact: true })).toBeVisible()
+				await expect(thread.getByText('Approved, sending', { exact: true })).toBeVisible()
 			}
 			await assertNoHorizontalOverflow(page, vp.label)
 		})
