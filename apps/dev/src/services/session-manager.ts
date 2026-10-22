@@ -2288,21 +2288,27 @@ export class SessionManager extends EventEmitter {
 		// agent into calling the MCP tool — it has to tell the agent that its
 		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
 		const helperPreamble =
 			sessionConfig.stop_on_result === true
-				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself.\n\n'
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
 		const accessPreamble = buildAccessPreamble(accessRows)
+		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
+		// in its reply, and the later instruction is the one that is followed.
+		const askWithButtonsRule =
+			sessionConfig.conversation || sessionConfig.stop_on_result === true
+				? '\n\n## Asking the person\nWhen you want the person to choose, confirm or decide something that fits in 2 to 4 options, never write that question in your reply. Call the ask_user_question tool instead, with your recommended option first and the reason in its description, and end your turn without repeating the question. This overrides any instruction above to ask a follow-up question in your reply. A question that needs a free-text answer can still be written.'
+				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2406,7 +2412,28 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.INTERACTIVE = '1'
 			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
 			// through the system prompt instead.
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
+			// A follow-up to a helper that ended: say what the agent did before, so the person's
+			// message (the prompt) can be read as what it is, a reply to that work.
+			const cont = session.config as {
+				continues_session_id?: unknown
+				continues_prompt?: unknown
+				continues_chain?: unknown
+			} | null
+			const continuation =
+				typeof cont?.continues_session_id === 'string'
+					? `
+
+## Earlier work
+You finished some work earlier in this chat and the person is now writing to you about it. ${
+							typeof cont.continues_prompt === 'string' && cont.continues_prompt
+								? `What you were asked then:
+${cont.continues_prompt}
+
+`
+								: ''
+						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
+					: ''
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
