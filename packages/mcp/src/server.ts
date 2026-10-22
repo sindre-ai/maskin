@@ -55,7 +55,9 @@ import {
 	safeBuildSetupBlock,
 } from './setup-guidance/index.js'
 import {
+	type ListActorsView,
 	MUTATION_TOOL_KINDS,
+	TELEMETRY_VIEW,
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
@@ -63,7 +65,7 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import { tools } from './tools.js'
+import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -197,6 +199,35 @@ function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>)
 	if (broken.size === 0) return null
 	const list = [...broken].map(([provider, status]) => `${provider} (${status})`).join(', ')
 	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
+}
+
+/**
+ * Card keys on message metadata, mapped to the tool that really shows that card.
+ * The server drops them from anything posted through post_conversation_message,
+ * so a call that carried one used to succeed with the card silently missing.
+ * A null tool means no agent tool shows that card at all.
+ */
+const CARD_METADATA_KEYS: Record<string, string | null> = {
+	integration_connect: 'connect_integration',
+	keychain_request: 'request_keychain_credential',
+	keychain_access_request: 'request_keychain_access',
+	computer_request: 'show_computer',
+	question: 'ask_user_question',
+	needed_tools: null,
+}
+
+/** Throws when message metadata carries a card key, naming the tool to use instead. */
+function rejectCardMetadata(metadata: Record<string, unknown> | undefined): void {
+	if (!metadata) return
+	const found = Object.keys(CARD_METADATA_KEYS).filter((key) => metadata[key] !== undefined)
+	if (found.length === 0) return
+	const advice = found.map((key) => {
+		const tool = CARD_METADATA_KEYS[key]
+		return tool ? `${key}: call ${tool}` : `${key}: no agent tool shows this card`
+	})
+	throw new Error(
+		`post_conversation_message cannot render cards, so nothing was posted. Remove ${found.join(', ')} from metadata (${advice.join('; ')}). Never write card text yourself or tell the user a card is shown.`,
+	)
 }
 
 /** Default page size when the caller did not pass an explicit limit. Kept
@@ -2573,6 +2604,12 @@ export function createMcpServer(config: McpConfig) {
 				transport: config.transport,
 			})
 
+			// Read before the cap below: applyResponseTokenCap may hand back a
+			// different object, and the symbol only lives on the handler's own.
+			const telemetryView = (response as { [TELEMETRY_VIEW]?: ListActorsView } | undefined)?.[
+				TELEMETRY_VIEW
+			]
+
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
 			// the wire response see the same, capped shape.
@@ -2604,6 +2641,7 @@ export function createMcpServer(config: McpConfig) {
 				seq: currentToolCallSeq(),
 				args,
 				transport: config.transport,
+				view: telemetryView,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
@@ -3645,6 +3683,18 @@ export function createMcpServer(config: McpConfig) {
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships, even on the final page where no cursor was emitted.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as (typeof raw)[number]
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
+				},
 			}
 		},
 	)
@@ -3927,24 +3977,32 @@ export function createMcpServer(config: McpConfig) {
 			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
 				? (enriched as Array<Record<string, unknown>>)
 				: []
-			// Connected triggers/loops only resolve for a single, known workspace —
+			// Connected triggers/loops are the bulk of a row (about 73% of the
+			// bytes), so they only come back when the caller asks for them with
+			// `include`. They also only resolve for a single, known workspace —
 			// the cross-workspace branch (no workspace_id) lists actors from many
-			// workspaces at once, and a trigger/loop belongs to exactly one.
-			const actorLinks = workspaceScoped
-				? await resolveActorLinks(config, args.workspace_id as string)
-				: null
+			// workspaces at once, and a trigger/loop belongs to exactly one, so
+			// `include` is ignored there.
+			const include = parseListActorsInclude(args.include)
+			const wantTriggers = workspaceScoped && include.includes('triggers')
+			const wantLoops = workspaceScoped && include.includes('loops')
+			const actorLinks =
+				wantTriggers || wantLoops
+					? await resolveActorLinks(config, args.workspace_id as string)
+					: null
 			const heroObjects = rows.map((a, idx) => {
 				let obj = buildActorHeroCardObject(a)
 				const url = pickUrl(enrichedRows[idx])
 				if (url) obj = { ...obj, url }
 				if (actorLinks) {
-					const connectedTriggers = actorLinks.triggersByActor.get(a.id)
-					const connectedLoops = actorLinks.loopsByActor.get(a.id)
+					const connectedTriggers = wantTriggers ? actorLinks.triggersByActor.get(a.id) : undefined
+					const connectedLoops = wantLoops ? actorLinks.loopsByActor.get(a.id) : undefined
 					if (connectedTriggers?.length) obj = { ...obj, connectedTriggers }
 					if (connectedLoops?.length) obj = { ...obj, connectedLoops }
 				}
 				return obj
 			})
+			const view: ListActorsView = wantTriggers || wantLoops ? 'full' : 'slim'
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			// heroCard.objects carries every row the API returned on this page —
 			// `structuredContent` has no separate rich row array for this tool, so
@@ -3968,6 +4026,9 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 			return {
+				// Read by the registerAppTool wrapper for the size event; a symbol
+				// never serializes onto the wire.
+				[TELEMETRY_VIEW]: view,
 				_meta: uiMeta(
 					'list_actors',
 					config,
@@ -5195,6 +5256,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, conversation_id, mention_names, ...body } = args
+			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
 			let unresolvedMentions: MentionNameResolution['unresolved'] = []

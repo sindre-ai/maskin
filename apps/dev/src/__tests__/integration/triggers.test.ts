@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { events, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, desc, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
@@ -33,6 +33,9 @@ describe('Triggers Integration', () => {
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Test Agent' })
 		targetActorId = agent.id
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: targetActorId, role: 'member' })
 	})
 
 	describe('CRUD lifecycle', () => {
