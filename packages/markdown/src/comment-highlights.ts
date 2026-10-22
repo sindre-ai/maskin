@@ -8,7 +8,13 @@
 
 import { Extension } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { type EditorState, Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
+import {
+	type EditorState,
+	Plugin,
+	PluginKey,
+	TextSelection,
+	type Transaction,
+} from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { type RenderedText, type TextAnchor, findAnchorRange, renderedText } from './text-anchor'
 
@@ -173,7 +179,10 @@ function withPageSelection(view: EditorView, tr: Transaction): Transaction {
 		const anchor = view.posAtDOM(anchorNode, page.anchorOffset)
 		const head = view.posAtDOM(focusNode, page.focusOffset)
 		if (anchor === tr.selection.anchor && head === tr.selection.head) return tr
-		if (!tr.doc.resolve(anchor).parent.inlineContent || !tr.doc.resolve(head).parent.inlineContent) {
+		if (
+			!tr.doc.resolve(anchor).parent.inlineContent ||
+			!tr.doc.resolve(head).parent.inlineContent
+		) {
 			return tr
 		}
 		return tr.setSelection(TextSelection.create(tr.doc, anchor, head))
