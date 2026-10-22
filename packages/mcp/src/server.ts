@@ -2840,7 +2840,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, include } = args
+			const { workspace_id } = args
+			const include: string[] = []
 			const includeSet = new Set(include ?? [])
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
