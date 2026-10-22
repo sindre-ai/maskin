@@ -53,6 +53,7 @@ import {
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
@@ -137,6 +138,21 @@ app.openapi(createSessionRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Every other id in the body must belong to the caller's workspace before
+	// anything is written or started with it. A miss is a 404, the same as an id
+	// that does not exist. The agent (body.actor_id) is checked inside
+	// startSession(), which every caller of a session start goes through.
+	await assertInWorkspace(db, workspaceId, {
+		objects: [
+			body.initiated_from_object_id,
+			body.config.mention?.object_id,
+			body.config.thread_reply?.object_id,
+		],
+		conversations: [body.config.conversation?.conversation_id],
+		triggers: [body.trigger_id],
+		sessions: [body.source_session_id, ...(body.depends_on_session_ids ?? [])],
+	})
 
 	// Stash entry_agent_role inside the existing config JSON blob so downstream
 	// analytics (parent bet's Chief of Staff thinness query) can attribute

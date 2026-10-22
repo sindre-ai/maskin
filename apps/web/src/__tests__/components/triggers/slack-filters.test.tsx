@@ -10,10 +10,6 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: vi.fn(() => false),
-}))
-
 import {
 	EMPTY_SLACK_FILTER_STATE,
 	type SlackFilterState,
@@ -22,7 +18,6 @@ import {
 	slackFiltersFromConditions,
 	slackFiltersToConditions,
 } from '@/components/triggers/slack-filters'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
@@ -115,10 +110,6 @@ describe('slackFiltersFromConditions', () => {
 })
 
 describe('SlackFilters (rendering)', () => {
-	afterEach(() => {
-		vi.mocked(useFeatureFlag).mockReturnValue(false)
-	})
-
 	beforeEach(() => {
 		vi.mocked(api.integrations.slackConversations).mockResolvedValue([
 			{
@@ -179,8 +170,7 @@ describe('SlackFilters (rendering)', () => {
 		expect(screen.getByText(/Connect Slack/i)).toBeInTheDocument()
 	})
 
-	it('renders a not-a-member warning on selected chips when the flag is on and is_member is false', async () => {
-		vi.mocked(useFeatureFlag).mockImplementation((flag: string) => flag === 'slack-setup-ux-v2')
+	it('renders a not-a-member warning on selected chips when is_member is false', async () => {
 		vi.mocked(api.integrations.slackConversations).mockResolvedValue([
 			{
 				id: 'C_MEMBER',

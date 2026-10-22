@@ -177,6 +177,10 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	// array — both arrive as nulls and empty lists. Optional, and absent on an
 	// older MCP server build, which is the same thing as "no fault reported".
 	shape_error: z.boolean().optional(),
+	// Which shape of answer the tool gave (list_actors: `slim` default row, `full`
+	// when connected triggers/loops were requested). Fixed values only: a bad
+	// value costs the property, not the event.
+	view: degradeTo(z.enum(['slim', 'full']).optional(), undefined),
 })
 
 /**

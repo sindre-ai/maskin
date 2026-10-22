@@ -1,6 +1,13 @@
 ﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
+// startSession() checks that the agent is a member of the workspace. These tests script the mock DB's selects one by one, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),
