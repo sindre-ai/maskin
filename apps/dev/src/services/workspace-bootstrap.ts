@@ -123,8 +123,9 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
 			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
-			// Voice v1: read by POST /api/voice-sessions to gate mint (400 if
-			// missing). Chief of Staff is the only default-on candidate.
+			// Voice v1: not read by POST /api/voice-sessions; the per-person
+			// voice-mode-v1 flag gates a call. Chief of Staff is the only
+			// default-on candidate.
 			metadata: { ...(CHIEF_OF_STAFF_DEFAULT.metadata ?? {}) },
 		}
 	}
