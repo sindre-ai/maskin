@@ -4,10 +4,17 @@ import { Button } from '@/components/ui/button'
 import { type FileSaveClient, useMarkdownFileSave } from '@/hooks/use-markdown-file-save'
 import { trackEvent } from '@/lib/analytics'
 import { captureEditorParseError } from '@/lib/editor-events'
-import type { MarkdownEditorRef, MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
+import { textCommentCardId, useTextComments } from '@/lib/text-comments-context'
+import type {
+	CommentRequest,
+	MarkdownEditorRef,
+	MarkdownParseErrorInfo,
+	TextCommentHighlight,
+} from '@maskin/markdown/react/editor'
 import { Check } from 'lucide-react'
-import { Suspense, lazy, useCallback, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SourceView, type ViewMode, ViewToggle } from './file-body'
+import { TextCommentCompose } from './text-comment-compose'
 
 // Dynamic-imported so Tiptap never bundles into a read-only route (same split
 // as MarkdownContent; the Vite chunk-name CI assertion enforces it).
@@ -70,6 +77,26 @@ export function MarkdownFileEditor({
 	const [refusedConstruct, setRefusedConstruct] = useState<string | null>(null)
 	const editorRef = useRef<MarkdownEditorRef>(null)
 
+	// Comments on selected text, when the file route provides them. The editor
+	// only draws the highlights and offers the Comment action; the comments
+	// themselves live in the route and the review panel.
+	const textComments = useTextComments()
+	const [compose, setCompose] = useState<CommentRequest | null>(null)
+	const savedHighlights = textComments?.highlights
+	const highlights = useMemo<TextCommentHighlight[] | undefined>(() => {
+		if (!savedHighlights) return undefined
+		if (!compose) return savedHighlights
+		// The passage being commented on stays marked while the compose box is open.
+		return [...savedHighlights, { id: 'pending', anchor: compose.anchor, pending: true }]
+	}, [savedHighlights, compose])
+	const handleCommentRequest = useCallback((request: CommentRequest) => setCompose(request), [])
+	const scrollRequest = textComments?.scrollRequest
+	useEffect(() => {
+		if (scrollRequest) {
+			editorRef.current?.scrollToTextComment(scrollRequest.id, { focus: scrollRequest.focus })
+		}
+	}, [scrollRequest])
+
 	const save = useMarkdownFileSave({
 		client,
 		initialText: text,
@@ -114,6 +141,19 @@ export function MarkdownFileEditor({
 
 	return (
 		<div className="space-y-3">
+			{compose && textComments && (
+				<TextCommentCompose
+					request={compose}
+					onSave={(body) => {
+						textComments.onCompose({ anchor: compose.anchor, position: compose.position, body })
+						setCompose(null)
+					}}
+					onDiscard={() => {
+						setCompose(null)
+						editorRef.current?.focus()
+					}}
+				/>
+			)}
 			<div className="flex items-center justify-end gap-2">
 				{showSaved && (
 					<span className="mr-auto flex items-center gap-1 text-xs text-muted-foreground">
@@ -193,6 +233,12 @@ export function MarkdownFileEditor({
 							onChange={noop}
 							onEdit={save.markEdited}
 							onParseError={handleParseError}
+							textComments={highlights}
+							activeTextCommentId={textComments?.activeId ?? null}
+							onTextCommentRequest={textComments ? handleCommentRequest : undefined}
+							onTextCommentClick={textComments?.onHighlightClick}
+							onTextCommentsOrphaned={textComments?.onOrphansChange}
+							textCommentDescribedBy={textCommentCardId}
 						/>
 					</Suspense>
 				</div>
