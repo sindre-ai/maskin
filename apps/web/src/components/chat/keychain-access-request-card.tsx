@@ -47,8 +47,8 @@ export function KeychainAccessRequestCard({
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [declinedNow, setDeclinedNow] = useState(false)
-	const declined =
-		declinedNow || useCardAnswer(conversationId, workspaceId, messageId) === 'declined'
+	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
+	const declined = declinedNow || storedAnswer === 'declined'
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
 	const [allowedNow, setAllowedNow] = useState<'chat' | 'always' | null>(null)
 

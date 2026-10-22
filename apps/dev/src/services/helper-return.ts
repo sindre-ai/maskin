@@ -94,7 +94,13 @@ export async function returnDeferredHelpers(
 ): Promise<void> {
 	try {
 		const helpers = await db
-			.select({ id: sessions.id, status: sessions.status, result: sessions.result })
+			.select({
+				id: sessions.id,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+				status: sessions.status,
+				result: sessions.result,
+			})
 			.from(sessions)
 			.where(
 				and(
@@ -108,6 +114,13 @@ export async function returnDeferredHelpers(
 							and events.action = 'helper_return_skipped'
 							and events.data->>'reason' = 'sender_live'
 					)`,
+					// Once only: a helper whose return was already retried is not retried again.
+					sql`not exists (
+						select 1 from events
+						where events.entity_type = 'session'
+							and events.entity_id = ${sessions.id}
+							and events.action = 'helper_return_retried'
+					)`,
 				),
 			)
 		for (const helper of helpers) {
@@ -119,7 +132,21 @@ export async function returnDeferredHelpers(
 				.set({ helperReturnedAt: null })
 				.where(and(eq(sessions.id, helper.id), isNotNull(sessions.helperReturnedAt)))
 				.returning({ id: sessions.id })
-			if (reset) await returnToSender(db, helper.id, opts)
+			if (!reset) continue
+			await recordEvent(db, {
+				workspaceId: helper.workspaceId,
+				actorId: helper.actorId,
+				action: 'helper_return_retried',
+				entityType: 'session',
+				entityId: helper.id,
+				data: {},
+			}).catch((err) =>
+				logger.warn('Failed to record helper_return_retried', {
+					sessionId: helper.id,
+					error: String(err),
+				}),
+			)
+			await returnToSender(db, helper.id, opts)
 		}
 	} catch (err) {
 		logger.error('Deferred helper return failed', { senderSessionId, error: String(err) })
