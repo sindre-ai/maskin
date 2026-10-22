@@ -7444,4 +7444,22 @@ describe('X-Maskin-Session-Id source', () => {
 			{ name: 'Nobody', reason: 'not_in_conversation' },
 		])
 	})
+
+	it('post_conversation_message rejects a card key with an error naming the tool that shows it', async () => {
+		build({})
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await expect(
+			handler({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				content: 'Here is your LinkedIn connect card',
+				metadata: {
+					integration_connect: { provider: 'linkedin', session_id: callerSession },
+					needed_tools: [{ provider: 'linkedin' }],
+				},
+			}),
+		).rejects.toThrow(/cannot render cards.*integration_connect: call connect_integration/)
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
 })
