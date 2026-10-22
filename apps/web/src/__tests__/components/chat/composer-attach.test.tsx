@@ -120,7 +120,11 @@ describe('Composer clipboard paste', () => {
 	it('attaches a pasted screenshot: uploading chip, then the attachment, under a readable name', async () => {
 		uploadFileMock.mockReset()
 		let finish: (v: { id: string }) => void = () => {}
-		uploadFileMock.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+		uploadFileMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finish = resolve
+			}),
+		)
 		const onDispatchSelection = vi.fn()
 		renderComposer({ onDispatchSelection })
 
