@@ -137,12 +137,30 @@ describe('LinkedIn message drafts', () => {
 		expect(rows.filter((r) => r.entityId === draft.id)).toHaveLength(0)
 	})
 
-	it('refuses to approve a message that has no recipient', async () => {
+	it('approves a reply with no recipient, and the card warns that nobody is named', async () => {
+		// A reply goes into a conversation the agent already holds, so the recipient is
+		// recommended, not required (see the linkedin_message deliverable in config.ts).
 		const s = await setup()
 		const draft = await insertObject(db, s.workspace.id, s.agent.id, {
 			type: 'task',
 			content: 'Hej',
 			metadata: { kind: 'linkedin_message' },
+		})
+		const shown = (await previewOf(s.human, s.workspace.id, draft.id)) as Preview & {
+			warnings: string[]
+		}
+		expect(shown.missing).toEqual([])
+		expect(shown.warnings).toContain('To is not filed.')
+		const res = await approve(s.human, s.workspace.id, draft.id)
+		expect(res.status).toBe(200)
+	})
+
+	it('refuses to approve a connection request that has no recipient', async () => {
+		const s = await setup()
+		const draft = await insertObject(db, s.workspace.id, s.agent.id, {
+			type: 'task',
+			content: 'Hej',
+			metadata: { kind: 'linkedin_connection_request' },
 		})
 		const res = await approve(s.human, s.workspace.id, draft.id)
 		expect(res.status).toBe(400)
