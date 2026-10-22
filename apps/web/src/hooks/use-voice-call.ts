@@ -271,7 +271,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		} catch (err) {
 			teardown()
 			if (err instanceof ApiError && err.status === 429) {
-				// Vendor rate limit: every Call button disables until the server says to retry.
+				// Vendor rate limit or the workspace's daily minutes: every Call
+				// button disables until the server says to retry.
 				markVoiceUnavailable(err.retryAfterSeconds ?? 30)
 				setNotice(VOICE_UNAVAILABLE_TOOLTIP)
 			} else {
