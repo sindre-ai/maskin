@@ -224,7 +224,7 @@ export async function startSession(
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: input.config,
+		config: withBackgroundDefaults(input),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -297,6 +297,23 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/**
+ * Background work (a trigger, a cron, a plain API call) runs as an interactive session that
+ * ends on its result, like a helper: the person can read it as a chat and write into it, and
+ * once it has ended a message starts a follow-up. A session that belongs to a chat stays open
+ * between messages instead of ending on its result.
+ */
+function withBackgroundDefaults(input: StartSessionInput): SessionConfig {
+	const config = input.config
+	const hasChat =
+		!!input.conversationId || !!(config as { conversation?: unknown } | undefined)?.conversation
+	// Every session is interactive, whatever the caller asked for. Only background work also
+	// ends on its result: a chat session stays open between messages.
+	return hasChat
+		? { ...config, interactive: true }
+		: { ...config, interactive: true, stop_on_result: true }
 }
 
 function readIdempotencyKey(config: SessionConfig | undefined): string | undefined {
