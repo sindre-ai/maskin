@@ -160,7 +160,10 @@ describe('endVoiceSession', () => {
 		expect(Number(row?.totalCostUsd)).toBeCloseTo(0.06, 6)
 		const ended = vi
 			.mocked(freshPosthog.capturePosthogEvent)
-			.mock.calls.find(([event]) => event === 'voice_session_ended')
+			.mock.calls.find(
+				([event, , props]) =>
+					event === 'voice_session_ended' && props?.voice_session_id === session.id,
+			)
 		expect(ended?.[2]).toMatchObject({ turn_count: 1, tool_calls_count: 2 })
 	})
 
