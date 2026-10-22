@@ -5,12 +5,12 @@ import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytic
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
-import { VOICE_CONFIRM_ARG, type WriteReview, createWriteGate } from './voice-write-gate'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
 	writeVoiceTranscriptLine,
 } from './voice-transcript'
+import { VOICE_CONFIRM_ARG, type WriteReview, createWriteGate } from './voice-write-gate'
 
 /**
  * Per-call logic for the server's socket to a Realtime call (see
