@@ -471,6 +471,7 @@ export function Composer({
 			},
 			[setValue],
 		),
+		workspaceId,
 	)
 
 	// Abort every in-flight upload when the composer unmounts so a closed
@@ -1158,11 +1159,18 @@ export function Composer({
 								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
 							)}
 							onClick={dictation.toggle}
-							disabled={disabled}
+							disabled={disabled || dictation.transcribing}
 							aria-pressed={dictation.recording}
-							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
+							aria-busy={dictation.transcribing}
+							aria-label={
+								dictation.transcribing
+									? 'Transcribing'
+									: dictation.recording
+										? 'Stop dictating'
+										: 'Dictate a message'
+							}
 						>
-							<Mic size={14} aria-hidden />
+							{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
 						</Button>
 					) : null}
 					{callAgent ? (
