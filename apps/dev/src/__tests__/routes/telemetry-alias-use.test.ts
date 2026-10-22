@@ -4,8 +4,13 @@ import { createTestApp } from '../setup'
 
 // The alias_use branch of `POST /api/telemetry/mcp`. Postgres is the source of
 // truth for the removal check, so the row and its actor are what matter here.
-const capturePosthogEvent = vi.fn().mockResolvedValue(undefined)
-vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent }))
+const { capturePosthogEvent } = vi.hoisted(() => ({
+	capturePosthogEvent: vi.fn(),
+}))
+vi.mock('../../lib/analytics/posthog', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/analytics/posthog')>()
+	return { ...actual, capturePosthogEvent }
+})
 
 const { default: telemetryRoutes } = await import('../../routes/telemetry')
 
