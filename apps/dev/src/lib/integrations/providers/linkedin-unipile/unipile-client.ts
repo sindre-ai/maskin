@@ -14,6 +14,7 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
+import { type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
 
 export type LinkedInHttpResult<TBody = unknown> = {
 	status: number
@@ -402,6 +403,10 @@ export interface LinkedInClient {
 		query: LinkedInSearchPeopleQuery,
 	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
 	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// Bet aff468ba · InMail credit balance; the reducers live in inmail.ts.
+	getInmailCredits(
+		query: LinkedInInmailCreditsQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	getManagedCompanyPages(
 		query: LinkedInListManagedPagesQuery,
 	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
@@ -609,6 +614,9 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const qs = params.toString()
 			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
 			return call('GET', qs ? `${path}?${qs}` : path)
+		},
+		getInmailCredits(query) {
+			return call('GET', inmailCreditsPath(query.account_id))
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected

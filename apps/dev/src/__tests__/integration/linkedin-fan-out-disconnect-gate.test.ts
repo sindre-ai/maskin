@@ -132,6 +132,7 @@ function recordingClient(): LinkedInClient & { sendCalls: Array<{ account_id: st
 		searchPeople: vi.fn(),
 		getProfile: vi.fn(),
 		getManagedCompanyPages: vi.fn(),
+		getInmailCredits: vi.fn(),
 		sendConnectionRequest: vi.fn(),
 		publishPost: vi.fn(),
 		commentOnPost: vi.fn(),

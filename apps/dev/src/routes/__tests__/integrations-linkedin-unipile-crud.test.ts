@@ -115,6 +115,7 @@ function makeStubClient() {
 		searchPeople: vi.fn(),
 		getProfile: vi.fn(),
 		getManagedCompanyPages: vi.fn(),
+		getInmailCredits: vi.fn(),
 		sendConnectionRequest: vi.fn(),
 		publishPost: vi.fn(),
 		commentOnPost: vi.fn(),
