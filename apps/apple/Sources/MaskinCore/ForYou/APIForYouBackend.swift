@@ -88,10 +88,12 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 				objectTitle: item.object?.title, objectType: item.object?._type,
 				status: item.object?.status, unreadCount: 1,
 				maxAttention: item.latest_mention?.attention.map { Int($0) },
-				latestEventId: item.latest_mention.map { Int($0.event_id) },
+				latestEventId: item.latest_mention.map { Int($0.event_id) }
+					?? item.latest_event_id.map { Int($0) },
 				latestActivityAt: item.latest_mention.flatMap { Self.date($0.created_at) }
 					?? item.created_at.flatMap(Self.date),
-				mention: mention, rank: position)
+				mention: mention, rank: position, curatedHeadline: item.headline,
+				curatedRationale: item.rationale)
 		}
 	}
 
