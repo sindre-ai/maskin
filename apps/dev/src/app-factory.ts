@@ -392,8 +392,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// reading the `X-Maskin-Session-Id` header once at the boundary and
 	// stashing it on the context. Any route that then calls `recordEvent`
 	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
-	// gets a `session → object|file` `produced_by` edge for free (gated on
-	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// gets a `session → object|file` `produced_by` edge for free. Non-mutating
 	// requests are unaffected; requests without the header — human writes
 	// direct from the UI — leave the context value undefined and no edge
 	// lands, exactly the intended contract.

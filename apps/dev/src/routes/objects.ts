@@ -721,8 +721,7 @@ app.openapi(createObjectRoute, async (c) => {
 
 	// Log event · pass the session context so `recordEvent` can also upsert
 	// a `session → object` `produced_by` edge when the caller's session id
-	// arrived on the `X-Maskin-Session-Id` header and the
-	// `graph-provenance-writes` flag is on for the session's actor.
+	// arrived on the `X-Maskin-Session-Id` header.
 	await recordEvent(db, {
 		workspaceId,
 		actorId,
