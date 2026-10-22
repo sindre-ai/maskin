@@ -201,6 +201,35 @@ function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>)
 	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
 }
 
+/**
+ * Card keys on message metadata, mapped to the tool that really shows that card.
+ * The server drops them from anything posted through post_conversation_message,
+ * so a call that carried one used to succeed with the card silently missing.
+ * A null tool means no agent tool shows that card at all.
+ */
+const CARD_METADATA_KEYS: Record<string, string | null> = {
+	integration_connect: 'connect_integration',
+	keychain_request: 'request_keychain_credential',
+	keychain_access_request: 'request_keychain_access',
+	computer_request: 'show_computer',
+	question: 'ask_user_question',
+	needed_tools: null,
+}
+
+/** Throws when message metadata carries a card key, naming the tool to use instead. */
+function rejectCardMetadata(metadata: Record<string, unknown> | undefined): void {
+	if (!metadata) return
+	const found = Object.keys(CARD_METADATA_KEYS).filter((key) => metadata[key] !== undefined)
+	if (found.length === 0) return
+	const advice = found.map((key) => {
+		const tool = CARD_METADATA_KEYS[key]
+		return tool ? `${key}: call ${tool}` : `${key}: no agent tool shows this card`
+	})
+	throw new Error(
+		`post_conversation_message cannot render cards, so nothing was posted. Remove ${found.join(', ')} from metadata (${advice.join('; ')}). Never write card text yourself or tell the user a card is shown.`,
+	)
+}
+
 /** Default page size when the caller did not pass an explicit limit. Kept
  *  in sync with `HERO_CARD_UI_PAGE_SIZE` — the UI has been paging at 25 for
  *  months, so an agent gets responses shaped like what a human sees in the
@@ -5227,6 +5256,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, conversation_id, mention_names, ...body } = args
+			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
 			let unresolvedMentions: MentionNameResolution['unresolved'] = []
