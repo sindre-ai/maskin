@@ -1030,7 +1030,7 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
-		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
+		it('defaults ANTHROPIC_MODEL to Sonnet when the agent has no model preference', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -1074,7 +1074,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBeUndefined()
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the Claude OAuth route', async () => {
