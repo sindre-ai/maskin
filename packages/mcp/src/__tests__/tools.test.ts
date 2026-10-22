@@ -1415,6 +1415,19 @@ describe('list_actors schema', () => {
 	it('rejects invalid workspace_id', () => {
 		expect(() => schema.parse({ workspace_id: 'not-a-uuid' })).toThrow()
 	})
+
+	const allowedIncludes = ['triggers', 'loops', 'triggers,loops', 'loops, triggers']
+	it.each(allowedIncludes)('accepts include=%s', (include) => {
+		expect(schema.parse({ include }).include).toBe(include)
+	})
+
+	it('rejects an unknown include value and lists the allowed values', () => {
+		const result = schema.safeParse({ include: 'triggers,skills' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.message).toContain('triggers, loops')
+		}
+	})
 })
 
 describe('get_actor schema', () => {
