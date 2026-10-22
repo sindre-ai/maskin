@@ -42,7 +42,8 @@ describe('Mini-app regen route', () => {
 			targetActorId,
 			createdBy: actorId,
 		})
-		mockResults.selectQueue = [[member], [htmlFile], []]
+		// Select #1 caller member, #2 file, #3 target agent member, #4 existing trigger.
+		mockResults.selectQueue = [[member], [htmlFile], [{ id: targetActorId }], []]
 		mockResults.insertQueue = [[triggerRow], [{ id: 'evt-1' }]]
 
 		const res = await app.request(
@@ -99,8 +100,8 @@ describe('Mini-app regen route', () => {
 			enabled: false,
 		})
 		const updated = { ...existing, enabled: true, updatedAt: new Date() }
-		// Select #1 member, #2 file, #3 existing trigger.
-		mockResults.selectQueue = [[member], [htmlFile], [existing]]
+		// Select #1 caller member, #2 file, #3 target agent member, #4 existing trigger.
+		mockResults.selectQueue = [[member], [htmlFile], [{ id: targetActorId }], [existing]]
 		mockResults.updateQueue = [[updated]]
 		mockResults.insertQueue = [[{ id: 'evt-1' }]]
 
@@ -121,6 +122,34 @@ describe('Mini-app regen route', () => {
 		expect(calls.updates).toHaveLength(1)
 		expect(calls.inserts).toHaveLength(1) // audit event only, no dup trigger
 		expect(calls.inserts[0]?.action).toBe('updated')
+	})
+
+	it('returns 404 and provisions nothing when the target agent is not a workspace member', async () => {
+		const { app, mockResults, calls } = createImportTestApp(miniAppRegenRoutes, '/api/mini-apps')
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		const htmlFile = buildFile({
+			workspaceId,
+			id: fileId,
+			name: 'curriculum.html',
+			mimeType: 'text/html',
+			sizeBytes: 120,
+		})
+		// Caller is a member and the file is in the workspace, but the target agent has no
+		// membership row here.
+		mockResults.selectQueue = [[member], [htmlFile], []]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/regen',
+				{ file_id: fileId, app_name: 'Curriculum', target_actor_id: targetActorId },
+				headers(),
+			),
+		)
+
+		expect(res.status).toBe(404)
+		expect(calls.inserts).toHaveLength(0)
+		expect(calls.updates).toHaveLength(0)
 	})
 
 	it('rejects non-members', async () => {
@@ -186,7 +215,7 @@ describe('Mini-app regen route', () => {
 		})
 		// Same-name lookup finds it, but the file_id in config does not match →
 		// the route must provision a fresh trigger, never reconfigure the other.
-		mockResults.selectQueue = [[member], [htmlFile], [other]]
+		mockResults.selectQueue = [[member], [htmlFile], [{ id: targetActorId }], [other]]
 		const created = buildTrigger({
 			id: '66666666-6666-6666-6666-666666666666',
 			workspaceId,

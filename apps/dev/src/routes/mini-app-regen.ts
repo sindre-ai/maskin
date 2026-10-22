@@ -7,6 +7,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { errorSchema, triggerResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import {
 	MASKIN_APP_DATA_WINDOW_KEY,
 	MASKIN_STATE_SLOT_ID,
@@ -96,6 +97,10 @@ app.openapi(regenRoute, (async (c) => {
 	if (!isHtmlMime(file.mimeType)) {
 		return c.json(createApiError('VALIDATION_ERROR', 'Regen only applies to hosted html apps'), 400)
 	}
+
+	// The regen trigger starts this agent every day, so it has to be a member of
+	// this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const fileRef: MiniAppFileRef = { id: file.id, name: file.name }
 	const appName = body.app_name ?? file.name
