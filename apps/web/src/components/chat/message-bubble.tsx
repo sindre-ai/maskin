@@ -50,6 +50,8 @@ interface MessageBubbleProps {
 	spawnInfo?: MessageSpawnInfo
 	/** Linked objects an earlier message already shows a card for. */
 	shownLinkedObjectIds?: ReadonlySet<string>
+	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
+	onRetried?: (message: MessageResponse) => void
 }
 
 /**
@@ -66,6 +68,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	spawnInfo,
 	shownLinkedObjectIds,
+	onRetried,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -246,7 +249,12 @@ export function MessageBubble({
 							</button>
 							<button
 								type="button"
-								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								onClick={() =>
+									retryMessage.mutate(
+										{ messageId: message.id },
+										{ onSuccess: () => onRetried?.(message) },
+									)
+								}
 								disabled={retryMessage.isPending}
 								aria-label="Ask agents to respond again"
 								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
@@ -441,7 +449,12 @@ export function MessageBubble({
 						{canRetryAgent ? (
 							<button
 								type="button"
-								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								onClick={() =>
+									retryMessage.mutate(
+										{ messageId: message.id },
+										{ onSuccess: () => onRetried?.(message) },
+									)
+								}
 								disabled={retryMessage.isPending}
 								aria-label="Retry"
 								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
