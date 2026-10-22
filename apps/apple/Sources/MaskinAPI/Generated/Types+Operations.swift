@@ -32865,6 +32865,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/defaultAgentAccess`.
@@ -32877,7 +32878,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/agentGrantsPayload/access`.
@@ -33935,6 +33935,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/defaultAgentAccess`.
@@ -33947,7 +33948,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/agentGrantsPayload/access`.
@@ -35220,6 +35220,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/defaultAgentAccess`.
@@ -35232,7 +35233,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/agentGrantsPayload/access`.
@@ -58170,7 +58170,7 @@ public enum Operations {
             }
         }
     }
-    /// The Chief of Staff's ranked list of what needs the current actor
+    /// What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
@@ -58213,9 +58213,18 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload`.
                         public struct itemsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/notification_id`.
-                            public var notification_id: Swift.String
+                            public var notification_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/source`.
+                            @frozen public enum sourcePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case curated = "curated"
+                                case decision = "decision"
+                            }
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/source`.
+                            public var source: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.sourcePayload
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/rank`.
                             public var rank: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_event_id`.
+                            public var latest_event_id: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/headline`.
                             public var headline: Swift.String
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/rationale`.
@@ -59301,7 +59310,9 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - notification_id:
+                            ///   - source:
                             ///   - rank:
+                            ///   - latest_event_id:
                             ///   - headline:
                             ///   - rationale:
                             ///   - created_at:
@@ -59311,8 +59322,10 @@ public enum Operations {
                             ///   - object:
                             ///   - latest_mention:
                             public init(
-                                notification_id: Swift.String,
+                                notification_id: Swift.String? = nil,
+                                source: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.sourcePayload,
                                 rank: Swift.Double,
+                                latest_event_id: Swift.Double? = nil,
                                 headline: Swift.String,
                                 rationale: Swift.String? = nil,
                                 created_at: Swift.String? = nil,
@@ -59323,7 +59336,9 @@ public enum Operations {
                                 latest_mention: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload? = nil
                             ) {
                                 self.notification_id = notification_id
+                                self.source = source
                                 self.rank = rank
+                                self.latest_event_id = latest_event_id
                                 self.headline = headline
                                 self.rationale = rationale
                                 self.created_at = created_at
@@ -59335,7 +59350,9 @@ public enum Operations {
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case notification_id
+                                case source
                                 case rank
+                                case latest_event_id
                                 case headline
                                 case rationale
                                 case created_at
