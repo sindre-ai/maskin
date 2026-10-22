@@ -10,6 +10,8 @@ import { encrypt } from '../../lib/crypto'
 import { registerLinkedInMcpInstance } from '../../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import { recordObjectApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -115,6 +117,30 @@ async function statusOf(id: string) {
 	return row?.status
 }
 
+/** A first message to Liz, filed the way an agent drafts one: no conversation yet, a recipient id. */
+async function draft(workspaceId: string, actorId: string) {
+	return insertObject(db, workspaceId, actorId, {
+		type: 'task',
+		status: 'todo',
+		content: 'Hej Liz',
+		metadata: { kind: 'linkedin_message', to: 'Liz Benison', recipient_provider_id: 'ACoAAA1' },
+	})
+}
+
+async function approve(workspaceId: string, actorId: string, objectId: string) {
+	const [object] = await db.select().from(objects).where(eq(objects.id, objectId))
+	const preview = object && buildObjectPreview(object)
+	if (!object || !preview) throw new Error('not a draft')
+	await recordObjectApproval(db, {
+		workspaceId,
+		actorId,
+		objectId,
+		objectType: object.type,
+		preview,
+		via: 'approval',
+	})
+}
+
 describe('LinkedIn send tools with object_id', () => {
 	it('closes the task when a connection request is accepted', async () => {
 		const { client, sendConnectionRequest } = stubClient()
@@ -188,24 +214,117 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(await statusOf(task.id)).toBe('todo')
 	})
 
-	it('closes the task when a direct message is accepted', async () => {
+	it('closes the task when an approved direct message is sent', async () => {
 		const { client, sendMessage } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
-		const task = await insertObject(db, workspaceId, actorId, { type: 'task', status: 'todo' })
+		const task = await draft(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
 
 		const result = await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
-			arguments: {
-				recipient_urn: 'urn:li:person:other',
-				body: 'Hej',
-				idempotency_key: 'key-1',
-				object_id: task.id,
-			},
+			arguments: { object_id: task.id },
 		})
 
 		expect(result.isError).toBeFalsy()
 		expect(sendMessage).toHaveBeenCalledTimes(1)
+		expect(sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ recipient_urn: 'ACoAAA1', body: 'Hej Liz' }),
+		)
 		expect(await statusOf(task.id)).toBe('done')
+	})
+
+	it('will not send a direct message nobody approved', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await draft(workspaceId, actorId)
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_message'),
+			arguments: { object_id: task.id },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(textOf(result)).toContain('No person has approved')
+		expect(sendMessage).not.toHaveBeenCalled()
+		expect(await statusOf(task.id)).toBe('todo')
+	})
+
+	it('holds the approval line: edit withdraws it, re-approve sends once, a second send is refused', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await draft(workspaceId, actorId)
+		const send = () =>
+			mcp.callTool({ name: toolName(cfg, 'send_message'), arguments: { object_id: task.id } })
+
+		await approve(workspaceId, actorId, task.id)
+		await db.update(objects).set({ content: 'Hej Liz, edited' }).where(eq(objects.id, task.id))
+		const afterEdit = await send()
+		expect(afterEdit.isError).toBe(true)
+		expect(textOf(afterEdit)).toContain('No person has approved')
+		expect(sendMessage).not.toHaveBeenCalled()
+
+		await approve(workspaceId, actorId, task.id)
+		const sent = await send()
+		expect(sent.isError).toBeFalsy()
+		expect(sendMessage).toHaveBeenCalledTimes(1)
+
+		const again = await send()
+		expect(again.isError).toBe(true)
+		expect(sendMessage).toHaveBeenCalledTimes(1)
+	})
+
+	it('refuses raw attachments on send_message and names the object path', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp } = await connect()
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_message'),
+			arguments: {
+				recipient_urn: 'ACoAAA1',
+				body: 'Hej',
+				idempotency_key: 'key-att',
+				attachments: [{ content: 'AAAA', content_type: 'application/pdf', filename: 'a.pdf' }],
+			},
+		})
+
+		expect(result.isError).toBe(true)
+		expect(textOf(result)).toContain('INVALID_INPUT')
+		expect(textOf(result)).toContain('attachment_file_id')
+		expect(sendMessage).not.toHaveBeenCalled()
+	})
+
+	it('refuses body and recipient_urn next to object_id', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await draft(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_message'),
+			arguments: { object_id: task.id, body: 'Something else', recipient_urn: 'ACoAAA2' },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(textOf(result)).toContain('INVALID_INPUT')
+		expect(sendMessage).not.toHaveBeenCalled()
+	})
+
+	it('still sends plain text without object_id', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp } = await connect()
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_message'),
+			arguments: { recipient_urn: 'ACoAAA1', body: 'Hej', idempotency_key: 'key-plain' },
+		})
+
+		expect(result.isError).toBeFalsy()
+		expect(sendMessage).toHaveBeenCalledTimes(1)
 	})
 })

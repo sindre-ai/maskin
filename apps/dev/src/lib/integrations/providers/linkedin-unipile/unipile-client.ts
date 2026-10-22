@@ -14,6 +14,7 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
+import { type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
 
 export type LinkedInHttpResult<TBody = unknown> = {
 	status: number
@@ -41,6 +42,8 @@ export type LinkedInReplyPayload = {
 	account_id: string
 	thread_id: string
 	body: string
+	/** Same shape and meaning as on {@link LinkedInSendMessagePayload}; omitted when empty. */
+	attachments?: unknown[]
 }
 
 export type LinkedInListConversationsQuery = {
@@ -402,6 +405,10 @@ export interface LinkedInClient {
 		query: LinkedInSearchPeopleQuery,
 	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
 	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// Bet aff468ba · InMail credit balance; the reducers live in inmail.ts.
+	getInmailCredits(
+		query: LinkedInInmailCreditsQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	getManagedCompanyPages(
 		query: LinkedInListManagedPagesQuery,
 	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
@@ -536,10 +543,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		reply(payload) {
 			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
 			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			// An approved message that carries a file adds `attachments`, folded in the same way
+			// as on `sendMessage`; a text-only reply keeps its exact wire body.
+			const body: Record<string, unknown> = { text: payload.body }
+			if (payload.attachments && payload.attachments.length > 0) {
+				body.attachments = payload.attachments
+			}
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
-				{ text: payload.body },
+				body,
 			)
 		},
 		listConversations(query) {
@@ -609,6 +622,9 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const qs = params.toString()
 			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
 			return call('GET', qs ? `${path}?${qs}` : path)
+		},
+		getInmailCredits(query) {
+			return call('GET', inmailCreditsPath(query.account_id))
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected

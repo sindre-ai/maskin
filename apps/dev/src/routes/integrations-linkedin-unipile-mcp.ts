@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -90,6 +91,7 @@ type Env = {
 		actorId: string
 		/** Set by the global X-Maskin-Session-Id middleware in app-factory.ts. */
 		maskinSessionId?: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -236,7 +238,13 @@ app.post('/:instanceSlug', async (c) => {
 		providerLabel: 'LinkedIn',
 	})
 	const mcpServer = createLinkedInMcpServer(
-		{ db, actorId, workspaceId, sessionId: c.get('maskinSessionId') },
+		{
+			db,
+			actorId,
+			workspaceId,
+			storage: c.get('storageProvider'),
+			sessionId: c.get('maskinSessionId'),
+		},
 		scoped,
 		gate,
 	)

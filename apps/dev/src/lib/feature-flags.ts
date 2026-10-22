@@ -73,14 +73,12 @@ export const FLAGS = {
 	 */
 	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
 	/**
-	 * Gates the LinkedIn outreach writes added by the bet [Sales Reps close the LinkedIn outreach
-	 * loop](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aff468ba-2519-4401-836e-2251c9560e5b):
-	 * withdraw_invitation, react_to_post, send_inmail and attachment sends. Read per call with
-	 * isFlagEnabledForWorkspace(workspaceId, flag, { actorId }). The reads, the action log
-	 * (linkedin_actions) and the linkedin_tool_called event are NOT flagged: they carry no
-	 * content and are safe for everyone. Off preserves today's behaviour. Env + restart; the
-	 * fast stop for every LinkedIn write is setting the rep's LinkedIn access to Read. Retire
-	 * once the bet is won.
+	 * Gates the LinkedIn outreach writes: withdraw_invitation, react_to_post, send_inmail and
+	 * any send whose approved object carries a file (`attachment_file_id`). Read per call on
+	 * the workspace, with the calling actor as fallback. Off means a send with a file is
+	 * refused with INVALID_INPUT; plain text sends are unaffected. See parent bet [Sales Reps
+	 * close the LinkedIn outreach loop](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aff468ba-2519-4401-836e-2251c9560e5b).
+	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
 } as const
