@@ -1,5 +1,4 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest, readMetadataSql } from '../helpers'
 import { createTestApp } from '../setup'
@@ -22,22 +21,8 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const testerActorId = 'test-actor-id'
 const targetActorId = '00000000-0000-0000-0000-0000000000a1'
 
-// The route reads its flag via `isFlagEnabled(actorId, 'slack-setup-ux-v2')`,
-// which resolves against `FF_TESTER_ACTOR_IDS` × `FF_TESTER_FEATURES`. Turn
-// both on for the test actor so the post-commit hook actually fires — a fresh
-// `_resetFeatureFlagConfig()` re-reads the env after every mutation.
-beforeAll(() => {
-	process.env.FF_TESTER_ACTOR_IDS = testerActorId
-	process.env.FF_TESTER_FEATURES = 'slack-setup-ux-v2'
-	_resetFeatureFlagConfig()
-})
-
 beforeEach(() => {
 	runSlackTriggerSetupMock.mockClear()
-})
-
-afterEach(() => {
-	_resetFeatureFlagConfig()
 })
 
 describe('Triggers Routes', () => {

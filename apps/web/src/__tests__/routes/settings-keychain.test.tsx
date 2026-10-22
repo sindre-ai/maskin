@@ -31,8 +31,6 @@ vi.mock('@/lib/auth', async (importOriginal) => ({
 	getStoredActor: () => mockActor(),
 }))
 
-const mockFlag = vi.fn<() => boolean>(() => true)
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => mockFlag() }))
 vi.mock('@/hooks/use-document-title', () => ({ useDocumentTitle: () => {} }))
 
 const mockUseIntegrations = vi.fn()
@@ -116,7 +114,6 @@ const captured = (over = {}) =>
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mockFlag.mockReturnValue(true)
 	mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })

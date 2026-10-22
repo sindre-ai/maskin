@@ -8,7 +8,6 @@ import { TestWrapper } from '../../setup'
 const connectMutate = vi.fn()
 let providers: ProviderInfo[] = []
 let integrations: IntegrationResponse[] = []
-let visible = true
 let pricing = { isFree: false, isPaid: false }
 
 vi.mock('@/hooks/use-integrations', () => ({
@@ -19,9 +18,6 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useCompleteIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 	useLinkGithubInstallation: () => ({ mutate: vi.fn(), isPending: false }),
 	useLinkableGithubInstallations: () => ({ data: [], isLoading: false }),
-}))
-vi.mock('@/hooks/use-provider-visibility', () => ({
-	useProviderVisibility: () => () => visible,
 }))
 vi.mock('@/hooks/use-identity-addon-pricing', () => ({
 	useIdentityAddonPricing: () => pricing,
@@ -76,7 +72,6 @@ describe('IntegrationConnectCard', () => {
 		connectMutate.mockClear()
 		providers = []
 		integrations = []
-		visible = true
 		pricing = { isFree: false, isPaid: false }
 	})
 
@@ -170,14 +165,6 @@ describe('IntegrationConnectCard', () => {
 			screen.getByText('$49/month per connected identity, added to your Maskin subscription.'),
 		).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
-	})
-
-	it('renders nothing for a provider hidden behind a feature flag the actor lacks', () => {
-		providers = [provider({ name: 'google-meet', displayName: 'Google Meet' })]
-		visible = false
-		const { container } = renderCard('google-meet')
-
-		expect(container).toBeEmptyDOMElement()
 	})
 
 	it('renders nothing for a provider the server does not list', () => {

@@ -2,7 +2,6 @@ import { keychainEnvNames } from '@/components/chat/keychain-request-card'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
 import { useSendMessage } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { ApiError, type MessageKeychainAccessRequest, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -41,7 +40,6 @@ export function KeychainAccessRequestCard({
 	const { workspace } = useWorkspace()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
-	const settingsUi = useFeatureFlag('keychain-settings-ui')
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -132,7 +130,7 @@ export function KeychainAccessRequestCard({
 						</>
 					)}
 				</span>
-				{allowed && settingsUi ? (
+				{allowed ? (
 					<Link
 						to="/$workspaceId/settings/keychain"
 						params={{ workspaceId }}
