@@ -14,12 +14,14 @@ export const POSTS_READS_SECOND_POST_ID = 'mock-post-2'
 export const POSTS_READS_AUTHOR_ID = 'ACoAAAmockauthor1'
 
 export const CANNED_USER_POSTS_RESPONSE = (authorId: string, cursor: string | null) => {
+	// A numeric id is a company page, the way the live API labels the author.
+	const isCompany = /^\d+$/.test(authorId)
 	const author = {
 		object: 'User',
 		id: authorId,
-		type: 'individual',
-		public_identifier: 'adalovelace',
-		display_name: 'Ada Lovelace',
+		type: isCompany ? 'organization' : 'individual',
+		public_identifier: isCompany ? 'analytical-engines' : 'adalovelace',
+		display_name: isCompany ? 'Analytical Engines Ltd' : 'Ada Lovelace',
 	}
 	if (cursor === 'page-2') {
 		return { object: 'PostList', data: [], next_cursor: null }
