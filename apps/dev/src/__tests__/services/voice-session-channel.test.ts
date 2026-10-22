@@ -328,6 +328,23 @@ describe('voice channel — turn telemetry and frame handling', () => {
 })
 
 describe('voice channel — session lifecycle hooks', () => {
+	it('keeps the call going when a counter write fails', async () => {
+		recordTurn.mockRejectedValueOnce(new Error('db down'))
+		recordToolCall.mockRejectedValueOnce(new Error('db down'))
+		const { channel, sent, toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		await channel.onMessage(
+			JSON.stringify({
+				type: 'turn_completed',
+				turn_index: 0,
+				user_audio_ms: 1_000,
+				agent_audio_ms: 1_000,
+				barge_in: false,
+			}),
+		)
+		await toolCall('search_objects', { query: 'loops', workspace_id: WORKSPACE })
+		expect(sent.some((m) => m.type === 'tool_result' && m.ok === true)).toBe(true)
+	})
+
 	it('records each turn and each tool call against the session counters', async () => {
 		const { channel, toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
 		await channel.onMessage(
@@ -340,8 +357,11 @@ describe('voice channel — session lifecycle hooks', () => {
 			}),
 		)
 		await toolCall('search_objects', { query: 'loops', workspace_id: WORKSPACE })
-		expect(recordTurn).toHaveBeenCalledWith(SESSION_ID, { userAudioMs: 4_000, agentAudioMs: 9_000 })
-		expect(recordToolCall).toHaveBeenCalledWith(SESSION_ID)
+		expect(recordTurn).toHaveBeenCalledWith(expect.anything(), SESSION_ID, {
+			userAudioMs: 4_000,
+			agentAudioMs: 9_000,
+		})
+		expect(recordToolCall).toHaveBeenCalledWith(expect.anything(), SESSION_ID)
 	})
 
 	it('ends the call as vendor_error, tags Sentry with the session id, and tells the browser', async () => {
