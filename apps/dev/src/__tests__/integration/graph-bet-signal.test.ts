@@ -113,7 +113,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 				'POST',
 				'/api/graph',
 				{
-					nodes: [{ $id: 'task-1', type: 'task', title: 'A task', status: 'in_progress' }],
+					nodes: [{ $id: 'task-1', type: 'task', title: 'A task', status: 'todo' }],
 					edges: [],
 				},
 				{ 'x-workspace-id': workspaceId },
@@ -122,7 +122,27 @@ describe('Graph — bet creation always lands at `signal`', () => {
 
 		expect(res.status).toBe(201)
 		const body = await res.json()
-		expect(body.nodes[0].status).toBe('in_progress')
+		expect(body.nodes[0].status).toBe('todo')
+	})
+
+	it('rejects a task node created at in_progress with a 400 naming todo and backlog', async () => {
+		const app = createApp()
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/graph',
+				{
+					nodes: [{ $id: 'task-1', type: 'task', title: 'A task', status: 'in_progress' }],
+					edges: [],
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('todo')
+		expect(body.error.message).toContain('backlog')
 	})
 
 	it('returns 400 when a non-bet node omits status', async () => {

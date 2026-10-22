@@ -1,28 +1,41 @@
 import { sortByPriority } from './priority'
 import type { SetupCheck } from './types'
 
+function renderItems(checks: SetupCheck[], startAt: number): string[] {
+	return checks.map((check, idx) => {
+		const suffix = check.fix ? ` (fix: call ${check.fix.tool} — ${check.fix.args_hint})` : ''
+		return `  ${startAt + idx}. ${check.message}${suffix}`
+	})
+}
+
 /**
- * Render checks as forceful, imperative prose the calling LLM should relay to
- * the user before it ends its turn. Deliberately matches `get_started`'s
- * "INSTRUCTIONS FOR THE ... section — render this BEFORE anything else" voice
- * rather than a quiet declarative sentence — a `setup` field is one key among
- * many in a JSON tool response, so the text itself has to carry the emphasis
- * a UI would otherwise provide (bolding, placement, a modal). Numbered items,
- * one gap per line, each with the fix hint attached.
+ * Render checks as prose for the calling LLM, split into two groups. `fail`
+ * checks are real blockers (missing LLM key, a loop step with no agent) and
+ * must be relayed to the user. `warn` checks are not blockers: the agent
+ * fixes them itself with the listed tool when the answer is obvious,
+ * otherwise mentions them as one FYI line in its final message. A warn item
+ * never justifies ending the turn on a question.
  *
- * Returns an empty string when there is nothing to ask about.
+ * Numbered items, one gap per line, each with the fix hint attached.
+ * Returns an empty string when there is nothing to report.
  */
 export function toProseBlock(checks: SetupCheck[]): string {
 	const sorted = sortByPriority(checks).filter((c) => c.status !== 'unknown')
 	if (sorted.length === 0) return ''
 
-	const lines: string[] = [
-		'IMPORTANT — before ending your turn, relay these setup gaps to the user (do not skip this silently):',
-	]
-	sorted.forEach((check, idx) => {
-		const num = idx + 1
-		const suffix = check.fix ? ` (fix: call ${check.fix.tool} — ${check.fix.args_hint})` : ''
-		lines.push(`  ${num}. ${check.message}${suffix}`)
-	})
+	const blockers = sorted.filter((c) => c.status === 'fail')
+	const others = sorted.filter((c) => c.status !== 'fail')
+
+	const lines: string[] = []
+	if (blockers.length > 0) {
+		lines.push('Blockers — tell the user, this stops the work until it is resolved:')
+		lines.push(...renderItems(blockers, 1))
+	}
+	if (others.length > 0) {
+		lines.push(
+			'Not blockers — fix these yourself with the listed tool if the answer is obvious, otherwise mention them as one FYI line in your final message. Never end your turn on a question about them:',
+		)
+		lines.push(...renderItems(others, blockers.length + 1))
+	}
 	return lines.join('\n')
 }

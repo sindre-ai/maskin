@@ -833,3 +833,39 @@ describe('File Comments Integration — text anchor', () => {
 		expect(tooLong.status).toBe(400)
 	})
 })
+
+describe('File Comments Integration — round target stays in the file workspace', () => {
+	it('does not treat an object from another workspace as an attaching object', async () => {
+		resetRoundLimiterForTests()
+		const actorId = getTestActorId()
+		const otherActor = await insertActor(db)
+		const { id: workspaceId } = await insertWorkspace(db, actorId)
+		const { id: otherWorkspaceId } = await insertWorkspace(db, otherActor.id)
+		const file = await insertFile(workspaceId, actorId)
+		// An attached edge from an object in another workspace onto this file.
+		const foreignObject = await insertObject(db, otherWorkspaceId, otherActor.id, {
+			type: 'bet',
+			driver: otherActor.id,
+		})
+		await attachFileToObject(file.id, foreignObject.id, actorId)
+		const app = createApp(actorId)
+		const draft = await createDraft(app, file.id, { body: 'needs a second look' })
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/files/${file.id}/comments/rounds`, {
+				roundId: randomUUID(),
+				targetObjectId: foreignObject.id,
+				commentIds: [draft.id],
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draft.id))
+		expect(row?.roundId).toBeNull()
+		const rollups = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, foreignObject.id), eq(events.action, 'commented')))
+		expect(rollups).toHaveLength(0)
+	})
+})

@@ -10,7 +10,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
-import { expandBrowserCapability } from '../lib/marketplace-loops/loop-snapshot'
+import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -466,10 +466,9 @@ export function buildActorInsert(
 			(snapshot.llmConfig as Record<string, unknown>) ??
 			(snapshot.llm_config as Record<string, unknown>) ??
 			null,
-		// expandBrowserCapability turns the snapshot's secret-free `tools.browser`
-		// flag back into a real @playwright/mcp entry — without it, an installed
-		// agent whose prompt promises a browser never gets a Chromium sidecar.
-		tools: (expandBrowserCapability(snapshot.tools) as Record<string, unknown>) ?? null,
+		// Old snapshots may carry a `tools.browser` flag from the browser-sidecar
+		// era; it is meaningless now, so it does not reach the installed actor.
+		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,
 		apiKey: generateApiKey().key,
 		metadata,
 		createdBy,

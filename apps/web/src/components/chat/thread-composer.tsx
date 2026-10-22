@@ -1,15 +1,20 @@
 import { Composer } from '@/components/chat/chat'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useMemo, useReducer, useState } from 'react'
 
+const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
+
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
+	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 /**
@@ -23,13 +28,37 @@ interface ThreadComposerProps {
  * responder pipeline's mention fast-path auto-joins them as participants if
  * they weren't one already.
  */
-export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerProps) {
+export function ThreadComposer({ workspaceId, conversationId, fillRequest }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 
 	const self = getStoredActor()
+	// Where a pasted provider secret gets vaulted: the running session of this chat and
+	// the agent running it. No running session, no vaulting (the guard still blocks). A
+	// session still pending, starting or queued is an agent coming back from a relaunch:
+	// vaulting another secret then would race the launch that is already reading keys.
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const secretCapture = useMemo(() => {
+		const live = sessions?.find((s) => s.status === 'running')
+		if (!live) return null
+		const agent = conversation?.participants.find((p) => p.actorId === live.actorId)
+		return {
+			sessionId: live.id,
+			conversationId,
+			agent: { id: live.actorId, name: agent?.actorName ?? 'the agent' },
+		}
+	}, [sessions, conversation?.participants, conversationId])
+	const secretRestarting = useMemo(
+		() => !secretCapture && !!sessions?.some((s) => BOOTING_STATUSES.has(s.status)),
+		[secretCapture, sessions],
+	)
+	// Vault mode (the ! prefix) needs a running session to vault into. It waits while the
+	// conversation has none, or has one still coming up (pending, starting or queued).
+	const vaultModeBlocked =
+		!sessions?.some((s) => s.status === 'running') ||
+		sessions.some((s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued')
 	const participantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
@@ -124,6 +153,10 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			// would make the same control a different control to a screen reader.
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
+			fillRequest={fillRequest}
+			secretCapture={secretCapture}
+			secretRestarting={secretRestarting}
+			vaultModeBlocked={vaultModeBlocked}
 		/>
 	)
 }

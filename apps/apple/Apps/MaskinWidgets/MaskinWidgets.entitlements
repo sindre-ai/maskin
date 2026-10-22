@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Read-only use of the app's signed-in session. Must be the FIRST (and only) group so
+	     KeychainSecretStore resolves the same shared group the app writes to. No push, no App Group:
+	     the widget fetches over the network and caches in its own container. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+</dict>
+</plist>

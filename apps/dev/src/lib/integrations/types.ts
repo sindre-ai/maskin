@@ -123,7 +123,46 @@ export interface McpConfig {
 	 * providers carry a `server` is what holds that line.
 	 */
 	server?: McpServerSpec
+	/**
+	 * How an agent's `tools.mcpServers.<key>` entry for this provider is
+	 * recognised. Omit for the common case: one shared entry that is exactly
+	 * `server`. A provider that declares `mcp` must carry either `server` or a
+	 * non-shared `entry` — a contract test fails otherwise, because an entry
+	 * nothing can recognise is an entry that disconnect leaves behind on every
+	 * agent.
+	 */
+	entry?: McpEntryDeclaration
 }
+
+/** The fields of an `integrations` row that an entry declaration reads. */
+export interface McpEntryOwner {
+	config: unknown
+	unipileAccSlug: string | null
+}
+
+/**
+ * Where a provider's entries sit on an agent, stated as data beside the rest
+ * of the provider config rather than in a second list (integrations-mcp.md,
+ * "Explicitly rejected").
+ *
+ * - `shared`: one entry for the whole provider. It outlives any single
+ *   connection, so it is only removed when no other active integration of the
+ *   provider still needs it.
+ * - `per-identity`: one entry per credential identity, served by this API at
+ *   `{urlPath}/{instanceSlug}` (LinkedIn). `slugPrefix` is the part of the slug
+ *   one credential owns, null when it never enumerated an identity.
+ * - `per-installation`: one stdio entry per installation (GitHub), recognised
+ *   by the env var it reads its token from. `envKey` is that variable's name,
+ *   null when the row names no owner.
+ */
+export type McpEntryDeclaration =
+	| { kind: 'shared' }
+	| {
+			kind: 'per-identity'
+			urlPath: string
+			slugPrefix: (owner: McpEntryOwner) => string | null
+	  }
+	| { kind: 'per-installation'; envKey: (owner: McpEntryOwner) => string | null }
 
 // ── Events ─────────────────────────────────────────────────────────────────
 
@@ -148,6 +187,46 @@ export interface EventMapping {
 	}
 }
 
+// ── Deliverables ───────────────────────────────────────────────────────────
+
+/**
+ * One field an object of a deliverable kind carries in `metadata`.
+ * `recipients` is a comma separated list of "Name <address>" or bare addresses;
+ * `text` is a single line. The body is never a field: it is the object's content.
+ */
+export interface DeliverableField {
+	key: string
+	label: string
+	type: 'recipients' | 'text'
+	required?: boolean
+	/** Longest accepted value, in characters. */
+	maxLength?: number
+	/** Which side of the message a `recipients` field is. Defaults to `to`. */
+	role?: 'to' | 'cc'
+	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
+	address?: 'email'
+	/** Which part of the preview a `text` field fills. Only `subject` today. */
+	slot?: 'subject'
+}
+
+/**
+ * Something an agent can draft for a person to review and an integration can deliver
+ * (an email, a LinkedIn message, a Slack post). Declared next to the provider's other
+ * config so the preview a person sees, the validation an agent is held to and the send
+ * tool all derive from one place. An object opts in with `metadata.kind = <kind>`.
+ */
+export interface DeliverableKind {
+	/** The value of `metadata.kind`. Unique across providers: "email", "linkedin_message". */
+	kind: string
+	/** Shown above the text: "Email". */
+	label: string
+	fields: DeliverableField[]
+	/** Longest body the channel takes, in characters. */
+	bodyMaxLength?: number
+	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */
+	sendTool: string
+}
+
 // ── Provider config ────────────────────────────────────────────────────────
 
 export interface ProviderConfig {
@@ -162,6 +241,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** What agents can draft for review through this provider. See {@link DeliverableKind}. */
+	deliverables?: DeliverableKind[]
 	/** How to display externalId in the integrations UI. 'email' → "Connected as <id>", 'installation' (default) → "Connected · Installation <id>" */
 	externalIdDisplay?: 'email' | 'installation'
 }
@@ -345,4 +426,37 @@ export interface ResolveInstallationIdContext {
 	normalized: NormalizedEvent
 	payload: unknown
 	headers: Record<string, string>
+}
+
+// ── Keychain: credentials returned by getCredential ────────────────────────
+
+export interface HeaderMintContext {
+	/** URL being called; an adapter may scope the headers it mints to it. */
+	outboundTarget: string
+	/** For adapter-side audit. */
+	requestId: string
+	/** An adapter may issue shorter-lived tokens. */
+	ttlHint?: number
+}
+
+/**
+ * Slot for Layer 1.6 external secret managers (1Password, Vault, AWS Secrets
+ * Manager). Nothing implements it yet. An adapter is selected per credential by
+ * integrations.metadata.adapterKind, so adding one changes no caller.
+ */
+export interface HeaderMintAdapter {
+	readonly kind: `external:${string}`
+	mint(integrationId: string, ctx: HeaderMintContext): Promise<Record<string, string>>
+}
+
+export interface DecryptedCredential {
+	id: string
+	workspaceId: string
+	provider: string
+	providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+	source: 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+	/** The decrypted stored value. Env injection reads this; HTTP callers use getHeaders. */
+	value: string
+	credentialSource: 'vault' | `external:${string}`
+	getHeaders(ctx: HeaderMintContext): Promise<Record<string, string>>
 }

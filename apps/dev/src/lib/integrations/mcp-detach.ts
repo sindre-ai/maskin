@@ -1,50 +1,53 @@
 import type { Database } from '@maskin/db'
-import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import {
+	INTEGRATION_STATUS_ACTIVE,
+	type Integration,
+	actors,
+	integrations,
+	workspaceMembers,
+} from '@maskin/db/schema'
+import { and, eq, ne } from 'drizzle-orm'
 import { recordEvent } from '../events/record-event'
 import { logger } from '../logger'
+import { entryMatcherFor } from './mcp-entries'
+import { getProvider } from './registry'
 
 /**
- * Strips a provider's in-process MCP server entry from every agent in a
- * workspace when that provider is disconnected.
+ * Strips the MCP entries a disconnected integration put on agents.
  *
- * Some providers are served by an MCP endpoint this API hosts itself —
- * `/api/integrations/<provider>/mcp` (LinkedIn, Slack). Agents attach them by
- * copying a preset into `actors.tools.mcpServers`, which is a snapshot: it
- * keeps pointing at the endpoint long after the credential behind it is gone.
- * The agent then boots with the server configured, its tools appear in the
- * tool list, and every call fails — the worst shape of failure, because the
- * agent believes it has a capability it does not and reports a broken platform
- * rather than a missing connection.
+ * Agents attach a provider by copying its preset into
+ * `actors.tools.mcpServers`, which is a snapshot: it keeps pointing at the
+ * server long after the credential behind it is gone. The agent then boots with
+ * the server configured, its tools appear in the tool list, and every call
+ * fails — the worst shape of failure, because the agent believes it has a
+ * capability it does not and reports a broken platform rather than a missing
+ * connection.
  *
- * Entries are matched on the endpoint URL, not the key name. The key is
- * user-editable (an agent can attach the same server under any name), while
- * the URL is what actually determines where the calls go — so matching on the
- * URL removes a renamed entry and, equally important, leaves alone a
- * hand-written server that merely happens to share the name.
+ * What counts as "this integration's entry" is declared by the provider in its
+ * own `config.ts` and applied by `mcp-entries.ts`, the same for every provider.
+ * Two rules come with that:
+ *
+ * - Only the disconnected credential's own entries go. A workspace can hold
+ *   several active rows per provider (LinkedIn identities, GitHub
+ *   installations, a second Slack team), and disconnecting one must not strip
+ *   what another still needs.
+ * - Entries are matched on what they point at, not the key an agent filed them
+ *   under (see `mcp-entries.ts`).
  *
  * Reconnecting does NOT re-attach: the agent's tool list is the user's to
  * curate, and silently re-adding a server someone may have deliberately
  * removed would be the same overreach in the other direction.
  */
 
-/** The endpoint shape this API serves per-provider MCP on. */
-function providerMcpPath(provider: string): string {
-	return `/api/integrations/${provider}/mcp`
-}
-
-type McpServerEntry = { url?: unknown } & Record<string, unknown>
-
-function entryTargetsProvider(entry: unknown, provider: string): boolean {
-	if (!entry || typeof entry !== 'object') return false
-	const url = (entry as McpServerEntry).url
-	if (typeof url !== 'string') return false
-	return url.includes(providerMcpPath(provider))
-}
+/** The fields of the disconnected row that detach reads. */
+export type DetachedIntegration = Pick<
+	Integration,
+	'id' | 'workspaceId' | 'provider' | 'config' | 'unipileAccSlug'
+>
 
 /**
- * Removes the provider's MCP entry from every agent in the workspace.
- * Returns the number of agents changed.
+ * Removes the disconnected integration's MCP entries from every agent in its
+ * workspace. Returns the number of agents changed.
  *
  * Never throws: this runs after the disconnect has already committed, and a
  * failure to tidy an agent's config must not fail the disconnect the user
@@ -53,12 +56,26 @@ function entryTargetsProvider(entry: unknown, provider: string): boolean {
  */
 export async function detachProviderMcpServers(
 	db: Database,
-	workspaceId: string,
-	provider: string,
+	integration: DetachedIntegration,
 	/** The actor performing the disconnect — recorded on the audit event. */
 	actorId: string,
 ): Promise<number> {
+	const { workspaceId, provider } = integration
 	try {
+		const others = await db
+			.select({ config: integrations.config, unipileAccSlug: integrations.unipileAccSlug })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.provider, provider),
+					eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+					ne(integrations.id, integration.id),
+				),
+			)
+		const matches = entryMatcherFor(getProvider(provider).config, integration, others)
+		if (!matches) return 0
+
 		const rows = await db
 			.select({ id: actors.id, name: actors.name, tools: actors.tools })
 			.from(actors)
@@ -74,7 +91,7 @@ export async function detachProviderMcpServers(
 			const kept: Record<string, unknown> = {}
 			const removed: string[] = []
 			for (const [key, entry] of Object.entries(servers as Record<string, unknown>)) {
-				if (entryTargetsProvider(entry, provider)) removed.push(key)
+				if (matches(entry)) removed.push(key)
 				else kept[key] = entry
 			}
 			if (removed.length === 0) continue

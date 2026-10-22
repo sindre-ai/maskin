@@ -8,7 +8,7 @@ import {
 	insertWorkspace,
 } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, sql as pg } from './global-setup'
 
 const { default: objectsRoutes } = await import('../../routes/objects')
 
@@ -1511,6 +1511,32 @@ describe('Objects Integration', () => {
 			const walked = [...page1.map((r) => r.id), ...page2.map((r) => r.id)]
 			expect([...walked].sort()).toEqual([...seededIds].sort())
 		})
+
+		it('ranks a title match above a content-only match on /objects/search', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+			// Alphabetically first and hits the token in the body twice over, so
+			// the old equal-weight rank + title-ASC tie-break would put it first.
+			const contentOnly = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Aardvark notes',
+				content: 'zebrafish zebrafish zebrafish appears only in the body',
+			})
+			const titleMatch = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Zebrafish tracker',
+				content: 'nothing relevant here',
+			})
+
+			const res = await app.request(
+				jsonGet('/api/objects/search?q=zebrafish', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const rows = (await res.json()) as Array<{ id: string }>
+			expect(rows.map((r) => r.id)).toEqual([titleMatch.id, contentOnly.id])
+		})
 	})
 
 	describe('GET /api/objects/:id/graph — endpoint resolution by id', () => {
@@ -1728,6 +1754,63 @@ describe('Objects Integration', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.unique_contexts).toBe(0)
+		})
+	})
+
+	describe('PATCH /api/objects/:id — metadata merge under the row lock', () => {
+		it('keeps a metadata key written between the pre-transaction read and the lock', async () => {
+			const app = createApp()
+			const obj = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				metadata: { source: 'slack' },
+			})
+
+			// A second writer takes the row lock first. The PATCH below does its
+			// pre-transaction read (which does not lock), then blocks on its own
+			// SELECT ... FOR UPDATE until this writer commits.
+			let lockHeld!: () => void
+			const held = new Promise<void>((resolve) => {
+				lockHeld = resolve
+			})
+			let releaseWriter!: () => void
+			const writerMayCommit = new Promise<void>((resolve) => {
+				releaseWriter = resolve
+			})
+			const otherWriter = db.transaction(async (tx) => {
+				await tx.select().from(objects).where(eq(objects.id, obj.id)).for('update')
+				lockHeld()
+				await writerMayCommit
+				await tx
+					.update(objects)
+					.set({ metadata: { source: 'slack', dial_count: 3 } })
+					.where(eq(objects.id, obj.id))
+			})
+			await held
+
+			const patch = app.request(
+				jsonRequest('PATCH', `/api/objects/${obj.id}`, { metadata: { company_type: 'b2b' } }),
+			)
+
+			// Wait until the PATCH is parked on the row lock, so its pre-transaction
+			// read is guaranteed to predate the other writer's commit.
+			for (let i = 0; i < 100; i++) {
+				const [{ n }] = await pg<{ n: number }[]>`
+					select count(*)::int as n from pg_stat_activity
+					where datname = current_database()
+						and wait_event_type = 'Lock'
+						and query ilike '%for update%'`
+				if (n > 0) break
+				await new Promise((r) => setTimeout(r, 50))
+			}
+			releaseWriter()
+			await otherWriter
+
+			const res = await patch
+			expect(res.status).toBe(200)
+
+			const [after] = await db.select().from(objects).where(eq(objects.id, obj.id))
+			expect(after.metadata).toEqual({ source: 'slack', dial_count: 3, company_type: 'b2b' })
 		})
 	})
 })

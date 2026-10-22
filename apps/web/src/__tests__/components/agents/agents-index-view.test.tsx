@@ -2,13 +2,18 @@ import { AgentsIndexView } from '@/components/agents/agents-index-view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return { ...mockTanStackRouter() }
 })
+
+// The row Call button mounts VoiceCallDialog, whose hook reads the workspace.
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
 
 type DisplaySettingsBody = Record<string, unknown>
 type MockState = {
@@ -178,7 +183,38 @@ describe('AgentsIndexView', () => {
 			const activity = screen.getByText('Crunching numbers')
 			const sessions = screen.getByText('1 session')
 			expect(activity.className).toContain('md:block')
-			expect(sessions.className).toContain('md:block')
+			expect(sessions.parentElement?.className).toContain('md:flex')
+			expect(screen.getByText('$0.00').parentElement?.className).toContain('lg:flex')
+		})
+
+		it('shows active sessions and total / last-30-day cost per agent', () => {
+			const now = Date.now()
+			const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString()
+			mount(
+				[agentBrian()],
+				[
+					buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' }),
+					buildSessionResponse({
+						id: 'b',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '1.50',
+						completedAt: daysAgo(2),
+					}),
+					buildSessionResponse({
+						id: 'c',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '10.25',
+						completedAt: daysAgo(45),
+					}),
+				],
+			)
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('3 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('1 active')).toBeInTheDocument()
+			expect(within(row).getByText('$11.75')).toBeInTheDocument()
+			expect(within(row).getByText('$1.50 · 30d')).toBeInTheDocument()
 		})
 	})
 
@@ -458,5 +494,33 @@ describe('AgentsIndexView', () => {
 			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
 			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
+	})
+})
+
+describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
+	beforeEach(() => window.localStorage.setItem('ff:voice-mode-v1', 'on'))
+	afterEach(() => window.localStorage.removeItem('ff:voice-mode-v1'))
+
+	it('gives every agent row a Call button, beside the row link and not inside it', () => {
+		mount([agentAda(), agentBrian()], [])
+		const call = screen.getByRole('button', { name: 'Call Ada' })
+		expect(call).toHaveTextContent('Call')
+		expect(screen.getByRole('button', { name: 'Call Brian' })).toBeInTheDocument()
+		// A button nested in the row's anchor is invalid markup and would navigate.
+		expect(screen.getByRole('link', { name: /Ada/ })).not.toContainElement(call)
+		// Hover-reveal is desktop-only; below md the button is plain inline.
+		expect(call.className).toContain('md:opacity-0')
+		expect(call.className).not.toMatch(/(^|\s)opacity-0/)
+	})
+
+	it('has no Voice filter chip', () => {
+		mount([agentAda(), agentBrian()], [])
+		expect(screen.queryByRole('button', { name: /^Voice/ })).not.toBeInTheDocument()
+	})
+
+	it('renders no Call button when the flag is off', () => {
+		window.localStorage.setItem('ff:voice-mode-v1', 'off')
+		mount([agentAda()], [])
+		expect(screen.queryByRole('button', { name: 'Call Ada' })).not.toBeInTheDocument()
 	})
 })

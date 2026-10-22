@@ -3,14 +3,43 @@ name: CI
 on:
   push:
     branches: [main]
+  # bet/** so task PRs into a bet branch get the same checks as a PR into main.
+  # Without it they report nothing until the aggregate bet -> main PR.
   pull_request:
-    branches: [main]
+    branches: [main, 'bet/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Decides which of the slow jobs a change can affect (scripts/ci/changed-areas.sh).
+  # Lint, type-check and unit tests always run: they are cheap and cover every package.
+  # Integration tests and e2e are skipped only when every changed file is one the script
+  # lists as unable to affect them (docs, the Apple app, other apps' workflows, ...);
+  # anything unknown, a push to main, or a diff that cannot be computed runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.areas.outputs.backend }}
+      e2e: ${{ steps.areas.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Self-test the path rules
+        run: bash scripts/ci/changed-areas.test.sh
+
+      - name: Which areas changed?
+        id: areas
+        run: |
+          : > changed.txt
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt || : > changed.txt
+          fi
+          bash scripts/ci/changed-areas.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
   # Config-only gate. The Alloy configs and Grafana alert rules under
   # observability/ are shipped as text and applied by hand — nothing in the
   # build or the test suite ever parses them, so without this job their first
@@ -111,22 +140,25 @@ jobs:
       - run: pnpm test -- -- --run
 
   integration-tests:
+    needs: changes
+    # A skipped job counts as passing for the required check of the same name.
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: maskin_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 20
+    env:
+      # actions/cache waits 10 minutes per segment by default; when the cache
+      # backend is unavailable (e.g. "Egress is over the account limit") the
+      # setup-node pnpm cache restore alone burned half of this job's budget.
+      # A cache miss only costs a cold install, so fail fast instead.
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
     steps:
+      # A throwaway database: durability buys nothing here, and each test file
+      # clones its own database from a template, so run it on tmpfs with fsync
+      # off and enough connections for parallel workers. (A `services:` block
+      # cannot pass server flags, hence docker run.)
+      - name: Start Postgres
+        run: |
+          docker run -d --name pg -p 5432:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=maskin_test postgres:16-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300
       - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v5
@@ -176,13 +208,113 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
-      - run: pnpm test:integration -- --run
+      - name: Wait for Postgres
+        run: until docker exec pg pg_isready -U postgres; do sleep 1; done
+
+      # Calls the package script directly: `pnpm test:integration` goes through
+      # turbo, which re-runs the ^build tasks the `pnpm build` step just did.
+      - run: pnpm --filter @maskin/dev test:integration -- --run
         env:
+          INTEGRATION_WORKERS: 4
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
-  verify-e2e:
+  # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
+  # Nothing else runs that script, so a change that breaks a fresh bootstrap is
+  # otherwise first noticed by the next agent whose session needs a database.
+  # Each check lives in scripts/checks/ and bootstraps into a throwaway dir.
+  dev-bootstrap-guards:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The cache is what keeps this job off snapshot.debian.org, which is the
+      # flake risk here rather than the check itself. Keyed on the two pinned
+      # versions the script downloads; only the downloads are cached, never a
+      # data dir.
+      - name: Read devstack versions
+        id: devstack
+        run: |
+          echo "pg=$(sed -n 's/^MASKIN_PG_VERSION="${MASKIN_PG_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+          echo "weed=$(sed -n 's/^MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache devstack downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/maskin-devstack/postgres-*
+            ~/.cache/maskin-devstack/vendor-lib-*
+            ~/.cache/maskin-devstack/weed-*
+          key: devstack-${{ runner.os }}-${{ runner.arch }}-pg${{ steps.devstack.outputs.pg }}-weed${{ steps.devstack.outputs.weed }}
+
+      - name: Fresh bootstrap is UTF8 and migrates
+        run: bash scripts/checks/fresh-db-utf8.sh
+
+      - name: A busy SeaweedFS master port is routed around
+        run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
+
+  # Boots the real agent-base image through its entrypoint and agent-run.sh with
+  # a stub `claude` (scripts/checks/agent-image-smoke.sh). Merging a change under
+  # docker/agent-base/ publishes the image and restarts the shared agent-server
+  # (agent-base-docker.yml), and nothing else runs agent-run.sh before that, so a
+  # script that aborts under `set -e` otherwise takes down every session at once.
+  # The image build is skipped on PRs that don't touch its inputs; the job still
+  # reports success so it can be a required check.
+  agent-image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Did the agent image inputs change?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base scripts/checks/agent-image-smoke.sh scripts/checks/fixtures; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.changed.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:smoke
+          cache-from: type=gha
+
+      - name: Sessions reach the agent launch
+        if: steps.changed.outputs.run == 'true'
+        run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
+
+  verify-e2e:
+    needs: changes
+    # Not a job-level `if`: the ruleset requires the checks `verify-e2e (1)`..`(5)` by name, and a
+    # skipped matrix job would never create them. So every shard starts and reports success, and
+    # each step below does its work only when the e2e area changed.
+    runs-on: ubuntu-24.04
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright cannot install chromium on
+    # ("does not support chromium on ubuntu26.04-x64"). Unpin once Playwright supports it.
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
@@ -208,6 +340,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.e2e == 'true'
 
       # SeaweedFS is the S3-compatible backend the dev server writes skill
       # content to. The install path (POST /api/installed-loops) puts one S3
@@ -218,6 +351,7 @@ jobs:
       # `seaweedfs-s3.json`; same image + credentials + bucket name as
       # docker-compose.yml so behaviour matches local dev.
       - name: Start SeaweedFS (S3-compatible backend)
+        if: needs.changes.outputs.e2e == 'true'
         run: |
           set -euo pipefail
           docker run -d --name seaweedfs \
@@ -251,29 +385,36 @@ jobs:
           exit 1
 
       - uses: pnpm/action-setup@v5
+        if: needs.changes.outputs.e2e == 'true'
         with:
           version: 9.15.0
 
       - uses: actions/setup-node@v6
+        if: needs.changes.outputs.e2e == 'true'
         with:
           node-version: 20
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.e2e == 'true'
 
       - name: Cache turbo build outputs
+        if: needs.changes.outputs.e2e == 'true'
         uses: ./.github/actions/cache-turbo
         with:
           job-name: verify-e2e
 
       - run: pnpm build
+        if: needs.changes.outputs.e2e == 'true'
 
       - name: Run database migrations
+        if: needs.changes.outputs.e2e == 'true'
         run: pnpm db:migrate
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
 
       - name: Cache Playwright browsers
+        if: needs.changes.outputs.e2e == 'true'
         id: playwright-cache
         uses: actions/cache@v4
         with:
@@ -281,14 +422,15 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
+        if: needs.changes.outputs.e2e == 'true'
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -340,7 +482,7 @@ jobs:
           S3_REGION: us-east-1
 
       - name: Upload Playwright report
-        if: always()
+        if: always() && needs.changes.outputs.e2e == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.shard }}
