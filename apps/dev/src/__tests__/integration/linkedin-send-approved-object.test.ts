@@ -1,8 +1,8 @@
 import {
 	events,
+	INTEGRATION_STATUS_ACTIVE,
 	files,
 	idempotencyRecords,
-	INTEGRATION_STATUS_ACTIVE,
 	integrations,
 	objects,
 } from '@maskin/db/schema'
@@ -246,7 +246,7 @@ describe('sendApprovedLinkedInObject', () => {
 		})
 		await approve(ws.id, actorId, object)
 		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/thread_id is required/,
+			/A conversation or a recipient is required/,
 		)
 		await sendApprovedLinkedInObject(ctx, { object_id: object.id, thread_id: 'thread-9' })
 		expect(reply).toHaveBeenCalledWith(expect.objectContaining({ thread_id: 'thread-9' }))
