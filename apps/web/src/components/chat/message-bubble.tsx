@@ -161,53 +161,54 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
+				{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				    (`pr-2`) and owns the absolute placement, so the bar sits flush
+				    against the bubble and stays inside the box that measures overflow. */}
 				<div
 					className={cn(
-						'relative flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground',
+						'relative max-w-[min(560px,80%)]',
+						spawnInfo && 'pr-2',
 						editing && 'w-full',
 					)}
 				>
-					{spawnInfo ? (
-						// S2 · persistent spawn marker. Absolute + right-side placement
-						// so the bar sits flush against the bubble without changing
-						// its width or reflowing the transcript. Nested inside the
-						// bubble so it inherits the bubble's height and clips
-						// naturally on wrap.
-						<SpawnBar className="absolute -right-2 top-0 h-full" />
-					) : null}
-					{fileList}
-					{editing ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={draft}
-								onChange={(e) => setDraft(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !e.shiftKey) {
-										e.preventDefault()
-										saveEdit()
-									}
-									if (e.key === 'Escape') setEditing(false)
-								}}
-								aria-label="Edit message"
-								autoFocus
-								className="bg-background text-foreground"
-							/>
-							<div className="flex justify-end gap-2">
-								<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-									Cancel
-								</Button>
-								<Button size="sm" onClick={saveEdit}>
-									Save
-								</Button>
+					{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+					<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
+						{fileList}
+						{editing ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={draft}
+									onChange={(e) => setDraft(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault()
+											saveEdit()
+										}
+										if (e.key === 'Escape') setEditing(false)
+									}}
+									aria-label="Edit message"
+									autoFocus
+									className="bg-background text-foreground"
+								/>
+								<div className="flex justify-end gap-2">
+									<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+										Cancel
+									</Button>
+									<Button size="sm" onClick={saveEdit}>
+										Save
+									</Button>
+								</div>
 							</div>
-						</div>
-					) : message.content.length > 0 ? (
-						// `break-words` is load-bearing next to the column's `min-w-0`:
-						// `min-w-0` bounds the box, this bounds the ink. Without it an
-						// unbroken token (a long URL) raises this span's min-content and
-						// paints past the bubble's `max-w` cap, out to the viewport edge.
-						<span className="whitespace-pre-wrap text-balance break-words">{message.content}</span>
-					) : null}
+						) : message.content.length > 0 ? (
+							// `break-words` is load-bearing next to the column's `min-w-0`:
+							// `min-w-0` bounds the box, this bounds the ink. Without it an
+							// unbroken token (a long URL) raises this span's min-content and
+							// paints past the bubble's `max-w` cap, out to the viewport edge.
+							<span className="whitespace-pre-wrap text-balance break-words">
+								{message.content}
+							</span>
+						) : null}
+					</div>
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
@@ -271,13 +272,13 @@ export function MessageBubble({
 				size="md"
 				className="shrink-0 rounded-lg"
 			/>
-			<div className="relative min-w-0 flex-1 md:max-w-[660px]">
+			<div className={cn('relative min-w-0 flex-1 md:max-w-[660px]', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (
 					// S2 · agent-side messages can also spawn sessions (an agent that
 					// hands off work to a spawned session); render the same marker
-					// they'd see on their own bubble. Absolute-positioned so it
-					// doesn't reflow the message column.
-					<SpawnBar className="absolute -right-2 top-0 h-full" />
+					// they'd see on their own bubble. Absolute-positioned in a gutter
+					// the column reserves, so it stays inside the column's box.
+					<SpawnBar className="absolute right-0 top-0 h-full" />
 				) : null}
 				<div className="flex items-baseline gap-2">
 					<span className="truncate text-[12.5px] font-bold text-foreground">

@@ -59,7 +59,7 @@ export function AgentCallButton({
 				// button is always inline. Focus (keyboard, or a tap that lands on the
 				// row) also reveals it, so it is never unreachable.
 				variant === 'row' &&
-					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 sm:w-auto sm:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
+					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 lg:w-auto lg:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
 				variant === 'icon' &&
 					'h-6 w-6 shrink-0 bg-brand text-brand-foreground hover:bg-brand-hover',
 				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
@@ -70,7 +70,7 @@ export function AgentCallButton({
 		>
 			<Phone size={variant === 'icon' ? 13 : 14} aria-hidden="true" />
 			{variant === 'detail' && `Call ${agent.name}`}
-			{variant === 'row' && <span className="hidden sm:inline">Call</span>}
+			{variant === 'row' && <span className="hidden lg:inline">Call</span>}
 		</Button>
 	)
 
