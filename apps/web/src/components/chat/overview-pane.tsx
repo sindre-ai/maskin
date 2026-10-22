@@ -81,7 +81,11 @@ export function OverviewPane({
 		>
 			{threadOpen ? null : (
 				<div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<Tabs value={tab} onValueChange={(v) => onTabChange(v as OverviewTab)}>
+					<Tabs
+						value={tab}
+						onValueChange={(v) => onTabChange(v as OverviewTab)}
+						className="min-w-0 overflow-x-auto"
+					>
 						<TabsList>
 							<TabsTrigger value="threads" className="gap-1">
 								<Hand size={13} aria-hidden />
