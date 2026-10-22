@@ -88,6 +88,11 @@ const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
+/** Whether two tools.envFrom values are the same list (a missing value counts as empty). */
+function sameEnvFrom(next: unknown, stored: unknown): boolean {
+	return JSON.stringify(next ?? []) === JSON.stringify(stored ?? [])
+}
+
 /**
  * Event data for an actor mutation. Events are readable by every workspace
  * member (history and SSE return the row unfiltered), so this carries identity
@@ -1084,6 +1089,20 @@ app.openapi(updateActorRoute, (async (c) => {
 				'FORBIDDEN',
 				"Only workspace admins can change another actor's tools or llm_config",
 			),
+			403,
+		)
+	}
+
+	// envFrom names which API-service variables get copied into the agent's
+	// sessions, so only a human admin or owner may change it, even on the actor's
+	// own record. Sending the stored list back unchanged stays open.
+	if (
+		body.tools !== undefined &&
+		!sameEnvFrom(body.tools.envFrom, (existing.tools as { envFrom?: unknown } | null)?.envFrom) &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human workspace admin can change tools.envFrom'),
 			403,
 		)
 	}
