@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 				'gmail',
 				'google-calendar',
 				'google-meet',
+				'google-search-console',
 				'linear',
 				'linkedin-unipile',
 				'posthog',
@@ -483,6 +484,56 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(200)
 			const integrationInsert = calls.inserts[0] as { config: unknown }
 			expect(integrationInsert.config).toEqual({ system_actor_id: systemActor.id })
+		})
+
+		it('rejects a resend connect that sends api_key without receive_subdomain, and writes no row', async () => {
+			// The MCP connect_integration tool only forwards api_key. That used to fall
+			// through to an insert with empty credentials: a row that looked connected,
+			// then a webhook 500 on the first delivery.
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/resend/connect',
+					{ api_key: 're_test_key' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('receive_subdomain')
+			expect(JSON.stringify(body)).not.toContain('re_test_key')
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('rejects an api_key sent to a manual provider that has no use for one, and writes no row', async () => {
+			const systemActor = { id: 'skjald-system-actor-id', type: 'system', name: 'Skjald' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'skjald', displayName: 'Skjald', auth: { type: 'manual' } },
+			} as unknown as ResolvedProvider)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/skjald/connect',
+					{ api_key: 'sk_test_key' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('does not take an api_key')
+			expect(JSON.stringify(body)).not.toContain('sk_test_key')
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {

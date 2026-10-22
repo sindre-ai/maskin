@@ -220,7 +220,7 @@ function fetchNotificationPage(
 }
 
 /**
- * A NEWKIND row surfaced by the unified `/` picker (`chat-slash-picker-v2`).
+ * A NEWKIND row surfaced by the unified `/` picker.
  * The three built-ins mirror the v2 spec's Create-new section — Task, Bet,
  * Insight. `sub` is the sub-copy verbatim from the spec.
  */

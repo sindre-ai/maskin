@@ -62,6 +62,7 @@ struct ChatThreadView: View {
 	@State private var newTitle = ""
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
+	@State private var showingLinked = false
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -203,6 +204,16 @@ struct ChatThreadView: View {
 						ThreadScreen(store: store, root: root)
 					}
 				}
+				.linkedItems(runtime)
+				.sheet(isPresented: $showingLinked) {
+					LinkedSheet(
+						entries: linkedEntries,
+						onJump: { entry in jump(to: entry, proxy: proxy) },
+						onApproved: { entry, title, body in
+							store.tellAgentOfApproval(title: title, body: body, linkedBy: entry.actorID, author: entry.author)
+						})
+						.linkedItems(runtime)
+				}
 				.alert("Rename conversation", isPresented: $renaming) {
 					TextField("Title", text: $newTitle)
 					Button("Cancel", role: .cancel) {}
@@ -228,6 +239,18 @@ struct ChatThreadView: View {
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if !linkedEntries.isEmpty {
+				Button { showingLinked = true } label: {
+					HStack(spacing: MaskinSpace.s1) {
+						Image(systemName: "link")
+						Text("\(linkedEntries.count)").maskinText(.caption).fontWeight(.semibold)
+					}
+					.foregroundStyle(MaskinColor.ink)
+				}
+				.accessibilityLabel("Linked")
+				.accessibilityValue("\(linkedEntries.count)")
+				.accessibilityHint("Shows the drafts, pages and objects this chat links to")
+			}
 			if ThreadNav.showsMemberStack(participants: store.participants, flow: flow) {
 				Button(action: onShowParticipants) {
 					ThreadNavAvatars(participants: memberStack, leadID: flow?.leadID, limit: flow == nil ? 4 : 3)
@@ -302,6 +325,21 @@ struct ChatThreadView: View {
 				}
 				.buttonStyle(.maskinPressed)
 			}
+		}
+	}
+
+	// MARK: Linked
+
+	/// Everything the conversation's messages link to, newest first.
+	private var linkedEntries: [LinkedEntry] { LinkedConversationItems.derive(from: store.allMessages) }
+
+	/// Brings the message that linked something into view: in the timeline, or in its thread.
+	private func jump(to entry: LinkedEntry, proxy: ScrollViewProxy) {
+		guard let message = store.allMessages.first(where: { $0.id == entry.messageID }) else { return }
+		if let rootID = message.threadRootID, !message.alsoInChannel {
+			threadRoute = ThreadRoute(rootID: rootID)
+		} else {
+			scroll(to: message.id, proxy: proxy)
 		}
 	}
 
@@ -1031,7 +1069,10 @@ struct ThreadTranscript: View {
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
-				onSelectVersion: { store.selectVersion($0, of: message.id) }
+				onSelectVersion: { store.selectVersion($0, of: message.id) },
+				onApprovedDraft: { title, body in
+					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
+				}
 			)
 			.overlay {
 				if matchIDs.contains(message.id) {

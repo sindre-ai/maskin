@@ -19,6 +19,12 @@ export const previewRecipientSchema = z.object({
 	address: z.string().nullable(),
 })
 
+/** One labelled line of a preview that is not a recipient or the subject: "Posting as", "Channel". */
+export const previewDetailSchema = z.object({
+	label: z.string(),
+	value: z.string(),
+})
+
 export const objectPreviewSchema = z.object({
 	/** The declared kind, from `metadata.kind`: "email", "linkedin_message", … */
 	kind: z.string(),
@@ -28,6 +34,14 @@ export const objectPreviewSchema = z.object({
 	provider: z.string().nullable(),
 	recipients: z.array(previewRecipientSchema),
 	subject: z.string().nullable(),
+	/** Other facts about where it goes (the account a post is published as, a Slack channel). */
+	details: z.array(previewDetailSchema),
+	/**
+	 * What the draft answers, as the person who wrote it said it (the LinkedIn message a reply
+	 * is to). Shown above the text so it is read in context. Not part of what is approved:
+	 * it is not sent, so it is not in `content_hash`.
+	 */
+	context: z.string().nullable().optional(),
 	/** The exact text that would go out. */
 	body: z.string(),
 	/** Longest body the channel accepts, when it has a limit worth showing. */
@@ -52,6 +66,7 @@ export const objectPreviewSchema = z.object({
 
 export type ObjectPreview = z.infer<typeof objectPreviewSchema>
 export type PreviewRecipient = z.infer<typeof previewRecipientSchema>
+export type PreviewDetail = z.infer<typeof previewDetailSchema>
 
 /** The metadata key that makes an object previewable. */
 export const PREVIEW_KIND_KEY = 'kind'

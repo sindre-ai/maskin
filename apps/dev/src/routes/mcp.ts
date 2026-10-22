@@ -596,6 +596,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
+				errorMessage: error.message ?? '',
 				sessionId: misfireSessionId,
 				agentActorId,
 			}

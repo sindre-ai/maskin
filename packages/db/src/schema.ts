@@ -235,8 +235,7 @@ export const relationships = pgTable(
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
-		// Applied live via migration 0074; hook itself gated on
-		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
 			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
@@ -318,10 +317,13 @@ export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' |
  * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
  * Keychain credentials only ever use 'read_write' (on/off): no row is off.
  */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
-/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
-export type IntegrationDefaultAccess = 'read' | 'none'
+/**
+ * What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything
+ * else unless a person picked 'read_write' (every agent may write) or 'none'.
+ */
+export type IntegrationDefaultAccess = 'read' | 'read_write' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -357,7 +359,7 @@ export const integrations = pgTable(
 			.default('registered'),
 		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
 		displayName: text('display_name'),
-		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// What an agent with no agent_grants row may do: 'read' (default), 'read_write' or 'none'.
 		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
 		defaultAgentAccess: text('default_agent_access')
 			.$type<IntegrationDefaultAccess>()
@@ -398,7 +400,7 @@ export const integrations = pgTable(
 		),
 		check(
 			'integrations_default_agent_access_enum',
-			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+			sql`${t.defaultAgentAccess} IN ('read', 'read_write', 'none')`,
 		),
 		check(
 			'integrations_source_enum',
@@ -441,10 +443,7 @@ export const agentGrants = pgTable(
 	(t) => [
 		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
 		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
-		check(
-			'agent_grants_access_enum',
-			sql`${t.access} IN ('none', 'read', 'ask_first', 'read_write')`,
-		),
+		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
@@ -592,11 +591,8 @@ export const triggers = pgTable('triggers', {
 	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
 	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
 	escalateAfterMs: integer('escalate_after_ms'),
-	// D6b idempotency guard: the last time the escalation reconciler posted
-	// an escalation comment for this step. The reconciler skips a step whose
-	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
-	// timestamp for the hands-off actor), so a new wait spell re-arms
-	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
 	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),

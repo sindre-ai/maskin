@@ -6,7 +6,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, MousePointer2, RefreshCw, Square } from 'lucide-react'
+import { Eye, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -90,6 +90,8 @@ export function DesktopViewer({
 	workspaceId,
 	agentId,
 	toolbarEnd,
+	variant = 'inline',
+	onOpen,
 	onOpenAgent,
 }: {
 	workspaceId: string
@@ -97,6 +99,13 @@ export function DesktopViewer({
 	agentId: string
 	/** Rendered at the far end of the toolbar (the Expand / Close button). */
 	toolbarEnd?: React.ReactNode
+	/**
+	 * `inline`: toolbar above the picture. `preview`: just the picture, for a card that opens
+	 * the popup. `immersive`: the popup, controls float under the picture.
+	 */
+	variant?: 'inline' | 'preview' | 'immersive'
+	/** `preview` only: what clicking the live picture does (open the popup). */
+	onOpen?: () => void
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
 }) {
@@ -227,30 +236,56 @@ export function DesktopViewer({
 			)
 		) : null
 
+	// The popup's floating pill: what you are doing on the left, the one switch on the right.
+	const pill = (
+		<div
+			role="toolbar"
+			aria-label="Computer controls"
+			className="flex items-center gap-1 self-center rounded-full border bg-card p-1 shadow-md"
+		>
+			<span className="flex items-center gap-1.5 px-3 text-sm text-muted-foreground">
+				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
+				{controlling ? "You're in control" : 'Watching'}
+			</span>
+			<Button
+				variant={controlling ? 'secondary' : 'default'}
+				size="sm"
+				className="rounded-full"
+				aria-label={controlling ? 'Stop controlling' : 'Take over'}
+				disabled={sending}
+				onClick={() => setControlling((v) => !v)}
+			>
+				{controlling ? 'Stop' : 'Take control'}
+			</Button>
+		</div>
+	)
+
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
-			<div
-				role="toolbar"
-				aria-label="Computer controls"
-				className="flex min-w-0 items-center justify-between gap-2"
-			>
-				<div className="min-w-0">
-					<DesktopStatus
-						phase={phase}
-						teaching={teaching.status}
-						elapsedMs={teaching.elapsedMs}
-						agentName={teaching.agentName}
-					/>
+			{variant === 'inline' && (
+				<div
+					role="toolbar"
+					aria-label="Computer controls"
+					className="flex min-w-0 items-center justify-between gap-2"
+				>
+					<div className="min-w-0">
+						<DesktopStatus
+							phase={phase}
+							teaching={teaching.status}
+							elapsedMs={teaching.elapsedMs}
+							agentName={teaching.agentName}
+						/>
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						{controls}
+						{toolbarEnd}
+					</div>
 				</div>
-				<div className="flex shrink-0 items-center gap-2">
-					{controls}
-					{toolbarEnd}
-				</div>
-			</div>
+			)}
 
 			<div
 				className={cn(
-					'relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
+					'group relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
 					recording && 'ring-2 ring-destructive',
 				)}
 			>
@@ -264,6 +299,20 @@ export function DesktopViewer({
 						phase !== 'connected' && 'invisible',
 					)}
 				/>
+				{/* Not on the error state: that card holds a Reconnect button this must not cover. */}
+				{variant === 'preview' && onOpen && !failed && (
+					<button
+						type="button"
+						aria-label="Open computer in a popup"
+						onClick={onOpen}
+						className="absolute inset-0 z-10 flex items-center justify-center focus-visible:outline-none"
+					>
+						<span className="flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+							<Maximize2 size={15} />
+							Open
+						</span>
+					</button>
+				)}
 				{busy && (
 					<EmptyState
 						className="absolute inset-0 py-0"
@@ -278,19 +327,19 @@ export function DesktopViewer({
 					<EmptyState
 						className="absolute inset-0 py-0"
 						compact
-						title={
-							phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
-						}
+						// A closed stream is an idle computer going to sleep, not a fault.
+						title={phase === 'disconnected' ? 'The computer is idle' : "Couldn't open the desktop"}
 						description={error ?? undefined}
 						action={
 							<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
 								<RefreshCw size={15} />
-								Reconnect
+								{phase === 'disconnected' ? 'Wake up' : 'Reconnect'}
 							</Button>
 						}
 					/>
 				)}
 			</div>
+			{variant === 'immersive' && phase === 'connected' && (recording ? controls : pill)}
 			{/* <TeachDialog
 				open={teaching.dialogOpen}
 				onOpenChange={teaching.setDialogOpen}

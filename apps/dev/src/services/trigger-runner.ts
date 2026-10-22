@@ -29,6 +29,7 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
@@ -2173,17 +2174,30 @@ export class CommentDispatcher {
 		authorSessionId: string | null
 	}): Promise<void> {
 		// The commenter rides along in the same lookup so the loop guards can tell
-		// an agent-authored mention from a human one without an extra query.
-		const mentionedActors = await this.db
-			.select({ id: actors.id, type: actors.type })
+		// an agent-authored mention from a human one without an extra query. The
+		// join marks which rows are members of this workspace: a mention of an
+		// actor from another workspace is dropped below, so it gets no
+		// notification and no session. The commenter is read whether or not it is
+		// a member, so the loop guards never lose track of an agent author.
+		const lookedUp = await this.db
+			.select({ id: actors.id, type: actors.type, memberWorkspaceId: workspaceMembers.workspaceId })
 			.from(actors)
+			.leftJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
 			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
-		const commenterIsAgent = mentionedActors.some(
-			(a) => a.id === ctx.commenterId && a.type === 'agent',
-		)
+		const commenterIsAgent = lookedUp.some((a) => a.id === ctx.commenterId && a.type === 'agent')
+		const mentionedActors = lookedUp
+			.filter((a) => a.memberWorkspaceId !== null)
+			.map((a) => ({ id: a.id, type: a.type }))
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
-		// don't resolve to an actor row; both cases quietly drop out here).
+		// don't resolve to a member of this workspace; both cases quietly drop out
+		// here).
 		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
 		const seen = new Set<string>()
 		let anyDispatched = false
@@ -2597,6 +2611,7 @@ export class CommentDispatcher {
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
 		let originConversationId: string | null = null
+		let notifyOnComplete = false
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2608,6 +2623,14 @@ export class CommentDispatcher {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
 				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
 			}
 		}
 
@@ -2635,6 +2658,7 @@ export class CommentDispatcher {
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
 				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',

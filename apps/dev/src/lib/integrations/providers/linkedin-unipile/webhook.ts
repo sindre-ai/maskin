@@ -52,7 +52,7 @@ export function __setLinkedInWebhookClientForTests(builder: WebhookClientBuilder
  * surfaces the same way for both. `UNIPILE_BASE_URL` must NOT include
  * `/v2` — the client owns the path prefix.
  */
-export function buildLinkedInClientForWebhook(): LinkedInClient {
+export function buildLinkedInClientForWebhook(fetchImpl?: typeof fetch): LinkedInClient {
 	if (webhookClientOverride) return webhookClientOverride()
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
@@ -62,7 +62,7 @@ export function buildLinkedInClientForWebhook(): LinkedInClient {
 			'LinkedIn client is not configured (missing UNIPILE_BASE_URL or UNIPILE_API_KEY)',
 		)
 	}
-	return createLinkedInHttpClient({ baseUrl, apiKey })
+	return createLinkedInHttpClient({ baseUrl, apiKey, fetchImpl })
 }
 
 /**

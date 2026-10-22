@@ -44,9 +44,17 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import {
+	canControlSession,
+	canReadSession,
+	canUpdateSessionActivity,
+	helperAskConversationId,
+	sessionListVisibility,
+} from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
+import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
@@ -80,6 +88,15 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * watchdog in `apps/web/src/lib/sse.ts`.
  */
 const SSE_HEARTBEAT_MS = 15_000
+
+/**
+ * Session row for an HTTP response. The stored config can hold env_vars values
+ * and mcps env / headers values, so those are masked here, in the one place every
+ * session-returning handler goes through. Internal readers use the raw row.
+ */
+function serializeSession<T extends { config: unknown } & Record<string, unknown>>(session: T) {
+	return serialize({ ...session, config: redactSessionConfig(session.config) })
+}
 
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
@@ -122,6 +139,21 @@ app.openapi(createSessionRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Every other id in the body must belong to the caller's workspace before
+	// anything is written or started with it. A miss is a 404, the same as an id
+	// that does not exist. The agent (body.actor_id) is checked inside
+	// startSession(), which every caller of a session start goes through.
+	await assertInWorkspace(db, workspaceId, {
+		objects: [
+			body.initiated_from_object_id,
+			body.config.mention?.object_id,
+			body.config.thread_reply?.object_id,
+		],
+		conversations: [body.config.conversation?.conversation_id],
+		triggers: [body.trigger_id],
+		sessions: [body.source_session_id, ...(body.depends_on_session_ids ?? [])],
+	})
 
 	// Stash entry_agent_role inside the existing config JSON blob so downstream
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
@@ -226,7 +258,7 @@ app.openapi(createSessionRoute, (async (c) => {
 		}
 		session = row
 	}
-	const created = serialize(session) as z.infer<typeof sessionResponseSchema>
+	const created = serializeSession(session) as z.infer<typeof sessionResponseSchema>
 	// The work still runs when the chain is too deep; the caller is told nothing
 	// will be sent back, so it does not wait for a return that cannot come.
 	if (!link.linked && link.reason === 'hop_cap') {
@@ -285,6 +317,15 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the detail route, applied in the query so the page cut and the
+	// `before` cursor only ever see sessions this caller may read.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
@@ -336,7 +377,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 				.limit(query.limit)
 				.offset(query.offset)
 
-			return c.json(serializeArray(fenced) as z.infer<typeof sessionResponseSchema>[])
+			return c.json(fenced.map(serializeSession) as z.infer<typeof sessionResponseSchema>[])
 		}
 
 		const results = await db
@@ -347,7 +388,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 			.offset(query.offset)
 			.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
-		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+		return c.json(results.map(serializeSession) as z.infer<typeof sessionResponseSchema>[])
 	}
 
 	// Lean path: LEFT JOIN triggers for title synthesis (the trigger's name is
@@ -554,7 +595,7 @@ app.openapi(getSessionRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 	}
 
-	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
+	const serialized = serializeSession(session) as z.infer<typeof sessionResponseSchema>
 
 	if (!include_logs) {
 		return c.json(serialized as z.infer<typeof getSessionResponseSchema>)
@@ -663,6 +704,13 @@ app.openapi(patchSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
+	if (
+		body.current_activity !== undefined &&
+		!(await canUpdateSessionActivity(db, session, actorId))
+	) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
+
 	// Only whoever started the helper can ask for its result to come back.
 	if (body.notify_on_complete && session.createdBy !== actorId) {
 		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
@@ -722,7 +770,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 				: { notify_on_complete: 'skipped' as const, notify_skip_reason: notifyOutcome.reason }
 
 	return c.json({
-		...serialize(updated),
+		...serializeSession(updated),
 		...notify,
 	} as z.infer<typeof sessionNotifyResponseSchema>)
 }) as RouteHandler<typeof patchSessionRoute, Env>)
@@ -781,7 +829,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof stopSessionRoute, Env>)
 
 // POST /:id/pause - Pause and snapshot a session
@@ -838,7 +886,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof pauseSessionRoute, Env>)
 
 // POST /:id/resume - Resume a paused session
@@ -895,7 +943,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+	return c.json(serializeSession(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
 // POST /:id/input - Send a user turn to an interactive session

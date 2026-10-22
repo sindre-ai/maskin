@@ -297,15 +297,21 @@ describe('PUT /api/integrations/:id/grants on a saved key (Integration)', () => 
 		expect(await scopeRows(s)).toEqual([])
 	})
 
-	it('answers 400 to read-only or write-only access on a saved key: it is on or off', async () => {
+	it('answers 400 to read-only access on a saved key: it is on (read_write) or off (none)', async () => {
 		const s = await setup()
-		for (const access of ['read', 'none']) {
-			const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, {
-				grants: [{ actorId: s.agentA.id, access }],
-			})
-			expect(res.status).toBe(400)
-		}
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, {
+			grants: [{ actorId: s.agentA.id, access: 'read' }],
+		})
+		expect(res.status).toBe(400)
 		expect(await grantedIds(s.integrationId)).toEqual([])
+	})
+
+	it('accepts none on a saved key: an agent switched off when everyone else has it', async () => {
+		const s = await setup()
+		const res = await putGrants(appFor(s.human), s.ws.id, s.integrationId, {
+			grants: [{ actorId: s.agentA.id, access: 'none' }],
+		})
+		expect(res.status).toBe(200)
 	})
 
 	it.each([

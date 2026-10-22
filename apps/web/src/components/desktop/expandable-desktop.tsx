@@ -1,7 +1,7 @@
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Minimize2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 // The popup zooms and slides in for 200ms (ui/dialog). noVNC fits the picture to
@@ -40,27 +40,23 @@ export function ExpandableDesktop({
 		return () => clearTimeout(timer)
 	}, [expanded])
 
-	const expandButton = (
-		<Button
-			variant="ghost"
-			size="sm"
-			aria-label="Open computer in a popup"
-			onClick={() => setExpanded(true)}
-		>
-			<Maximize2 size={15} />
-			<span className="hidden sm:inline">Expand</span>
-		</Button>
-	)
-
 	return (
 		<>
 			{!expanded && (
-				<DesktopViewer
-					workspaceId={workspaceId}
-					agentId={agentId}
-					toolbarEnd={expandButton}
-					onOpenAgent={onOpenAgent}
-				/>
+				<div className="flex min-w-0 flex-col gap-2">
+					{/* The picture is a preview only: the whole card is one button that opens
+					    the popup, where the controls live. */}
+					<div className="min-w-0 overflow-hidden rounded-2xl">
+						<DesktopViewer
+							workspaceId={workspaceId}
+							agentId={agentId}
+							variant="preview"
+							onOpen={() => setExpanded(true)}
+							onOpenAgent={onOpenAgent}
+						/>
+					</div>
+					<p className="text-center text-sm text-muted-foreground">{agentName}'s screen</p>
+				</div>
 			)}
 
 			{expanded && (
@@ -75,11 +71,22 @@ export function ExpandableDesktop({
 			)}
 
 			<Dialog open={expanded} onOpenChange={setExpanded}>
-				<DialogContent className="sm:max-w-5xl">
+				{/* As wide as the screen allows while the 16:9 picture plus the pill under it
+				    still fit the height, so the picture never needs to scroll. */}
+				<DialogContent className="sm:max-w-[min(96vw,calc((100dvh_-_9rem)*16/9))]">
 					<DialogTitle className="sr-only">{agentName}'s computer</DialogTitle>
 					<DialogDescription className="sr-only">
-						Live view of {agentName}'s computer. Use Take over to control it.
+						Live view of {agentName}'s computer. Use Take control to control it.
 					</DialogDescription>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="absolute right-10 top-3 size-7"
+						aria-label="Close popup"
+						onClick={() => setExpanded(false)}
+					>
+						<Minimize2 size={15} />
+					</Button>
 					{/* min-w-0: the dialog is a grid, and a grid item will not shrink below its
 					    content (the 1280px noVNC canvas) unless told it may. */}
 					<div className="min-w-0 pt-6">
@@ -88,23 +95,10 @@ export function ExpandableDesktop({
 								workspaceId={workspaceId}
 								agentId={agentId}
 								onOpenAgent={onOpenAgent}
-								toolbarEnd={
-									<Button
-										variant="ghost"
-										size="sm"
-										aria-label="Close popup"
-										onClick={() => setExpanded(false)}
-									>
-										<Minimize2 size={15} />
-										<span className="hidden sm:inline">Shrink</span>
-									</Button>
-								}
+								variant="immersive"
 							/>
 						) : (
-							<div className="flex flex-col gap-2" aria-hidden>
-								<div className="h-8" />
-								<div className="aspect-video w-full rounded-lg border bg-muted" />
-							</div>
+							<div className="aspect-video w-full rounded-lg border bg-muted" aria-hidden />
 						)}
 					</div>
 				</DialogContent>

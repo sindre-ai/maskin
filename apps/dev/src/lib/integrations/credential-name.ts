@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { checkCredentialName, credentialNameMessage, credentialSlug } from '@maskin/shared'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 
 export class CredentialNameError extends Error {
 	constructor(
@@ -33,12 +33,14 @@ export function assertValidCredentialName(name: string): void {
  * Throws NAME_TAKEN when another bring-your-own key or login in the workspace is active or
  * waiting out its undo window under the same env var slug. Slugs are compared, not
  * display names, because the slug is what the agent reads. An undone key has given
- * its name back; a pending_undo one still holds it.
+ * its name back; a pending_undo one still holds it. `exceptIntegrationId` leaves one row out, so a
+ * credential can be renamed to a name that differs only in case or spacing from its own.
  */
 export async function assertSlugFree(
 	db: Database | Transaction,
 	workspaceId: string,
 	name: string,
+	exceptIntegrationId?: string,
 ): Promise<void> {
 	const slug = credentialSlug(name)
 	const rows = await db
@@ -49,6 +51,7 @@ export async function assertSlugFree(
 				eq(integrations.workspaceId, workspaceId),
 				inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
 				inArray(integrations.status, ['active', 'pending_undo']),
+				exceptIntegrationId ? ne(integrations.id, exceptIntegrationId) : undefined,
 			),
 		)
 	if (rows.some((r) => r.displayName !== null && credentialSlug(r.displayName) === slug)) {

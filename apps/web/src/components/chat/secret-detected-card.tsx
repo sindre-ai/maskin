@@ -180,7 +180,7 @@ export type VaultedPhase = 'resuming' | 'live' | 'failed' | 'undone'
 
 interface VaultedCardProps {
 	credentialName: string
-	/** Where View credential points. */
+	/** Where View in Keychain points. */
 	workspaceId: string
 	integrationId: string
 	agentCount: number
@@ -202,7 +202,6 @@ const PILL = 'shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs
 export function VaultedCard({
 	credentialName,
 	workspaceId,
-	integrationId,
 	agentCount,
 	agentName,
 	phase,
@@ -286,11 +285,8 @@ export function VaultedCard({
 						</Button>
 					) : null}
 					<Button asChild variant="outline" size="sm">
-						<Link
-							to="/$workspaceId/settings/keychain/$integrationId"
-							params={{ workspaceId, integrationId }}
-						>
-							View credential
+						<Link to="/$workspaceId/settings/keychain" params={{ workspaceId }}>
+							View in Keychain
 						</Link>
 					</Button>
 					{undoAvailable ? (
