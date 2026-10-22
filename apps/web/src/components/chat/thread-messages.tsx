@@ -15,6 +15,7 @@ import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
 import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type RedoneTurns,
@@ -149,16 +150,20 @@ export function ThreadMessages({
 	})
 
 	// A linked object's card shows once, on the first message that links it; later
-	// messages keep the link but not another copy of the card.
+	// messages keep the link but not another copy of the card. Only messages that
+	// draw cards count: your own bubble draws none, so a link you posted first must
+	// not hide the card from the agent's reply.
+	const ownActorId = getStoredActor()?.id
 	const shownLinkedObjectIdsByMessage = useMemo(() => {
 		const seen = new Set<string>()
 		const byMessage = new Map<number, ReadonlySet<string>>()
 		for (const m of visibleMessages) {
 			byMessage.set(m.id, new Set(seen))
+			if (m.kind !== 'message' || m.actorId === ownActorId) continue
 			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
 		}
 		return byMessage
-	}, [visibleMessages])
+	}, [visibleMessages, ownActorId])
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)

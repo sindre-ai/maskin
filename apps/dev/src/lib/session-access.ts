@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { actors, messages, type sessions } from '@maskin/db/schema'
 import { type SQL, eq, sql } from 'drizzle-orm'
 import { isConversationParticipant } from '../services/spawned-sessions'
-import { getWorkspaceRole } from './workspace-auth'
+import { getWorkspaceRole, isWorkspaceHumanAdminOrOwner } from './workspace-auth'
 
 type SessionRow = typeof sessions.$inferSelect
 
@@ -120,4 +120,18 @@ export async function sessionListVisibility(
 			)
 		)
 	)`
+}
+
+/**
+ * Who may change a session's status line: the agent running it, whoever started
+ * it, or a human workspace admin or owner. Agents write the line with their own
+ * key, so an agent only passes as the session's actor, never as an admin.
+ */
+export async function canUpdateSessionActivity(
+	db: Database,
+	session: Pick<SessionRow, 'actorId' | 'createdBy' | 'workspaceId'>,
+	actorId: string,
+): Promise<boolean> {
+	if (session.actorId === actorId || session.createdBy === actorId) return true
+	return isWorkspaceHumanAdminOrOwner(db, actorId, session.workspaceId)
 }
