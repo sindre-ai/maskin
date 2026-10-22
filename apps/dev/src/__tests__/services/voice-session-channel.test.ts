@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const captureToolCall = vi.fn()
 const captureTurnCompleted = vi.fn()
@@ -47,6 +47,8 @@ const session = {
 	conversationId: null,
 } as never
 
+const READ_ONLY = new Set(['search_objects', 'list_objects', 'get_objects', 'list_actors'])
+
 function setup(invokeTool = vi.fn()) {
 	const sent: Array<Record<string, unknown>> = []
 	const channel: Channel = createVoiceChannel({
@@ -54,6 +56,7 @@ function setup(invokeTool = vi.fn()) {
 		session,
 		agentName: 'Chief of Staff',
 		invokeTool,
+		isReadOnlyTool: (name) => READ_ONLY.has(name),
 		send: (m) => sent.push(m as Record<string, unknown>),
 		now: (() => {
 			let t = 1_000
@@ -144,14 +147,6 @@ describe('voice channel — tool proxy', () => {
 		expect(invoke.mock.calls[1]?.[2]).toMatchObject({ workspaceId: WORKSPACE })
 	})
 
-	it('runs any tool the model asks for, with no allow-list in front of it', async () => {
-		const invoke = vi.fn().mockResolvedValue(textResult('{}'))
-		const { sent, toolCall } = setup(invoke)
-		await toolCall('create_objects', { nodes: [{ $id: 'n', type: 'bet', title: 'x' }] })
-		expect(invoke).toHaveBeenCalledTimes(1)
-		expect(lastResult(sent).ok).toBe(true)
-	})
-
 	it('answers unparseable arguments without calling the tool', async () => {
 		const invoke = vi.fn()
 		const { sent, toolCall } = setup(invoke)
@@ -165,9 +160,7 @@ describe('voice channel — tool proxy', () => {
 			.fn()
 			.mockResolvedValue({ isError: true, content: [{ type: 'text', text: 'bad status' }] })
 		const { sent, toolCall } = setup(invoke)
-		await toolCall('create_objects', {
-			nodes: [{ $id: 'n', type: 'task', title: 'x', status: 'nope' }],
-		})
+		await toolCall('get_objects', { ids: [ENTITY] })
 		expect(lastResult(sent)).toMatchObject({ ok: false, error_code: 'voice_tool_failed' })
 	})
 
@@ -206,7 +199,7 @@ describe('voice channel — tool proxy', () => {
 			.mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'nope' }] })
 		const { toolCall } = setup(invoke)
 		await toolCall('search_objects', { q: 'x' })
-		await toolCall('create_comment', { entity_id: ENTITY, content: 'hi' }, 'call_2')
+		await toolCall('get_objects', { ids: [ENTITY] }, 'call_2')
 
 		expect(captureToolCall).toHaveBeenCalledTimes(2)
 		expect(captureToolCall).toHaveBeenNthCalledWith(1, HUMAN, {
@@ -218,7 +211,7 @@ describe('voice channel — tool proxy', () => {
 		})
 		expect(captureToolCall).toHaveBeenNthCalledWith(2, HUMAN, {
 			voice_session_id: SESSION_ID,
-			tool_name: 'create_comment',
+			tool_name: 'get_objects',
 			success: false,
 			latency_ms: expect.any(Number),
 			error_code: 'voice_tool_failed',
@@ -370,5 +363,182 @@ describe('voice channel — session lifecycle hooks', () => {
 		const { toolCall } = setup(vi.fn().mockRejectedValue(new Error('db down')))
 		await toolCall('search_objects', { q: 'x' })
 		expect(captureException).toHaveBeenCalledWith(SESSION_ID, expect.any(Error))
+	})
+})
+
+describe('voice channel — a write waits for the person to say yes', () => {
+	const WRITE_ARGS = { entity_id: ENTITY, content: 'hello' }
+
+	function writeSetup() {
+		const invoke = vi.fn().mockResolvedValue(textResult('done'))
+		const ctx = setup(invoke)
+		const results = () =>
+			ctx.sent.filter((m) => m.type === 'tool_result') as Array<{
+				ok: boolean
+				error_code: string | null
+				event: { item: { call_id: string; output: string } }
+			}>
+		const outputOf = (n: number) => JSON.parse(results()[n]?.event.item.output ?? '{}')
+		const heldId = (n: number) => /confirmation_id "([^"]+)"/.exec(outputOf(n).error)?.[1] ?? ''
+		const frame = (f: Record<string, unknown>) => ctx.channel.onMessage(JSON.stringify(f))
+		/** The person starts speaking, and the transcript of that speech arrives. */
+		const say = async (text: string, itemId: string) => {
+			await frame({ type: 'user_speech_started', item_id: itemId })
+			await frame({ type: 'transcript', role: 'user', text, item_id: itemId })
+		}
+		return { ...ctx, invoke, results, outputOf, heldId, frame, say }
+	}
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('holds a write without running it and tells the model to ask', async () => {
+		const { invoke, toolCall, results, outputOf } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
+		expect(outputOf(0).error).toContain('Not done yet')
+		expect(outputOf(0).error).toContain('confirmation_id')
+	})
+
+	it('runs the same call once after the person says yes, with the confirmation id removed', async () => {
+		const { invoke, toolCall, results, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await say('Yeah, go ahead.', 'item_1')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(invoke.mock.calls[0]?.[0]).toBe('create_comment')
+		expect(invoke.mock.calls[0]?.[1]).toEqual({ ...WRITE_ARGS, workspace_id: WORKSPACE })
+		expect(results()[1]).toMatchObject({ ok: true, error_code: null })
+
+		// Single use: the same id again is a new hold.
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(results()[2]?.error_code).toBe('voice_confirmation_required')
+	})
+
+	it('runs the write when the yes is transcribed while the repeated call is waiting', async () => {
+		vi.useFakeTimers()
+		const { invoke, toolCall, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		const repeated = toolCall(
+			'create_comment',
+			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
+			'call_2',
+		)
+		await vi.advanceTimersByTimeAsync(500)
+		expect(invoke).not.toHaveBeenCalled()
+		await say('yes', 'item_1')
+		await repeated
+		expect(invoke).toHaveBeenCalledTimes(1)
+	})
+
+	it('refuses a repeated call when the model confirms but the person said nothing', async () => {
+		vi.useFakeTimers()
+		const { invoke, toolCall, results, heldId } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		const repeated = toolCall(
+			'create_comment',
+			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
+			'call_2',
+		)
+		await vi.advanceTimersByTimeAsync(3_000)
+		await repeated
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]).toMatchObject({ ok: false, error_code: 'voice_confirmation_missing' })
+	})
+
+	it('does not count speech that began before the hold as the answer', async () => {
+		vi.useFakeTimers()
+		const { invoke, toolCall, heldId, say, frame } = writeSetup()
+		await frame({ type: 'user_speech_started', item_id: 'item_request' })
+		await toolCall('create_comment', WRITE_ARGS)
+		// The request's own transcript lands after the hold. It is not an answer.
+		await frame({ type: 'transcript', role: 'user', text: 'yes', item_id: 'item_request' })
+		const repeated = toolCall(
+			'create_comment',
+			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
+			'call_2',
+		)
+		await vi.advanceTimersByTimeAsync(3_000)
+		await repeated
+		expect(invoke).not.toHaveBeenCalled()
+
+		// A later yes still works on the same hold.
+		await say('yes', 'item_answer')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		expect(invoke).toHaveBeenCalledTimes(1)
+	})
+
+	it('drops the action when the person says no', async () => {
+		const { invoke, toolCall, results, outputOf, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await say('No, wait.', 'item_1')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]?.error_code).toBe('voice_confirmation_missing')
+		expect(outputOf(1).error).toContain('said no')
+	})
+
+	it.each([
+		['a question', 'Yes, but which one?'],
+		['a long answer', 'Yes please go ahead and do that right now'],
+		['a hedge', 'Yes but wait'],
+	])('does not take %s for a yes', async (_label, line) => {
+		const { invoke, toolCall, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await say(line, 'item_1')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		expect(invoke).not.toHaveBeenCalled()
+	})
+
+	it('drops the action after 60 seconds, even if the person then says yes', async () => {
+		vi.useFakeTimers()
+		const { invoke, toolCall, results, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await vi.advanceTimersByTimeAsync(60_000)
+		await say('yes', 'item_1')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]?.error_code).toBe('voice_confirmation_required')
+	})
+
+	it('treats changed arguments as a new hold, not a confirmation', async () => {
+		const { invoke, toolCall, results, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await say('yes', 'item_1')
+		await toolCall(
+			'create_comment',
+			{ ...WRITE_ARGS, content: 'something else', confirmation_id: heldId(0) },
+			'call_2',
+		)
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]?.error_code).toBe('voice_confirmation_required')
+		expect(heldId(1)).not.toBe(heldId(0))
+	})
+
+	it('lets a newer write replace the pending one', async () => {
+		const { invoke, toolCall, heldId, say } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('delete_object', { id: ENTITY }, 'call_2')
+		await say('yes', 'item_1')
+		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		expect(invoke).not.toHaveBeenCalled()
+	})
+
+	it('holds a tool from an attached server and calls it risky', async () => {
+		const { invoke, toolCall, results, outputOf } = writeSetup()
+		await toolCall('gmail__send_email', { to: 'a@b.c' })
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]?.error_code).toBe('voice_confirmation_required')
+		expect(outputOf(0).error).toContain('risky')
+	})
+
+	it('runs a read-only tool at once without a yes', async () => {
+		const { invoke, toolCall } = writeSetup()
+		await toolCall('get_objects', { ids: [ENTITY] })
+		expect(invoke).toHaveBeenCalledTimes(1)
 	})
 })
