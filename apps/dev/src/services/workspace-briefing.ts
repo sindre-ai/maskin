@@ -104,6 +104,16 @@ export function buildSenderLine(sender: { name: string; type: string }): string 
 }
 
 /**
+ * First line of a prompt a comment starts: `label: "what was said"`. The sessions
+ * list and the chat's threads use a prompt's first line as the session's title, so
+ * it has to say what the work is about, not open with boilerplate or a sender line.
+ */
+export function commentPromptHeadline(label: string, content: string): string {
+	const said = truncate(content, 70)
+	return said ? `${label}: "${said}"` : label
+}
+
+/**
  * Look up the sender and render their line, or '' when the actor can't be
  * resolved — a missing line is better than a wrong one.
  */

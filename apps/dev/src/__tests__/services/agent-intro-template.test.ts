@@ -16,7 +16,6 @@ const base: AgentIntroInput = {
 	canRun: true,
 }
 
-const PROMISE = "I'll reply here. Only things that need your decision go to For You."
 const STEPS_LINE = 'How can I help? Start with one of these, or tell me what you need.'
 const NO_KEY_LINE =
 	"I can't run yet. Connect your Claude subscription or API key under Settings, Keys, then reply here."
@@ -107,11 +106,10 @@ describe('buildSuggestedSteps', () => {
 })
 
 describe('renderAgentIntro', () => {
-	it('orders greeting and description, promise, steps line, numbered list, closing line', () => {
+	it('orders greeting and description, steps line, numbered list, closing line', () => {
 		const { content } = renderAgentIntro(base)
 		expect(paragraphs(content)).toEqual([
 			"Hey Sam, I'm Scout. I keep an eye on competitor launches.",
-			PROMISE,
 			STEPS_LINE,
 			'1. What can you help me with?\n2. Give me a first task',
 		])
@@ -180,7 +178,7 @@ describe('renderAgentIntro', () => {
 			...base,
 			creatorSteps: [send('Read my inbox'), fill('Draft a reply')],
 		})
-		expect(paragraphs(content)[3]).toBe(
+		expect(paragraphs(content)[2]).toBe(
 			'1. Read my inbox\n2. Draft a reply\n3. What can you help me with?',
 		)
 		expect(steps).toHaveLength(3)
@@ -220,7 +218,6 @@ describe('renderAgentIntro', () => {
 		})
 		expect(paragraphs(rendered.content)).toEqual([
 			"Hey Sam, I'm Scout. I keep an eye on competitor launches.",
-			PROMISE,
 			NO_KEY_LINE,
 		])
 		expect(rendered.steps).toEqual([])

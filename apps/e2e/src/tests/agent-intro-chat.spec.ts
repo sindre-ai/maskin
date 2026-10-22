@@ -55,7 +55,6 @@ const INTRO_AGENT = { id: '55555555-5555-4555-8555-555555555555', name: 'Scout' 
 
 const INTRO_BODY = [
 	"Hey Sam, I'm Scout.",
-	"I'll reply here. Only things that need your decision go to For You.",
 	'Start with one of these, or tell me what you need.',
 	'1. Summarise open bugs\n2. Draft a reply\n3. What can you help me with?',
 	"For this job I use Linear. Add any that aren't connected yet under Settings, Integrations.",

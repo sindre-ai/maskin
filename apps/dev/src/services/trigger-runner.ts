@@ -44,7 +44,7 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
-import { loadSenderLine } from './workspace-briefing'
+import { commentPromptHeadline } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -2635,13 +2635,11 @@ export class CommentDispatcher {
 		}
 
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
-		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actor.id,
 			callerKind: 'trigger',
 			actionPrompt: buildMentionPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
@@ -2649,6 +2647,9 @@ export class CommentDispatcher {
 				parentEventId: ctx.parentEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.commenterId,
 				mention: {
 					object_id: ctx.objectId,
 					commenter_actor_id: ctx.commenterId,
@@ -2702,6 +2703,8 @@ export function buildMentionPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('Mentioned in a comment', ctx.content),
+		'',
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
