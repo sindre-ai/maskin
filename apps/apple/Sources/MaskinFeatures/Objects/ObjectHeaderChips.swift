@@ -171,8 +171,8 @@ struct ObjectHeaderChips: View {
 
 	private var driverChip: some View {
 		let driver = store.directory.actor(for: object.driverId)
-		return picker(driver.map { "Driver \($0.name). Change driver" } ?? "No driver. Choose a driver") {
-			HeaderChip(foreground: driver == nil ? MaskinColor.ink4 : MaskinColor.ink, label: driver?.name ?? "No driver") {
+		return picker(driver.map { "Owner \($0.name). Change owner" } ?? "No owner. Choose an owner") {
+			HeaderChip(foreground: driver == nil ? MaskinColor.ink4 : MaskinColor.ink, label: driver?.name ?? "No owner") {
 				if let driver {
 					ActorAvatar(name: driver.name, kind: driver.isAgent ? .agent : .human, size: MaskinSpace.s11, seed: driver.id)
 				} else {

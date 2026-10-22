@@ -3,20 +3,31 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
+import {
+	NATIVE_OAUTH_RETURN_URLS,
+	type NativeOAuthOutcome,
+	buildNativeOAuthReturnUrl,
+	parseNativeOAuthReturnUrl,
+} from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { recordWebhookDelivery } from '../lib/integrations/providers/linkedin-unipile/delivery-telemetry'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
+import { readUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/envelope'
 import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
+import { getEventMapRow } from '../lib/integrations/providers/linkedin-unipile/event-map'
+import { ingestUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/ingest'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import {
 	commentOnLinkedInPost,
@@ -149,6 +160,8 @@ type StoredAuthBlob = {
 	nonce_expires_at?: string
 	/** Workspace-relative path to land on after connecting (already sanitised). */
 	return_to?: string
+	/** Native-app return target (allowlisted exact match when minted, sealed here). */
+	native_return?: string
 }
 
 /**
@@ -157,7 +170,7 @@ type StoredAuthBlob = {
  * encryption-key rotation) — in both cases the caller has no valid nonce to
  * compare against and must reject, which is the safe direction.
  */
-function readStoredAuthBlob(raw: string): StoredAuthBlob {
+function readStoredAuthBlob(raw: string | null): StoredAuthBlob {
 	if (!raw) return {}
 	try {
 		const parsed: unknown = JSON.parse(decrypt(raw))
@@ -233,6 +246,10 @@ const connectRoute = createRoute({
 				},
 			},
 		},
+		400: {
+			description: 'native_return_url is not an allowed return target',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -249,8 +266,30 @@ app.openapi(connectRoute, (async (c) => {
 	// Where to land after the wizard: the chat that showed the Connect card, when
 	// there was one. Kept in the sealed pending blob alongside the nonce, so it is
 	// as tamper-proof as the nonce itself, and dropped when the credential lands.
-	const connectBody = (await c.req.json().catch(() => ({}))) as { return_to?: unknown }
+	const connectBody = (await c.req.json().catch(() => ({}))) as {
+		return_to?: unknown
+		native_return_url?: unknown
+	}
 	const returnTo = sanitizeReturnPath(connectBody.return_to, workspaceId)
+
+	// Native app return target: exact-match allowlist, refused (not ignored) when
+	// supplied but not allowed. Stored in the same sealed blob as the nonce, so it
+	// is as tamper-proof as the nonce and dies when the credential lands.
+	let nativeReturn: string | undefined
+	if (connectBody.native_return_url !== undefined && connectBody.native_return_url !== null) {
+		nativeReturn = parseNativeOAuthReturnUrl(connectBody.native_return_url)
+		if (!nativeReturn) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'native_return_url is not an allowed return target',
+					undefined,
+					`Allowed: ${NATIVE_OAUTH_RETURN_URLS.join(', ')}`,
+				),
+				400,
+			)
+		}
+	}
 
 	// Look up or insert a pending row keyed by (workspace, actor, provider).
 	// credentials starts as an empty string because the column is NOT NULL
@@ -291,6 +330,7 @@ app.openapi(connectRoute, (async (c) => {
 						auth_nonce: authNonce,
 						nonce_expires_at: nonceExpiresAt,
 						...(returnTo ? { return_to: returnTo } : {}),
+						...(nativeReturn ? { native_return: nativeReturn } : {}),
 					}),
 				),
 				...(existing[0].status === CONNECTED_STATUS ? {} : { status: 'pending' as const }),
@@ -310,6 +350,7 @@ app.openapi(connectRoute, (async (c) => {
 						auth_nonce: authNonce,
 						nonce_expires_at: nonceExpiresAt,
 						...(returnTo ? { return_to: returnTo } : {}),
+						...(nativeReturn ? { native_return: nativeReturn } : {}),
 					}),
 				),
 				createdBy: actorId,
@@ -371,6 +412,7 @@ app.openapi(connectRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'), 500)
 	}
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
 
 // ── GET /callback ──────────────────────────────────────────────────────────
 // v2 replaces the v1 HMAC-signed POST body with a browser redirect carrying
@@ -417,12 +459,12 @@ app.openapi(callbackRoute, (async (c) => {
 		logger.warn('linkedin-unipile callback: malformed success query', {
 			present: Object.keys(query),
 		})
-		return redirectToSettings(c, 'error', 'invalid_callback')
+		return redirectError(c, db, query.state, 'invalid_callback', 'unknown')
 	}
 	const { account_id, provider, state } = parsed.data
 	if (provider !== 'linkedin') {
 		logger.warn('linkedin-unipile callback: unexpected provider', { provider })
-		return redirectToSettings(c, 'error', 'wrong_provider')
+		return redirectError(c, db, state, 'wrong_provider', 'unsupported')
 	}
 
 	const resolved = await resolveCallbackState(db, state)
@@ -473,7 +515,7 @@ app.openapi(callbackRoute, (async (c) => {
 			error: err instanceof Error ? err.message : String(err),
 			code: isLinkedInIntegrationError(err) ? err.code : undefined,
 		})
-		return redirectToSettings(c, 'error', 'enumeration_failed', pending.workspaceId)
+		return redirectError(c, db, state, 'enumeration_failed', 'enumeration_failed', pending)
 	}
 
 	// Single-transaction credential landing (spec §Telemetry ordering rule):
@@ -549,6 +591,13 @@ app.openapi(callbackRoute, (async (c) => {
 	// a paid line with no connection. `syncLinkedInAddonQuantity` swallows its
 	// own Stripe errors for the same reason.
 	const sync = await syncLinkedInAddonQuantity(db, pending.workspaceId)
+	const nativeTarget = nativeReturnOf(pending)
+	if (sync.status === 'checkout_required' && nativeTarget) {
+		// Stripe Checkout needs an https success URL and a browser session of its own, which
+		// a custom-scheme return cannot give it. The connection is live; the app is told the
+		// add-on is unbilled and billing is completed on the web (the next sync retries).
+		return redirectNative(c, nativeTarget, pending, { status: 'connected', billing: 'required' })
+	}
 	if (sync.status === 'checkout_required') {
 		// Trial workspace: no plan subscription to attach the $49 item to, so
 		// the add-on gets its own single-line subscription via its own Checkout.
@@ -604,12 +653,61 @@ function redirectToSettings(
  * landing replaces the blob, which is also what makes the state single-use.
  */
 function redirectAfterConnect(c: Context, pending: Integration, detail: string): Response {
+	const nativeTarget = nativeReturnOf(pending)
+	if (nativeTarget) return redirectNative(c, nativeTarget, pending, { status: 'connected' })
 	const returnTo = sanitizeReturnPath(
 		readStoredAuthBlob(pending.credentials).return_to,
 		pending.workspaceId,
 	)
 	if (returnTo) return c.redirect(frontendUrlForReturn(pending.workspaceId, returnTo), 302)
 	return redirectToSettings(c, 'connected', detail, pending.workspaceId)
+}
+
+/** The allowlisted native return target stored on a pending row, if any. */
+function nativeReturnOf(row: Integration): string | undefined {
+	return parseNativeOAuthReturnUrl(readStoredAuthBlob(row.credentials).native_return)
+}
+
+function redirectNative(
+	c: Context,
+	target: string,
+	row: Integration,
+	outcome: Omit<NativeOAuthOutcome, 'provider' | 'workspaceId' | 'integrationId'>,
+): Response {
+	return c.redirect(
+		buildNativeOAuthReturnUrl(target, {
+			provider: PROVIDER,
+			workspaceId: row.workspaceId,
+			integrationId: row.id,
+			...outcome,
+		}),
+		302,
+	)
+}
+
+/**
+ * Error exit. A native flow is told through its return target; every other flow
+ * gets the existing settings redirect. The native target is only found when
+ * `state` authenticates (nonce + expiry) — a callback with a bad state has no
+ * proven origin, so it falls through to the web redirect, never to an
+ * attacker-chosen target.
+ */
+async function redirectError(
+	c: Context,
+	db: Database,
+	state: string | undefined,
+	detail: string,
+	reason: NativeOAuthOutcome['reason'],
+	knownRow?: Integration,
+): Promise<Response> {
+	let row = knownRow
+	if (!row && state) {
+		const resolved = await resolveCallbackState(db, state)
+		if (resolved.ok) row = resolved.row
+	}
+	const target = row ? nativeReturnOf(row) : undefined
+	if (row && target) return redirectNative(c, target, row, { status: 'error', reason })
+	return redirectToSettings(c, 'error', detail, knownRow?.workspaceId)
 }
 
 async function handleCallbackError(
@@ -619,7 +717,7 @@ async function handleCallbackError(
 ): Promise<Response> {
 	const parsed = CallbackErrorQuerySchema.safeParse(q)
 	if (!parsed.success) {
-		return redirectToSettings(c, 'error', 'malformed_error')
+		return redirectError(c, db, q.state, 'malformed_error', 'unknown')
 	}
 	const { error_type, error_detail, state } = parsed.data
 
@@ -673,6 +771,14 @@ async function handleCallbackError(
 	}
 
 	if (error_type === 'api/restricted_account') {
+		// Existing web behaviour addressed no workspace here; kept as is (redirectError
+		// only adds the workspace for the native case via the resolved row).
+		const native = state ? await nativeTargetFromState(db, state) : undefined
+		if (native)
+			return redirectNative(c, native.target, native.row, {
+				status: 'error',
+				reason: 'account_restricted',
+			})
 		return redirectToSettings(c, 'error', 'account_restricted')
 	}
 	// Log the integration id only — `state` carries the auth nonce, and a
@@ -681,7 +787,22 @@ async function handleCallbackError(
 		error_type,
 		integrationId: state ? parseCallbackState(state)?.integrationId : undefined,
 	})
+	{
+		const native = state ? await nativeTargetFromState(db, state) : undefined
+		if (native)
+			return redirectNative(c, native.target, native.row, { status: 'error', reason: 'unknown' })
+	}
 	return redirectToSettings(c, 'error', error_type)
+}
+
+async function nativeTargetFromState(
+	db: Database,
+	state: string,
+): Promise<{ target: string; row: Integration } | undefined> {
+	const resolved = await resolveCallbackState(db, state)
+	if (!resolved.ok) return undefined
+	const target = nativeReturnOf(resolved.row)
+	return target ? { target, row: resolved.row } : undefined
 }
 // ── Message verbs (send-message / reply / list-conversations) ─────────────
 //
@@ -1049,24 +1170,36 @@ app.post('/webhook', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in webhook payload'), 400)
 	}
 
-	const parsed = parseAccountReconnectPayload(payload)
-	if (!parsed) {
-		// Unknown or unhandled Unipile event type — acknowledge so Unipile
-		// does not retry. Log the shape so an unhandled event kind surfaces
-		// in the dev log rather than staying invisible. Common expected
-		// arrivals here: `account.status.*`, `message.*`, `chat.*`, etc.
-		// If we ever need to react to those, extend `RE_ENUMERATE_EVENTS`
-		// below rather than special-casing here.
-		logger.info('linkedin-unipile webhook: skipped unhandled event', {
-			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-		})
-		return c.json({ ok: true, skipped: true })
+	const envelope = readUnipileEnvelope(payload)
+
+	const mapRow = getEventMapRow(envelope.type)
+
+	if (envelope.type && RE_ENUMERATE_EVENTS.has(envelope.type) && envelope.accountId) {
+		const db = c.get('db')
+		// The account event commits BEFORE the inline re-enumeration, which calls
+		// Unipile with no timeout and can outlive the 5 second delivery window; a
+		// slow or hung re-enumeration must not lose the event. A transient failure
+		// to record it answers 503 after the re-enumeration, so Unipile's retry
+		// gets another go at the event.
+		const recorded = mapRow ? await ingestUnipileEnvelope(db, mapRow, envelope) : null
+		const client = buildLinkedInClientForWebhook()
+		const result = await handleUnipileAccountReconnect(db, client, envelope.accountId)
+		if (recorded?.status === 503) return c.json(recorded.body, recorded.status)
+		return c.json({ ok: true, ...result })
 	}
 
-	const db = c.get('db')
-	const client = buildLinkedInClientForWebhook()
-	const result = await handleUnipileAccountReconnect(db, client, parsed.accountId)
-	return c.json({ ok: true, ...result })
+	if (!mapRow) {
+		// Unknown or unhandled Unipile event type: acknowledge so Unipile does not
+		// retry. The delivery line carries the event type so an unhandled event kind
+		// surfaces in the dev log rather than staying invisible. Common expected
+		// arrivals here: `chat.*`. To react to one, add a row to
+		// event-map.ts. No integration row is resolved here, so no PostHog event.
+		recordWebhookDelivery(envelope, false, null, { outcome: 'dropped', reason: 'unknown_type' })
+		return c.json({ ok: true, skipped: 'unknown_type' })
+	}
+
+	const outcome = await ingestUnipileEnvelope(c.get('db'), mapRow, envelope)
+	return c.json(outcome.body, outcome.status)
 })
 
 /**
@@ -1077,24 +1210,6 @@ app.post('/webhook', async (c) => {
  * https://developer.unipile.com/v2.0/reference/event-types-1.
  */
 const RE_ENUMERATE_EVENTS = new Set<string>(['account.reconnect'])
-
-const AccountReconnectPayloadSchema = z.object({
-	// Unipile v2 puts the event kind on `type` (docs example:
-	// https://developer.unipile.com/v2.0/docs/webhooks-introduction).
-	// v1 used `event`; accept both so a version drift does not silently
-	// no-op every delivery.
-	type: z.string().optional(),
-	event: z.string().optional(),
-	account_id: z.string().min(1),
-})
-
-function parseAccountReconnectPayload(payload: unknown): { accountId: string } | null {
-	const parsed = AccountReconnectPayloadSchema.safeParse(payload)
-	if (!parsed.success) return null
-	const kind = parsed.data.type ?? parsed.data.event
-	if (!kind || !RE_ENUMERATE_EVENTS.has(kind)) return null
-	return { accountId: parsed.data.account_id }
-}
 
 export default app
 

@@ -170,6 +170,20 @@ export const FLAGS = {
 	 */
 	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
 	/**
+	 * Voice v1 — 1:1 in-app click-to-talk to a voice-enabled agent. Gates the
+	 * **POST /api/voice-sessions** session-mint route (404 when off), the
+	 * Call button on `/agents/:id`, and the VoiceCallDialog. Per-actor: a
+	 * workspace tester with this flag on sees the button; every other member
+	 * of the same workspace sees nothing. See parent bet
+	 * [Voice with Maskin agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
+	 *
+	 * Boot-time invariant: when this flag id appears in `FF_TESTER_FEATURES`,
+	 * `MASKIN_VOICE_OPENAI_API_KEY` must be set. `apps/dev/src/lib/voice-boot-guard.ts`
+	 * asserts it at startup so a mis-configured deploy fails fast instead of
+	 * 500-ing on the first mint call.
+	 */
+	VOICE_MODE_V1: 'voice-mode-v1',
+	/**
 	 * Gates the trigger-engine v2 rollout (bet
 	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).
 	 * Off preserves today's behaviour on every axis — matcher, cooldown,
@@ -195,6 +209,18 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Unipile webhook deliveries become `events` rows (message.new first). Read
+	 * per integration row on the dedicated linkedin-unipile webhook route, on the
+	 * integration's owner actor (actor_id, falling back to created_by), after
+	 * account resolution and before the dedupe claim. Off means a signed
+	 * delivery is acknowledged with `skipped: flag_off` and nothing is written,
+	 * so switching it on later needs no replay. A rollout gate, not a kill
+	 * switch (env + restart); the fast stop is disabling the trigger. Retire
+	 * once the Unipile webhook events bet is won. See parent bet [Unipile webhook
+	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
+	 */
+	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -8,10 +8,29 @@ import OpenAPIRuntime
 public struct APIObjectsRemote: ObjectsRemote {
 	private let client: Client
 	private let credentials: MaskinCredentialsProvider
+	/// Where the raw calls go: the generated client has no operation for approving a draft yet.
+	/// Without it `approve` reports that it can't.
+	private let raw: RawTransport?
+
+	struct RawTransport: Sendable {
+		var baseURL: URL
+		var clientSource: String
+		var session: URLSession
+	}
 
 	public init(client: Client, credentials: @escaping MaskinCredentialsProvider) {
 		self.client = client
 		self.credentials = credentials
+		self.raw = nil
+	}
+
+	public init(
+		client: Client, credentials: @escaping MaskinCredentialsProvider, baseURL: URL, clientSource: String,
+		session: URLSession = .shared
+	) {
+		self.client = client
+		self.credentials = credentials
+		self.raw = RawTransport(baseURL: baseURL, clientSource: clientSource, session: session)
 	}
 
 	/// Required by the generated signatures; the auth middleware stamps the same value.
@@ -35,7 +54,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 			let output = try await client.get_sol_api_sol_objects(
 				.init(
 					query: .init(
-						_type: query.type, status: query.status, sort: query.sort.serverField,
+						_type: query.type, status: query.status, driver: query.driver, sort: query.sort.serverField,
 						order: query.sort.serverAscending ? .asc : .desc,
 						limit: min(query.limit, ServerLimits.maxPageSize), offset: query.offset),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
@@ -419,7 +438,7 @@ private struct GraphDTO: Decodable {
 				id: rel.id, relation: rel.type, isOutgoing: outgoing, otherId: otherId,
 				otherType: known?.type ?? (outgoing ? rel.targetType : rel.sourceType),
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
-				otherStatus: known?.status)
+				otherStatus: known?.status, otherDriver: known?.driver)
 		}
 		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
 	}
@@ -440,5 +459,138 @@ enum ISODate {
 	static func parse(_ s: String) -> Date? {
 		let fractional = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 		return (try? fractional.parse(s)) ?? (try? Date.ISO8601FormatStyle().parse(s))
+	}
+}
+
+// MARK: - Drafts
+
+extension APIObjectsRemote: ObjectDraftsRemote {
+	public func detail(objectId: String) async throws -> ObjectDetail {
+		do {
+			let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: objectId)))
+			switch output {
+			case .ok(let ok):
+				return try Self.convert(ok.body.json, as: DetailDTO.self).model
+			case .notFound:
+				throw ObjectsError(ObjectsRemoteMessages.notFound)
+			default:
+				throw Self.failure(output)
+			}
+		} catch {
+			throw Self.wrap(error)
+		}
+	}
+
+	public func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview {
+		guard let raw else { throw ObjectApprovalError.other("Approving isn't available here.") }
+		let request = await makeApprovalRequest(
+			objectId: objectId, contentHash: contentHash, idempotencyKey: idempotencyKey, transport: raw)
+		let data: Data
+		let response: URLResponse
+		do {
+			(data, response) = try await raw.session.data(for: request)
+		} catch {
+			let offline = Self.wrap(error).isOffline
+			throw offline ? ObjectApprovalError.offline : ObjectApprovalError.other("Couldn't reach Maskin.")
+		}
+		let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+		return try Self.approvalResult(status: status, body: data)
+	}
+
+	var rawTransportForTesting: RawTransport? { raw }
+
+	/// Built apart from sending so a test can read the path, headers and body.
+	func makeApprovalRequest(
+		objectId: String, contentHash: String, idempotencyKey: String, transport: RawTransport
+	) async -> URLRequest {
+		var request = URLRequest(
+			url: transport.baseURL.appendingPathComponent("api/objects/\(objectId)/approval"))
+		request.httpMethod = "POST"
+		request.timeoutInterval = 30
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue(transport.clientSource, forHTTPHeaderField: "X-Client-Source")
+		request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+		if let credentials = await credentials() {
+			request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
+			if let workspaceId = credentials.workspaceId {
+				request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+			}
+		}
+		request.httpBody = try? JSONEncoder().encode(["content_hash": contentHash])
+		return request
+	}
+
+	/// What a response to the approval means: the new preview, or why not.
+	static func approvalResult(status: Int, body: Data) throws -> ObjectPreview {
+		struct Envelope: Decodable {
+			struct Failure: Decodable {
+				struct Detail: Decodable { var message: String? }
+				var message: String?
+				var details: [Detail]?
+			}
+			var error: Failure?
+		}
+		let failure = (try? JSONDecoder().decode(Envelope.self, from: body))?.error
+		switch status {
+		case 200..<300:
+			struct Approved: Decodable { var preview: FeedPreviewDTO }
+			guard let approved = try? JSONDecoder().decode(Approved.self, from: body) else {
+				throw ObjectApprovalError.other("Maskin sent a reply this version can't read.")
+			}
+			return approved.preview.model
+		case 409: throw ObjectApprovalError.changed
+		case 400:
+			let detail = failure?.details?.compactMap(\.message).first ?? failure?.message
+			throw ObjectApprovalError.incomplete(detail)
+		case 403: throw ObjectApprovalError.notAllowed
+		case 404: throw ObjectApprovalError.notFound
+		default: throw ObjectApprovalError.other("The server couldn't approve this draft.")
+		}
+	}
+}
+
+/// `preview` as the server writes it, read by hand so it maps the same on a read and on approval.
+struct FeedPreviewDTO: Decodable {
+	struct Recipient: Decodable { var role: String; var name: String?; var address: String? }
+	struct Detail: Decodable { var label: String; var value: String }
+	struct Delivery: Decodable { var state: String }
+	var kind: String
+	var label: String
+	var recipients: [Recipient]?
+	var subject: String?
+	var details: [Detail]?
+	var body: String
+	var missing: [String]?
+	var warnings: [String]?
+	var content_hash: String
+	var delivery: Delivery?
+
+	var model: ObjectPreview {
+		ObjectPreview(
+			kind: kind, label: label,
+			recipients: (recipients ?? []).map { .init(role: $0.role, name: $0.name, address: $0.address) },
+			subject: subject, details: (details ?? []).map { .init(label: $0.label, value: $0.value) },
+			body: body, missing: missing ?? [], warnings: warnings ?? [], contentHash: content_hash,
+			delivery: delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })
+	}
+}
+
+private struct DetailDTO: Decodable {
+	var workspaceId: String
+	var preview: FeedPreviewDTO?
+	var object: ObjectDTO
+
+	init(from decoder: Decoder) throws {
+		let c = try decoder.container(keyedBy: Keys.self)
+		workspaceId = try c.decode(String.self, forKey: .workspaceId)
+		preview = try c.decodeIfPresent(FeedPreviewDTO.self, forKey: .preview)
+		object = try ObjectDTO(from: decoder)
+	}
+
+	enum Keys: String, CodingKey { case workspaceId, preview }
+
+	var model: ObjectDetail {
+		ObjectDetail(object: object.model, workspaceId: workspaceId, preview: preview?.model)
 	}
 }

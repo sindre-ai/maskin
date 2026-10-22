@@ -8,7 +8,12 @@ import {
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import {
+	CREDENTIAL_NAME_MAX_LENGTH,
+	checkCredentialName,
+	manualRedactionMarker,
+} from '@maskin/shared'
+import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
@@ -231,6 +236,73 @@ describe('Conversations Integration', () => {
 				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
 			)
 			expect(strangerDetail.status).toBe(404)
+		})
+
+		it("posting a message advances the sender's read cursor, humans only, never backwards", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, other.id)
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id, agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const headers = { 'x-workspace-id': workspaceId }
+			const post = async (app: ReturnType<typeof createConversationsApp>['app'], content: string) =>
+				(await (
+					await app.request(
+						jsonRequest(
+							'POST',
+							`/api/conversations/${conversation.id}/messages`,
+							{ content },
+							headers,
+						),
+					)
+				).json()) as { id: number }
+			const detail = async (app: ReturnType<typeof createConversationsApp>['app']) =>
+				(await (
+					await app.request(jsonGet(`/api/conversations/${conversation.id}`, headers))
+				).json()) as { unread_count: number; last_read_message_id: number | null }
+
+			const m1 = await post(ownerApp, 'question')
+			const m2 = await post(ownerApp, 'follow-up')
+
+			// A reply reads everything before it, without any PATCH /me from the client.
+			const { app: otherApp } = createConversationsApp(other.id)
+			expect((await detail(otherApp)).unread_count).toBe(2)
+			const reply = await post(otherApp, 'answer')
+			const afterReply = await detail(otherApp)
+			expect(afterReply.last_read_message_id).toBe(reply.id)
+			expect(afterReply.unread_count).toBe(0)
+
+			// An older mark-read cannot pull it back.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: m1.id },
+					headers,
+				),
+			)
+			expect((await detail(otherApp)).last_read_message_id).toBe(reply.id)
+
+			// Messages that arrive after the reply are unread, and the cursor never skips ahead of them.
+			const m3 = await post(ownerApp, 'later')
+			expect(m3.id).toBeGreaterThan(m2.id)
+			const later = await detail(otherApp)
+			expect(later.unread_count).toBe(1)
+			expect(later.last_read_message_id).toBe(reply.id)
+
+			// An agent posting mid-turn does not move its own cursor.
+			const { app: agentApp } = createConversationsApp(agent.id, 'agent')
+			await post(agentApp, 'working on it')
+			expect((await detail(agentApp)).last_read_message_id).toBeNull()
 		})
 
 		it('marking read clears unread_count and never regresses on an older value', async () => {
@@ -588,6 +660,72 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
+		it('reports mentioned ids that are neither participants nor workspace members, and still posts', async () => {
+			// A mistyped or foreign UUID used to be dropped without a word, so the
+			// author never learned nobody was pulled in. It must come back in
+			// `unresolved_mentions`, while a real workspace member in the same
+			// message still joins and is not reported.
+			const agent = await insertActor(db, { type: 'agent' })
+			const outsider = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const typo = '00000000-0000-4000-8000-000000000000'
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Bad mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello', metadata: { mentions: [agent.id, typo, outsider.id, typo] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+			const body = (await messageRes.json()) as { id: number; unresolved_mentions?: string[] }
+			expect(body.id).toBeGreaterThan(0)
+			expect([...(body.unresolved_mentions ?? [])].sort()).toEqual([outsider.id, typo].sort())
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId)).toContain(agent.id)
+			expect(detailBody.participants.map((p) => p.actorId)).not.toContain(outsider.id)
+		})
+
+		it('omits unresolved_mentions when every mention resolves', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Good mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello', metadata: { mentions: [agent.id] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+			expect(await messageRes.json()).not.toHaveProperty('unresolved_mentions')
+		})
+
 		it('auto-joins both actors in a two-actor mention and lets both responders see wasMentioned=true', async () => {
 			// Two-actor mention case: neither is a participant, both must be
 			// promoted, both must be handed to `evaluateAndRespond` with the
@@ -632,9 +770,12 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
 			await new Promise((resolve) => setTimeout(resolve, 50))
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			// Count only this test's agents. startSession reads the module-wide session
+			// manager, so a responder still running from an earlier test in this file can
+			// land its createSession on this test's mock.
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
+				.filter((actorId) => actorId === agentA.id || actorId === agentB.id)
 				.sort()
 			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
 
@@ -912,6 +1053,74 @@ describe('Conversations Integration', () => {
 			expect(body.metadata?.mentions).toEqual([])
 		})
 
+		it('strips a client-claimed delivery marker, so a person cannot forge one', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Delivery', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really an intro',
+						metadata: { delivery: { kind: 'agent_intro', version: 1 }, mentions: [] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// A forged marker would poison the intro cap and the dedupe checks, which
+			// count messages by metadata.delivery.kind.
+			const [stored] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored?.metadata).toEqual({ mentions: [] })
+		})
+
+		it('strips a client-claimed helper_return marker, so a person cannot hide a message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Helper return', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really a helper result',
+						metadata: { helper_return: '11111111-1111-4111-8111-111111111111', mentions: [] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// The web thread hides any message carrying this key, so a forged one would
+			// let a client post a message the other participants never see.
+			const [stored] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored?.metadata).toEqual({ mentions: [] })
+		})
+
 		it('still posts the message, bumps lastMessageAt and logs the event', async () => {
 			// The insert path moved into a shared helper so the turn finalizer can
 			// reuse it — this pins the route's behaviour as unchanged.
@@ -947,6 +1156,192 @@ describe('Conversations Integration', () => {
 				.from(events)
 				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_posted')))
 			expect(eventRows).toHaveLength(1)
+		})
+	})
+
+	describe('raw-secret backstop', () => {
+		// Obviously fake, assembled at runtime so no token-shaped literal sits in the repo.
+		const fakeToken = `ghp_${'a'.repeat(36)}`
+
+		async function startConversation(app: ReturnType<typeof createConversationsApp>['app']) {
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Backstop', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			return (await created.json()) as { id: string }
+		}
+
+		const post = (
+			app: ReturnType<typeof createConversationsApp>['app'],
+			conversationId: string,
+			content: string,
+		) =>
+			app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversationId}/messages`,
+					{ content },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+		it('returns 400 RAW_SECRET_DETECTED, stores no message and records a bypass event without the value', async () => {
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+
+			const res = await post(app, conversation.id, `use this key ${fakeToken} please`)
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { error: { code: string; message: string } }
+			expect(body.error.code).toBe('RAW_SECRET_DETECTED')
+			expect(JSON.stringify(body)).not.toContain(fakeToken)
+
+			const stored = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+			expect(stored).toHaveLength(0)
+			// Nothing was handed to an agent either.
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+			expect(eventRows[0]?.data).toMatchObject({ pattern_id: 'github', caller_type: 'human' })
+			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
+		})
+
+		it('refuses an edit that adds a secret, keeps the stored text and records a bypass event', async () => {
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const sent = await post(app, conversation.id, 'a clean message')
+			const { id: messageId } = (await sent.json()) as { id: number }
+			sessionManager.writeInput.mockClear()
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${messageId}`,
+					{ content: `now with ${fakeToken}` },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const [stored] = await db.select().from(messages).where(eq(messages.id, messageId))
+			expect(stored?.content).toBe('a clean message')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+			expect(JSON.stringify(eventRows)).not.toContain(fakeToken)
+		})
+
+		it('refuses a secret in the initial message and creates no conversation', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Seeded', participant_actor_ids: [], initial_message: fakeToken },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+				'RAW_SECRET_DETECTED',
+			)
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, workspaceId),
+						eq(events.action, 'credential_scanner_bypass_attempt'),
+					),
+				)
+			expect(eventRows).toHaveLength(1)
+		})
+
+		it('applies to agent callers too', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const human = createConversationsApp(ownerId)
+			const conversation = await startConversation(human.app)
+			await db.execute(
+				sql`INSERT INTO conversation_participants (conversation_id, actor_id) VALUES (${conversation.id}, ${agent.id})`,
+			)
+			const { app } = createConversationsApp(agent.id, 'agent')
+			const res = await post(app, conversation.id, fakeToken)
+			expect(res.status).toBe(400)
+		})
+
+		it('lets the redaction marker through', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const res = await post(app, conversation.id, 'here it is ghp_[REDACTED · vaulted as NAME]')
+			expect(res.status).toBe(201)
+		})
+
+		it('lets the manual redaction marker through for names built from every provider prefix', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			const prefixes = [
+				'cfut_',
+				'cfat_',
+				'cfk_',
+				'ghp_',
+				'github_pat_',
+				'sk_live_',
+				'sk_test_',
+				'xoxb-',
+				'xoxp-',
+				'sk-',
+				'sk-proj-',
+				'sk-svcacct-',
+			]
+			for (const prefix of prefixes) {
+				// The bare prefix, and the longest name the name rule still lets through.
+				const names = [prefix]
+				for (let n = 1; n <= CREDENTIAL_NAME_MAX_LENGTH - prefix.length; n++) {
+					const name = `${prefix}${'a'.repeat(n)}`
+					if (checkCredentialName(name) === null) names[1] = name
+				}
+				for (const name of names) {
+					expect(checkCredentialName(name)).toBeNull()
+					const res = await post(app, conversation.id, manualRedactionMarker(name))
+					expect(res.status).toBe(201)
+				}
+			}
+		})
+
+		it('lets ordinary messages and amber-only blobs through', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const conversation = await startConversation(app)
+			expect((await post(app, conversation.id, 'hello there')).status).toBe(201)
+			expect(
+				(await post(app, conversation.id, `commit ${'0123456789abcdef'.repeat(3)}`)).status,
+			).toBe(201)
 		})
 	})
 

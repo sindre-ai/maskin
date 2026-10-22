@@ -47,10 +47,95 @@ export const config: ProviderConfig = {
 	// same "no single spec" signal github uses for its per-installation surface.
 	// The route test enumerating which providers omit `server` in
 	// `integrations.test.ts` is what holds this line.
+	//
+	// `entry` is how agents' copies of those per-identity URLs are recognised
+	// (mcp-detach.ts): one credential owns the slugs that start with
+	// `linkedin-{unipileAccSlug}-`. A credential that never enumerated an
+	// identity owns none.
 	mcp: {
 		envKey: 'LINKEDIN_UNIPILE_TOKEN',
 		autoInject: false,
+		entry: {
+			kind: 'per-identity',
+			urlPath: '/api/integrations/linkedin-unipile/mcp',
+			slugPrefix: (owner) => (owner.unipileAccSlug ? `linkedin-${owner.unipileAccSlug}-` : null),
+		},
 	},
+
+	// Event definitions only. No `mapping` key and no `webhook` key: a webhook
+	// key would opt the provider into the generic /api/webhooks/:provider route,
+	// and Unipile deliveries are handled by the dedicated route in
+	// routes/integrations-linkedin-unipile.ts using event-map.ts.
+	events: {
+		definitions: [
+			{
+				entityType: 'linkedin.message',
+				actions: ['received', 'received_cold', 'received_unresolved'],
+				label: 'LinkedIn message',
+			},
+			{
+				entityType: 'linkedin.connection',
+				actions: ['accepted', 'new'],
+				label: 'LinkedIn connection',
+			},
+			{
+				entityType: 'linkedin.account',
+				actions: ['status_changed'],
+				label: 'LinkedIn account status',
+			},
+		],
+	},
+
+	// What agents can draft here for a person to read, edit and approve. The send tools are
+	// served per identity, so each is prefixed `linkedin-{account}-{identity}__`; `sendTool`
+	// names the verb. Limits mirror operations.ts (8000-character messages, 3000-character
+	// posts, the 200-character invite note).
+	deliverables: [
+		{
+			kind: 'linkedin_message',
+			label: 'LinkedIn message',
+			// `reply` with the object's id sends the approved text; see send-object.ts.
+			sendTool: 'reply',
+			// Mirrors the limit in operations.ts.
+			bodyMaxLength: 8000,
+			// The sales loop files its replies as tasks with `channel: linkedin_dm`; they are
+			// drafts of a message without anyone having to add a kind.
+			alsoMatches: [{ key: 'channel', value: 'linkedin_dm' }],
+			fields: [
+				// A reply goes into a conversation the agent already holds, so a recipient is not
+				// required to send; it is recommended, so the card can say who it goes to. A
+				// name or profile link, not checked as an address.
+				{ key: 'to', label: 'To', type: 'recipients', role: 'to', recommended: true },
+				// The conversation a reply goes into. Not shown; `reply` reads it when it is
+				// given an object id instead of the text.
+				{ key: 'thread_id', label: 'Conversation', type: 'text', slot: 'hidden' },
+				// The message being answered, shown above the draft so it is read in context.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+			],
+		},
+		{
+			kind: 'linkedin_connection_request',
+			label: 'LinkedIn connection request',
+			sendTool: 'send_connection_request',
+			bodyMaxLength: 200,
+			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+		},
+		{
+			kind: 'linkedin_post',
+			label: 'LinkedIn post',
+			sendTool: 'publish_post',
+			bodyMaxLength: 3000,
+			// The Copywriter's posts are `content` objects with `content_type: linkedin_post`
+			// and a header (account, voice, angle) above the copy, so they preview as posts
+			// without anyone adding a kind, showing only what would be published.
+			alsoMatches: [{ key: 'content_type', value: 'linkedin_post' }],
+			bodyBlock: { start: '--- POST ---', end: '--- MEDIA ---' },
+			fields: [
+				{ key: 'account', label: 'Posting as', type: 'text' },
+				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
+			],
+		},
+	],
 
 	externalIdDisplay: 'installation',
 }

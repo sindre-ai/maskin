@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { type events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
+import { mirrorCommentIntoChat } from '../services/object-chat-sync'
 import { recordEventReturning } from './events/record-event'
 
 export interface PostCommentInput {
@@ -29,6 +30,12 @@ export interface PostCommentInput {
 	 * the helper-return comment, which must not wake a session that has a link.
 	 */
 	authorSessionId?: string
+	/**
+	 * Fingerprint of the email an approval card showed when a person answered it (see
+	 * `providers/gmail/approval-hash.ts`). Set by the server for a person's reply, never
+	 * taken from the request body.
+	 */
+	approvedSendHash?: string
 }
 
 export interface PostCommentResult {
@@ -75,6 +82,7 @@ export async function postComment(
 				decision: input.decision,
 				attention: input.attention,
 				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
+				...(input.approvedSendHash ? { approved_send_hash: input.approvedSendHash } : {}),
 			},
 		})
 
@@ -137,6 +145,17 @@ export async function postComment(
 						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
 					})
 			}
+		}
+
+		if (entityType === 'object') {
+			await mirrorCommentIntoChat(tx, {
+				id: comment.id,
+				actorId: comment.actorId,
+				createdAt: comment.createdAt,
+				data: comment.data,
+				workspaceId: input.workspaceId,
+				entityId: input.entityId,
+			})
 		}
 
 		return { comment, unresolvedMentions }

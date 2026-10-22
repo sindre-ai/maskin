@@ -30,6 +30,18 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/objects/\(id)?tab=comments#x") == .object(workspaceId: ws, id: id))
 	}
 
+	@Test("a file link opens the file: the web's /files/<id> route and the maskin:// form")
+	func fileLinks() {
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/\(id)") == .file(workspaceId: ws, id: id))
+		#expect(DeepLink(string: "maskin://\(ws)/files/\(id)") == .file(workspaceId: ws, id: id))
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/\(id)?v=2#top") == .file(workspaceId: ws, id: id))
+		let link = DeepLink.file(workspaceId: ws, id: id)
+		#expect(DeepLink(url: link.url) == link)
+		#expect(DeepLink(url: link.universalURL()) == link)
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/../x") == nil)
+		#expect(DeepLink(string: "https://evil.example/\(ws)/files/\(id)") == nil)
+	}
+
 	@Test("round-trips through its canonical URLs")
 	func roundTrip() {
 		for link in [

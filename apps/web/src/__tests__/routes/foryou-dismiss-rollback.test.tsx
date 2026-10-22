@@ -36,11 +36,14 @@ testState.__markReadFails = false
 testState.__createCalls = []
 testState.__markReadCalls = []
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useUnread: () => ({
+vi.mock('@/hooks/use-for-you', () => ({
+	useForYou: () => ({
 		data: { items: (globalThis as unknown as TestState).__items },
 		isLoading: false,
 	}),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => ({
 		// `mutateAsync` returns a promise per call, so each caller keeps its own
 		// success/failure handling. This is the API the route must use.
@@ -120,8 +123,7 @@ vi.mock('@/components/foryou/feed-card', () => ({
 }))
 vi.mock('@/components/layout/page-header', () => ({ PageHeader: () => null }))
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({ OnboardingPromptCard: () => null }))
-vi.mock('@/components/foryou/brief-card', () => ({ BriefCard: () => null }))
-vi.mock('@/components/foryou/release-card', () => ({ ReleaseCard: () => null }))
+vi.mock('@/components/foryou/briefing-row', () => ({ BriefingRow: () => null }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
 	isCreateShortcut: () => false,

@@ -1,3 +1,4 @@
+import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
@@ -127,6 +128,7 @@ function WorkspaceLayout() {
 							</ContentPushShell>
 						</PageHeaderProvider>
 						<CommandPalette />
+						<VoiceCallHost />
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>
 			</NewConversationProvider>

@@ -355,6 +355,31 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
+// Mobile switcher bug (taps register, menu doesn't open): the two events below
+// split "the tap never reached the trigger" (no `open_attempted`) from "the
+// menu opened and closed again before the user could see it" (`open_attempted`
+// then `dismissed_immediately`), which have different fixes. `pointerType`
+// ('touch' | 'mouse' | 'pen') lets mobile and desktop be compared directly.
+export function trackSidebarWorkspaceSwitcherOpenAttempted(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.open_attempted', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
+}
+
+export function trackSidebarWorkspaceSwitcherDismissedImmediately(p: {
+	workspaceId: string
+	openMs: number
+}): void {
+	trackEvent('sidebar.workspace_switcher.dismissed_immediately', {
+		workspaceId: p.workspaceId,
+		openMs: p.openMs,
+	})
+}
+
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,

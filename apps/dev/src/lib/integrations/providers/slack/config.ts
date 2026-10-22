@@ -142,6 +142,19 @@ export const config: ProviderConfig = {
 			},
 		},
 	},
+
+	// A message an agent drafts for a person to approve before it is posted. The channel is
+	// written the way a person says it ("#coach-maskin"), never as a Slack id. The cap is
+	// Slack's 40k limit on `text`, the same one slack_send_message enforces.
+	deliverables: [
+		{
+			kind: 'slack_message',
+			label: 'Slack message',
+			sendTool: 'slack_send_message',
+			bodyMaxLength: 40_000,
+			fields: [{ key: 'channel', label: 'Channel', type: 'text', required: true }],
+		},
+	],
 }
 
 /**

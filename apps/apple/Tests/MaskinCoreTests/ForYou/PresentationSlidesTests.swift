@@ -55,6 +55,15 @@ struct PresentationSlidesTests {
 		#expect(PresentationParser.summary(of: slides) == "4 cards \u{00B7} 0:40")
 	}
 
+	@Test("a deck trimmed by the cap says how many cards the page holds")
+	func trimmedSummary() {
+		let many = (1...18).map { "<section><p>Card \($0)</p></section>" }.joined()
+		let slides = PresentationParser.parse(html: many)
+		#expect(PresentationParser.totalCount(html: many) == 18)
+		#expect(PresentationParser.summary(of: slides, total: 18) == "8 of 18 cards \u{00B7} 1:20")
+		#expect(PresentationParser.summary(of: slides, total: 8) == "8 cards \u{00B7} 1:20")
+	}
+
 	@Test("type labels use the schema name and never say Loop")
 	func typeLabels() {
 		#expect(ForYouTypeLabel.label(for: "loop") == "Flow")

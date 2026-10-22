@@ -93,7 +93,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
 					excluding: Set(composer.mentions.map(\.id))
 				).map { ChatParticipant(id: $0.id, name: $0.name, kind: $0.isAgent ? .agent : .human) }
-			})
+			},
+			// The same workspace list, with roles, every other composer offers.
+			roster: appRuntime?.mentionRoster()?.roster)
 	}
 
 	/// Hold → Reply: the composer quotes the event and the next comment threads under it.
@@ -235,6 +237,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.onChange(of: store.didDelete) { _, deleted in if deleted { close() } }
 		.task { await store.load() }
+		.task { await appRuntime?.mentionRoster()?.load() }
 		.task { await store.observe(environment.events.subscribe()) }
 	}
 
