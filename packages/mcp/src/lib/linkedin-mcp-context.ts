@@ -117,10 +117,16 @@ export type LinkedInPhase2Verb = (typeof LINKEDIN_PHASE2_VERBS)[number]
 
 /**
  * Outreach-loop verbs (bet aff468ba), registered on personal identities only: the InMail
- * credit read and the sent invitations read here, with the rest of the suite joining as its
- * tasks land.
+ * credit read, the sent invitations read, the posts and company reads and the like here, with
+ * the rest of the suite joining as its tasks land.
  */
-export const LINKEDIN_OUTREACH_VERBS = ['get_inmail_balance', 'list_sent_invitations'] as const
+export const LINKEDIN_OUTREACH_VERBS = [
+	'get_inmail_balance',
+	'list_sent_invitations',
+	'list_user_posts',
+	'get_company',
+	'react_to_post',
+] as const
 
 /**
  * Union of every verb R11 registers per-identity — Phase 1 + Phase 2, then the outreach

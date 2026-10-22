@@ -1,3 +1,4 @@
+import type { CapSpec } from './caps'
 import { LinkedInIntegrationError } from './errors'
 import {
 	type CompanySummary,
@@ -13,35 +14,28 @@ import {
 
 /**
  * list_user_posts, get_company and react_to_post, as plain functions over a
- * client and a guard. Credential lookup, retry and the registration in the MCP
- * server wrap these (see the wiring layer); keeping the decisions here makes
- * them testable without a database.
- *
- * The guard is the seam to the action log and caps (task "Every LinkedIn tool
- * call lands in the permanent action log"): the daily budgets, the per-author
- * rule and the prior-success lookup all live behind it.
+ * client and a few hooks. Credential lookup, retry, the action log and the
+ * registration in the MCP server wrap these (see operations.ts and mcp-server.ts);
+ * keeping the decisions here makes them testable without a database.
  */
 
-export interface LikeReservation {
-	/** The like went out: record it so caps and the per-author rule see it. */
-	commit(): Promise<void>
-	/** The like did not go out: release the slot. */
-	abort(error: unknown): Promise<void>
+/**
+ * The shared profile-view budget: get_profile, list_user_posts and get_company
+ * draw on one pool of 100 a day per connected account. The resolution lookups
+ * inside list_user_posts are logged as get_profile or get_company rows, so they
+ * are in the pool too. Enforced by the action log wrapper from this spec.
+ */
+export const PROFILE_VIEW_CAP: CapSpec = {
+	name: 'profile_views',
+	limit: 100,
+	tools: ['get_profile', 'list_user_posts', 'get_company'],
 }
 
-export interface PostsToolGuards {
-	/**
-	 * Spend `count` profile views from the shared daily budget, all or nothing.
-	 * Throws RATE_LIMITED_LINKEDIN (with the reset time) when they do not fit;
-	 * nothing has been sent at that point.
-	 */
-	takeProfileViews(count: number): Promise<void>
-	/**
-	 * Run the like checks in order: flag, daily cap, per-author rule, prior
-	 * success on this post. Throws on a refusal. Returns null when this account
-	 * already liked the post (nothing to send), else a reservation for the call.
-	 */
-	reserveLike(input: { post_id: string; author_provider_id: string }): Promise<LikeReservation | null>
+/** react_to_post: 15 a day per connected account. */
+export const REACT_TO_POST_CAP: CapSpec = {
+	name: 'react_to_post',
+	limit: 15,
+	tools: ['react_to_post'],
 }
 
 export interface PostsToolDeps {
@@ -49,7 +43,20 @@ export interface PostsToolDeps {
 	posts: PostsReadsClient
 	/** `GET users/{identifier}` body; one call, already wrapped in the retry policy. */
 	getProfile(identifier: string): Promise<Record<string, unknown>>
-	guards: PostsToolGuards
+	/**
+	 * Runs one resolution lookup as a profile view of its own: it takes a slot from the daily
+	 * budget and is logged as a get_profile or get_company row. Throws RATE_LIMITED_LINKEDIN
+	 * when the budget is spent, before `run` sends anything.
+	 */
+	lookup(tool: 'get_profile' | 'get_company', run: () => Promise<PostAuthor>): Promise<PostAuthor>
+	/**
+	 * The like rules that need the log: refuses (throws) a second like on this author inside
+	 * 7 days, and says when this account already liked the post.
+	 */
+	checkLike(input: {
+		post_id: string
+		author_provider_id: string
+	}): Promise<{ already_liked: boolean }>
 }
 
 const DEFAULT_LIMIT = 10
@@ -107,24 +114,24 @@ export async function listUserPosts(
 
 	let kind: 'individual' | 'organization'
 	let providerId: string
-	// Set when the input is not already a provider id and one lookup is needed.
-	let resolve: (() => Promise<PostAuthor>) | null = null
+	// Set when the input was a handle or slug and one lookup turned it into a provider id.
+	let known: PostAuthor | null = null
 	if (person) {
 		kind = 'individual'
 		providerId = normalizePersonInput(person)
-		if (!isMemberProviderId(providerId)) resolve = () => resolvePerson(deps, providerId)
+		if (!isMemberProviderId(providerId)) {
+			const handle = providerId
+			known = await deps.lookup('get_profile', () => resolvePerson(deps, handle))
+		}
 	} else {
 		const ref = normalizeCompanyInput(company as string)
 		if (!ref) throw invalid('company must be a numeric id, a slug or a linkedin.com/company URL')
 		kind = 'organization'
 		providerId = ref.value
-		if (ref.kind === 'slug') resolve = () => resolveCompany(deps, ref.value)
+		if (ref.kind === 'slug') {
+			known = await deps.lookup('get_company', () => resolveCompany(deps, ref.value))
+		}
 	}
-
-	// The resolution lookup is a profile view of its own, so budget for both up
-	// front: a call that cannot afford both must not send the first.
-	await deps.guards.takeProfileViews(resolve ? 2 : 1)
-	const known = resolve ? await resolve() : null
 	if (known) providerId = known.provider_id
 
 	const upstream = await deps.posts.listUserPosts({
@@ -183,7 +190,6 @@ export async function getCompany(
 	if (!raw) throw invalid('company is required')
 	const ref = normalizeCompanyInput(raw)
 	if (!ref) throw invalid('company must be a numeric id, a slug or a linkedin.com/company URL')
-	await deps.guards.takeProfileViews(1)
 	const res = await deps.posts.getCompanyProfile({
 		account_id: deps.accountId,
 		company_id: ref.value,
@@ -217,18 +223,12 @@ export async function reactToPost(
 		throw invalid('reaction must be "like"; no other reaction is supported')
 	}
 
-	const reservation = await deps.guards.reserveLike({
+	const { already_liked } = await deps.checkLike({
 		post_id: postId,
 		author_provider_id: authorProviderId,
 	})
-	if (!reservation) return { post_id: postId, reaction: 'like', already_liked: true }
+	if (already_liked) return { post_id: postId, reaction: 'like', already_liked: true }
 
-	try {
-		await deps.posts.addPostReaction({ account_id: deps.accountId, post_id: postId })
-	} catch (err) {
-		await reservation.abort(err)
-		throw err
-	}
-	await reservation.commit()
+	await deps.posts.addPostReaction({ account_id: deps.accountId, post_id: postId })
 	return { post_id: postId, reaction: 'like', already_liked: false }
 }
