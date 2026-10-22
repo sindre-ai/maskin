@@ -325,23 +325,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
-			include: z
-				.array(
-					z.enum([
-						'content',
-						'metadata',
-						'relationships',
-						'connected_objects',
-						'events',
-						'files',
-						'setup',
-					]),
-				)
-				.default([])
-				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` plus `setup` per object; each listed value adds one more block. `setup` is always attached regardless of whether it is listed here — the enum value is accepted only for backward compatibility and is a no-op.',
-				),
-		}),
 	},
 	update_objects: {
 		description:
