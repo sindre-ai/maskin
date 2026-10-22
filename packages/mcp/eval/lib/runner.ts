@@ -27,6 +27,12 @@ export interface AgentRunInput {
 interface SdkContentBlock {
 	type: string
 	is_error?: boolean
+	/** tool_use: the call id and tool name. */
+	id?: string
+	name?: string
+	/** tool_result: the id of the call it answers, and its text. */
+	tool_use_id?: string
+	content?: string | Array<{ type: string; text?: string }>
 }
 interface SdkModelUsage {
 	inputTokens: number
@@ -98,6 +104,13 @@ function sumUsage(modelUsage: Record<string, SdkModelUsage>): TokenUsage {
 	return usage
 }
 
+const MCP_TOOL_PREFIX = 'mcp__maskin__'
+
+function resultText(content: SdkContentBlock['content']): string {
+	if (typeof content === 'string') return content
+	return (content ?? []).map((part) => part.text ?? '').join(' ')
+}
+
 export async function runAgentSdk(input: AgentRunInput, query: QueryFn): Promise<RunOutcome> {
 	const startedAt = Date.now()
 	const abortController = new AbortController()
@@ -110,10 +123,12 @@ export async function runAgentSdk(input: AgentRunInput, query: QueryFn): Promise
 		numTurns: null,
 		clientToolUses: 0,
 		clientToolErrors: 0,
+		clientNotFoundByTool: {},
 		finished: false,
 		error: null,
 		durationMs: 0,
 	}
+	const toolNameByCallId = new Map<string, string>()
 	try {
 		const stream = query({
 			prompt: input.prompt,
@@ -122,11 +137,22 @@ export async function runAgentSdk(input: AgentRunInput, query: QueryFn): Promise
 		for await (const message of stream) {
 			const content = message.message?.content
 			if (message.type === 'assistant' && Array.isArray(content)) {
-				outcome.clientToolUses += content.filter((block) => block.type === 'tool_use').length
+				for (const block of content) {
+					if (block.type !== 'tool_use') continue
+					outcome.clientToolUses += 1
+					if (block.id && block.name) toolNameByCallId.set(block.id, block.name)
+				}
 			} else if (message.type === 'user' && Array.isArray(content)) {
-				outcome.clientToolErrors += content.filter(
-					(block) => block.type === 'tool_result' && block.is_error === true,
-				).length
+				for (const block of content) {
+					if (block.type !== 'tool_result' || block.is_error !== true) continue
+					outcome.clientToolErrors += 1
+					if (!/not found/i.test(resultText(block.content))) continue
+					const name = (toolNameByCallId.get(block.tool_use_id ?? '') ?? 'unknown').replace(
+						MCP_TOOL_PREFIX,
+						'',
+					)
+					outcome.clientNotFoundByTool[name] = (outcome.clientNotFoundByTool[name] ?? 0) + 1
+				}
 			} else if (message.type === 'result') {
 				outcome.finished = message.subtype === 'success' && message.is_error !== true
 				outcome.numTurns = message.num_turns ?? null

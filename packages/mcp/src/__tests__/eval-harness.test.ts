@@ -4,6 +4,7 @@ import { type SdkMessage, buildQueryOptions, runAgentSdk } from '../../eval/lib/
 import { H6_TASK_ID, summarise } from '../../eval/lib/summary'
 import { readSettledTelemetry, summariseTelemetry } from '../../eval/lib/telemetry'
 import type {
+	ClientSummary,
 	EdgeRow,
 	ObjectRow,
 	ResultRow,
@@ -26,6 +27,8 @@ const wsId = '00000000-0000-0000-0000-0000000000aa'
 function noErrors(callCount = 0): TelemetrySummary {
 	return summariseTelemetry([{ event_type: 'tool_call', tool_name: 'x', kind: null, n: callCount }])
 }
+
+const noClientErrors: ClientSummary = { notFoundByTool: {} }
 
 function task(id: string) {
 	const found = TASKS.find((candidate) => candidate.id === id)
@@ -175,6 +178,7 @@ describe('T1 bet with tasks', () => {
 			ctxFor(state, new FakeSeeder(state)),
 			{},
 			noErrors(),
+			noClientErrors,
 		)
 		expect(result).toEqual({ passed: true, reason: 'ok' })
 	})
@@ -186,6 +190,7 @@ describe('T1 bet with tasks', () => {
 			ctxFor(state, new FakeSeeder(state)),
 			{},
 			noErrors(),
+			noClientErrors,
 		)
 		expect(result.passed).toBe(false)
 		expect(result.reason).toContain('task B')
@@ -197,6 +202,7 @@ describe('T1 bet with tasks', () => {
 			ctxFor(state, new FakeSeeder(state)),
 			{},
 			noErrors(),
+			noClientErrors,
 		)
 		expect(result.passed).toBe(false)
 	})
@@ -211,9 +217,13 @@ describe('T2 read by ids', () => {
 		const note = obj({ id: 'n', type: 'knowledge', title: `Eval codes ${short}` })
 		state.objects.push(note)
 		note.content = [seed.code1, seed.code2].join('\n')
-		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [seed.code1, seed.code2, seed.code3].join('\n')
-		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors())).passed).toBe(true)
+		expect((await task('T2-read-by-ids').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -222,10 +232,14 @@ describe('T3 set driver', () => {
 		const state = new FakeState()
 		const ctx = ctxFor(state, new FakeSeeder(state))
 		const seed = await task('T3-set-driver').setup(ctx)
-		expect((await task('T3-set-driver').check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		const row = state.objects.find((candidate) => candidate.id === seed.taskId) as ObjectRow
 		row.driver = seed.helperId as string
-		expect((await task('T3-set-driver').check(ctx, seed, noErrors())).passed).toBe(true)
+		expect((await task('T3-set-driver').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -240,11 +254,17 @@ describe('T4 list links', () => {
 		const b = `Eval link ${short} B`
 		const c = `Eval link ${short} C`
 		note.content = [a, b].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [a, b, c, `Eval decoy ${short} 1`].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			false,
+		)
 		note.content = [a, b, c].join('\n')
-		expect((await task('T4-list-links').check(ctx, seed, noErrors())).passed).toBe(true)
+		expect((await task('T4-list-links').check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(
+			true,
+		)
 	})
 })
 
@@ -253,14 +273,18 @@ describe('T5 start session', () => {
 		const state = new FakeState()
 		const ctx = ctxFor(state, new FakeSeeder(state))
 		const seed = await task('T5-start-session').setup(ctx)
-		expect((await task('T5-start-session').check(ctx, seed, noErrors())).passed).toBe(false)
+		expect(
+			(await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed,
+		).toBe(false)
 		state.sessions.push({
 			id: 's1',
 			actorId: seed.helperId as string,
 			initiatedFromObjectId: seed.taskId as string,
 			actionPrompt: `eval-handoff-${short}, please look at this task.`,
 		})
-		expect((await task('T5-start-session').check(ctx, seed, noErrors())).passed).toBe(true)
+		expect(
+			(await task('T5-start-session').check(ctx, seed, noErrors(), noClientErrors)).passed,
+		).toBe(true)
 	})
 })
 
@@ -287,14 +311,14 @@ describe('H6 skill lookup', () => {
 	it('passes with the marker line appended and no error rows on the skill tools', async () => {
 		const { state, ctx, seed } = await seeded()
 		state.skills.set(H6_SKILL_NAME, `${seed.baseline}\n${h6Marker(ctx)}`)
-		expect((await h6.check(ctx, seed, noErrors(4))).passed).toBe(true)
+		expect((await h6.check(ctx, seed, noErrors(4), noClientErrors)).passed).toBe(true)
 	})
 
 	it('fails when the stored content is anything but old content plus marker', async () => {
 		const { state, ctx, seed } = await seeded()
-		expect((await h6.check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await h6.check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
 		state.skills.set(H6_SKILL_NAME, `${h6Marker(ctx)}\n${seed.baseline}`)
-		expect((await h6.check(ctx, seed, noErrors())).passed).toBe(false)
+		expect((await h6.check(ctx, seed, noErrors(), noClientErrors)).passed).toBe(false)
 	})
 
 	it('fails on an error row for get_workspace_skill even when the content is right', async () => {
@@ -308,9 +332,26 @@ describe('H6 skill lookup', () => {
 				n: 1,
 			},
 		])
-		const result = await h6.check(ctx, seed, telemetry)
+		const result = await h6.check(ctx, seed, telemetry, noClientErrors)
 		expect(result.passed).toBe(false)
 		expect(result.reason).toContain('get_workspace_skill 1')
+	})
+
+	it('fails on a "Not found" reply to the fetch by id even when content and error rows are fine', async () => {
+		const { state, ctx, seed } = await seeded()
+		state.skills.set(H6_SKILL_NAME, `${seed.baseline}\n${h6Marker(ctx)}`)
+		const result = await h6.check(ctx, seed, noErrors(5), {
+			notFoundByTool: { get_workspace_skill: 1 },
+		})
+		expect(result.passed).toBe(false)
+		expect(result.reason).toContain('Not found')
+	})
+
+	it('ignores "Not found" replies from other tools', async () => {
+		const { state, ctx, seed } = await seeded()
+		state.skills.set(H6_SKILL_NAME, `${seed.baseline}\n${h6Marker(ctx)}`)
+		const result = await h6.check(ctx, seed, noErrors(4), { notFoundByTool: { get_objects: 2 } })
+		expect(result.passed).toBe(true)
 	})
 })
 
@@ -326,6 +367,7 @@ describe('runTask', () => {
 			numTurns: 3,
 			clientToolUses: 4,
 			clientToolErrors: 1,
+			clientNotFoundByTool: {},
 			finished: true,
 			error: null,
 			durationMs: 1234,
@@ -376,6 +418,7 @@ describe('summarise', () => {
 			error_rows_by_tool: {},
 			client_tool_uses: 0,
 			client_tool_errors: 0,
+			client_not_found_by_tool: {},
 			num_turns: null,
 			duration_ms: 0,
 			run_date: '',
@@ -492,6 +535,52 @@ describe('runAgentSdk', () => {
 			cacheCreation: 10,
 			total: 180,
 		})
+	})
+
+	it('counts "Not found" error results by the tool that was called', async () => {
+		const messages: SdkMessage[] = [
+			{
+				type: 'assistant',
+				message: {
+					content: [
+						{ type: 'tool_use', id: 'c1', name: 'mcp__maskin__get_workspace_skill' },
+						{ type: 'tool_use', id: 'c2', name: 'mcp__maskin__get_objects' },
+						{ type: 'tool_use', id: 'c3', name: 'mcp__maskin__get_workspace_skill' },
+					],
+				},
+			},
+			{
+				type: 'user',
+				message: {
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'c1',
+							is_error: true,
+							content: [{ type: 'text', text: '{"reason":"Not found: skill abc"}' }],
+						},
+						{
+							type: 'tool_result',
+							tool_use_id: 'c2',
+							is_error: true,
+							content: 'Invalid argument: x',
+						},
+						{
+							type: 'tool_result',
+							tool_use_id: 'c3',
+							content: 'Not found in the text but not an error',
+						},
+					],
+				},
+			},
+		]
+		const outcome = await runAgentSdk(input, () =>
+			(async function* () {
+				yield* messages
+			})(),
+		)
+		expect(outcome.clientToolErrors).toBe(2)
+		expect(outcome.clientNotFoundByTool).toEqual({ get_workspace_skill: 1 })
 	})
 
 	it('reports a failed result instead of throwing', async () => {
