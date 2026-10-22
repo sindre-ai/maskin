@@ -101,6 +101,7 @@ async function doReturn(
 			actorId: sessions.actorId,
 			status: sessions.status,
 			result: sessions.result,
+			retryAt: sessions.retryAt,
 			config: sessions.config,
 			spawnedBySessionId: sessions.spawnedBySessionId,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
@@ -196,6 +197,7 @@ async function doReturn(
 			actorId: helper.actorId,
 		}),
 		reason: describeFailure(helper.result),
+		retryAt: kind === 'failed' ? helper.retryAt : null,
 		finalMessage: notify && kind === 'completed' ? await readFinalMessage(db, sessionId) : null,
 		exchange: notify ? await readQuestionExchange(db, sessionId, helper.config) : [],
 	})
@@ -434,6 +436,8 @@ export function buildReturnMessage(ctx: {
 	sessionId: string
 	agentUrl: string
 	reason: string | null
+	/** When the system will start this helper again by itself, after a usage limit. */
+	retryAt?: Date | null
 	/** Flagged helpers only: the helper's last message, already quoted and capped. */
 	finalMessage?: FinalMessage | null
 	/** Flagged helpers only: questions the helper put to the person, with their answers. */
@@ -466,6 +470,12 @@ export function buildReturnMessage(ctx: {
 			}
 			return `${ctx.helperName} finished the work you handed it. ${where} Read its comments on this object or its logs for what it produced.`
 		case 'failed':
+			// A usage limit lifts on its own and the system reruns the session then, so
+			// "retry it yourself" would double the work and "it failed" would be wrong.
+			if (ctx.retryAt) {
+				const at = ctx.retryAt.toISOString().slice(0, 16).replace('T', ' ')
+				return `${ctx.helperName} has not done the work yet: it hit its usage limit before it could start. It starts again by itself at ${at} UTC, and you will get its result here then. Do not hand the work to it again.${quoted}\n\n${where}`
+			}
 			return `${ctx.helperName} stopped with an error. ${where}${quoted}\n\n${options}`
 		case 'timeout':
 			return `${ctx.helperName} ran out of time. ${where}${quoted}\n\n${options}`

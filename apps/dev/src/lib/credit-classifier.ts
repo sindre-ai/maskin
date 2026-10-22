@@ -5,7 +5,7 @@ import {
 	parseResultLine,
 } from '@maskin/shared'
 
-import { parseCliResetBanner } from './subscription-limit-reset'
+import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
 
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
@@ -100,15 +100,21 @@ export function classifyCreditExhaustion(
 	// tail we see, so the reset-at parity cells succeed even when the classifier
 	// hits a banner (source 3 in §17.2). Best-effort — null when the fragment
 	// doesn't match or falls outside the [now+60s, now+24h] clamp.
-	const bannerResetAt = parseCliResetBanner(tail)?.toISOString() ?? null
-	// §7.5: when the banner parsed, stamp source + confidence on the failure
-	// reason so the retry-scheduler can carry them onto the session_retry_scheduled
-	// audit event. The CLI banner is the ONLY parse source that reaches this
-	// classifier — Anthropic response headers land in the failover companion at
-	// claude-failover.ts and never see this code path — so the source is
-	// always 'cli-banner' + 'advisory' when the banner matched.
+	// The CLI's rate_limit_event carries the reset as an epoch, so it wins over the
+	// banner text, whose time zone we may not be able to read.
+	const eventResetAt = parseRateLimitEventReset(tail)?.toISOString() ?? null
+	const bannerResetAt = eventResetAt ?? parseCliResetBanner(tail)?.toISOString() ?? null
+	// §7.5: when a reset parsed, stamp source + confidence on the failure reason so
+	// the retry-scheduler can carry them onto the session_retry_scheduled audit
+	// event. Anthropic response headers land in the failover companion at
+	// claude-failover.ts and never see this code path, so the source is always the
+	// CLI's output: advisory for the banner, authoritative for the event's epoch.
 	const resetStamp: Pick<SessionResultFailureReason, 'reset_source' | 'reset_confidence'> =
-		bannerResetAt !== null ? { reset_source: 'cli-banner', reset_confidence: 'advisory' } : {}
+		eventResetAt !== null
+			? { reset_source: 'cli-banner', reset_confidence: 'authoritative' }
+			: bannerResetAt !== null
+				? { reset_source: 'cli-banner', reset_confidence: 'advisory' }
+				: {}
 
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {

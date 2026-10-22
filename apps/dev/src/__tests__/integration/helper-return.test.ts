@@ -130,6 +130,32 @@ describe('Helper return (integration)', () => {
 		expect(data.attention).toBe(2)
 	})
 
+	it('a helper that hit its usage limit and has a rerun scheduled says it starts again by itself', async () => {
+		const s = await senderSession()
+		const h = await helperSession(s, {
+			result: {
+				exit_code: 1,
+				failure_reason: {
+					provider: 'anthropic',
+					reason_code: 'session_limit',
+					human_message: 'Claude session limit reached',
+					http_status: null,
+					reset_at: '2026-10-22T12:00:00.000Z',
+					verbatim_output: "You've hit your session limit",
+				},
+			},
+			retryAt: new Date('2026-10-22T12:00:00.000Z'),
+		})
+
+		await returnToSender(db, h.id)
+
+		const [row] = await returnComments()
+		const content = (row.data as { content: string }).content
+		expect(content).toContain('has not done the work yet')
+		expect(content).toContain('starts again by itself at 2026-10-22 12:00 UTC')
+		expect(content).not.toContain('retry with a narrower task')
+	})
+
 	it('a timeout says it ran out of time', async () => {
 		const s = await senderSession()
 		const h = await helperSession(s, { status: 'timeout', result: { exit_code: null } })
