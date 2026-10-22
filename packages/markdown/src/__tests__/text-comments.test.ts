@@ -61,9 +61,10 @@ describe('captureTextAnchor', () => {
 		const anchor = captureTextAnchor(editor.state.doc, from, to)
 		expect(anchor).toEqual({
 			quote: 'brown fox',
-			prefix: 'The quick ',
-			suffix: ' jumps over the lazy dog.',
+			prefix: 'e of the file\nThe quick ',
+			suffix: ' jumps over the lazy dog',
 		})
+		expect(anchor?.prefix.length).toBeLessThanOrEqual(24)
 		expect(anchor?.suffix.length).toBeLessThanOrEqual(24)
 		destroy()
 	})
