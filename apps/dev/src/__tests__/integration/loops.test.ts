@@ -577,6 +577,193 @@ describe('Loops read API integration', () => {
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
 	})
 
+	describe('closed members keep their in_loop edge and close time comes from the status event', () => {
+		const statusChange = (entityId: string, to: string, at: Date, from = 'in_progress') => ({
+			workspaceId,
+			actorId,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId,
+			data: { changes: [{ field: 'status', old: from, new: to }] },
+			createdAt: at,
+		})
+
+		async function linkTask(loopId: string, overrides: Record<string, unknown>) {
+			const task = await insertObject(db, workspaceId, actorId, { type: 'task', ...overrides })
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loopId,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'in_loop',
+			})
+			return task
+		}
+
+		it('moving a member to a closed status through the API keeps its edge and counts it as closed', async () => {
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+			app.route('/api/objects', objectsRoutes)
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Keeps links',
+			})
+			const task = await linkTask(loop.id, { status: 'in_progress', title: 'Closes' })
+
+			const patchRes = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/objects/${task.id}`,
+					{ status: 'done' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(patchRes.status).toBe(200)
+
+			const statusEvents = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, task.id), eq(events.action, 'status_changed')))
+			expect(statusEvents).toHaveLength(1)
+
+			const edges = await sql`
+				SELECT 1 FROM relationships
+				WHERE source_id = ${loop.id} AND target_id = ${task.id} AND type = 'in_loop'
+			`
+			expect(edges).toHaveLength(1)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; inProgressCount: number }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('uses the first event into the closed set, not later edits to the member', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Event-based close time',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			const closedAt = new Date(createdAt.getTime() + 2000)
+			// updated_at is a day after the close, as if the closed item was edited later.
+			const task = await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed then edited',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 86_400_000),
+			})
+			await db.insert(events).values([
+				statusChange(task.id, 'in_progress', new Date(createdAt.getTime() + 500), 'todo'),
+				statusChange(task.id, 'done', closedAt),
+			])
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(2000)
+		})
+
+		it('falls back to updated_at for a closed member with no status event', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'No events',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed without an event',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 4000),
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(4000)
+		})
+
+		it('reads status events with one batched query for many closed members', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Batched',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			for (let i = 0; i < 5; i++) {
+				const task = await linkTask(loop.id, {
+					status: 'done',
+					title: `Closed ${i}`,
+					createdAt,
+					updatedAt: createdAt,
+				})
+				await db
+					.insert(events)
+					.values(statusChange(task.id, 'done', new Date(createdAt.getTime() + 1000 * (i + 1))))
+			}
+
+			// Count selects issued against the events table during one request.
+			let eventSelects = 0
+			const countingDb = new Proxy(db, {
+				get(target, prop) {
+					const value = Reflect.get(target, prop, target)
+					if (prop !== 'select' || typeof value !== 'function') {
+						return typeof value === 'function' ? value.bind(target) : value
+					}
+					return (...args: unknown[]) => {
+						const builder = value.apply(target, args)
+						return new Proxy(builder, {
+							get(b, bProp) {
+								const member = Reflect.get(b, bProp, b)
+								if (bProp === 'from') {
+									return (table: unknown) => {
+										if (table === events) eventSelects += 1
+										return member.call(b, table)
+									}
+								}
+								return typeof member === 'function' ? member.bind(b) : member
+							},
+						})
+					}
+				},
+			}) as Database
+
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', countingDb)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(5)
+			expect(row?.medianTimeToCloseMs).toBe(3000)
+			expect(eventSelects).toBe(1)
+		})
+	})
+
 	it('ignores relationships of a different type when computing loop membership', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',

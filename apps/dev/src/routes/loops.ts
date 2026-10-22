@@ -4,6 +4,8 @@ import { events, actors, objects, relationships, sessions, triggers } from '@mas
 import {
 	type LoopTarget,
 	TERMINAL_BET_STATUSES,
+	findChange,
+	getChangesFromEventData,
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
 	loopTargetSchema,
@@ -230,13 +232,14 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// stays cheap.
 	const childRows = await db.execute<{
 		loop_id: string
+		object_id: string
 		type: string
 		status: string
 		created_at: string | Date
 		updated_at: string | Date
 	}>(
 		sql`
-			SELECT r.source_id AS loop_id, o.type, o.status, o.created_at, o.updated_at
+			SELECT r.source_id AS loop_id, o.id AS object_id, o.type, o.status, o.created_at, o.updated_at
 			FROM ${relationships} r
 			JOIN ${objects} o ON o.id = r.target_id
 			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
@@ -258,6 +261,53 @@ app.openapi(listLoopsRoute, (async (c) => {
 		return terminal.includes(status)
 	}
 
+	// A closed member keeps its in_loop edge, so its close time comes from the
+	// first status-change event that moved it into the loop's closed set, not
+	// from updated_at (any later edit moves that). One batched query for every
+	// closed member across all loops in the request, never one per member; no
+	// closed members, no query.
+	const closedObjectIds = Array.from(
+		new Set(
+			childRows
+				.filter((row) => isClosedForLoop(row.loop_id, row.type, row.status))
+				.map((row) => row.object_id),
+		),
+	)
+	const statusEventsByObject = new Map<string, Array<{ status: unknown; at: Date }>>()
+	if (closedObjectIds.length > 0) {
+		const statusEventRows = await db
+			.select({ entityId: events.entityId, data: events.data, createdAt: events.createdAt })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.action, 'status_changed'),
+					inArray(events.entityId, closedObjectIds),
+				),
+			)
+			.orderBy(events.id)
+		for (const ev of statusEventRows) {
+			if (!ev.createdAt) continue
+			const status = findChange(getChangesFromEventData(ev.data, ['status']), 'status')?.new
+			if (status === undefined) continue
+			const list = statusEventsByObject.get(ev.entityId) ?? []
+			list.push({ status, at: ev.createdAt })
+			statusEventsByObject.set(ev.entityId, list)
+		}
+	}
+
+	// Close time for a member that is closed for this loop: the first event that
+	// moved it into the closed set, falling back to updated_at when it has none
+	// (closed before events carried a diff, or the status was set directly).
+	const closedAtMs = (row: (typeof childRows)[number]): number => {
+		const override = closedStatusOverridesByLoop.get(row.loop_id)?.[row.type]
+		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[row.type] ?? []
+		const moved = statusEventsByObject
+			.get(row.object_id)
+			?.find((ev) => typeof ev.status === 'string' && terminal.includes(ev.status))
+		return (moved?.at ?? new Date(row.updated_at)).getTime()
+	}
+
 	const childStatsByLoop = new Map<
 		string,
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
@@ -273,7 +323,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 			if (isClosedForLoop(row.loop_id, row.type, row.status)) {
 				stats.closedCount += 1
 				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
-				durations.push(new Date(row.updated_at).getTime() - new Date(row.created_at).getTime())
+				durations.push(closedAtMs(row) - new Date(row.created_at).getTime())
 				closeDurationsByLoop.set(row.loop_id, durations)
 			} else {
 				stats.inProgressCount += 1
