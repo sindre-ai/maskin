@@ -16,7 +16,9 @@ import type { VoiceSessionRow } from './voice-transcript'
  * with the same key. Tool calls, transcript lines and turn telemetry all run
  * over that socket, through the channel logic in
  * (services/voice-session-channel.ts). Tool calls run as the agent with the
- * call's workspace; there is no tool allow-list in front of them.
+ * call's workspace. Every tool that is not read-only is held until the person
+ * says yes out loud (services/voice-write-gate.ts); there is no tool allow-list,
+ * attention cap, mentions refusal or bet refusal.
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -223,6 +225,8 @@ export interface AttachVoiceCallInput {
 	session: VoiceSessionRow
 	agentName: string
 	invokeTool: InvokeTool
+	/** Tools that only read; every other tool waits for the person's yes. */
+	readOnlyTools: ReadonlySet<string>
 	/** Releases what the call's tools hold open (connections to the agent's MCP servers). */
 	dispose?: () => Promise<void> | void
 	callId: string
@@ -236,6 +240,7 @@ export interface AttachVoiceCallInput {
 interface RealtimeEvent {
 	type?: string
 	call_id?: string
+	item_id?: string
 	name?: string
 	arguments?: string
 	transcript?: string
@@ -314,6 +319,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		session,
 		agentName: input.agentName,
 		invokeTool: input.invokeTool,
+		isReadOnlyTool: (name) => input.readOnlyTools.has(name),
 		send: onChannelMessage,
 		now,
 	})
@@ -341,7 +347,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			case 'conversation.item.input_audio_transcription.completed': {
 				const text = evt.transcript?.trim()
-				if (text) feed({ type: 'transcript', role: 'user', text })
+				if (text) feed({ type: 'transcript', role: 'user', text, item_id: evt.item_id })
 				return
 			}
 			// GA name first; the beta name is kept so a fake or older edge still works.
@@ -352,6 +358,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			}
 			case 'input_audio_buffer.speech_started':
+				feed({ type: 'user_speech_started', item_id: evt.item_id })
 				userSpeechStartedAt = now()
 				// Speaking over an agent that is mid-response is a barge-in.
 				if (agentResponseStartedAt !== null) bargeIn = true
