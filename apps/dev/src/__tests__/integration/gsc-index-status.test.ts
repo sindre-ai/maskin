@@ -125,6 +125,8 @@ async function setup() {
 }
 
 const deps = (now: Date) => ({ now, sleep: async () => {}, getAccessToken: async () => 'tok' })
+// The sync entry points take the clock as a function; inspectIndexStatus takes the date.
+const syncDeps = (now: Date) => ({ ...deps(now), now: () => now })
 
 async function indexObjects(workspaceId: string) {
 	return db
@@ -392,7 +394,7 @@ describe('the daily sync and the index object leave each other alone', () => {
 		stubGoogle(defaultAnswers())
 
 		// Hook path: sync (already current, no calls) then inspection.
-		await syncAllGscIntegrations(db, deps(DAY1))
+		await syncAllGscIntegrations(db, syncDeps(DAY1))
 		const [index] = await indexObjects(ws.id)
 		expect(parseIndexRows(index.content)).toHaveLength(1)
 
@@ -415,7 +417,7 @@ describe('the daily sync and the index object leave each other alone', () => {
 		const [rowsBefore] = await db.select().from(objects).where(eq(objects.id, propertyObject.id))
 		const [row] = await db.select().from(integrations).where(eq(integrations.id, integration.id))
 		stubGoogle(defaultAnswers())
-		await syncGscIntegration(db, row, deps(DAY2))
+		await syncGscIntegration(db, row, syncDeps(DAY2))
 
 		const [rowsAfter] = await db.select().from(objects).where(eq(objects.id, propertyObject.id))
 		expect(rowsBefore.metadata).not.toHaveProperty('read_status')
