@@ -70,6 +70,8 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// The Resend connect dialog is always mounted (closed); it only has to render.
+	useResendDnsPrecheck: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	// Agent access has its own tests; here it only has to render.
 	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),

@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { describe, expect, it } from 'vitest'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -10,21 +9,6 @@ const OTHER_HUMAN = '7d0f5c6e-df81-4365-8fa2-9e4b1f35c886'
 const AGENT = '4a8d2f3b-ac5e-4032-9d7f-6b1e8c02f553'
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const SESSION_ID = '5b9e3a4c-bd6f-4143-8e80-7c2f9d13a664'
-
-function setFlag(on: boolean) {
-	if (on) {
-		process.env.FF_TESTER_ACTOR_IDS = HUMAN
-		process.env.FF_TESTER_FEATURES = 'voice-mode-v1'
-	} else {
-		process.env.FF_TESTER_ACTOR_IDS = undefined
-		process.env.FF_TESTER_FEATURES = undefined
-		// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"
-		delete process.env.FF_TESTER_ACTOR_IDS
-		// biome-ignore lint/performance/noDelete: same
-		delete process.env.FF_TESTER_FEATURES
-	}
-	_resetFeatureFlagConfig()
-}
 
 const startedAt = new Date(Date.now() - 90_000)
 
@@ -48,16 +32,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 const hangup = (app: ReturnType<typeof createTestApp>['app'], body: unknown, id = SESSION_ID) =>
 	app.request(jsonRequest('POST', `/api/voice-sessions/${id}/hangup`, body))
 
-beforeEach(() => setFlag(true))
-afterEach(() => setFlag(false))
-
 describe('POST /api/voice-sessions/:id/hangup', () => {
-	it('404s when the voice-mode-v1 flag is off for the caller', async () => {
-		setFlag(false)
-		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		expect((await hangup(app, { reason: 'user_hangup' })).status).toBe(404)
-	})
-
 	it('404s for a session that belongs to another human', async () => {
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [[row({ humanActorId: OTHER_HUMAN })]]

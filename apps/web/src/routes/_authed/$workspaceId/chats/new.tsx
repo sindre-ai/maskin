@@ -1,10 +1,8 @@
 import { Composer } from '@/components/chat/chat'
-import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
@@ -70,27 +68,9 @@ interface Recipient {
 	description?: string | null
 }
 
-/**
- * Feature-flag boundary for the Chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
- * Read once at this route per the feature-flags rule
- * (`.claude/rules/feature-flags.md`) — the umbrella AND the `.new_chat` sub-flag.
- * Flag off renders the pre-bet screen vendored in
- * `components/chat/legacy/new-chat-form.tsx`; the v4 rewrite lives in `NewChatV4`
- * below. Retiring the flag means deleting the legacy file, this boundary, and the
- * flag ids in `apps/dev/src/lib/feature-flags.ts`.
- */
 function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
-	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
-	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
-	if (!chatsV4Enabled || !newChatV4Enabled) {
-		return <LegacyNewChatForm search={search} />
-	}
-	return <NewChatV4 search={search} />
-}
-
-function NewChatV4({ search }: { search: NewChatSearch }) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
@@ -103,11 +83,6 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
 	const [activeIndex, setActiveIndex] = useState(0)
-	// Task 6321aecf: promote `/` and `@` in the no-recipient composer placeholder
-	// once the `+` menu collapses. Same flag boundary as the DropdownMenu switch
-	// in `<Composer>` — the two changes ship together. Applied to the
-	// no-recipient case of the v4 new-chat placeholder below.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
@@ -406,9 +381,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const composerPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
-			: plusMenuAttachOnly
-				? 'Message… / reference or create · @ mention'
-				: 'Message this conversation'
+			: 'Message… / reference or create · @ mention'
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

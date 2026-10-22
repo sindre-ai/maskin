@@ -22,7 +22,6 @@ import {
 	useProviders,
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
-import { useProviderVisibility } from '@/hooks/use-provider-visibility'
 import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
 import { safeReturnPath } from '@/lib/return-path'
 import { sortBy } from '@/lib/sort'
@@ -48,11 +47,8 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
-	// Flagged providers (google-meet, resend) stay hidden here until their flag is
-	// on; the Connect card an agent puts in chat asks the same hook.
-	const isProviderVisible = useProviderVisibility()
 	const visibleProviders = sortBy(
-		(providers ?? []).filter((p) => isProviderVisible(p.name)),
+		providers ?? [],
 		(p) => p.displayName,
 		(p) => p.name,
 	)
@@ -89,8 +85,7 @@ function IntegrationsPage() {
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
 	// Rows that finished /connect but haven't posted the webhook signing secret
 	// yet. Skjald reaches this state on Cancel-at-secret today; Slice 2 adds a
-	// Resume affordance for the resend rows in this bucket. Only rendered when
-	// the flag is on — see `isProviderVisible` above.
+	// Resume affordance for the resend rows in this bucket.
 	const awaitingSecretByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
 		if (integration.status === 'active') {
@@ -107,8 +102,7 @@ function IntegrationsPage() {
 			awaitingSecretByProvider.set(integration.provider, existing)
 		}
 	}
-	const resendVisible = isProviderVisible('resend')
-	const resendAwaitingSecret = resendVisible ? (awaitingSecretByProvider.get('resend') ?? []) : []
+	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
 		<div>
@@ -145,14 +139,12 @@ function IntegrationsPage() {
 				onSelected={finishGithubSelect}
 				returnTo={returnTo}
 			/>
-			{resendVisible && (
-				<ResendConnectDialog
-					workspaceId={workspaceId}
-					open={resendDialog.open}
-					prefill={resendDialog.prefill}
-					onClose={() => setResendDialog({ open: false, prefill: null })}
-				/>
-			)}
+			<ResendConnectDialog
+				workspaceId={workspaceId}
+				open={resendDialog.open}
+				prefill={resendDialog.prefill}
+				onClose={() => setResendDialog({ open: false, prefill: null })}
+			/>
 		</div>
 	)
 }

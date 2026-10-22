@@ -19,7 +19,6 @@ export const VOICE_SESSION_STARTED_EVENT = 'voice_session_started'
 export const VOICE_SESSION_DENIED_EVENT = 'voice_session_denied'
 
 export type VoiceSessionDeniedReason =
-	| 'flag_off'
 	| 'no_active_agent'
 	| 'concurrent_active'
 	| 'rate_limited'

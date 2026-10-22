@@ -22,10 +22,8 @@ import {
 /**
  * `<UnifiedChatSlashPicker>` — the v2 `/` picker built for the chat composer.
  *
- * Ships behind the `chat-slash-picker-v2` feature flag; the legacy per-kind
- * `<SlashPicker>` remains the fallback and continues to serve the `+` menu's
- * pre-filtered "Reference an object" / "Mention an agent" entries. This one is
- * bound to the raw `/` in the textarea: it always shows two stacked sections —
+ * The legacy per-kind `<SlashPicker>` still serves the comment input. This one
+ * is bound to the raw `/` in the chat composer's textarea: it always shows two stacked sections —
  * `Reference` on top (workspace objects via `search_objects`, or the 5 most-
  * recently-updated when the query is empty) and `Create new` beneath (built-in
  * NEWKIND rows Task / Bet / Insight, always present so the picker never

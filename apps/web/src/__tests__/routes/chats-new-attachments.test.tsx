@@ -1,6 +1,7 @@
 // Split out of chats-new.test.tsx: that file stubs the Composer to exercise the
 // route's draft/titling behaviour, while this one drives the real composer to
 // cover file attachments. The two mock sets cannot coexist in one module.
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -60,19 +61,8 @@ vi.mock('@/hooks/use-files', () => ({
 	useUploadFile: () => mockUploadFile,
 }))
 
-// The route gates the v4 rewrite behind the `chats-v4-polish` umbrella AND its
-// `.new_chat` sub-flag (bet/bdda1c1e-chats-v4-polish). This suite drives the v4
-// chip composer, so resolve the boundary on.
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id.startsWith('chats-v4-polish'),
-}))
-
 vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: async () => 'AAAA',
-}))
-
-vi.mock('@/components/chat/slash-picker', () => ({
-	SlashPicker: () => null,
 }))
 
 vi.mock('@/lib/analytics', () => ({
@@ -103,7 +93,12 @@ describe('New conversation page — attachments', () => {
 	it('includes an attached file in initial_message_metadata when starting a new conversation', async () => {
 		mockUploadFile.mockResolvedValueOnce({ id: 'file-1' })
 		const user = userEvent.setup()
-		const { container } = render(<NewConversationPage />, { wrapper: createWorkspaceWrapper() })
+		const { container } = render(
+			<TooltipProvider>
+				<NewConversationPage />
+			</TooltipProvider>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
 
 		// The redesigned page seeds Builder as an initial chip, so there is no
 		// recipient to pick before attaching.

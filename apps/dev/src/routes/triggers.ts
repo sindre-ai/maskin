@@ -11,7 +11,6 @@ import {
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
 	idParamSchema,
@@ -47,9 +46,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
  * just removed, and the service needs to run to clear the outcomes the form
  * would otherwise keep showing.
- *
- * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
- * behaviour (no join, no confirmation, no metadata write).
  */
 /**
  * Write-time warning for filters whose values the matcher will never resolve
@@ -92,7 +88,6 @@ function kickOffSlackSetup(
 	},
 ): void {
 	if (row.type !== 'event') return
-	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
 	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
 	const hasStaleSetup =
 		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined

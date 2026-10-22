@@ -5,10 +5,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => false }))
 vi.mock('@/hooks/use-files', () => ({ useUploadFile: () => vi.fn() }))
 vi.mock('@/lib/file-utils', () => ({ readFileAsBase64: async () => 'AAAA' }))
-vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},

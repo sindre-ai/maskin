@@ -20,7 +20,6 @@ vi.mock('@tanstack/react-router', async () => {
 const sendMutate = vi.fn()
 let integrations: IntegrationResponse[] = []
 vi.mock('@/hooks/use-conversation', () => ({ useSendMessage: () => ({ mutate: sendMutate }) }))
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => true }))
 vi.mock('@/hooks/use-integrations', () => ({ useIntegrations: () => ({ data: integrations }) }))
 
 let role = 'member'

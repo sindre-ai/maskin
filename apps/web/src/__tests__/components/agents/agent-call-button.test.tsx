@@ -8,12 +8,6 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockFlag } = vi.hoisted(() => ({ mockFlag: vi.fn() }))
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (...args: unknown[]) => mockFlag(...args),
-}))
-
 // The dialog is covered by its own suite; here it is only a presence marker.
 vi.mock('@/components/agents/voice-call-dialog', () => ({
 	VoiceCallDialog: ({ open, agent }: { open: boolean; agent: { name: string } }) =>
@@ -32,18 +26,11 @@ const wrap = (ui: ReactNode) =>
 	)
 
 beforeEach(() => {
-	mockFlag.mockReset().mockReturnValue(true)
 	resetVoiceAvailability()
 	endVoiceCall()
 })
 
 describe('AgentCallButton', () => {
-	it('renders nothing when the voice-mode-v1 flag is off', () => {
-		mockFlag.mockReturnValue(false)
-		wrap(<AgentCallButton agent={agent} variant="row" />)
-		expect(screen.queryByRole('button')).not.toBeInTheDocument()
-	})
-
 	it('row variant: a labelled Call button that opens the dialog', async () => {
 		wrap(<AgentCallButton agent={agent} variant="row" shortcut={false} />)
 		const button = screen.getByRole('button', { name: 'Call Chief of Staff' })

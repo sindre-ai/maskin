@@ -1,6 +1,5 @@
 import { Composer } from '@/components/chat/chat'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -121,15 +120,9 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
 		firstMentionName ?? conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
-	// Task 6321aecf: same boundary as `<Composer>`'s `+` menu switch — when the
-	// flag is ON and there is no named counterpart, promote `/` and `@` in the
-	// placeholder rather than falling back to the generic phrase.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const placeholder = counterpart
 		? `Reply to ${counterpart}…`
-		: plusMenuAttachOnly
-			? 'Message… / reference or create · @ mention'
-			: 'Message this conversation'
+		: 'Message… / reference or create · @ mention'
 
 	return (
 		<Composer

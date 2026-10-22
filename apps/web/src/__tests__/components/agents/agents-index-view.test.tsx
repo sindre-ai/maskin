@@ -2,7 +2,7 @@ import { AgentsIndexView } from '@/components/agents/agents-index-view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -497,10 +497,7 @@ describe('AgentsIndexView', () => {
 	})
 })
 
-describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
-	beforeEach(() => window.localStorage.setItem('ff:voice-mode-v1', 'on'))
-	afterEach(() => window.localStorage.removeItem('ff:voice-mode-v1'))
-
+describe('AgentsIndexView — row Call button', () => {
 	it('gives every agent row a Call button, beside the row link and not inside it', () => {
 		mount([agentAda(), agentBrian()], [])
 		const call = screen.getByRole('button', { name: 'Call Ada' })
@@ -516,11 +513,5 @@ describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
 	it('has no Voice filter chip', () => {
 		mount([agentAda(), agentBrian()], [])
 		expect(screen.queryByRole('button', { name: /^Voice/ })).not.toBeInTheDocument()
-	})
-
-	it('renders no Call button when the flag is off', () => {
-		window.localStorage.setItem('ff:voice-mode-v1', 'off')
-		mount([agentAda()], [])
-		expect(screen.queryByRole('button', { name: 'Call Ada' })).not.toBeInTheDocument()
 	})
 })

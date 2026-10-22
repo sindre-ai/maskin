@@ -1,19 +1,11 @@
 import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { startVoiceCall } from '@/lib/voice-active-call'
 import { VOICE_UNAVAILABLE_TOOLTIP, useVoiceUnavailable } from '@/lib/voice-availability'
 import { Phone } from 'lucide-react'
 import { useEffect } from 'react'
-
-// One boundary per feature — this component reads `voice-mode-v1` and renders
-// nothing when the flag is off, so every surface that mounts it (agent detail
-// header, agent rows, thread header) stays trivial and the flag is not
-// scattered across per-element checks. When the flag is deleted (feature ships
-// to everyone), this component's guard is the only site to clean up.
-const VOICE_MODE_V1_ID = 'voice-mode-v1'
 
 export function AgentCallButton({
 	agent,
@@ -30,14 +22,13 @@ export function AgentCallButton({
 	 *  one page and V has no single agent to mean. */
 	shortcut?: boolean
 }) {
-	const enabled = useFeatureFlag(VOICE_MODE_V1_ID)
 	const unavailable = useVoiceUnavailable()
 
 	// `V` starts the call when the agent detail is focused (anywhere on the
 	// page counts, provided the user isn't typing in an input). Global scope
 	// mirrors the SPEC: "V opens when the agent detail is focused."
 	useEffect(() => {
-		if (!enabled || !shortcut || unavailable) return
+		if (!shortcut || unavailable) return
 		function onKey(e: KeyboardEvent) {
 			if (e.metaKey || e.ctrlKey || e.altKey) return
 			if (e.key.toLowerCase() !== 'v') return
@@ -53,9 +44,7 @@ export function AgentCallButton({
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [enabled, shortcut, unavailable, agent])
-
-	if (!enabled) return null
+	}, [shortcut, unavailable, agent])
 
 	const button = (
 		<Button
@@ -70,7 +59,7 @@ export function AgentCallButton({
 				// button is always inline. Focus (keyboard, or a tap that lands on the
 				// row) also reveals it, so it is never unreachable.
 				variant === 'row' &&
-					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 sm:w-auto sm:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
+					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 lg:w-auto lg:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
 				variant === 'icon' &&
 					'h-6 w-6 shrink-0 bg-brand text-brand-foreground hover:bg-brand-hover',
 				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
@@ -81,7 +70,7 @@ export function AgentCallButton({
 		>
 			<Phone size={variant === 'icon' ? 13 : 14} aria-hidden="true" />
 			{variant === 'detail' && `Call ${agent.name}`}
-			{variant === 'row' && <span className="hidden sm:inline">Call</span>}
+			{variant === 'row' && <span className="hidden lg:inline">Call</span>}
 		</Button>
 	)
 
