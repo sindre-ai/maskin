@@ -477,16 +477,21 @@ export type LinkedInHttpClientOptions = {
 }
 
 /**
- * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
- * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
- * include the `/v2` suffix — the path lives here so this client owns the
- * v1 → v2 migration surface in a single spot.
+ * The fetch wrapper behind `createLinkedInHttpClient`, exported so a sibling
+ * client (posts-reads.ts) shares the exact same auth headers, JSON handling and
+ * result shape instead of copying them.
  */
-export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+export type LinkedInHttpCall = <T>(
+	method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+	path: string,
+	body?: unknown,
+) => Promise<LinkedInHttpResult<T>>
+
+export function createLinkedInHttpCall(options: LinkedInHttpClientOptions): LinkedInHttpCall {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '')
 	const fetchFn = options.fetchImpl ?? fetch
 
-	async function call<T>(
+	return async function call<T>(
 		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
 		path: string,
 		body?: unknown,
@@ -517,6 +522,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		}
 		return { status: response.status, body: parsed as T, headers }
 	}
+}
+
+/**
+ * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
+ * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
+ * include the `/v2` suffix — the path lives here so this client owns the
+ * v1 → v2 migration surface in a single spot.
+ */
+export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+	const call = createLinkedInHttpCall(options)
 
 	return {
 		sendMessage(payload) {
