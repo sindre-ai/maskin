@@ -45,7 +45,8 @@ describe('alias_use event through the real SDK path', () => {
 			// A session that is already finished, so run_agent returns after one poll.
 			respond: ({ method, path }) => {
 				if (method === 'POST' && path === '/api/sessions') return { id: 's1', status: 'pending' }
-				if (method === 'GET' && path === '/api/sessions/s1') return { id: 's1', status: 'completed' }
+				if (method === 'GET' && path === '/api/sessions/s1')
+					return { id: 's1', status: 'completed' }
 				if (path.startsWith('/api/sessions/s1/logs')) return []
 				return undefined
 			},
@@ -209,7 +210,9 @@ describe('alias_use event through the real SDK path', () => {
 				const parsed = JSON.parse(outcome.text)
 				expect(parsed).toMatchObject({ session_id: 's1', settled: true, logs: [] })
 
-				const create = outcome.requests.find((r) => r.method === 'POST' && r.path === '/api/sessions')
+				const create = outcome.requests.find(
+					(r) => r.method === 'POST' && r.path === '/api/sessions',
+				)
 				expect(create?.body).toMatchObject({ actor_id: U1, action_prompt: SECRET })
 				expect(create?.workspace).toBe(DEFAULT_WORKSPACE_ID)
 				for (const dropped of [
@@ -226,7 +229,12 @@ describe('alias_use event through the real SDK path', () => {
 					tool_name: 'run_agent',
 					renames: [],
 					both_sent: false,
-					dropped_keys: ['config', 'poll_interval_seconds', 'timeout_seconds', 'depends_on_session_ids'],
+					dropped_keys: [
+						'config',
+						'poll_interval_seconds',
+						'timeout_seconds',
+						'depends_on_session_ids',
+					],
 					tool_alias: { old: 'run_agent', new: 'create_session' },
 				})
 				expect(captured.filter((c) => c.event.event_type === 'tool_call')).toHaveLength(1)

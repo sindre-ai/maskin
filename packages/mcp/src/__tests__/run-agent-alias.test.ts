@@ -16,8 +16,8 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { createMcpServer } from '../server'
 import { REMOVAL_LEDGER } from '../removal-ledger'
+import { createMcpServer } from '../server'
 import { MAX_LISTED_TOOL_ALIASES, TOOL_NAME_ALIASES } from '../tool-aliases'
 import { tools } from '../tools'
 
