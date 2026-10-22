@@ -31,12 +31,25 @@ vi.mock('../../lib/logger', () => ({
 const mocks = vi.hoisted(() => ({
 	webhookClientSentinel: { __sentinel: 'webhook-client' } as const,
 	handleUnipileAccountReconnect: vi.fn(),
+	ingest: vi.fn(),
+	realIngest: undefined as unknown as (...args: unknown[]) => Promise<unknown>,
 }))
 
 vi.mock('../../lib/integrations/providers/linkedin-unipile/webhook', () => ({
 	buildLinkedInClientForWebhook: () => mocks.webhookClientSentinel,
 	handleUnipileAccountReconnect: mocks.handleUnipileAccountReconnect,
 }))
+
+// The real ingest runs by default (account.reconnect without an account_id answers before
+// touching the db); only the re-enumeration test stubs it, because the db here is a sentinel.
+vi.mock('../../lib/integrations/providers/linkedin-unipile/ingest', async (importOriginal) => {
+	const actual =
+		await importOriginal<
+			typeof import('../../lib/integrations/providers/linkedin-unipile/ingest')
+		>()
+	mocks.realIngest = actual.ingestUnipileEnvelope as unknown as typeof mocks.realIngest
+	return { ...actual, ingestUnipileEnvelope: mocks.ingest }
+})
 
 import integrationsLinkedinRoutes from '../integrations-linkedin-unipile'
 
@@ -77,6 +90,8 @@ beforeEach(() => {
 	process.env.UNIPILE_WEBHOOK_SECRET = SECRET
 	mocks.handleUnipileAccountReconnect.mockReset()
 	mocks.handleUnipileAccountReconnect.mockResolvedValue({ appliedTo: [] })
+	mocks.ingest.mockReset()
+	mocks.ingest.mockImplementation((...args: unknown[]) => mocks.realIngest(...args))
 })
 
 afterEach(() => {
@@ -145,20 +160,21 @@ describe('POST /api/integrations/linkedin-unipile/webhook — auth', () => {
 describe('POST /api/integrations/linkedin-unipile/webhook — event handling', () => {
 	it('acknowledges (200 skipped) unhandled event kinds without re-enumerating', async () => {
 		const app = buildApp()
-		const body = '{"type":"message.new","account_id":"acc_1"}'
+		// message.new and relation.new are mapped events (ingested, not skipped); chat.new has no map row.
+		const body = '{"type":"chat.new","account_id":"acc_1"}'
 		const res = await app.request(ROUTE, {
 			method: 'POST',
 			headers: { 'unipile-signature': sign(body, SECRET), 'content-type': 'application/json' },
 			body,
 		})
 		expect(res.status).toBe(200)
-		const json = (await res.json()) as { ok: boolean; skipped?: boolean }
+		const json = (await res.json()) as { ok: boolean; skipped?: string }
 		expect(json.ok).toBe(true)
-		expect(json.skipped).toBe(true)
+		expect(json.skipped).toBe('unknown_type')
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
-	it('acknowledges (200 skipped) a payload missing account_id', async () => {
+	it('answers account.reconnect without account_id via ingest, no re-enumeration', async () => {
 		const app = buildApp()
 		const body = '{"type":"account.reconnect"}'
 		const res = await app.request(ROUTE, {
@@ -167,7 +183,7 @@ describe('POST /api/integrations/linkedin-unipile/webhook — event handling', (
 			body,
 		})
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: true })
+		expect(await res.json()).toEqual({ ok: true, skipped: 'missing_account_id' })
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
@@ -182,7 +198,7 @@ describe('POST /api/integrations/linkedin-unipile/webhook — event handling', (
 			body,
 		})
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: true })
+		expect(await res.json()).toEqual({ ok: true, skipped: 'unknown_type' })
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
@@ -191,6 +207,7 @@ describe('POST /api/integrations/linkedin-unipile/webhook — event handling', (
 		mocks.handleUnipileAccountReconnect.mockResolvedValueOnce({
 			appliedTo: [{ integrationId: 'int-1', workspaceId: 'ws-1', diff: { unchanged: [] } }],
 		})
+		mocks.ingest.mockResolvedValueOnce({ status: 200, body: { ok: true } })
 		const body = '{"type":"account.reconnect","account_id":"acc_target"}'
 		const res = await app.request(ROUTE, {
 			method: 'POST',

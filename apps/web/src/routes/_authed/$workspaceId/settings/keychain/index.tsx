@@ -1,21 +1,13 @@
-import {
-	CapturedViaChatBadge,
-	CredentialStatusBadge,
-	credentialName,
-	credentialTypeLabel,
-	describeScope,
-	isKeychainCredential,
-} from '@/components/keychain/keychain-parts'
-import { EmptyState } from '@/components/shared/empty-state'
+import { CredentialCard } from '@/components/keychain/credential-card'
+import { isKeychainCredential } from '@/components/keychain/keychain-parts'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -43,13 +35,12 @@ function KeychainPage() {
 	useDocumentTitle('Keychain')
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading, isError, error, refetch } = useIntegrations(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-	const actorName = (actorId: string) => actors?.find((a) => a.id === actorId)?.name
 
-	const credentials = (integrations ?? [])
-		.filter(isKeychainCredential)
-		.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
-	const hasChatCaptured = credentials.some((c) => c.source === 'chat_capture')
+	const credentials = sortBy(
+		(integrations ?? []).filter(isKeychainCredential),
+		(c) => c.displayName ?? '',
+		(c) => c.id,
+	)
 
 	return (
 		<div className="max-w-[720px]">
@@ -115,46 +106,11 @@ function KeychainPage() {
 					</ul>
 				</div>
 			) : (
-				<>
-					<ul className="flex flex-col">
-						{credentials.map((credential) => (
-							<li key={credential.id}>
-								<Link
-									to="/$workspaceId/settings/keychain/$integrationId"
-									params={{ workspaceId, integrationId: credential.id }}
-									className="flex flex-col gap-1.5 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted sm:flex-row sm:items-center sm:gap-3"
-								>
-									<div className="min-w-0 flex-1">
-										<div className="flex min-w-0 items-center gap-2">
-											<span className="truncate text-sm font-medium">
-												{credentialName(credential)}
-											</span>
-											{credential.source === 'chat_capture' && <CapturedViaChatBadge />}
-										</div>
-										<div className="mt-0.5 truncate text-xs text-muted-foreground">
-											{describeScope(credential.agentGrants, actorName)} ·{' '}
-											<RelativeTime date={credential.createdAt} />
-										</div>
-									</div>
-									<div className="flex shrink-0 items-center gap-1.5">
-										<Badge variant="outline">{credentialTypeLabel(credential.providerMode)}</Badge>
-										<CredentialStatusBadge integration={credential} />
-									</div>
-								</Link>
-							</li>
-						))}
-					</ul>
-					<p className="mt-3 text-center text-xs text-muted-foreground">
-						Encrypted at rest. Every use is logged. See any credential for its audit trail.
-						{hasChatCaptured && (
-							<>
-								{' '}
-								Credentials with <span aria-hidden>💬</span> Captured via chat were vaulted from a
-								live session.
-							</>
-						)}
-					</p>
-				</>
+				<div className="flex flex-col gap-3">
+					{credentials.map((credential) => (
+						<CredentialCard key={credential.id} credential={credential} />
+					))}
+				</div>
 			)}
 		</div>
 	)
