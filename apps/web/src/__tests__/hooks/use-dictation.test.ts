@@ -1,117 +1,156 @@
 import { useDictation } from '@/hooks/use-dictation'
-import { act, renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-interface FakeRecognition {
-	continuous: boolean
-	interimResults: boolean
-	lang: string
-	start: () => void
-	stop: () => void
-	abort: () => void
-	onresult: ((event: unknown) => void) | null
-	onerror: (() => void) | null
-	onend: (() => void) | null
-}
+const { mockCreate, mockToast } = vi.hoisted(() => ({
+	mockCreate: vi.fn(),
+	mockToast: { error: vi.fn(), info: vi.fn() },
+}))
 
-let instances: FakeRecognition[] = []
+vi.mock('@/lib/api', () => ({ api: { transcriptions: { create: mockCreate } } }))
+vi.mock('sonner', () => ({ toast: mockToast }))
+// Decoding and re-encoding real audio is covered in wav.test.ts; here the
+// recording is just bytes that flow through.
+vi.mock('@/lib/wav', () => ({
+	blobToWav16k: vi.fn(async () => new Blob(['wav'])),
+	blobToBase64: vi.fn(async () => 'BASE64'),
+}))
 
-function installFakeSpeechRecognition() {
-	instances = []
-	class FakeSpeechRecognition implements FakeRecognition {
-		continuous = false
-		interimResults = false
-		lang = ''
-		onresult: ((event: unknown) => void) | null = null
-		onerror: (() => void) | null = null
-		onend: (() => void) | null = null
-		start = vi.fn()
-		stop = vi.fn(() => {
-			this.onend?.()
-		})
-		abort = vi.fn()
-		constructor() {
-			instances.push(this)
-		}
+const WORKSPACE = 'workspace-1'
+
+let recorders: FakeRecorder[] = []
+let trackStop: ReturnType<typeof vi.fn>
+
+class FakeRecorder {
+	state: 'inactive' | 'recording' = 'inactive'
+	mimeType = 'audio/webm'
+	ondataavailable: ((e: { data: Blob }) => void) | null = null
+	onstop: (() => void) | null = null
+	constructor() {
+		recorders.push(this)
 	}
-	;(window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition = FakeSpeechRecognition
+	start() {
+		this.state = 'recording'
+	}
+	stop() {
+		this.state = 'inactive'
+		this.ondataavailable?.({ data: new Blob(['audio']) })
+		this.onstop?.()
+	}
 }
+
+function installMic(opts: { deny?: boolean } = {}) {
+	trackStop = vi.fn()
+	Object.defineProperty(navigator, 'mediaDevices', {
+		configurable: true,
+		value: {
+			getUserMedia: vi.fn(async () => {
+				if (opts.deny) throw new Error('denied')
+				return { getTracks: () => [{ stop: trackStop }] }
+			}),
+		},
+	})
+	vi.stubGlobal('MediaRecorder', FakeRecorder)
+}
+
+beforeEach(() => {
+	recorders = []
+	mockCreate.mockReset()
+	mockToast.error.mockReset()
+	mockToast.info.mockReset()
+})
 
 afterEach(() => {
-	;(window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition = undefined
-	;(window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = undefined
+	vi.unstubAllGlobals()
+	Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
 describe('useDictation', () => {
-	it('reports unsupported when the browser has no SpeechRecognition', () => {
-		const { result } = renderHook(() => useDictation(vi.fn()))
+	it('reports unsupported when the browser cannot record audio', () => {
+		const { result } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
 		expect(result.current.supported).toBe(false)
 		expect(result.current.recording).toBe(false)
 	})
 
-	it('toggle() does nothing when unsupported', () => {
-		const { result } = renderHook(() => useDictation(vi.fn()))
-		act(() => result.current.toggle())
-		expect(result.current.recording).toBe(false)
-	})
-
-	it('reports supported when the webkit-prefixed global is present', () => {
-		;(window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = class {}
-		const { result } = renderHook(() => useDictation(vi.fn()))
+	it('reports supported when getUserMedia and MediaRecorder exist', () => {
+		installMic()
+		const { result } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
 		expect(result.current.supported).toBe(true)
 	})
 
-	it('transitions into and out of recording', () => {
-		installFakeSpeechRecognition()
-		const { result } = renderHook(() => useDictation(vi.fn()))
-
-		act(() => result.current.toggle())
-		expect(result.current.recording).toBe(true)
-		expect(instances[0].start).toHaveBeenCalled()
-		expect(instances[0].continuous).toBe(true)
-
+	it('toggle() does nothing when unsupported', () => {
+		const { result } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
 		act(() => result.current.toggle())
 		expect(result.current.recording).toBe(false)
 	})
 
-	it('toggle() flips the recording state', () => {
-		installFakeSpeechRecognition()
-		const { result } = renderHook(() => useDictation(vi.fn()))
+	it('records, then sends the audio for transcription and delivers the text', async () => {
+		installMic()
+		mockCreate.mockResolvedValue({ text: ' catch me up ' })
+		const onPhrase = vi.fn()
+		const { result } = renderHook(() => useDictation(onPhrase, WORKSPACE))
 
 		act(() => result.current.toggle())
-		expect(result.current.recording).toBe(true)
+		await waitFor(() => expect(result.current.recording).toBe(true))
+
 		act(() => result.current.toggle())
+		await waitFor(() => expect(onPhrase).toHaveBeenCalledWith('catch me up'))
+		expect(mockCreate).toHaveBeenCalledWith(WORKSPACE, { audio: 'BASE64' })
 		expect(result.current.recording).toBe(false)
+		expect(result.current.transcribing).toBe(false)
+		expect(trackStop).toHaveBeenCalled()
 	})
 
-	it('emits only finalised phrases', () => {
-		installFakeSpeechRecognition()
-		const onTranscript = vi.fn()
-		const { result } = renderHook(() => useDictation(onTranscript))
+	it('tells the user when no speech was detected', async () => {
+		installMic()
+		mockCreate.mockResolvedValue({ text: '  ' })
+		const onPhrase = vi.fn()
+		const { result } = renderHook(() => useDictation(onPhrase, WORKSPACE))
+
+		act(() => result.current.toggle())
+		await waitFor(() => expect(result.current.recording).toBe(true))
 		act(() => result.current.toggle())
 
-		act(() => {
-			instances[0].onresult?.({
-				resultIndex: 0,
-				results: { length: 1, 0: { isFinal: false, 0: { transcript: 'partial' } } },
-			})
-		})
-		expect(onTranscript).not.toHaveBeenCalled()
-
-		act(() => {
-			instances[0].onresult?.({
-				resultIndex: 0,
-				results: { length: 1, 0: { isFinal: true, 0: { transcript: 'catch me up' } } },
-			})
-		})
-		expect(onTranscript).toHaveBeenCalledWith('catch me up')
+		await waitFor(() => expect(mockToast.info).toHaveBeenCalledWith('No speech detected'))
+		expect(onPhrase).not.toHaveBeenCalled()
 	})
 
-	it('leaves recording when the recogniser errors out', () => {
-		installFakeSpeechRecognition()
-		const { result } = renderHook(() => useDictation(vi.fn()))
+	it('surfaces a transcription failure and leaves the draft alone', async () => {
+		installMic()
+		mockCreate.mockRejectedValue(new Error('Transcription failed'))
+		const onPhrase = vi.fn()
+		const { result } = renderHook(() => useDictation(onPhrase, WORKSPACE))
+
 		act(() => result.current.toggle())
-		act(() => instances[0].onerror?.())
+		await waitFor(() => expect(result.current.recording).toBe(true))
+		act(() => result.current.toggle())
+
+		await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Transcription failed'))
+		expect(onPhrase).not.toHaveBeenCalled()
+		expect(result.current.transcribing).toBe(false)
+	})
+
+	it('stays idle and says so when microphone access is denied', async () => {
+		installMic({ deny: true })
+		const { result } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
+
+		act(() => result.current.toggle())
+
+		await waitFor(() =>
+			expect(mockToast.error).toHaveBeenCalledWith('Microphone access was blocked'),
+		)
 		expect(result.current.recording).toBe(false)
+		expect(recorders).toHaveLength(0)
+	})
+
+	it('releases the microphone when unmounted mid-recording', async () => {
+		installMic()
+		const { result, unmount } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
+		act(() => result.current.toggle())
+		await waitFor(() => expect(result.current.recording).toBe(true))
+
+		unmount()
+
+		expect(trackStop).toHaveBeenCalled()
 	})
 })

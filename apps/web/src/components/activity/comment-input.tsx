@@ -7,6 +7,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
@@ -237,12 +238,13 @@ export function CommentInput({
 		setMentionFilter('')
 	}, [])
 
-	// Appends dictated phrases to the draft. Renders nothing at all when the
-	// browser has no SpeechRecognition — never a dead control.
+	// Appends the dictated transcript to the draft. Renders nothing at all when
+	// the browser cannot record audio — never a dead control.
 	const dictation = useDictation(
 		useCallback((text: string) => {
 			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
 		}, []),
+		workspaceId,
 	)
 
 	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
@@ -532,10 +534,18 @@ export function CommentInput({
 						dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
 					)}
 					onClick={dictation.toggle}
+					disabled={dictation.transcribing}
 					aria-pressed={dictation.recording}
-					aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+					aria-busy={dictation.transcribing}
+					aria-label={
+						dictation.transcribing
+							? 'Transcribing'
+							: dictation.recording
+								? 'Stop dictating'
+								: 'Dictate a comment'
+					}
 				>
-					<Mic size={14} aria-hidden />
+					{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
 				</Button>
 			) : null}
 			<Button
