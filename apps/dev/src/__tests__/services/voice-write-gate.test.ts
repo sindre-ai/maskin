@@ -65,8 +65,14 @@ describe('isRiskyTool', () => {
 
 describe('withConfirmationArg', () => {
 	const tools = [
-		{ name: 'list_objects', parameters: { type: 'object', properties: { cursor: { type: 'string' } } } },
-		{ name: 'create_comment', parameters: { type: 'object', properties: { content: { type: 'string' } } } },
+		{
+			name: 'list_objects',
+			parameters: { type: 'object', properties: { cursor: { type: 'string' } } },
+		},
+		{
+			name: 'create_comment',
+			parameters: { type: 'object', properties: { content: { type: 'string' } } },
+		},
 		{ name: 'ping', parameters: { type: 'object' } },
 	]
 	const out = withConfirmationArg(tools, new Set(['list_objects']))

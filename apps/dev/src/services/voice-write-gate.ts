@@ -104,10 +104,9 @@ export function isRiskyTool(name: string): boolean {
  * tool the gate can hold. Without it the model is told to send an argument its
  * tool definition does not list, which a strict vendor would refuse.
  */
-export function withConfirmationArg<T extends { name: string; parameters: Record<string, unknown> }>(
-	tools: T[],
-	readOnlyTools: ReadonlySet<string>,
-): T[] {
+export function withConfirmationArg<
+	T extends { name: string; parameters: Record<string, unknown> },
+>(tools: T[], readOnlyTools: ReadonlySet<string>): T[] {
 	return tools.map((tool) => {
 		if (readOnlyTools.has(tool.name)) return tool
 		const properties = (tool.parameters.properties ?? {}) as Record<string, unknown>
