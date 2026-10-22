@@ -14,6 +14,7 @@ const { default: notificationsRoutes } = await import('../../routes/notification
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
+const sourceActorId = '00000000-0000-0000-0000-0000000000a9'
 
 describe('Notifications Routes', () => {
 	beforeEach(() => {
@@ -25,9 +26,16 @@ describe('Notifications Routes', () => {
 			const notification = buildNotification({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insertQueue = [[notification], []]
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
 			)
 
 			expect(res.status).toBe(201)
@@ -45,9 +53,16 @@ describe('Notifications Routes', () => {
 				'agent',
 			)
 			mockResults.insertQueue = [[notification], []]
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
 			)
 
 			expect(res.status).toBe(201)
@@ -67,9 +82,16 @@ describe('Notifications Routes', () => {
 			const notification = buildNotification({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insertQueue = [[notification], []]
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			await app.request(
-				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
 			)
 
 			expect(trackCreateNotificationCalledMock).toHaveBeenCalledOnce()
@@ -81,9 +103,16 @@ describe('Notifications Routes', () => {
 		it('skips the emitter when notification insert fails', async () => {
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insert = []
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
 			)
 
 			expect(res.status).toBe(500)
@@ -93,9 +122,16 @@ describe('Notifications Routes', () => {
 		it('returns 500 when insert fails', async () => {
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insert = []
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
 			)
 
 			expect(res.status).toBe(500)
@@ -105,8 +141,11 @@ describe('Notifications Routes', () => {
 			const notification = buildNotification({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insertQueue = [[notification], []]
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const body = buildCreateNotificationBody({
+				source_actor_id: sourceActorId,
 				metadata: {
 					actions: [
 						{ label: 'Merged, continue', response: 'merged_continue' },
@@ -123,8 +162,11 @@ describe('Notifications Routes', () => {
 			const notification = buildNotification({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insertQueue = [[notification], []]
+			// The source agent is a member of the workspace.
+			mockResults.select = [{ id: sourceActorId }]
 
 			const body = buildCreateNotificationBody({
+				source_actor_id: sourceActorId,
 				metadata: {
 					actions: JSON.stringify([{ label: 'Approve', response: 'approved' }]),
 				},
@@ -138,11 +180,51 @@ describe('Notifications Routes', () => {
 			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
 
 			const body = buildCreateNotificationBody({
+				source_actor_id: sourceActorId,
 				metadata: { actions: 'not valid json' },
 			})
 
 			const res = await app.request(jsonRequest('POST', '/api/notifications', body, headers))
 			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 and writes nothing when the source agent is not a workspace member', async () => {
+			const { app, mockResults, calls } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({ source_actor_id: sourceActorId }),
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
+			expect(trackCreateNotificationCalledMock).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and writes nothing when the linked session is not in the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Source agent is a member; the session lookup, scoped to this workspace, finds nothing.
+			mockResults.selectQueue = [[{ id: sourceActorId }], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/notifications',
+					buildCreateNotificationBody({
+						source_actor_id: sourceActorId,
+						session_id: '00000000-0000-0000-0000-0000000000bb',
+					}),
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 
@@ -270,8 +352,14 @@ describe('Notifications Routes', () => {
 				notificationsRoutes,
 				'/api/notifications',
 			)
-			// notification lookup, membership check, source actor lookup (agent)
-			mockResults.selectQueue = [[notification], [buildWorkspaceMember()], [{ type: 'agent' }]]
+			// notification lookup, membership check, source actor lookup (agent), then
+			// startSession's check that the agent is a workspace member
+			mockResults.selectQueue = [
+				[notification],
+				[buildWorkspaceMember()],
+				[{ type: 'agent' }],
+				[{ id: sourceAgentId }],
+			]
 			mockResults.update = [resolved]
 			mockResults.insert = []
 
@@ -393,6 +481,7 @@ describe('Notifications Routes', () => {
 				[buildWorkspaceMember()],
 				[{ type: 'agent' }],
 				[{ status: 'completed' }],
+				[{ id: sourceAgentId }],
 			]
 			mockResults.update = [resolved]
 			mockResults.insert = []

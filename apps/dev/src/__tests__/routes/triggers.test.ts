@@ -19,6 +19,7 @@ const { default: triggersRoutes } = await import('../../routes/triggers')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 const testerActorId = 'test-actor-id'
+const targetActorId = '00000000-0000-0000-0000-0000000000a1'
 
 beforeEach(() => {
 	runSlackTriggerSetupMock.mockClear()
@@ -30,11 +31,16 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(201)
@@ -75,12 +81,19 @@ describe('Triggers Routes', () => {
 			})
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
 				jsonRequest(
 					'POST',
 					'/api/triggers',
-					buildCreateTriggerBody({ type: 'event', name: 'Sales alerts', config }),
+					buildCreateTriggerBody({
+						type: 'event',
+						name: 'Sales alerts',
+						config,
+						target_actor_id: targetActorId,
+					}),
 					{ 'x-workspace-id': wsId },
 				),
 			)
@@ -100,15 +113,38 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(201)
 			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and writes nothing when the target agent is not a member of the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// The membership lookup finds no row for the target agent in this workspace.
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 
@@ -164,6 +200,20 @@ describe('Triggers Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+		})
+
+		it('returns 404 and updates nothing when the new target agent is not a workspace member', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// Trigger row, the caller's membership, then no membership row for the target.
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { target_actor_id: targetActorId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
 		})
 
 		it('returns 404 when trigger not found', async () => {

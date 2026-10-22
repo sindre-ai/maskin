@@ -93,3 +93,33 @@ describe('alignTopFields', () => {
 		expect(alignTopFields(['data'], undefined)).toEqual({ topFields: [], topFieldBytes: [] })
 	})
 })
+
+describe('recordMcpToolCallResponseSizeSchema — view', () => {
+	const sizeEvent = (overrides: Record<string, unknown> = {}) => ({
+		event_type: 'tool_call_response_size' as const,
+		tool_name: 'list_actors',
+		session_id: 'session-1',
+		content_bytes: 10,
+		content_tokens: 2,
+		structured_content_bytes: 900,
+		structured_content_tokens: 220,
+		truncated: false,
+		...overrides,
+	})
+
+	it.each(['slim', 'full'])('accepts view=%s', (view) => {
+		expect(recordMcpToolCallResponseSizeSchema.parse(sizeEvent({ view })).view).toBe(view)
+	})
+
+	it('leaves view undefined when the producer omits it', () => {
+		expect(recordMcpToolCallResponseSizeSchema.parse(sizeEvent()).view).toBeUndefined()
+	})
+
+	it('drops a free-text view instead of rejecting the event', () => {
+		const parsed = recordMcpToolCallResponseSizeSchema.parse(
+			sizeEvent({ view: 'Acquire the Nakatomi account' }),
+		)
+		expect(parsed.view).toBeUndefined()
+		expect(parsed.structured_content_bytes).toBe(900)
+	})
+})
