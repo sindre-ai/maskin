@@ -421,6 +421,29 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # Playwright's OS packages (fonts, xvfb, newer glib/nss) come from
+      # azure.archive.ubuntu.com, ~26 MB. On some runners that mirror serves at
+      # ~50 kB/s, so the install stalled 9 to 11 minutes on 2 of 7 shards per run
+      # while the others finished it in ~12 seconds. Keep the downloaded .deb files
+      # in a cache and point apt at it, so a warm run needs no download at all.
+      # Keyed like the browser cache: the lockfile pins the Playwright version, which
+      # pins the package list. Only the archives are cached, never installed state.
+      - name: Cache Playwright OS packages
+        if: needs.changes.outputs.e2e == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/playwright-apt-archives
+          key: playwright-apt-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Point apt at the package cache
+        if: needs.changes.outputs.e2e == 'true'
+        run: |
+          mkdir -p "$HOME/playwright-apt-archives/partial"
+          echo "Dir::Cache::Archives \"$HOME/playwright-apt-archives\";" | sudo tee /etc/apt/apt.conf.d/99playwright-archives
+          # apt downloads as the _apt user; without write access it falls back to root with a warning.
+          sudo chown -R _apt "$HOME/playwright-apt-archives/partial"
+          ls "$HOME/playwright-apt-archives" | grep -c '\.deb$' || true
+
       - name: Install Playwright browsers
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
@@ -428,6 +451,11 @@ jobs:
       - name: Install Playwright OS dependencies
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
+
+      # apt leaves root-only files (its lock) behind; the cache save runs as the runner user.
+      - name: Make the package cache readable for saving
+        if: always() && needs.changes.outputs.e2e == 'true'
+        run: sudo rm -f "$HOME/playwright-apt-archives/lock" && sudo chmod -R a+rX "$HOME/playwright-apt-archives"
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
         if: needs.changes.outputs.e2e == 'true'
