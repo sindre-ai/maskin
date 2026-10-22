@@ -318,10 +318,13 @@ export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' |
  * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
  * Keychain credentials only ever use 'read_write' (on/off): no row is off.
  */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
-/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
-export type IntegrationDefaultAccess = 'read' | 'none'
+/**
+ * What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything
+ * else unless a person picked 'read_write' (every agent may write) or 'none'.
+ */
+export type IntegrationDefaultAccess = 'read' | 'read_write' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -357,7 +360,7 @@ export const integrations = pgTable(
 			.default('registered'),
 		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
 		displayName: text('display_name'),
-		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// What an agent with no agent_grants row may do: 'read' (default), 'read_write' or 'none'.
 		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
 		defaultAgentAccess: text('default_agent_access')
 			.$type<IntegrationDefaultAccess>()
@@ -398,7 +401,7 @@ export const integrations = pgTable(
 		),
 		check(
 			'integrations_default_agent_access_enum',
-			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+			sql`${t.defaultAgentAccess} IN ('read', 'read_write', 'none')`,
 		),
 		check(
 			'integrations_source_enum',
@@ -441,10 +444,7 @@ export const agentGrants = pgTable(
 	(t) => [
 		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
 		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
-		check(
-			'agent_grants_access_enum',
-			sql`${t.access} IN ('none', 'read', 'ask_first', 'read_write')`,
-		),
+		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect

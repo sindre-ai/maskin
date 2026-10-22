@@ -62,7 +62,9 @@ struct DecisionDraftMappingTests {
 
 		#expect(
 			decision.draft
-				== DecisionDraft(label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?"))
+				== DecisionDraft(
+					label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?",
+					objectId: "task-1"))
 	}
 
 	@Test("falls back to the label Draft")

@@ -13,7 +13,6 @@ vi.mock('../../../lib/events/record-event', () => ({
 import { buildAccessPreamble } from '../../../lib/integrations/access-preamble'
 import {
 	type AgentAccess,
-	canActWithoutAsking,
 	canRead,
 	canWrite,
 	effectiveAccess,
@@ -66,16 +65,13 @@ describe('classifyTool', () => {
 })
 
 describe('access levels', () => {
-	it.each<[AgentAccess, boolean, boolean, boolean]>([
-		['none', false, false, false],
-		['read', true, false, false],
-		// Ask first uses the write tools; it is only the irreversible action that asks.
-		['ask_first', true, true, false],
-		['read_write', true, true, true],
-	])('%s: can read %s, can write %s, acts without asking %s', (access, read, write, acts) => {
+	it.each<[AgentAccess, boolean, boolean]>([
+		['none', false, false],
+		['read', true, false],
+		['read_write', true, true],
+	])('%s: can read %s, can write %s', (access, read, write) => {
 		expect(canRead(access)).toBe(read)
 		expect(canWrite(access)).toBe(write)
-		expect(canActWithoutAsking(access)).toBe(acts)
 	})
 
 	it('resolves from a grant, the default, and the Keychain rule', () => {
@@ -83,7 +79,11 @@ describe('access levels', () => {
 		expect(effectiveAccess(reg, null)).toBe('read')
 		expect(effectiveAccess({ ...reg, defaultAgentAccess: 'none' }, null)).toBe('none')
 		expect(effectiveAccess(reg, 'read_write')).toBe('read_write')
-		expect(effectiveAccess({ ...reg, providerMode: 'byo_login' }, null)).toBe('none')
+		// A saved key or login is on or off: its own entry, else its default (none unless set to read).
+		const login = { ...reg, providerMode: 'byo_login' as const }
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'none' }, null)).toBe('none')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, null)).toBe('read_write')
+		expect(effectiveAccess({ ...login, defaultAgentAccess: 'read' }, 'none')).toBe('none')
 	})
 })
 
@@ -244,10 +244,10 @@ describe('buildAccessPreamble', () => {
 		expect(text.endsWith('\n\n')).toBe(true)
 	})
 
-	it('tells the agent that Gmail asks first, in the words the person sees', () => {
-		const text = buildAccessPreamble([row('gmail', 'ask_first')])
+	it('tells the agent that Gmail still needs a person to approve each email', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')])
 		expect(text).toMatch(
-			/- gmail: Ask first \(all tools, but sending needs a person to approve each one\)/i,
+			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
 		)
 	})
 

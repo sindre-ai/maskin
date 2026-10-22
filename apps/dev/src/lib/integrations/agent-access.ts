@@ -15,9 +15,11 @@ import { isGatedRow } from './custom-mcp'
 /**
  * What one actor may do with one integration. The single place that answers it.
  *
- * - Keychain credentials (byo_*) are explicit-grant: any agent_grants row means
- *   on (read_write), no row means off. There is no read/write split for a raw key
- *   or login, because it is injected as an env var and "read" could not stop a write.
+ * - Keychain credentials (byo_*) are on or off: the agent's own row if it has one
+ *   ('none' is off, anything else is on, read_write), else the credential's default
+ *   ('read' is on for every agent without a row, 'none' is off). Every credential starts
+ *   at 'none', so it is fail-closed until a person grants it. There is no read/write split
+ *   for a raw key or login, because it is injected as an env var and "read" could not stop a write.
  * - Every other integration: the agent's row if it has one, else the integration's
  *   default_agent_access ('read' unless a person switched it to 'none').
  * - People are not subject to grants on ordinary integrations; a Keychain credential
@@ -25,12 +27,9 @@ import { isGatedRow } from './custom-mcp'
  */
 export type AgentAccess = 'none' | AgentGrantAccess
 
-export const canRead = (a: AgentAccess): boolean =>
-	a === 'read' || a === 'ask_first' || a === 'read_write'
-/** May use the integration's write tools. "Ask first" may: it is the irreversible ones that ask. */
-export const canWrite = (a: AgentAccess): boolean => a === 'ask_first' || a === 'read_write'
-/** May do an irreversible action (send an email) without a person's yes. Only "Read & write". */
-export const canActWithoutAsking = (a: AgentAccess): boolean => a === 'read_write'
+export const canRead = (a: AgentAccess): boolean => a === 'read' || a === 'read_write'
+/** May use the integration's write tools. Where an action cannot be undone it still asks a person. */
+export const canWrite = (a: AgentAccess): boolean => a === 'read_write'
 export const hasAnyAccess = (a: AgentAccess): boolean => a !== 'none'
 
 export function isKeychainMode(mode: IntegrationProviderMode): boolean {
@@ -45,9 +44,10 @@ export function effectiveAccess(
 	},
 	grant: AgentGrantAccess | null,
 ): AgentAccess {
-	// A saved key or login is on or off: a row (never 'none') is on, no row is off.
+	// A saved key or login is on or off: its own row decides, else the default does.
 	if (isKeychainMode(integration.providerMode)) {
-		return grant && grant !== 'none' ? 'read_write' : 'none'
+		if (grant) return grant === 'none' ? 'none' : 'read_write'
+		return integration.defaultAgentAccess === 'read' ? 'read_write' : 'none'
 	}
 	return grant ?? integration.defaultAgentAccess
 }
@@ -120,6 +120,8 @@ export interface ActorIntegrationAccess {
 	exposed: boolean
 	/** A custom tool server Maskin sits in front of (has Read / Read & write / No access). */
 	gated: boolean
+	/** Which account this is when a provider can be connected more than once (GitHub: the org). */
+	accountLabel?: string | null
 }
 
 /**
@@ -202,11 +204,7 @@ export async function listAgentAccess(
 			providerMode: r.providerMode,
 			displayName: r.displayName,
 			access: viaChat ? ('read_write' as const) : effectiveAccess(r, r.grant),
-			source: viaChat
-				? ('chat' as const)
-				: r.grant || keychain
-					? ('grant' as const)
-					: ('default' as const),
+			source: viaChat ? ('chat' as const) : r.grant ? ('grant' as const) : ('default' as const),
 			chatCount: keychain ? chats.length : 0,
 			defaultAgentAccess: r.defaultAgentAccess,
 			status: r.status,
@@ -215,8 +213,15 @@ export async function listAgentAccess(
 				(r.config as { expose_to_agent_sessions?: boolean } | null)?.expose_to_agent_sessions !==
 				false,
 			gated: isGatedRow(r.config),
+			accountLabel: accountLabelOf(r.config),
 		}
 	})
+}
+
+/** The org or login an install belongs to, when the provider stores one (GitHub). */
+function accountLabelOf(config: unknown): string | null {
+	const login = (config as { owner_login?: unknown } | null)?.owner_login
+	return typeof login === 'string' && login.length > 0 ? login : null
 }
 
 /** Whether every actor id is an agent in the workspace. Grants name agents only. */
