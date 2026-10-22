@@ -32,10 +32,7 @@ import {
 	realtimeCallsUrl,
 } from '../services/voice-realtime-call'
 import {
-	VOICE_DAILY_MINUTE_CAP,
 	endVoiceSession,
-	getVoiceMinutesUsedToday,
-	secondsUntilVoiceCapResets,
 	setCloseVendorSessionFn,
 } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
@@ -203,11 +200,6 @@ const postVoiceSessionRoute = createRoute({
 			description: 'Caller already has a live voice session',
 			content: { 'application/json': { schema: errorSchema } },
 		},
-		429: {
-			description:
-				'The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`',
-			content: { 'application/json': { schema: rateLimitedResponse } },
-		},
 		500: {
 			description: 'The reservation row could not be written',
 			content: { 'application/json': { schema: errorSchema } },
@@ -280,28 +272,6 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 			reason: 'no_active_agent',
 		})
 		return c.json(createApiError('BAD_REQUEST', 'Target actor is not an agent'), 400)
-	}
-
-	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,
-	// not the packaging number: Pricing Strategist owns that. Checked before any
-	// row is written or vendor call is made, so a capped workspace costs nothing.
-	const minutesUsed = await getVoiceMinutesUsedToday(db, workspaceId)
-	if (minutesUsed >= VOICE_DAILY_MINUTE_CAP) {
-		await captureVoiceSessionDenied(humanActorId, {
-			agent_id: agentActorId,
-			workspace_id: workspaceId,
-			reason: 'rate_limited',
-		})
-		return c.json(
-			{
-				error: {
-					code: 'RATE_LIMITED' as const,
-					message: 'This workspace has used its voice minutes for today',
-				},
-				retry_after_seconds: secondsUntilVoiceCapResets(),
-			},
-			429,
-		)
 	}
 
 	// The DB unique index on (human_actor_id) partial to status IN

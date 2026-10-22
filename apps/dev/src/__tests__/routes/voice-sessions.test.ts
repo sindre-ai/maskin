@@ -84,7 +84,6 @@ describe('POST /api/voice-sessions', () => {
 			[membershipRow()],
 			[{ role: 'member' }], // writer-role check
 			[agentRow()],
-			[{ seconds: '0' }], // daily minutes used
 		]
 		// The route inserts voice_sessions first; the partial unique index on
 		// (human_actor_id) fires with pg code 23505.
@@ -102,34 +101,6 @@ describe('POST /api/voice-sessions', () => {
 		expect(body.error.code).toBe('CONFLICT')
 	})
 
-	it('429s with retry_after_seconds when the workspace has used its 60 daily voice minutes', async () => {
-		const { app, mockResults, calls } = createTestApp(
-			voiceSessionsRoutes,
-			'/api/voice-sessions',
-			HUMAN,
-		)
-		mockResults.selectQueue = [
-			[membershipRow()],
-			[{ role: 'member' }], // writer-role check
-			[agentRow()],
-			[{ seconds: String(60 * 60) }], // daily seconds used: exactly the cap
-		]
-
-		const res = await app.request(
-			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
-		)
-		expect(res.status).toBe(429)
-		const body = (await res.json()) as {
-			error: { code: string }
-			retry_after_seconds: number
-		}
-		expect(body.error.code).toBe('RATE_LIMITED')
-		expect(body.retry_after_seconds).toBeGreaterThanOrEqual(1)
-		expect(body.retry_after_seconds).toBeLessThanOrEqual(24 * 60 * 60)
-		// Nothing written for a capped workspace.
-		expect(calls.inserts).toHaveLength(0)
-	})
-
 	it('returns 201 with only the session id: no vendor credential leaves the server', async () => {
 		const insertedId = '11111111-1111-4111-8111-111111111111'
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
@@ -137,7 +108,6 @@ describe('POST /api/voice-sessions', () => {
 			[membershipRow()],
 			[{ role: 'member' }], // writer-role check
 			[agentRow()],
-			[{ seconds: '0' }], // daily minutes used
 		]
 		mockResults.insert = [{ id: insertedId }]
 
