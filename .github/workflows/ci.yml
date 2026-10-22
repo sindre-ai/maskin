@@ -144,9 +144,9 @@ jobs:
 
   integration-tests:
     # lint-typecheck is a gate here and on unit-tests and verify-e2e: when it fails they are
-    # skipped, so a red lint run reports in about a minute instead of 16 to 22. A skipped job
-    # still counts as passing for its required check, but lint-typecheck itself is required
-    # and red, so the PR stays blocked.
+    # skipped, so a red lint run reports in about a minute instead of 16 to 22. Their required
+    # checks then read as skipped (verify-e2e as one skipped job, not seven), never as passed
+    # by a test run; lint-typecheck is itself required and red, so the PR stays blocked.
     needs: [changes, lint-typecheck]
     # A skipped job counts as passing for the required check of the same name.
     if: needs.changes.outputs.backend == 'true'
