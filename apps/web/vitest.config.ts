@@ -12,15 +12,6 @@ export default defineConfig({
 		// host. Locale is deliberately NOT pinned — RelativeTime formats in the
 		// viewer's locale on purpose, so tests assert shape, never English words.
 		env: { TZ: 'UTC' },
-		server: {
-			deps: {
-				// The bubble menu's ESM build does `import tippy from 'tippy.js'`, and tippy.js
-				// ships CommonJS as its main entry. Node hands that import the whole exports
-				// object, so the first editor transaction throws "tippy is not a function".
-				// Inlining lets Vite resolve tippy.js to its ESM build instead.
-				inline: ['@tiptap/extension-bubble-menu'],
-			},
-		},
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'lcov'],
