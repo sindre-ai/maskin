@@ -6,12 +6,14 @@ import {
 } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
 import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
 import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
 import {
+	ATTACHMENTS_REFUSED_MESSAGE,
 	commentOnLinkedInPost,
 	deleteLinkedInPost,
 	editLinkedInPost,
@@ -28,7 +30,7 @@ import {
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
 } from './operations'
-import { replyWithApprovedObject } from './send-object'
+import { sendApprovedLinkedInObject } from './send-object'
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
@@ -62,6 +64,8 @@ export interface LinkedInMcpContext {
 	/** Calling actor — used as the ledger key by the operations layer. */
 	actorId: string
 	workspaceId: string
+	/** Where workspace files are read from, for an approved message that carries one. */
+	storage?: StorageProvider
 }
 
 /**
@@ -174,7 +178,13 @@ export function registerLinkedInMcpInstance(
 	ctx: LinkedInMcpContext,
 ): void {
 	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg))
-	const opCtx = { db: ctx.db, actorId: ctx.actorId, workspaceId: ctx.workspaceId, identity: cfg }
+	const opCtx = {
+		db: ctx.db,
+		actorId: ctx.actorId,
+		workspaceId: ctx.workspaceId,
+		identity: cfg,
+		storage: ctx.storage,
+	}
 
 	if (allowed.has('publish_post')) {
 		server.registerTool(
@@ -338,31 +348,38 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'send_message'),
 			{
-				description: scopedDescription('Send a LinkedIn direct message', cfg),
-				inputSchema: {
-					recipient_urn: z.string().min(1),
-					body: z.string().min(1).max(8000),
-					attachments: linkedinAttachmentsArraySchema
-						.optional()
-						.describe(
-							'Optional messaging attachments. Each entry carries `send_mode` (native vs file) — LinkedIn inlines "native" attachments in the DM and delivers "file" attachments as a hosted file link. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
-						),
-					idempotency_key: z.string().min(1).max(128),
-					object_id: sendObjectIdSchema,
-				},
+				description: scopedDescription(
+					'Send a LinkedIn direct message. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. Then recipient_urn, body and idempotency_key are not used. Without object_id, pass recipient_urn, body and idempotency_key; plain text only, this tool takes no attachments',
+					cfg,
+				),
+				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
+				// is refused by name, instead of the field being dropped and the text going out alone.
+				inputSchema: z
+					.object({
+						recipient_urn: z.string().min(1).optional(),
+						body: z.string().min(1).max(8000).optional(),
+						idempotency_key: z.string().min(1).max(128).optional(),
+						object_id: sendObjectIdSchema,
+					})
+					.passthrough(),
 			},
 			async (args) => {
 				try {
-					return await sendForObject(
-						ctx,
-						args.object_id,
-						() => sendLinkedInMessage(opCtx, args),
-						(sent) => ({
-							message_id: sent.message_id,
-							chat_id: sent.chat_id,
-							sent_at: sent.sent_at,
-						}),
-					)
+					if ((args as { attachments?: unknown }).attachments !== undefined) {
+						throw new LinkedInIntegrationError('INVALID_INPUT', ATTACHMENTS_REFUSED_MESSAGE)
+					}
+					if (args.object_id) {
+						if (args.body !== undefined || args.recipient_urn !== undefined) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the approved object.',
+							)
+						}
+						return jsonResult(
+							await sendApprovedLinkedInObject(opCtx, { object_id: args.object_id }),
+						)
+					}
+					return jsonResult(await sendLinkedInMessage(opCtx, args))
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_message'), err)
 				}
@@ -409,7 +426,7 @@ export function registerLinkedInMcpInstance(
 							)
 						}
 						return jsonResult(
-							await replyWithApprovedObject(opCtx, {
+							await sendApprovedLinkedInObject(opCtx, {
 								object_id: args.object_id,
 								thread_id: args.thread_id,
 							}),

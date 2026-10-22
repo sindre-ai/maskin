@@ -77,9 +77,9 @@ export type PublishPostInput = z.infer<typeof publishPostInputSchema>
 
 // ── __send_message ─────────────────────────────────────────────────────────
 //
-// Messaging attachment surface. `send_mode` is meaningful HERE (native vs
-// file) but NOT on publish attachments — LinkedIn's feed rendering wins on
-// posts regardless of the request field. Identity, again, is pre-scoped by
+// Plain-text direct message. There is no `attachments` input: a file goes out only
+// on a message a person approved, filed as `attachment_file_id` on the draft
+// object and sent with `object_id`. Identity, again, is pre-scoped by
 // register-time.
 
 export const sendMessageInputShape = {
@@ -95,11 +95,6 @@ export const sendMessageInputShape = {
 		.max(LINKEDIN_MESSAGE_MAX_CHARS)
 		.describe(
 			`Plain-text message body. Max ${LINKEDIN_MESSAGE_MAX_CHARS} chars (LinkedIn hard limit). No HTML; newlines allowed.`,
-		),
-	attachments: linkedinAttachmentsArraySchema
-		.optional()
-		.describe(
-			"Optional attachments. `send_mode` on each entry selects native inline vs Unipile-hosted file link; unset defaults to LinkedIn's per-type behaviour.",
 		),
 	idempotency_key: z
 		.string()

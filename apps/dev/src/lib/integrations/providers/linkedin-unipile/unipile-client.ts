@@ -41,6 +41,8 @@ export type LinkedInReplyPayload = {
 	account_id: string
 	thread_id: string
 	body: string
+	/** Same shape and meaning as on {@link LinkedInSendMessagePayload}; omitted when empty. */
+	attachments?: unknown[]
 }
 
 export type LinkedInListConversationsQuery = {
@@ -536,10 +538,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		reply(payload) {
 			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
 			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			// An approved message that carries a file adds `attachments`, folded in the same way
+			// as on `sendMessage`; a text-only reply keeps its exact wire body.
+			const body: Record<string, unknown> = { text: payload.body }
+			if (payload.attachments && payload.attachments.length > 0) {
+				body.attachments = payload.attachments
+			}
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
-				{ text: payload.body },
+				body,
 			)
 		},
 		listConversations(query) {

@@ -9,6 +9,7 @@ import {
 } from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { recordEvent } from '../../../events/record-event'
@@ -23,6 +24,7 @@ import {
 } from '../../errors'
 import { findIntegrationRow, getCredential } from '../../lookup'
 import { readContextFor } from '../../read-context'
+import type { LinkedInFileAttachment } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -1053,15 +1055,6 @@ type SendPayload = {
 	recipient_urn: string
 	body: string
 	idempotency_key: string
-	/**
-	 * Optional messaging attachments. Passed through to the Unipile client
-	 * verbatim; each entry carries `send_mode` (native vs file). Shape is
-	 * validated at the MCP tool boundary via `linkedinAttachmentsArraySchema`
-	 * in `packages/mcp/src/lib/linkedin-attachments.ts`, so this operation
-	 * treats them as opaque objects and lets the tool layer reject
-	 * mixed-type arrays with the exact §4.2 refinement message.
-	 */
-	attachments?: unknown[]
 }
 type ReplyPayload = {
 	thread_id: string
@@ -1073,12 +1066,22 @@ type ReplyPayload = {
 
 const IDEMPOTENCY_KEY_MAX = 128
 
+/**
+ * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
+ * on a message a person approved, through the object it is filed on.
+ */
+export const ATTACHMENTS_REFUSED_MESSAGE =
+	'send_message does not take attachments. File the workspace file on the draft instead: set metadata.attachment_file_id on the object, have a person approve it, then send with object_id.'
+
 function validateSendPayload(input: {
 	recipient_urn?: unknown
 	body?: unknown
 	idempotency_key?: unknown
 	attachments?: unknown
 }): { ok: true; payload: SendPayload } | { ok: false; error: string } {
+	if (input.attachments !== undefined) {
+		return { ok: false, error: ATTACHMENTS_REFUSED_MESSAGE }
+	}
 	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
 		return { ok: false, error: 'recipient_urn is required' }
 	}
@@ -1092,20 +1095,12 @@ function validateSendPayload(input: {
 	) {
 		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
 	}
-	let attachments: unknown[] | undefined
-	if (input.attachments !== undefined) {
-		if (!Array.isArray(input.attachments)) {
-			return { ok: false, error: 'attachments must be an array when provided' }
-		}
-		attachments = input.attachments
-	}
 	return {
 		ok: true,
 		payload: {
 			recipient_urn: input.recipient_urn,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
-			...(attachments !== undefined ? { attachments } : {}),
 		},
 	}
 }
@@ -1201,6 +1196,20 @@ export interface LinkedInOperationContext {
 	 * this will become required.
 	 */
 	identity?: LinkedInMcpInstanceConfig
+	/**
+	 * Where workspace files are read from, for a send that carries an approved file. Injected
+	 * by the MCP route the way Slack's fan-out receives it; absent for callers that never
+	 * send a file (the REST routes).
+	 */
+	storage?: StorageProvider
+}
+
+/**
+ * Only the approved-send path (send-object.ts) passes these: the caller of a tool or the REST
+ * route cannot, so a file never goes out on a message nobody approved.
+ */
+export interface LinkedInSendExtras {
+	attachments?: LinkedInFileAttachment[]
 }
 
 export async function sendLinkedInMessage(
@@ -1211,6 +1220,7 @@ export async function sendLinkedInMessage(
 		idempotency_key?: unknown
 		attachments?: unknown
 	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateSendPayload(input)
 	if (!validation.ok) {
@@ -1243,9 +1253,7 @@ export async function sendLinkedInMessage(
 						recipient_urn: validation.payload.recipient_urn,
 						body: validation.payload.body,
 						...(inboxId ? { inbox_id: inboxId } : {}),
-						...(validation.payload.attachments !== undefined
-							? { attachments: validation.payload.attachments }
-							: {}),
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -1262,6 +1270,7 @@ export async function replyToLinkedInThread(
 		idempotency_key?: unknown
 		in_reply_to_message_id?: unknown
 	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateReplyPayload(input)
 	if (!validation.ok) {
@@ -1291,6 +1300,7 @@ export async function replyToLinkedInThread(
 						account_id: pre.credentials.account_id,
 						thread_id: validation.payload.thread_id,
 						body: validation.payload.body,
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
 					}),
 				{ mutating: true },
 			)
