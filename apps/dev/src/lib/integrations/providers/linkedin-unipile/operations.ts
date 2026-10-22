@@ -24,6 +24,7 @@ import {
 } from '../../errors'
 import { findIntegrationRow, getCredential } from '../../lookup'
 import { readContextFor } from '../../read-context'
+import { type ActionRecorder, LinkedInActionRefusal } from './action-log'
 import type { LinkedInFileAttachment } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
@@ -42,7 +43,23 @@ import {
 	deriveInmailBalance,
 	parseInmailCredits,
 } from './inmail'
-import { type SentInvitation, nextSentOffset, parseSentInvitations } from './invitations'
+import {
+	REINVITE_LOCK_DAYS,
+	type SentListCaches,
+	WITHDRAW_MIN_AGE_DAYS,
+	addDays,
+	findFirstSeen,
+	findPriorWithdrawal,
+	findSentInvitation,
+	forgetSentInvitation,
+	recordFirstSeen,
+} from './invitation-withdrawal'
+import {
+	type SentInvitation,
+	inviteAgeDays,
+	nextSentOffset,
+	parseSentInvitations,
+} from './invitations'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -2633,6 +2650,19 @@ export async function listLinkedInSentInvitations(
 		client.listRelationRequests({ account_id: pre.credentials.account_id, offset, limit }),
 	)
 	const page = parseSentInvitations(upstream.body, now())
+	// Where Unipile gives no send date, the age of an invitation counts from the first time a
+	// list showed it, so note that for every undated row seen here.
+	if (ctx.identity) {
+		await recordFirstSeen(
+			ctx.db,
+			{
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				integrationId: ctx.identity.integrationId,
+			},
+			page.invitations.filter((i) => i.sent_at === null),
+		)
+	}
 	return {
 		invitations:
 			olderThanDays === undefined
@@ -2641,5 +2671,145 @@ export async function listLinkedInSentInvitations(
 		total_pending: page.total,
 		next_offset: nextSentOffset(offset, limit, page),
 		rows_without_date: page.invitations.filter((i) => i.sent_at === null).length,
+	}
+}
+
+export type WithdrawInvitationResult = {
+	invitation_id: string
+	recipient_provider_id: string | null
+	withdrawn: true
+	already_withdrawn: boolean
+	/** When LinkedIn lets this account invite the person again: the withdrawal plus 21 days. */
+	can_reinvite_after: string
+}
+
+function refuseWithdrawal(message: string): never {
+	throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', message)
+}
+
+/**
+ * `withdraw_invitation`: takes back one pending invitation this account sent.
+ *
+ * Unipile's cancel call withdraws a sent invite and refuses a received one with the same call,
+ * so the id is checked against the account's own sent list before anything is cancelled. The
+ * caller passes an id only: the age that gates the call comes from LinkedIn's send date, or,
+ * where LinkedIn gave none, from the first time our own list showed the id, never from the caller.
+ *
+ * Runs inside `withActionLog` (the daily cap of 30 is checked there, before this runs), and
+ * refuses with `refused_rule` when a rule says no. Order here:
+ *   1. A success already on the log for this invitation returns `already_withdrawn` at once. This
+ *      comes before the sent-list lookup because a withdrawn invitation leaves the sent list, so
+ *      asking the list afterwards would call it "not a sent invitation". Such a call is logged
+ *      as `noop`, which the cap does not count.
+ *   2. The id must be in the sent list, and at least 14 days old.
+ *   3. Cancel. A 404 means it is already gone: `already_withdrawn`, also a `noop`.
+ * The feature flag is checked when the tool is registered (mcp-server.ts).
+ */
+export async function withdrawLinkedInInvitation(
+	ctx: LinkedInOperationContext,
+	input: { invitation_id?: unknown },
+	deps: {
+		integrationId: string
+		recorder: ActionRecorder
+		now?: () => Date
+		caches?: SentListCaches
+	},
+): Promise<WithdrawInvitationResult> {
+	const invitationId = typeof input.invitation_id === 'string' ? input.invitation_id.trim() : ''
+	if (!invitationId) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', 'invitation_id is required')
+	}
+	const now = (deps.now ?? (() => new Date()))()
+	const { recorder } = deps
+	recorder.set({ refId: invitationId })
+
+	const prior = await findPriorWithdrawal(ctx.db, deps.integrationId, invitationId)
+	if (prior) {
+		recorder.set({ refId: invitationId, targetProviderId: prior.recipientProviderId })
+		recorder.markNoop()
+		return {
+			invitation_id: invitationId,
+			recipient_provider_id: prior.recipientProviderId,
+			withdrawn: true,
+			already_withdrawn: true,
+			can_reinvite_after: addDays(prior.withdrawnAt, REINVITE_LOCK_DAYS).toISOString(),
+		}
+	}
+
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const accountId = pre.credentials.account_id
+	const scope = {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		integrationId: deps.integrationId,
+	}
+
+	const found = await findSentInvitation({
+		accountKey: accountId,
+		invitationId,
+		nowMs: now.getTime(),
+		caches: deps.caches,
+		fetchPage: async (offset, limit) => {
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+				client.listRelationRequests({ account_id: accountId, offset, limit }),
+			)
+			return parseSentInvitations(upstream.body, now)
+		},
+		onPage: (rows) =>
+			recordFirstSeen(
+				ctx.db,
+				scope,
+				rows.filter((row) => row.sent_at === null),
+			),
+	})
+	if (!found) {
+		refuseWithdrawal(
+			`Invitation ${invitationId} is not in this account's list of pending sent invitations: not a sent invitation; this tool never refuses received invites. Nothing was withdrawn.`,
+		)
+	}
+	recorder.set({ refId: invitationId, targetProviderId: found.recipient_provider_id })
+
+	// The age is recomputed here, not read from the cached row, which may be 10 minutes old.
+	let ageDays = inviteAgeDays(found.sent_at, now)
+	if (found.sent_at === null) {
+		const firstSeen = await findFirstSeen(ctx.db, deps.integrationId, invitationId)
+		ageDays = inviteAgeDays(firstSeen ? firstSeen.toISOString() : null, now)
+		if (ageDays === null) {
+			refuseWithdrawal(
+				`The age of invitation ${invitationId} is unknown: LinkedIn gave no send date and this account's list has not shown it before. Nothing was withdrawn. List the sent invitations, then try again.`,
+			)
+		}
+	}
+	if (ageDays === null || ageDays < WITHDRAW_MIN_AGE_DAYS) {
+		const basis =
+			found.sent_at === null
+				? " (LinkedIn gave no send date, so the age counts from when this account's list first showed it)"
+				: ''
+		refuseWithdrawal(
+			`Invitation ${invitationId} is ${ageDays ?? 0} days old${basis}; only invitations at least ${WITHDRAW_MIN_AGE_DAYS} days old can be withdrawn. Nothing was withdrawn.`,
+		)
+	}
+
+	let alreadyGone = false
+	try {
+		await callLinkedInWithRetry(
+			() => client.cancelRelationRequest({ account_id: accountId, request_id: invitationId }),
+			{ mutating: true },
+		)
+	} catch (err) {
+		// The sent list just showed this id, so a 404 is about the request: it is already gone.
+		if (!(isLinkedInIntegrationError(err) && err.httpStatus === 404)) throw err
+		alreadyGone = true
+	}
+	forgetSentInvitation(accountId, invitationId, deps.caches)
+	if (alreadyGone) recorder.markNoop()
+	return {
+		invitation_id: invitationId,
+		recipient_provider_id: found.recipient_provider_id,
+		withdrawn: true,
+		already_withdrawn: alreadyGone,
+		can_reinvite_after: addDays(now, REINVITE_LOCK_DAYS).toISOString(),
 	}
 }

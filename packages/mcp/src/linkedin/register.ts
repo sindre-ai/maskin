@@ -58,6 +58,7 @@ const PROFILE_SUITE: readonly LinkedInVerb[] = ['search_people', 'get_profile'] 
 const OUTREACH_SUITE: readonly LinkedInVerb[] = [
 	'get_inmail_balance',
 	'list_sent_invitations',
+	'withdraw_invitation',
 ] as const
 
 /**
