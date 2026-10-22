@@ -2116,6 +2116,10 @@ export const deviceTokens = pgTable(
 		// 'sandbox' | 'production' — selects the APNs host.
 		environment: text('environment').notNull(),
 		appVersion: text('app_version'),
+		// SHA-256 (hex) of the secret the device generated and sent at registration. After sign-out the
+		// phone has no API key; POST /api/devices/unregister takes this secret as its credential. Null
+		// for rows registered by a client that does not send one: those cannot use that route.
+		unregisterSecretHash: text('unregister_secret_hash'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 	},
