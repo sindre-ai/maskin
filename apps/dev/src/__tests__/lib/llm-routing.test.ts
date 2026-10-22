@@ -21,6 +21,7 @@ import {
 } from '../../lib/billing-defaults'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
+	CLAUDE_SUBSCRIPTION_MODEL,
 	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
@@ -318,6 +319,18 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+	})
+
+	it('4a. workspace api_key route pins the subscription model when the agent sets none', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe(CLAUDE_SUBSCRIPTION_MODEL)
 	})
 
 	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
