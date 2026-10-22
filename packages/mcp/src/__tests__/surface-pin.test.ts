@@ -225,6 +225,19 @@ describe('MCP surface pin', () => {
 		expect(violations, violations.join('\n')).toEqual([])
 	})
 
+	it('every listed tool-name alias is registered, points at a registered tool, and stays within the cap', async () => {
+		const { MAX_LISTED_TOOL_ALIASES, TOOL_NAME_ALIASES } = await import('../tool-aliases')
+		const violations: string[] = []
+		for (const [oldName, target] of Object.entries(TOOL_NAME_ALIASES)) {
+			if (!registeredTools.has(oldName)) violations.push(`alias ${oldName} is not registered`)
+			if (!registeredTools.has(target)) {
+				violations.push(`alias ${oldName} points at unregistered tool ${target}`)
+			}
+		}
+		expect(violations, violations.join('\n')).toEqual([])
+		expect(Object.keys(TOOL_NAME_ALIASES).length).toBeLessThanOrEqual(MAX_LISTED_TOOL_ALIASES)
+	})
+
 	it('every MUTATION_TOOL_KINDS entry maps to a registered tool', () => {
 		const violations: string[] = []
 		for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
@@ -336,9 +349,10 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
 			const expected = [
 				'create_session',
+				'run_agent',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',

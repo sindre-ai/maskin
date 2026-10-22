@@ -85,7 +85,7 @@ function row(
 
 // destructive: delete_*, stop_session, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, resume_session, mark_read.
-// openWorld: create_session (starts an agent), the integration tools, and the two tools that
+// openWorld: create_session and its alias run_agent (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -147,6 +147,7 @@ const ROWS: Record<string, Row> = {
 	list_unread: row('List unread'),
 	// Sessions
 	create_session: row('Create session', { openWorld: true }),
+	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),

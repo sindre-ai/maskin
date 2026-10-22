@@ -70,6 +70,7 @@ const ALL_TOOL_NAMES = [
 	'get_loop',
 	'delete_loop',
 	'create_session',
+	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
