@@ -713,4 +713,121 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		expect(followUp._meta?.truncated).toBeUndefined()
 		expect(followUp.structuredContent.objects).toHaveLength(omittedIds.length)
 	})
+
+	describe('a trimmed page keeps a cursor, so a walk skips no rows', () => {
+		const ROW_COUNT = 30
+		const PAGE_LIMIT = 10
+
+		type Page = {
+			_meta?: { truncated?: boolean }
+			structuredContent: Record<string, unknown> & { next_cursor?: string }
+		}
+
+		// Newest first, one second apart, so (createdAt, id) is a strict keyset order.
+		function createdAtOf(idx: number) {
+			return new Date(Date.UTC(2026, 0, 1) + (ROW_COUNT - idx) * 1000).toISOString()
+		}
+
+		function objectRows(count: number) {
+			return Array.from({ length: count }, (_, i) => ({
+				...bigObjectRow(i),
+				createdAt: createdAtOf(i),
+			}))
+		}
+
+		function relationshipRows(count: number) {
+			return Array.from({ length: count }, (_, i) => ({
+				id: `rel-${String(i).padStart(12, '0')}`,
+				sourceId: `src-${i}`,
+				targetId: `tgt-${i}`,
+				type: 'in_loop',
+				createdAt: createdAtOf(i),
+				sourceTitle: 'x'.repeat(3072),
+				targetTitle: `Target ${i}`,
+			}))
+		}
+
+		// Serves /api/objects and /api/relationships the way the API does: only rows strictly
+		// after the keyset cursor (newest first), at most `limit` of them.
+		function stubKeysetApi(fixture: Array<{ id: string; createdAt: string }>) {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const parsed = new URL(url as string)
+				if (!/^\/api\/(objects|relationships)$/.test(parsed.pathname)) {
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				}
+				const cursorAt = parsed.searchParams.get('cursor_created_at')
+				const cursorId = parsed.searchParams.get('cursor_id')
+				const limit = Number(parsed.searchParams.get('limit'))
+				const rows = fixture
+					.filter(
+						(r) =>
+							!cursorAt ||
+							!cursorId ||
+							r.createdAt < cursorAt ||
+							(r.createdAt === cursorAt && r.id < cursorId),
+					)
+					.slice(0, limit)
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve(rows) } as Response
+			})
+		}
+
+		function callTool(tool: string, args: Record<string, unknown>) {
+			const handler = handlers.get(tool)
+			if (!handler) throw new Error(`${tool} handler not registered`)
+			return handler(args) as Promise<Page>
+		}
+
+		const cases = [
+			{ tool: 'list_objects', rowsField: 'objects', makeRows: objectRows },
+			{ tool: 'list_relationships', rowsField: 'relationships', makeRows: relationshipRows },
+		]
+
+		for (const { tool, rowsField, makeRows } of cases) {
+			it(`${tool}: walking trimmed middle and final pages returns every row exactly once`, async () => {
+				process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '4000'
+				const fixture = makeRows(ROW_COUNT)
+				stubKeysetApi(fixture)
+
+				const seen: string[] = []
+				const pages: Page[] = []
+				let cursor: string | undefined
+				// Bounded so a cursor that never advances fails the test instead of hanging it.
+				for (let hop = 0; hop < ROW_COUNT + 2; hop++) {
+					const page = await callTool(tool, { limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}) })
+					pages.push(page)
+					const rows = page.structuredContent[rowsField] as Array<{ id: string }>
+					seen.push(...rows.map((r) => r.id))
+					cursor = page.structuredContent.next_cursor
+					if (!cursor) break
+				}
+
+				expect(seen).toEqual(fixture.map((r) => r.id))
+				// The cap cut many pages, including ones the API sent with no cursor of
+				// its own (fewer than PAGE_LIMIT rows left), and only the last page ends the walk.
+				expect(pages.filter((p) => p._meta?.truncated).length).toBeGreaterThan(2)
+				expect(pages.at(-1)?.structuredContent.next_cursor).toBeUndefined()
+			})
+
+			it(`${tool}: a trimmed page that held the whole list still emits a cursor after the last shipped row`, async () => {
+				process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '4000'
+				// 6 rows is under the page limit, so the API sends no cursor of its own.
+				const fixture = makeRows(6)
+				stubKeysetApi(fixture)
+
+				const page = await callTool(tool, { limit: PAGE_LIMIT })
+				const shipped = page.structuredContent[rowsField] as Array<{ id: string }>
+				expect(page._meta?.truncated).toBe(true)
+				expect(shipped.length).toBeGreaterThan(0)
+				expect(shipped.length).toBeLessThan(fixture.length)
+
+				const next = page.structuredContent.next_cursor
+				expect(next).toBeTruthy()
+				expect(decodeCursor(next)?.k.id).toBe(shipped.at(-1)?.id)
+
+				const rest = await callTool(tool, { limit: PAGE_LIMIT, cursor: next })
+				const restRows = rest.structuredContent[rowsField] as Array<{ id: string }>
+				expect(restRows[0]?.id).toBe(fixture[shipped.length].id)
+			})
+		}
+	})
 })
