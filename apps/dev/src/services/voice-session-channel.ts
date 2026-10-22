@@ -163,9 +163,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
-			// Same call a chat agent makes. The voice model is told the workspace id
-			// in its instructions; this only fills it in when it leaves it out.
-			const args = { workspace_id: session.workspaceId, ...(rawArgs as object) }
+			// Same call a chat agent makes. The call's workspace is applied last, so a
+			// workspace_id the model passes can never point a tool at another workspace.
+			const args = { ...(rawArgs as object), workspace_id: session.workspaceId }
 			const result = await invokeTool(msg.name, args, {
 				actorId: session.agentActorId,
 				workspaceId: session.workspaceId,
