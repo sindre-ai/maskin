@@ -1095,6 +1095,22 @@ app.openapi(connectRoute, (async (c) => {
 				? rawBody.expose_to_agent_sessions
 				: null
 
+		// A key we are about to ignore must fail here, not later. Without this the
+		// fall-through insert below writes empty credentials and the caller gets a
+		// row that looks connected, then a webhook 500 at delivery time.
+		if (resendApiKey && !(providerName === 'resend' && resendSubdomain)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					providerName === 'resend'
+						? 'Resend needs receive_subdomain together with api_key, send both to POST /api/integrations/resend/connect'
+						: `Provider ${providerName} does not take an api_key on connect`,
+					[{ field: 'code', message: 'API_KEY_NOT_ACCEPTED' }],
+				),
+				400,
+			)
+		}
+
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
 			// Server-side guard behind the dialog's advisory pre-check: a malformed
 			// name never reaches Resend, and a bare domain that already carries
