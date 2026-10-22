@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import { events, integrations, messages, sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -44,7 +44,13 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { canControlSession, canReadSession, helperAskConversationId } from '../lib/session-access'
+import {
+	canControlSession,
+	canReadSession,
+	canUpdateSessionActivity,
+	helperAskConversationId,
+	sessionListVisibility,
+} from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
@@ -311,6 +317,15 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the detail route, applied in the query so the page cut and the
+	// `before` cursor only ever see sessions this caller may read.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
@@ -689,6 +704,13 @@ app.openapi(patchSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
+	if (
+		body.current_activity !== undefined &&
+		!(await canUpdateSessionActivity(db, session, actorId))
+	) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
+
 	// Only whoever started the helper can ask for its result to come back.
 	if (body.notify_on_complete && session.createdBy !== actorId) {
 		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
@@ -1052,6 +1074,145 @@ app.openapi(inputSessionRoute, (async (c) => {
 
 	return c.json({ ok: true as const })
 }) as RouteHandler<typeof inputSessionRoute, Env>)
+
+// POST /:id/continue - Carry on with a helper that has already ended
+//
+// A helper in a chat ends the moment it gives its result, so there is nothing to
+// type into. This starts a new interactive session for the same agent that stays
+// open, hangs it from the same message so it is another thread of the same chat,
+// and tells it what it did before and what the person now says. The person's
+// follow-up is its first turn; the thread then takes messages like any live one.
+const continueSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/continue',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Start a follow-up session for a helper that has ended',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionInputSchema } } },
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: z.object({ session_id: z.string().uuid() }) } },
+			description: 'Follow-up session started',
+		},
+		400: { content: { 'application/json': { schema: errorSchema } }, description: 'Refused' },
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not in the chat this session belongs to',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session has not ended',
+		},
+	},
+})
+
+app.openapi(continueSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	// Whoever started it, or anyone in a chat it belongs to: the one it asks its questions in,
+	// the one it came from, or the one holding the message it was handed off from.
+	if (session.createdBy !== actorId) {
+		const cfg = (session.config ?? {}) as { origin_conversation_id?: unknown }
+		const chatIds = new Set<string>()
+		const ask = helperAskConversationId(session)
+		if (ask) chatIds.add(ask)
+		if (typeof cfg.origin_conversation_id === 'string') chatIds.add(cfg.origin_conversation_id)
+		if (session.conversationId) chatIds.add(session.conversationId)
+		if (session.spawnedByMessageId) {
+			const [anchor] = await db
+				.select({ conversationId: messages.conversationId })
+				.from(messages)
+				.where(eq(messages.id, session.spawnedByMessageId))
+				.limit(1)
+			if (anchor) chatIds.add(anchor.conversationId)
+		}
+		let entitled = false
+		for (const chatId of chatIds) {
+			if (await isConversationParticipant(db, chatId, actorId)) {
+				entitled = true
+				break
+			}
+		}
+		if (!entitled) {
+			return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+		}
+	}
+	if (!(TERMINAL_STATUSES as readonly string[]).includes(session.status)) {
+		return c.json(createApiError('CONFLICT', 'Session has not ended: write into it instead'), 409)
+	}
+
+	const secretRefusal = await refuseRawSecret(db, {
+		content: body.content,
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		entityType: 'session',
+		entityId: id,
+	})
+	if (secretRefusal) return c.json(secretRefusal, 400)
+
+	// The person's words are the session's prompt, as in any chat: that is what its first
+	// message and its title show. What the agent did before reaches it through the system
+	// prompt at launch (config.continues_*), not through this text.
+	const earlier = (session.actionPrompt ?? '').trim().slice(0, 600)
+	const actionPrompt = body.content.trim()
+
+	const origin = (session.config ?? {}) as { origin_conversation_id?: unknown; hop_depth?: unknown }
+	const config = {
+		interactive: true,
+		// Ends after its reply, like the helper it continues, so the thread reads Done between
+		// messages; the next message starts the next follow-up.
+		stop_on_result: true,
+		sent_by_actor_id: actorId,
+		continues_session_id: id,
+		continues_chain: [
+			...(Array.isArray((session.config as { continues_chain?: unknown } | null)?.continues_chain)
+				? ((session.config as { continues_chain: unknown[] }).continues_chain.filter(
+						(x) => typeof x === 'string',
+					) as string[])
+				: []),
+			id,
+		],
+		continues_prompt: earlier,
+		...(helperAskConversationId(session)
+			? { ask_conversation_id: helperAskConversationId(session) }
+			: {}),
+		...(typeof origin.origin_conversation_id === 'string'
+			? { origin_conversation_id: origin.origin_conversation_id }
+			: {}),
+		...(typeof origin.hop_depth === 'number' ? { hop_depth: origin.hop_depth } : {}),
+	}
+	const handle = await startSession({
+		workspaceId,
+		actorId: session.actorId,
+		callerKind: 'rest',
+		actionPrompt,
+		config,
+		createdBy: actorId,
+		initiatedFromObjectId: session.initiatedFromObjectId,
+		await: 'none',
+		// Another thread of the same chat: the anchor message when there is one, else the
+		// chat session that started the original.
+		spawnedByMessageId: session.spawnedByMessageId ?? undefined,
+		spawnedBySessionId: session.spawnedByMessageId
+			? undefined
+			: (session.spawnedBySessionId ?? undefined),
+	})
+	return c.json({ session_id: handle.sessionId }, 201)
+}) as RouteHandler<typeof continueSessionRoute, Env>)
 
 // POST /:id/ask - Surface an agent's AskUserQuestion into the chat it is in
 //

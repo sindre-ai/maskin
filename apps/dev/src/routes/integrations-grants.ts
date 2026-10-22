@@ -205,6 +205,14 @@ function failure(reason: string): {
 				),
 				status: 400,
 			}
+		case 'keychain_default':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'A saved key is on or off for all other agents: use read or none',
+				),
+				status: 400,
+			}
 		default:
 			return {
 				error: createApiError('BAD_REQUEST', 'Not allowed for this integration'),
@@ -527,6 +535,11 @@ app.openapi(putDefaultRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
+		// A saved key's default is on ('read') or off ('none'). read_write would show as set but
+		// be off at the server (see effectiveAccess), so it is refused rather than stored.
+		if (isKeychainMode(target.providerMode as never) && defaultAgentAccess === 'read_write') {
+			return 'keychain_default' as const
+		}
 		await tx
 			.update(integrations)
 			.set({ defaultAgentAccess, updatedAt: new Date() })

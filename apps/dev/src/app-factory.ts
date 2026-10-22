@@ -78,6 +78,7 @@ import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
+import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
@@ -490,6 +491,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
+	app.route('/api/transcriptions', transcriptionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

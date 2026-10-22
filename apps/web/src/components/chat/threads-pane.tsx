@@ -3,9 +3,7 @@ import {
 	isSessionIdleAwaitingInput,
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
-import { MessageActivity } from '@/components/chat/message-activity'
-import { QuestionOptions } from '@/components/chat/question-options'
-import { ProducedFilesGroup, ProducedObjectsGroup } from '@/components/objects/produced-pane'
+import { SessionThread } from '@/components/chat/session-thread'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -163,77 +161,6 @@ function ThreadsList({
 	)
 }
 
-/**
- * What the person came to read: the final output of a finished thread, what a
- * failed one is stuck on, or the live transcript while it is still running.
- * The prompt the agent was handed is deliberately not shown.
- */
-function ThreadOutcome({
-	workspaceId,
-	conversationId,
-	thread,
-	logs,
-	isLoading,
-}: {
-	workspaceId: string
-	conversationId: string
-	thread: ConversationThread
-	logs: SessionLogResponse[]
-	isLoading: boolean
-}) {
-	const group = groupOf(thread)
-	const result = useMemo(() => getSessionResultDisplay(logs), [logs])
-	// A helper has no `maskin_message_id` turns, so its whole trace is one run of steps.
-	const steps = useMemo(() => {
-		const { segments, unassigned } = segmentActivityByMessage(logs)
-		return [...unassigned, ...segments.flatMap((s) => s.steps)]
-	}, [logs])
-	if (isLoading) return <Spinner />
-	if (group === 'waiting' && thread.awaiting) {
-		return (
-			<div className="rounded-lg border border-border bg-card px-3 py-2">
-				<span className="eyebrow">Waiting on you</span>
-				<QuestionOptions
-					conversationId={conversationId}
-					workspaceId={workspaceId}
-					questionMessageId={thread.awaiting.message_id}
-					question={{ ...thread.awaiting.question, reply_to_session: true }}
-					answered={false}
-				/>
-			</div>
-		)
-	}
-	// Live work reads like it does in the chat — who is working, how long, and the
-	// steps taken — rather than the raw log.
-	if (group === 'working') {
-		return (
-			<MessageActivity
-				workspaceId={workspaceId}
-				turn={{
-					sessionId: thread.id,
-					actorId: thread.actorId,
-					steps,
-					inProgress: true,
-					starting: statusToPill(thread.status) === 'QUEUED',
-				}}
-			/>
-		)
-	}
-	const text = result?.text ?? (group === 'failed' ? failureText(thread.result) : null)
-	return (
-		<div className="rounded-lg border border-border bg-card px-3 py-2">
-			<span className="eyebrow">{group === 'failed' ? 'Needs attention' : 'Final output'}</span>
-			<div className="mt-1.5">
-				{text ? (
-					<MarkdownContent content={text} size="sm" />
-				) : (
-					<p className="text-[12.5px] text-muted-foreground">No final output was recorded.</p>
-				)}
-			</div>
-		</div>
-	)
-}
-
 function ThreadView({
 	workspaceId,
 	conversationId,
@@ -250,8 +177,8 @@ function ThreadView({
 	const pill = statusToPill(thread.status)
 	const display = threadPill(thread.status, thread.awaiting !== null)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
-	const { data: session } = useSession(thread.id, workspaceId)
-	const { data: logs, isLoading } = useSessionLogs(thread.id, workspaceId, true, { live })
+	const { data: session } = useSession(thread.latestId, workspaceId)
+	const { data: logs, isLoading } = useSessionLogs(thread.latestId, workspaceId, true, { live })
 	const { producedObjects, producedFiles } = useSessionAffectedObjects(
 		thread.startedAt,
 		thread.completedAt,
@@ -311,92 +238,7 @@ function ThreadView({
 				) : null}
 			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
-				<ThreadOutcome
-					workspaceId={workspaceId}
-					conversationId={conversationId}
-					thread={thread}
-					logs={logs ?? []}
-					isLoading={isLoading}
-				/>
-				<ProducedObjectsGroup workspaceId={workspaceId} items={producedObjects} />
-				<ProducedFilesGroup workspaceId={workspaceId} items={producedFiles} />
-				<Link
-					to="/$workspaceId/agents/$agentId"
-					params={{ workspaceId, agentId: thread.actorId }}
-					search={{ session: thread.id } as never}
-					className="inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
-				>
-					Open full session <ExternalLink size={12} />
-				</Link>
-			</div>
-
-			<ThreadReply
-				workspaceId={workspaceId}
-				thread={thread}
-				canReply={
-					!!session &&
-					session.status === 'running' &&
-					session.config?.interactive === true &&
-					session.createdBy === getStoredActor()?.id
-				}
-			/>
+			<SessionThread workspaceId={workspaceId} conversationId={conversationId} thread={thread} />
 		</>
-	)
-}
-
-/**
- * The reply box mirrors the `POST /sessions/:id/input` gates (interactive,
- * running, started by the caller) so a reply the server would refuse is
- * explained here instead of failing after the user typed it.
- */
-function ThreadReply({
-	workspaceId,
-	thread,
-	canReply,
-}: { workspaceId: string; thread: ConversationThread; canReply: boolean }) {
-	const [draft, setDraft] = useState('')
-	const send = useSendSessionInput(workspaceId)
-
-	if (!canReply) {
-		return (
-			<p className="shrink-0 border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
-				{thread.actorName} isn't taking replies in this thread. Ask the agent that handed this off
-				to pass your feedback on, or open the full session.
-			</p>
-		)
-	}
-
-	const submit = () => {
-		const content = draft.trim()
-		if (!content || send.isPending) return
-		send.mutate({ id: thread.id, content }, { onSuccess: () => setDraft('') })
-	}
-
-	return (
-		<div className="flex shrink-0 items-end gap-2 border-t border-border px-3 py-2.5">
-			<Textarea
-				value={draft}
-				onChange={(e) => setDraft(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter' && !e.shiftKey) {
-						e.preventDefault()
-						submit()
-					}
-				}}
-				placeholder={`Reply to ${thread.actorName}…`}
-				rows={1}
-				className="min-h-0 flex-1 resize-none"
-			/>
-			<Button
-				type="button"
-				size="icon"
-				onClick={submit}
-				disabled={!draft.trim() || send.isPending}
-				aria-label="Send reply"
-			>
-				<Send size={14} />
-			</Button>
-		</div>
 	)
 }

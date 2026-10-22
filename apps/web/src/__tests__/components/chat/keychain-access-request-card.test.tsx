@@ -19,7 +19,11 @@ vi.mock('@tanstack/react-router', async () => {
 
 const sendMutate = vi.fn()
 let integrations: IntegrationResponse[] = []
-vi.mock('@/hooks/use-conversation', () => ({ useSendMessage: () => ({ mutate: sendMutate }) }))
+let cardAnswer: 'declined' | 'done' | null = null
+vi.mock('@/hooks/use-conversation', () => ({
+	useSendMessage: () => ({ mutate: sendMutate }),
+	useCardAnswer: () => cardAnswer,
+}))
 vi.mock('@/hooks/use-integrations', () => ({ useIntegrations: () => ({ data: integrations }) }))
 
 let role = 'member'
@@ -61,6 +65,7 @@ function renderCard() {
 			<KeychainAccessRequestCard
 				workspaceId="ws-1"
 				conversationId="conv-1"
+				messageId={7}
 				askingAgentId={AGENT}
 				request={request}
 			/>
@@ -193,5 +198,13 @@ describe('KeychainAccessRequestCard', () => {
 		role = 'admin'
 		renderCard()
 		expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
+	})
+
+	it('reads as declined when the chat already holds the person’s answer', () => {
+		cardAnswer = 'declined'
+		renderCard()
+
+		expect(screen.getByText(/Declined/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
 	})
 })
