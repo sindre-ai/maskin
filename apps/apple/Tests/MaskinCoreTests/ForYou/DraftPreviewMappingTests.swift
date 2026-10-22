@@ -35,7 +35,7 @@ struct DraftPreviewMappingTests {
 		let field = (draft.map { #","draft":\#($0)"# } ?? "") + (drafts.map { #","drafts":\#($0)"# } ?? "")
 		return """
 			{"items":[{
-			  "notification_id":"11111111-1111-4111-8111-111111111111","rank":1,
+			  "notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,
 			  "headline":"h","rationale":null,"created_at":"2026-10-20T10:00:00.000Z",
 			  "entity_type":"object","entity_id":"task-1","session_id":null,
 			  "latest_mention":{"event_id":42,"actor_id":null,"created_at":"2026-10-20T10:00:00.000Z",
