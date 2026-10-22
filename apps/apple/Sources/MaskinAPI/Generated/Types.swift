@@ -523,7 +523,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/notifications/{id}/respond`.
     /// - Remark: Generated from `#/paths//api/notifications/{id}/respond/post`.
     func post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond(_ input: Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Input) async throws -> Operations.post_sol_api_sol_notifications_sol__lcub_id_rcub__sol_respond.Output
-    /// The Chief of Staff's ranked list of what needs the current actor
+    /// What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
@@ -1967,7 +1967,7 @@ extension APIProtocol {
             body: body
         ))
     }
-    /// The Chief of Staff's ranked list of what needs the current actor
+    /// What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.

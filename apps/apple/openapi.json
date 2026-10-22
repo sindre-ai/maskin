@@ -58400,6 +58400,16 @@
 											},
 											"shape_error": {
 												"type": "boolean"
+											},
+											"view": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"slim",
+													"full"
+												]
 											}
 										},
 										"required": [
@@ -62443,7 +62453,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-				"description": "Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"description": "Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 				"requestBody": {
 					"required": true,
 					"content": {
@@ -62713,7 +62723,7 @@
 					"Voice"
 				],
 				"summary": "Connect a reserved voice session to the vendor",
-				"description": "Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
+				"description": "Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
 				"parameters": [
 					{
 						"schema": {
@@ -62871,7 +62881,7 @@
 						}
 					},
 					"500": {
-						"description": "Vendor connect failed — the session row is marked errored so the caller can start again",
+						"description": "Voice is not configured (no operator key), the vendor connect failed, or the vendor refused it over quota or billing (message says the team has been notified) — the session row is released so the caller can start again",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -62936,7 +62946,7 @@
 					"Voice"
 				],
 				"summary": "End a voice call",
-				"description": "Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+				"description": "Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
 				"parameters": [
 					{
 						"schema": {
