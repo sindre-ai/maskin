@@ -117,8 +117,8 @@ test.describe('Chats v2 — turn this into an object', () => {
 			// `aria-label`, and getByLabel does not match a role="listbox" element.
 			const menu = page.getByRole('listbox', { name: 'Reference or create' })
 			await expect(menu).toBeVisible({ timeout: 10_000 })
-			await expect(menu.getByRole('option', { name: /Bet/ })).toBeVisible()
-			await expect(menu.getByRole('option', { name: /Insight/ })).toBeVisible()
+			await expect(menu.getByRole('option', { name: /^Bet A shaped/ })).toBeVisible()
+			await expect(menu.getByRole('option', { name: /^Insight A signal/ })).toBeVisible()
 
 			await page.keyboard.press('Escape')
 			await expect(menu).toHaveCount(0)
