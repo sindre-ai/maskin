@@ -775,11 +775,14 @@ describe('buildMentionPrompt()', () => {
 
 	it('puts the sender line first when one is given', () => {
 		const prompt = buildMentionPrompt({ ...base, senderLine: 'Sent by Planner, another agent.' })
-		expect(prompt.startsWith('Sent by Planner, another agent.\n\nYou were @mentioned')).toBe(true)
+		expect(prompt.startsWith('Sent by Planner, another agent.\n\nMentioned in a comment')).toBe(
+			true,
+		)
 	})
 
-	it('leaves the prompt unchanged when no sender line is given', () => {
-		expect(buildMentionPrompt(base).startsWith('You were @mentioned')).toBe(true)
+	it('opens with a headline that says what the comment is about, so the session has a real title', () => {
+		const prompt = buildMentionPrompt(base)
+		expect(prompt.startsWith('Mentioned in a comment: "hello"\n\nYou were @mentioned')).toBe(true)
 	})
 })
 

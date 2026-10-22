@@ -304,6 +304,11 @@ export const messageMetadataSchema = z.object({
 	computer_request: messageComputerRequestSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/**
+	 * Client-supplied: the message is a nudge for the agent (a card's Done or Allow), not
+	 * something the person wrote. The agent receives it as usual; the chat does not draw it.
+	 */
+	hidden_from_chat: z.literal(true).optional(),
 	/** Backend-owned: how the server itself put this message in the chat. */
 	delivery: messageDeliverySchema.optional(),
 	/** Backend-owned: the intro's first-step buttons, written once with the intro. */

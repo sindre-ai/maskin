@@ -30,7 +30,7 @@ import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import { returnToSender } from './helper-return'
+import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -1057,6 +1057,11 @@ export async function settleSession(
 	// A pause is not an ending.
 	if (flipped && outcome.kind !== 'pause') {
 		void returnToSender(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
+	// A sender that finished normally may have missed helpers that failed while it was
+	// busy: tell it now, so it is woken to deal with them.
+	if (flipped && outcome.kind === 'complete') {
+		void returnDeferredHelpers(deps.db, sessionId, { sessionManager: configuredSessionManager() })
 	}
 
 	// Step 4: (Post-commit) stopSandbox best-effort.

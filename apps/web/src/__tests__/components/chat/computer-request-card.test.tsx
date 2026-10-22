@@ -83,16 +83,12 @@ describe('ComputerRequestCard', () => {
 		expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
 	})
 
-	it("lets the person say they can't, from before or after opening it", async () => {
-		const user = userEvent.setup()
+	it('offers no way to decline: the person skips it by writing a message', () => {
 		renderCard()
 
-		await user.click(screen.getByRole('button', { name: "Can't do this" }))
-
-		expect(sendMutate).toHaveBeenCalledTimes(1)
-		expect(sendMutate.mock.calls[0]?.[0].content).toMatch(/couldn't do that/i)
-		expect(screen.getByText("Told Ledger you couldn't do this.")).toBeInTheDocument()
-		expect(mounted).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'Open computer' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: "Can't do this" })).not.toBeInTheDocument()
+		expect(sendMutate).not.toHaveBeenCalled()
 	})
 
 	it('posts plain text, never anything that carries the task or the screen', async () => {

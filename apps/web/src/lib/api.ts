@@ -2507,6 +2507,8 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */

@@ -143,6 +143,8 @@ export function ThreadMessages({
 		// A helper's result handed to the agent that started it: the agent gets it, the
 		// person reads it in the helper's thread as its final output.
 		if (m.metadata?.helper_return) return false
+		// A card button's nudge to the agent: delivered, but not something to read.
+		if (m.metadata?.hidden_from_chat) return false
 		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
