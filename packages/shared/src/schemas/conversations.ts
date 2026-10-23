@@ -172,6 +172,15 @@ export const messageQuestionAnswerSchema = z.object({
 })
 
 /**
+ * Set on a card a helper put in the chat it was started from. The helper is not in that
+ * chat, so the answer goes to its session, not to the chat's agents.
+ */
+// A function, not a shared schema: one instance reused in several places is emitted as a $ref in
+// the JSON schema of a tool that embeds the metadata (post_conversation_message), which tool
+// schemas must not contain (tool-schemas-no-ref.test.ts).
+const replyToSessionSchema = () => z.boolean().optional()
+
+/**
  * Set by the backend when an agent in a chat calls `connect_integration`: the
  * chat renders a Connect card (button for OAuth providers, key input for
  * API-key providers) instead of the agent pasting a URL. Never accepted from a
@@ -183,6 +192,7 @@ export const messageQuestionAnswerSchema = z.object({
 export const messageIntegrationConnectSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** Provider name as listed by `GET /api/integrations/providers`, e.g. 'linear'. */
 	provider: z.string().min(1).max(100),
 })
@@ -238,6 +248,7 @@ export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
 export const messageKeychainRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
 	/** A name for the credential the card pre-fills, e.g. "e-conomic". */
 	suggested_name: z.string().min(1).max(80).optional(),
@@ -253,6 +264,7 @@ export const messageKeychainRequestSchema = z.object({
 export const messageKeychainAccessRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** The credential being asked for. */
 	integration_id: z.string().uuid(),
 	/** Its name as the person knows it, e.g. "Stripe". */
@@ -273,8 +285,15 @@ export const messageKeychainAccessRequestSchema = z.object({
 export const messageComputerRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** What the person should do on the computer, in the agent's words. */
 	task: z.string().min(1).max(500),
+})
+
+/** Which card a message answers, and how: a Not now or a Done. */
+export const messageCardAnswerSchema = z.object({
+	message_id: z.number().int().positive(),
+	outcome: z.enum(['declined', 'done']),
 })
 
 export const messageMetadataSchema = z.object({
@@ -311,12 +330,7 @@ export const messageMetadataSchema = z.object({
 	 * Client-supplied: this message is the person's answer to a card (a message id), so the
 	 * card reads as answered whenever the chat is opened again.
 	 */
-	card_answer: z
-		.object({
-			message_id: z.number().int().positive(),
-			outcome: z.enum(['declined', 'done']),
-		})
-		.optional(),
+	card_answer: messageCardAnswerSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**
@@ -402,6 +416,13 @@ export const conversationListQuerySchema = z.object({
 	unread_only: booleanQueryParam.optional(),
 	subject_type: z.enum(['object', 'loop']).optional(),
 	subject_id: z.string().uuid().optional(),
+	// Only chats with a message after this time (ISO 8601).
+	updated_after: z.string().datetime({ offset: true }).optional(),
+	// Only chats that still have at least one human participant.
+	has_human: booleanQueryParam.optional(),
+	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
+	// 'activity' orders purely by last message, newest first.
+	sort: z.enum(['pinned', 'activity']).default('pinned'),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

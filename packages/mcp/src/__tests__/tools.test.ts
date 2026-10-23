@@ -58,6 +58,7 @@ const ALL_TOOL_NAMES = [
 	'get_comments',
 	'create_comment',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'post_conversation_message',
 	'create_trigger',

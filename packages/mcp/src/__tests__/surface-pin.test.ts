@@ -66,6 +66,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'get_session_logs',
 	'traverse_graph',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
 	'list_notifications',

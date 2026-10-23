@@ -57,6 +57,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_session_logs',
 	'traverse_graph',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
 	'list_notifications',
@@ -129,6 +130,7 @@ const ROWS: Record<string, Row> = {
 	get_comments: row('Get comments'),
 	create_comment: row('Create comment'),
 	get_conversation: row('Get conversation'),
+	list_chats: row('List chats'),
 	list_conversation_messages: row('List conversation messages'),
 	post_conversation_message: row('Post conversation message'),
 	// Triggers
