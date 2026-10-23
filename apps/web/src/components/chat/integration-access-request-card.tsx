@@ -159,6 +159,7 @@ export function IntegrationAccessRequestCard({
 					<Link
 						to="/$workspaceId/settings/integrations"
 						params={{ workspaceId }}
+						search={{ select_github: undefined, error: undefined, return_to: undefined }}
 						className="text-xs text-muted-foreground underline"
 					>
 						Manage in Integrations
