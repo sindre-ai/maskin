@@ -131,7 +131,7 @@ function makeFakeDb(
 								if (ctx.sorted && name === 'session_dispatch_attempts') {
 									out = (out as DispatchRow[])
 										.slice()
-										.sort((a, b) => a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime())
+										.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 								}
 								const limited = out.slice(0, n)
 								const promise: Promise<unknown> & {
@@ -212,8 +212,9 @@ vi.mock('drizzle-orm', async () => {
 	const eq = (col: { __name: string }, v: unknown) => ({
 		__pred: (r: Record<string, unknown>) => r[col.__name] === v,
 	})
-	const and = (...preds: { __pred: (r: Record<string, unknown>) => boolean }[]) => ({
-		__pred: (r: Record<string, unknown>) => preds.every((p) => p.__pred(r)),
+	// Like drizzle's `and`, skips an `undefined` condition.
+	const and = (...preds: ({ __pred: (r: Record<string, unknown>) => boolean } | undefined)[]) => ({
+		__pred: (r: Record<string, unknown>) => preds.every((p) => !p || p.__pred(r)),
 	})
 	const lte = (col: { __name: string }, v: Date) => ({
 		__pred: (r: Record<string, unknown>) =>
@@ -262,6 +263,7 @@ vi.mock('@maskin/db/schema', () => {
 			status: col('status'),
 			nextAttemptAt: col('nextAttemptAt'),
 			lastError: col('lastError'),
+			createdAt: col('createdAt'),
 		},
 		sessions: {
 			_: { name: 'sessions' },
