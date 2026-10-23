@@ -21,46 +21,62 @@ struct TeamRow: View {
 	var body: some View {
 		HStack(alignment: .center, spacing: MaskinSpace.s7) {
 			avatar.frame(width: ConversationRow.clusterWidth, height: ConversationRow.avatarSize)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1 + 1) {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-					Text(title)
-						.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: row.isUnread ? .bold : .semibold, relativeTo: .body))
-						.tracking(-0.014 * MaskinFontSize.t16)
-						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(1)
-					if let role {
-						Text(role)
-							.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
-							.foregroundStyle(MaskinColor.ink5)
-							.lineLimit(1)
-					}
-					Spacer(minLength: MaskinSpace.s4)
-					if let date = row.activityDate {
-						Text(ChatListTime.label(for: date, now: now))
-							.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
-							.foregroundStyle(MaskinColor.inkPlaceholder)
-							.lineLimit(1)
-					}
-				}
-				HStack(alignment: .center, spacing: MaskinSpace.s4) {
-					RowStatusLine(status: status, unread: row.isUnread)
-					Spacer(minLength: 0)
-					if status.mentionsYou { CountBadge(text: "@").accessibilityLabel("Mentions you") }
-					if row.isUnread { UnreadBadge(count: row.unreadCount) }
-					if canExpand { chevron }
-				}
-				if let subtitle {
-					Text(subtitle)
-						.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
-						.foregroundStyle(MaskinColor.ink5)
-						.lineLimit(1)
-				}
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text(title)
+					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: row.isUnread ? .bold : .semibold, relativeTo: .body))
+					.tracking(-0.014 * MaskinFontSize.t16)
+					.foregroundStyle(MaskinColor.ink)
+					.lineLimit(2)
+					.multilineTextAlignment(.leading)
+				secondaryLine
 			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			// Time over the unread badge (or the expand chevron), right-aligned.
+			VStack(alignment: .trailing, spacing: MaskinSpace.s4) {
+				if let date = row.activityDate {
+					Text(ChatListTime.label(for: date, now: now))
+						.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
+						.foregroundStyle(MaskinColor.inkPlaceholder)
+						.lineLimit(1)
+						.fixedSize()
+				}
+				// One badge per row: a mention outranks the unread count.
+				if status.mentionsYou {
+					CountBadge(text: "@").accessibilityLabel("Mentions you")
+				} else if row.isUnread {
+					UnreadBadge(count: row.unreadCount)
+				}
+				if canExpand { chevron }
+			}
+			.frame(minWidth: MaskinSpace.s14 - MaskinSpace.s4, alignment: .trailing)
 		}
 		.contentShape(Rectangle())
 		.maskinHover()
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
+	}
+
+	/// The line under the title: who the chat is with (the agent's name), or the live status
+	/// while someone types or works, or the latest message for rows that have no topic.
+	@ViewBuilder
+	private var secondaryLine: some View {
+		if showsStatus {
+			RowStatusLine(status: status, unread: row.isUnread)
+		} else if let who = subtitle ?? role {
+			Text(who)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .medium, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+		} else {
+			RowStatusLine(status: status, unread: row.isUnread)
+		}
+	}
+
+	private var showsStatus: Bool {
+		switch status.prefix {
+		case .typing, .working: true
+		default: false
+		}
 	}
 
 	// MARK: Pieces
@@ -153,10 +169,10 @@ struct RowStatusLine: View {
 				Text("typing…")
 					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
 					.foregroundStyle(MaskinColor.sigInk)
-			case .working(let n):
+			case .working:
 				HStack(spacing: MaskinSpace.s3) {
 					TeamWorkingBars()
-					Text(ConversationRowStatus.workingLabel(n))
+					Text(status.workingText)
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
 				}
 				.foregroundStyle(MaskinColor.sigInk)
@@ -174,7 +190,9 @@ struct RowStatusLine: View {
 				Text(status.preview)
 					.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
 					.foregroundStyle(previewColor)
-					.lineLimit(1)
+					.lineLimit(2)
+					.multilineTextAlignment(.leading)
+					.fixedSize(horizontal: false, vertical: true)
 			}
 		}
 	}

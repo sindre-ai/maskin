@@ -1,197 +1,219 @@
 /**
- * Voice v1 tool surface: the JSON-schema definitions pinned onto the OpenAI
- * Realtime session at mint (`session.tools`), and the argument gate the WS
- * tool-proxy runs before dispatching to `invokeTool`.
+ * The tool surface of a Live (voice) call: every tool the MCP server registers,
+ * exactly as chat gets them, plus the tools of any extra MCP servers the caller
+ * hands in (the ones attached to the agent).
  *
- * The advertised schemas are deliberately narrower than the MCP tools' own
- * input schemas — a voice model gets the few fields a spoken request needs,
- * not the whole surface. The real zod schema in ./tools.ts stays the authority:
- * `parseVoiceToolArgs` validates against it, so a field the model invents or
- * gets wrong is rejected the same way a chat agent's would be.
+ * Nothing is redefined here. `createMcpServer` is the single source of truth
+ * for the Maskin tools, and a voice call reads it through an in-memory MCP
+ * client, so the names, descriptions and JSON schemas pinned onto the Realtime
+ * session are the ones `tools/list` returns to any other MCP client, and a call
+ * is validated and run by the SDK exactly as it is for chat. Extra servers are
+ * reached over HTTP/SSE the same way and their tools are listed as they report
+ * them, with the server name in front so they cannot collide.
  */
 
-import type { ZodTypeAny } from 'zod'
-import { tools } from './tools.js'
-import {
-	VOICE_TOOL_ERROR_CODES,
-	type VoiceAllowedTool,
-	VoiceToolNotAllowedError,
-	assertVoiceInvocationAllowed,
-} from './voice-tool-whitelist.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { READ_ONLY_TOOLS } from './annotations.js'
+import type { InvokeTool } from './invoke.js'
+import { type McpConfig, createMcpServer } from './server.js'
 
+/** A tool in the shape the OpenAI Realtime session expects in `session.tools`. */
 export interface VoiceRealtimeTool {
 	type: 'function'
-	name: VoiceAllowedTool
+	name: string
 	description: string
-	parameters: {
-		type: 'object'
-		properties: Record<string, unknown>
-		required?: string[]
+	parameters: Record<string, unknown>
+}
+
+/** An already-resolved remote MCP server (placeholders filled, credentials in place). */
+export interface VoiceExternalMcpServer {
+	url: string
+	headers?: Record<string, string>
+	transport?: 'http' | 'sse'
+}
+
+export interface VoiceToolkit {
+	/** Every registered MCP tool, as Realtime function definitions. */
+	tools: VoiceRealtimeTool[]
+	/** Runs a tool through the MCP SDK (input validation included). */
+	invokeTool: InvokeTool
+	/**
+	 * Tools that only read, by Realtime function name: the platform tools in
+	 * READ_ONLY_TOOLS (the table chat uses) plus tools of the extra servers that
+	 * declare readOnlyHint. Every other tool is a write.
+	 */
+	readOnlyTools: ReadonlySet<string>
+	/** Names of extra servers that could not be reached, so their tools are missing. */
+	unreachableServers: string[]
+	/** Closes the connections to the extra servers. */
+	close: () => Promise<void>
+}
+
+/** How long one extra server gets to connect and list its tools. */
+export const VOICE_EXTERNAL_MCP_CONNECT_TIMEOUT_MS = 5000
+/** The Realtime API limits a function name to this many characters. */
+const MAX_TOOL_NAME_LENGTH = 64
+
+async function listAllTools(client: Client) {
+	const out = []
+	let cursor: string | undefined
+	do {
+		const page = await client.listTools(cursor ? { cursor } : undefined)
+		out.push(...page.tools)
+		cursor = page.nextCursor
+	} while (cursor)
+	return out
+}
+
+function realtimeName(server: string, tool: string, taken: Set<string>): string {
+	const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '_')
+	const base = `${safe(server)}__${safe(tool)}`.slice(0, MAX_TOOL_NAME_LENGTH)
+	let name = base
+	for (let n = 2; taken.has(name); n++) {
+		const suffix = `_${n}`
+		name = `${base.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`
+	}
+	taken.add(name)
+	return name
+}
+
+/**
+ * Never follow a redirect: the address was checked before the call, and a
+ * redirect would carry the request (and its credentials) somewhere unchecked.
+ */
+const noRedirectFetch = (input: string | URL, init?: RequestInit) =>
+	fetch(input, { ...init, redirect: 'manual' })
+
+async function connectExternal(spec: VoiceExternalMcpServer): Promise<Client> {
+	const url = new URL(spec.url)
+	const requestInit = { headers: spec.headers ?? {} }
+	const transport =
+		spec.transport === 'sse'
+			? new SSEClientTransport(url, { requestInit, fetch: noRedirectFetch })
+			: new StreamableHTTPClientTransport(url, { requestInit, fetch: noRedirectFetch })
+	const client = new Client({ name: 'maskin-voice', version: '0.1.0' })
+	try {
+		await client.connect(transport)
+	} catch (err) {
+		await client.close().catch(() => {})
+		throw err
+	}
+	return client
+}
+
+export async function createVoiceToolkit(
+	config: McpConfig,
+	externalServers: Record<string, VoiceExternalMcpServer> = {},
+): Promise<VoiceToolkit> {
+	const server = createMcpServer(config)
+	const client = new Client({ name: 'maskin-voice', version: '0.1.0' })
+	const externalClients: Client[] = []
+	try {
+		return await buildToolkit(server, client, externalClients, externalServers)
+	} catch (err) {
+		// Setup failed halfway: close everything already opened.
+		await Promise.allSettled([
+			client.close(),
+			server.close(),
+			...externalClients.map((c) => c.close()),
+		])
+		throw err
 	}
 }
 
-const uuid = { type: 'string', format: 'uuid' } as const
-const limit = { type: 'integer', minimum: 1, maximum: 25 } as const
+async function buildToolkit(
+	server: ReturnType<typeof createMcpServer>,
+	client: Client,
+	externalClients: Client[],
+	externalServers: Record<string, VoiceExternalMcpServer>,
+): Promise<VoiceToolkit> {
+	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+	await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
 
-export const VOICE_REALTIME_TOOLS: readonly VoiceRealtimeTool[] = Object.freeze([
-	{
-		type: 'function',
-		name: 'search_objects',
-		description:
-			'Search the workspace for bets, tasks, insights and other objects by keywords in the title or content. Use this when the person names something to find.',
-		parameters: {
-			type: 'object',
-			properties: {
-				q: { type: 'string', description: 'Keywords to search for.' },
-				type: { type: 'string', description: 'Optional object type, e.g. bet, task, insight.' },
-				status: { type: 'string', description: 'Optional status filter.' },
-				limit,
-			},
-			required: ['q'],
-		},
-	},
-	{
-		type: 'function',
-		name: 'get_objects',
-		description: 'Read one or more objects by id. Ask for content to get the full body.',
-		parameters: {
-			type: 'object',
-			properties: {
-				ids: { type: 'array', items: uuid, minItems: 1, maxItems: 10 },
-				include: {
-					type: 'array',
-					items: { type: 'string', enum: ['content', 'metadata', 'relationships'] },
-				},
-			},
-			required: ['ids'],
-		},
-	},
-	{
-		type: 'function',
-		name: 'list_objects',
-		description:
-			'List objects of a type, newest first. Use it for questions like "what tasks are in review".',
-		parameters: {
-			type: 'object',
-			properties: {
-				type: { type: 'string' },
-				status: { type: 'string' },
-				sort: { type: 'string', enum: ['updated_at_asc', 'updated_at_desc'] },
-				limit,
-			},
-		},
-	},
-	{
-		type: 'function',
-		name: 'get_comments',
-		description: 'Read the comments on an object.',
-		parameters: {
-			type: 'object',
-			properties: { entity_id: uuid, limit },
-			required: ['entity_id'],
-		},
-	},
-	{
-		type: 'function',
-		name: 'list_actors',
-		description: 'List the humans and agents in the workspace.',
-		parameters: { type: 'object', properties: { limit } },
-	},
-	{
-		type: 'function',
-		name: 'list_relationships',
-		description: 'List the links from and to an object.',
-		parameters: {
-			type: 'object',
-			properties: { object_id: uuid, type: { type: 'string' }, limit },
-		},
-	},
-	{
-		type: 'function',
-		name: 'create_comment',
-		description:
-			'Post a comment on an object. Attention is capped at 3 on a voice call; higher values are refused.',
-		parameters: {
-			type: 'object',
-			properties: {
-				entity_id: uuid,
-				content: { type: 'string', description: 'The comment, one short conversational thought.' },
-				attention: { type: 'integer', minimum: 1, maximum: 3 },
-			},
-			required: ['entity_id', 'content'],
-		},
-	},
-	{
-		type: 'function',
-		name: 'create_objects',
-		description:
-			'Capture an insight or a task. Only the insight and task types can be created on a voice call.',
-		parameters: {
-			type: 'object',
-			properties: {
-				nodes: {
-					type: 'array',
-					minItems: 1,
-					maxItems: 5,
-					items: {
-						type: 'object',
-						properties: {
-							$id: { type: 'string', description: 'A short local label, unique within this call.' },
-							type: { type: 'string', enum: ['insight', 'task'] },
-							title: { type: 'string' },
-							content: { type: 'string' },
-							status: {
-								type: 'string',
-								description: 'Entry status for the type: new for an insight, backlog for a task.',
-							},
-						},
-						required: ['$id', 'type', 'title', 'status'],
-					},
-				},
-			},
-			required: ['nodes'],
-		},
-	},
-]) as readonly VoiceRealtimeTool[]
+	const tools: VoiceRealtimeTool[] = []
+	const taken = new Set<string>()
+	for (const tool of await listAllTools(client)) {
+		taken.add(tool.name)
+		tools.push({
+			type: 'function',
+			name: tool.name,
+			description: tool.description ?? '',
+			parameters: tool.inputSchema,
+		})
+	}
 
-/**
- * Validate and normalise a voice tool call's arguments.
- *
- * - Rejects anything off the whitelist, over the attention cap, or creating a
- *   non-{insight, task} type (codes in `VOICE_TOOL_ERROR_CODES`).
- * - Forces `workspace_id` to the voice session's workspace. The agent's API key
- *   may be a member of other workspaces, and a model steered by retrieved text
- *   must not be able to read or write across them by passing another id.
- * - Validates against the MCP tool's real zod schema, since `invokeTool`
- *   dispatches straight to the handler and skips the SDK's input parsing.
- *
- * The whitelist gate runs on the raw args first (so a rule violation reports
- * its own code, not a generic schema error) and again on the parsed args.
- */
-export function parseVoiceToolArgs(
-	name: string,
-	rawArgs: unknown,
-	workspaceId: string,
-): Record<string, unknown> {
-	if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
-		throw new VoiceToolNotAllowedError(
-			VOICE_TOOL_ERROR_CODES.invalidArguments,
-			`Arguments for ${name} must be a JSON object.`,
-		)
+	// realtime function name -> where to send the call and what the server calls it
+	const external = new Map<string, { client: Client; tool: string }>()
+	const readOnlyTools = new Set<string>(READ_ONLY_TOOLS)
+	const unreachableServers: string[] = []
+	await Promise.all(
+		Object.entries(externalServers).map(async ([serverName, spec]) => {
+			let connected: Client | null = null
+			let timedOut = false
+			let timer: ReturnType<typeof setTimeout> | undefined
+			try {
+				const attempt = (async () => {
+					const c = await connectExternal(spec)
+					connected = c
+					// Connected after the deadline: nobody is waiting for it any more.
+					if (timedOut) {
+						await c.close().catch(() => {})
+						throw new Error('timed out')
+					}
+					return { client: c, tools: await listAllTools(c) }
+				})()
+				// If the timeout wins the race, this keeps the late result from being an unhandled rejection.
+				attempt.catch(() => {})
+				const listed = await Promise.race([
+					attempt,
+					new Promise<never>((_, reject) => {
+						timer = setTimeout(() => {
+							timedOut = true
+							reject(new Error('timed out'))
+						}, VOICE_EXTERNAL_MCP_CONNECT_TIMEOUT_MS)
+					}),
+				])
+				clearTimeout(timer)
+				externalClients.push(listed.client)
+				for (const tool of listed.tools) {
+					const name = realtimeName(serverName, tool.name, taken)
+					external.set(name, { client: listed.client, tool: tool.name })
+					if (tool.annotations?.readOnlyHint === true) readOnlyTools.add(name)
+					tools.push({
+						type: 'function',
+						name,
+						description: tool.description ?? '',
+						parameters: tool.inputSchema,
+					})
+				}
+			} catch (err) {
+				clearTimeout(timer)
+				unreachableServers.push(serverName)
+				console.error(
+					`[MCP] Voice could not use server "${serverName}":`,
+					err instanceof Error ? err.message : err,
+				)
+				;(connected as Client | null)?.close().catch(() => {})
+			}
+		}),
+	)
+
+	return {
+		tools,
+		readOnlyTools,
+		unreachableServers,
+		invokeTool: (name, args) => {
+			const target = external.get(name)
+			return (target?.client ?? client).callTool({
+				name: target?.tool ?? name,
+				arguments: (args ?? {}) as Record<string, unknown>,
+			})
+		},
+		close: async () => {
+			await Promise.allSettled([client, ...externalClients].map((c) => c.close()))
+		},
 	}
-	assertVoiceInvocationAllowed(name, rawArgs)
-	const schema = (tools as Record<string, { inputSchema: ZodTypeAny }>)[name]?.inputSchema
-	const parsed = schema?.safeParse({ ...(rawArgs as object), workspace_id: workspaceId })
-	if (!parsed?.success) {
-		const detail = parsed?.error.issues
-			.slice(0, 3)
-			.map((i) => `${i.path.join('.') || 'arguments'}: ${i.message}`)
-			.join('; ')
-		throw new VoiceToolNotAllowedError(
-			VOICE_TOOL_ERROR_CODES.invalidArguments,
-			`Invalid arguments for ${name}${detail ? ` (${detail})` : ''}.`,
-		)
-	}
-	assertVoiceInvocationAllowed(name, parsed.data)
-	return parsed.data as Record<string, unknown>
 }

@@ -1,3 +1,4 @@
+import { AgentAccess } from '@/components/integrations/agent-access'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
@@ -7,6 +8,7 @@ import {
 } from '@/components/integrations/provider-dialogs'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAuth } from '@/hooks/use-auth'
 import { useIdentityAddonPricing } from '@/hooks/use-identity-addon-pricing'
@@ -16,6 +18,7 @@ import {
 	useLinkableGithubInstallations,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
 import { Check, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
@@ -25,6 +28,14 @@ const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'groups:history',
 	'mpim:history',
 ]
+
+const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
+	ready: 'Connected, ready to use',
+	connected_not_on_agent: 'Connected to the workspace',
+	sharing_off: 'Connected to the workspace',
+	needs_reconnect: 'Needs reconnecting',
+	missing: 'Not connected yet',
+}
 
 export function ProviderRow({
 	provider,
@@ -38,6 +49,7 @@ export function ProviderRow({
 	returnTo,
 	variant = 'settings',
 	reconnect = false,
+	introState,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
@@ -59,6 +71,8 @@ export function ProviderRow({
 	variant?: 'settings' | 'chat'
 	/** The workspace has a row for this provider that is no longer active, so the sign-in button reads Reconnect. */
 	reconnect?: boolean
+	/** Draws the quiet row of an agent intro: tighter, an outline Connect and plain state subtitles. */
+	introState?: IntegrationToolState
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -112,11 +126,29 @@ export function ProviderRow({
 			? `${provider.events.length} event types available`
 			: 'Available to connect'
 
+	// The intro's quiet row says plainly where the tool stands for this agent, in
+	// place of the event count and the install id.
+	const introSubtitle =
+		introState !== undefined
+			? connect.isPending
+				? 'Connecting…'
+				: INTRO_SUBTITLES[introState]
+			: undefined
+	const introNeedsReconnect = introState === 'needs_reconnect' || reconnect
+	const connectLabel = reconnect ? 'Reconnect' : 'Connect'
+
 	return (
 		<ProviderCard
 			name={provider.displayName}
-			subtitle={connectedLabel}
-			tone={needsReconnect ? 'warning' : isConnected ? 'connected' : 'available'}
+			compact={introState !== undefined}
+			subtitle={introSubtitle ?? connectedLabel}
+			tone={
+				needsReconnect || (introState && introNeedsReconnect)
+					? 'warning'
+					: isConnected
+						? 'connected'
+						: 'available'
+			}
 			subtitleTitle={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
 			notes={
 				<>
@@ -148,7 +180,11 @@ export function ProviderRow({
 							</Button>
 						)}
 						{variant === 'chat' ? (
-							<ConnectedButton />
+							// The intro's row already warns and offers Reconnect; a disabled
+							// "Connected" beside it would say the opposite.
+							introState && needsReconnect ? null : (
+								<ConnectedButton />
+							)
 						) : (
 							<Button
 								variant="ghost"
@@ -169,11 +205,30 @@ export function ProviderRow({
 								Add existing
 							</Button>
 						)}
-						<Button size="sm" onClick={handleConnect} disabled={connect.isPending}>
-							{reconnect ? 'Reconnect' : 'Connect'}
+						<Button
+							size="sm"
+							variant={introState ? 'outline' : undefined}
+							onClick={handleConnect}
+							disabled={connect.isPending}
+							aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}
+						>
+							{introState && connect.isPending ? (
+								<>
+									<Spinner className="mr-1" />
+									Connecting…
+								</>
+							) : (
+								connectLabel
+							)}
 						</Button>
 					</div>
 				)
+			}
+			footer={
+				// Who can use it is managed in Settings, not from the chat card.
+				isConnected && variant === 'settings' ? (
+					<AgentAccess integration={integration} workspaceId={workspaceId} />
+				) : undefined
 			}
 		/>
 	)
@@ -202,7 +257,7 @@ export function GroupedProviderRow({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
-	const [expanded, setExpanded] = useState(installations.length > 1)
+	const [expanded, setExpanded] = useState(false)
 	const count = installations.length
 
 	// LinkedIn installs are per-member: the row carries `actorId`, and the only
@@ -322,6 +377,7 @@ export function GroupedProviderRow({
 							actorScoped={isActorScoped}
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
+							workspaceId={workspaceId}
 							onDisconnect={() => disconnect.mutate(installation.id)}
 							disconnecting={disconnect.isPending}
 						/>
@@ -365,6 +421,7 @@ function NestedInstallationRow({
 	actorScoped = false,
 	actorName,
 	isOwn = false,
+	workspaceId,
 	onDisconnect,
 	disconnecting,
 }: {
@@ -374,6 +431,7 @@ function NestedInstallationRow({
 	/** Display name of the member who connected an actor-scoped install. */
 	actorName?: string
 	isOwn?: boolean
+	workspaceId: string
 	onDisconnect: () => void
 	disconnecting: boolean
 }) {
@@ -389,7 +447,7 @@ function NestedInstallationRow({
 			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
+		<div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
 			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">
@@ -413,6 +471,9 @@ function NestedInstallationRow({
 			>
 				Disconnect
 			</Button>
+			<div className="basis-full">
+				<AgentAccess integration={integration} workspaceId={workspaceId} />
+			</div>
 		</div>
 	)
 }
@@ -442,6 +503,7 @@ export function ProviderConnectRow({
 	returnTo,
 	variant = 'settings',
 	reconnect,
+	introState,
 }: {
 	provider: ProviderInfo
 	/** This provider's active integrations in the workspace. */
@@ -450,6 +512,8 @@ export function ProviderConnectRow({
 	returnTo?: string
 	variant?: 'settings' | 'chat'
 	reconnect?: boolean
+	/** The quiet row of an agent intro; see ProviderRow. */
+	introState?: IntegrationToolState
 }) {
 	const [apiKeyOpen, setApiKeyOpen] = useState(false)
 	const [apiKey, setApiKey] = useState('')
@@ -467,7 +531,10 @@ export function ProviderConnectRow({
 
 	return (
 		<>
-			{MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0 ? (
+			{/* The intro's quiet row stays one row per tool, so it never takes the install list. */}
+			{MULTI_INSTALL_PROVIDERS.has(provider.name) &&
+			installations.length > 0 &&
+			introState === undefined ? (
 				<GroupedProviderRow
 					provider={provider}
 					installations={installations}
@@ -496,6 +563,7 @@ export function ProviderConnectRow({
 					returnTo={returnTo}
 					variant={variant}
 					reconnect={reconnect}
+					introState={introState}
 				/>
 			)}
 			{provider.authType === 'api_key' && (

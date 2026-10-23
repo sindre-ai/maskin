@@ -127,6 +127,10 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Keychain master key (64 hex chars). Set it in Coolify. Unset: envelope encryption
+      # is unavailable and the server logs a warning at start.
+      KEYCHAIN_MASTER_KEY: ${KEYCHAIN_MASTER_KEY:-}
+      KEYCHAIN_MASTER_KEY_PREVIOUS: ${KEYCHAIN_MASTER_KEY_PREVIOUS:-}
       # Invite emails. Set RESEND_API_KEY and APP_URL together: with a key and no
       # APP_URL, invite creation returns 500. Do not add EMAIL_FROM here: the
       # email package reads it with ??, so an empty value would beat the

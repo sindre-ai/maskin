@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { type FirstStep, firstStepSchema } from './first-steps'
 import { mcpServerSchema } from './sessions'
 
 export const actorTypeSchema = z.enum(['human', 'agent'])
@@ -35,6 +36,8 @@ export const ACTOR_DESCRIPTION_MAX_LENGTH = 80
  */
 export const ACTOR_DESCRIPTION_MAX_STORED_LENGTH = 2000
 
+export { type FirstStep, firstStepSchema }
+
 export const createActorSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: actorTypeSchema,
@@ -50,6 +53,12 @@ export const createActorSchema = z.object({
 	// Agents only: the workspace the new agent is born into. The caller must be a
 	// member of it. Never accepted for humans (signup mints its own workspace).
 	workspace_id: z.string().uuid().optional(),
+	// Agents only (ignored for humans). Hints for the new agent's intro message;
+	// nothing here is stored on the actor. Shape errors are 400s. Content problems
+	// never fail creation: a provider name that is unknown, or has no tools an
+	// agent could use, is dropped by the intro and counted.
+	first_steps: z.array(firstStepSchema).min(1).max(4).optional(),
+	needed_integrations: z.array(z.string().min(1).max(100)).min(1).max(4).optional(),
 })
 
 export const loginSchema = z.object({

@@ -42,10 +42,12 @@ public final class AgentsActivityRuntime {
 		let next = makeFeed(workspaceId, coordinator)
 		feed = next
 		await next.start()
+		await coordinator.sweep()
 	}
 
 	/// Refetch the running sessions now (app came to the foreground, background refresh).
 	public func refresh() async {
 		await feed?.refresh()
+		await coordinator.sweep()
 	}
 }

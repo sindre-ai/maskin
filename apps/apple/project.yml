@@ -87,13 +87,19 @@ targets:
         # Where web-only settings (integrations, billing) open. Empty = the API origin, right for
         # production; set MASKIN_WEB_BASE_URL in Local.xcconfig when the web app is on another port.
         MaskinWebBaseURL: $(MASKIN_WEB_BASE_URL)
-        # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion, which the backend lacks
-        # for humans. Release hides "Create account" until it exists (docs/app-store-notes.md).
+        # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion. Settings › Delete
+        # account exists, so every configuration shows "Create account" (docs/app-store-notes.md).
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
+        # The public legal pages: shown on the sign-in / sign-up screen. Signed in, Settings also
+        # opens the web app's own Privacy & data settings.
+        MaskinTermsURL: https://maskin.io/terms/
+        MaskinPrivacyURL: https://maskin.io/privacy/
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
-        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages.
+        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages and talk with your agents in a live call.
         NSCameraUsageDescription: Maskin uses the camera so you can take a photo to attach to a message.
+        # App lock (Settings → Security): Face ID unlocks Maskin instead of the device passcode.
+        NSFaceIDUsageDescription: Maskin uses Face ID to unlock the app when you turn on app lock.
         UILaunchScreen:
           UIColorName: LaunchBackground
           UIImageName: LaunchMark
@@ -114,6 +120,8 @@ targets:
         UIBackgroundModes:
           - remote-notification
           - fetch
+          # A live call keeps the microphone and the agent's voice running with the screen locked.
+          - audio
         # Best-effort For You top-up while the app is closed (BackgroundRefresh.swift).
         BGTaskSchedulerPermittedIdentifiers:
           - io.maskin.app.refresh
@@ -171,7 +179,7 @@ targets:
           MASKIN_MACOS_ENTITLEMENTS: ""
         Release:
           MASKIN_APS_ENVIRONMENT: production
-          MASKIN_ENABLE_SIGNUP: "NO"
+          MASKIN_ENABLE_SIGNUP: "YES"
           MASKIN_MACOS_ENTITLEMENTS: Apps/Maskin/Maskin-macOS.entitlements
           # ASSUMPTION: production serves API and web from this origin (maskin.io is what the
           # repo's deep-link/docs URLs use). Confirm before the first TestFlight build.

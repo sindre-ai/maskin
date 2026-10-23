@@ -1,6 +1,11 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { conversations, messages, workspaceMembers } from '@maskin/db/schema'
+import {
+	conversationParticipants,
+	conversations,
+	messages,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -181,6 +186,85 @@ describe('POST /sessions/:id/ask', () => {
 		const res = await app.request(ask(session.id, workspaceId))
 		expect(res.status).toBe(403)
 		expect(await messagesFor(conversationId)).toHaveLength(0)
+	})
+
+	describe('with a Chief of Staff in the workspace', () => {
+		let cosId: string
+
+		beforeEach(async () => {
+			const cos = await insertActor(db, { type: 'agent', name: 'Chief of Staff' })
+			if (!cos) throw new Error('failed to seed Chief of Staff')
+			cosId = cos.id
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: cosId, role: 'member' })
+		})
+
+		async function cosChats() {
+			const rows = await db
+				.select({ id: conversations.id })
+				.from(conversations)
+				.innerJoin(
+					conversationParticipants,
+					eq(conversationParticipants.conversationId, conversations.id),
+				)
+				.where(eq(conversationParticipants.actorId, cosId))
+			return rows.map((r) => r.id)
+		}
+
+		it('sends an autonomous session question to the 1-1 with the Chief of Staff', async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(ask(session.id, workspaceId))
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { delivered_to: string }
+			expect(body.delivered_to).toBe('chief_of_staff')
+
+			const [chatId] = await cosChats()
+			if (!chatId) throw new Error('no Chief of Staff conversation was created')
+			const rows = await messagesFor(chatId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.actorId).toBe(agentId)
+			expect(rows[0]?.content).toContain('How should I reach Spotify?')
+		})
+
+		it('reuses the same 1-1 for every later question', async () => {
+			const first = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			const second = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!first || !second) throw new Error('failed to seed sessions')
+			const app = createSessionsApp(agentId)
+
+			expect((await app.request(ask(first.id, workspaceId))).status).toBe(200)
+			expect((await app.request(ask(second.id, workspaceId))).status).toBe(200)
+
+			const chats = await cosChats()
+			expect(chats).toHaveLength(1)
+			expect(await messagesFor(chats[0] as string)).toHaveLength(2)
+		})
+
+		it('still asks a chat session in its own chat, not the Chief of Staff 1-1', async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(ask(session.id, workspaceId))
+			expect(((await res.json()) as { delivered_to: string }).delivered_to).toBe('chat')
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+			expect(await cosChats()).toHaveLength(0)
+		})
 	})
 
 	it('404s an unknown session', async () => {

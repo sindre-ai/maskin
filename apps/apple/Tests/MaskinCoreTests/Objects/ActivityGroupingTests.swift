@@ -61,15 +61,13 @@ struct ActivityGroupingTests {
 		#expect(ActivityGrouping.timeLabel(nil, now: noon, calendar: cal, locale: gb) == nil)
 	}
 
-	@Test("a comment is authored text over 110 characters; anything shorter is a quiet event")
-	func commentThreshold() {
-		let short = TimelineItem(id: "s", kind: .comment("Great, ship it behind the flag."))
-		let exactly = TimelineItem(id: "x", kind: .comment(String(repeating: "a", count: 110)))
-		let over = TimelineItem(id: "o", kind: .comment(String(repeating: "a", count: 111)))
+	@Test("every authored comment is a message, however short; system events stay quiet lines")
+	func commentKind() {
+		let short = TimelineItem(id: "s", kind: .comment("ok"))
+		let long = TimelineItem(id: "o", kind: .comment(String(repeating: "a", count: 500)))
 		let system = TimelineItem(id: "e", kind: .activity(String(repeating: "moved ", count: 40)))
-		#expect(ActivityGrouping.kind(of: short) == .event)
-		#expect(ActivityGrouping.kind(of: exactly) == .event)
-		#expect(ActivityGrouping.kind(of: over) == .comment)
+		#expect(ActivityGrouping.kind(of: short) == .comment)
+		#expect(ActivityGrouping.kind(of: long) == .comment)
 		#expect(ActivityGrouping.kind(of: system) == .event)
 	}
 
@@ -90,10 +88,22 @@ struct ActivityGroupingTests {
 			], now: noon, calendar: cal, locale: gb)
 		#expect(days.map(\.label) == ["Today", "Yesterday", "Mon"])
 		#expect(days[0].entries.map(\.id) == ["t2", "t1"])
-		#expect(days[0].entries.map(\.kind) == [.event, .event])
+		#expect(days[0].entries.map(\.kind) == [.comment, .event])
 		#expect(days[0].entries[0].timeLabel == "11:00")
 		#expect(days[1].entries[0].kind == .comment)
 		#expect(days[1].entries[0].timeLabel == nil)
+	}
+
+	@Test("a reply to a reply stays in the same thread under the top-level message")
+	func nestedReplies() {
+		let days = ActivityGrouping.days(
+			[
+				item("root", .comment(longText), hoursAgo: 5, eventId: 10),
+				item("r1", .comment("First reply"), hoursAgo: 4, eventId: 11, parent: 10),
+				item("r2", .comment("Reply to the reply"), hoursAgo: 3, eventId: 12, parent: 11),
+			], now: noon, calendar: cal, locale: gb)
+		#expect(days.flatMap(\.entries).map(\.id) == ["root"])
+		#expect(days[0].entries[0].replies.map(\.id) == ["r1", "r2"])
 	}
 
 	@Test("replies nest under their parent, oldest first, and never start their own day")
@@ -168,7 +178,7 @@ struct RelatedGroupingTests {
 			link("a", "blocks", out: true), link("b", "breaks_into", out: false), link("c", "blocks", out: true),
 			link("d", "relates_to", out: true, type: "loop"),
 		])
-		#expect(groups.map(\.label) == ["In flow", "Blocks", "Part of"])
+		#expect(groups.map(\.label) == ["In flow", "Blocking", "Belongs to"])
 		#expect(groups[1].links.map(\.id) == ["a", "c"])
 	}
 

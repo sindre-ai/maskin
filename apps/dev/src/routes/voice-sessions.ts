@@ -7,8 +7,8 @@ import {
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
-import { createInvokeTool } from '@maskin/mcp'
-import type { InvokeTool } from '@maskin/mcp'
+import { createVoiceToolkit } from '@maskin/mcp'
+import type { VoiceToolkit } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -17,11 +17,11 @@ import {
 	captureVoiceSessionStarted,
 } from '../lib/analytics/voice-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
@@ -39,6 +39,7 @@ import {
 	setCloseVendorSessionFn,
 } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
+import { withConfirmationArg } from '../services/voice-write-gate'
 
 type Env = {
 	Variables: {
@@ -79,20 +80,46 @@ const rateLimitedResponse = z
 	})
 	.openapi('VoiceSessionRateLimited')
 
-/** Builds the tool dispatcher a call's tools run through. Overridable in tests. */
-export type VoiceInvokeToolFactory = (args: { apiKey: string; workspaceId: string }) => InvokeTool
+/**
+ * Builds the tools a call runs: every MCP tool chat has, plus the dispatcher
+ * that runs them. Overridable in tests.
+ */
+export type VoiceInvokeToolFactory = (args: {
+	db: Database
+	apiKey: string
+	workspaceId: string
+	agentTools: unknown
+}) => Promise<VoiceToolkit>
 
-const defaultInvokeToolFactory: VoiceInvokeToolFactory = ({ apiKey, workspaceId }) =>
-	createInvokeTool({
-		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
-		// The agent's own key, so every write is attributed to the agent's actor
-		// (voice_sessions.agent_actor_id) rather than the human speaking. It is
-		// read server-side here and never sent to the browser.
-		apiKey,
-		defaultWorkspaceId: workspaceId,
-		transport: 'http',
-		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+const defaultInvokeToolFactory: VoiceInvokeToolFactory = async ({
+	db,
+	apiKey,
+	workspaceId,
+	agentTools,
+}) => {
+	const apiBaseUrl = `http://localhost:${Number(process.env.PORT) || 3000}`
+	// Only the servers the user added to this agent, exactly as in chat.
+	const agentMcpServers = await resolveVoiceAgentMcpServers({
+		db,
+		agentTools,
+		agentApiKey: apiKey,
+		workspaceId,
+		apiBaseUrl,
 	})
+	return createVoiceToolkit(
+		{
+			apiBaseUrl,
+			// The agent's own key, so every write is attributed to the agent's actor
+			// (voice_sessions.agent_actor_id) rather than the human speaking. It is
+			// read server-side here and never sent to the browser.
+			apiKey,
+			defaultWorkspaceId: workspaceId,
+			transport: 'http',
+			webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		},
+		agentMcpServers,
+	)
+}
 
 let invokeToolFactory: VoiceInvokeToolFactory = defaultInvokeToolFactory
 
@@ -153,7 +180,7 @@ const postVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
-		'Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
+		'Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
 	request: {
 		body: {
 			content: { 'application/json': { schema: createVoiceSessionBody } },
@@ -192,18 +219,6 @@ const postVoiceSessionRoute = createRoute({
 app.openapi(postVoiceSessionRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
-
-	// Rail 3: flag gates the visual + session-mint surface. 404 (not 403) so
-	// a non-tester never even learns the endpoint exists — matches every other
-	// flag-gated route's shape.
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		await captureVoiceSessionDenied(humanActorId, {
-			agent_id: null,
-			workspace_id: null,
-			reason: 'flag_off',
-		})
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
 
 	const body = c.req.valid('json')
 	const agentActorId = body.agent_actor_id
@@ -359,7 +374,7 @@ const postOfferRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
-		'Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.',
+		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.',
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: offerBody } }, required: true },
@@ -383,7 +398,7 @@ const postOfferRoute = createRoute({
 		},
 		500: {
 			description:
-				'Vendor connect failed — the session row is marked errored so the caller can start again',
+				'Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -393,9 +408,6 @@ app.openapi(postOfferRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
 
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
 	const { id } = c.req.valid('param')
 	const { sdp } = c.req.valid('json')
 
@@ -416,11 +428,24 @@ app.openapi(postOfferRoute, async (c) => {
 		return c.json(createApiError('CONFLICT', 'This voice session already took an offer'), 409)
 	}
 
+	// Voice is billed to an operator key. Without it every vendor call is a 401
+	// that reads as a vendor outage, so say what is wrong and free the slot.
+	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()
+	if (!apiKey) {
+		logger.error('Voice is not configured: MASKIN_VOICE_OPENAI_API_KEY is unset', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+		})
+		await releasePendingSession(db, session.id)
+		return c.json(createApiError('INTERNAL_ERROR', 'Voice is not configured on this server'), 500)
+	}
+
 	const [agent] = await db
 		.select({
 			name: actors.name,
 			systemPrompt: actors.systemPrompt,
 			apiKey: actors.apiKey,
+			tools: actors.tools,
 		})
 		.from(actors)
 		.where(eq(actors.id, session.agentActorId))
@@ -464,22 +489,45 @@ app.openapi(postOfferRoute, async (c) => {
 
 	const instructions = [
 		agent.systemPrompt ?? '',
+		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
+		// The server holds every write until the person says yes; this only makes the agent ask naturally.
+		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
 	]
 		.join('')
 		.trim()
 
-	// Boot guard (voice-boot-guard.ts) ensures the env exists at boot when
-	// the flag is on; a live handler read is safe.
-	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY ?? ''
-	const outcome = await createRealtimeCall({
-		apiKey,
-		callsUrl: realtimeCallsUrl(),
-		offerSdp: sdp,
-		instructions,
-		voice: VOICE_REALTIME_VOICE,
-		model: VOICE_REALTIME_MODEL,
-	})
+	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
+	try {
+		toolkit = await invokeToolFactory({
+			db,
+			apiKey: agent.apiKey,
+			workspaceId: session.workspaceId,
+			agentTools: agent.tools,
+		})
+	} catch (err) {
+		await releasePendingSession(db, session.id)
+		throw err
+	}
+	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
+	try {
+		outcome = await createRealtimeCall({
+			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
+			apiKey,
+			callsUrl: realtimeCallsUrl(),
+			offerSdp: sdp,
+			instructions,
+			voice: VOICE_REALTIME_VOICE,
+			model: VOICE_REALTIME_MODEL,
+		})
+	} catch (err) {
+		// Nothing owns the toolkit's connections yet, so close them here.
+		void toolkit.close().catch(() => {})
+		await releasePendingSession(db, session.id)
+		throw err
+	}
+
+	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 
 	if (outcome.kind === 'rate_limited') {
 		await releasePendingSession(db, session.id)
@@ -527,6 +575,7 @@ app.openapi(postOfferRoute, async (c) => {
 			.set({ vendorSessionId: outcome.callId, model: VOICE_REALTIME_MODEL })
 			.where(eq(voiceSessions.id, session.id))
 	} catch (err) {
+		void toolkit.close().catch(() => {})
 		// The call exists at the vendor but we cannot track it: hang it up so it
 		// does not run unmetered.
 		await closeVoiceCall({ voiceSessionId: session.id, vendorSessionId: outcome.callId })
@@ -539,10 +588,9 @@ app.openapi(postOfferRoute, async (c) => {
 			db,
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
-			invokeTool: invokeToolFactory({
-				apiKey: agent.apiKey,
-				workspaceId: session.workspaceId,
-			}),
+			invokeTool: toolkit.invokeTool,
+			readOnlyTools: toolkit.readOnlyTools,
+			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
 		}),
@@ -616,7 +664,7 @@ const hangupVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'End a voice call',
 	description:
-		"Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+		"Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: hangupBody } }, required: true },
@@ -637,11 +685,7 @@ app.openapi(hangupVoiceSessionRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
 
-	// Same 404 shape as the mint route; a session that is not the caller's is a
-	// 404 too, so ids are not probeable.
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
+	// A session that is not the caller's is a 404, so ids are not probeable.
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 

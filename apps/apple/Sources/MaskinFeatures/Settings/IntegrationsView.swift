@@ -4,7 +4,8 @@ import MaskinUI
 import SwiftUI
 
 /// Integrations (2B): every account a flow can use with its state: connected, needs sign-in, or
-/// not connected. Connecting happens in the browser; disconnecting is here.
+/// not connected. Slack, GitHub and LinkedIn connect in a system sign-in sheet; the rest finish in
+/// the browser. Disconnecting is here.
 struct IntegrationsView: View {
 	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
@@ -30,9 +31,17 @@ struct IntegrationsView: View {
 				PageCard(rows: rows)
 			}
 			if let error = store.actionError { FormError(error) }
+			if let notice = store.connectNotice {
+				if notice.kind == .failure {
+					FormError(notice.text)
+				} else {
+					PageFootnote(text: notice.text)
+						.accessibilityAddTraits(.updatesFrequently)
+				}
+			}
 			PageFootnote(
 				text: store.canManage
-					? "Connecting signs you in with the provider in your browser. When you come back, this list refreshes."
+					? "Connecting signs you in with the provider. When you come back, this list refreshes."
 					: "Only owners and admins can connect or disconnect an integration.")
 		}
 		.task { await store.load() }
@@ -46,10 +55,27 @@ struct IntegrationsView: View {
 			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
 			titleVisibility: .visible, presenting: actionTarget
 		) { integration in
-			if needsWeb(integration) {
+			if store.canManage, store.supportsNativeConnect(integration.provider),
+				integration.state != .connected
+			{
+				Button("Reconnect") { startConnect(integration.provider) }
+			} else if needsWeb(integration) {
 				Button("Reconnect in browser") { openSetup() }
 			}
 			Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
+		}
+		.confirmationDialog(
+			"Choose a GitHub account",
+			isPresented: Binding(
+				get: { store.installationPicker != nil },
+				set: { if !$0 { store.cancelInstallationChoice() } }),
+			titleVisibility: .visible
+		) {
+			ForEach(store.installationPicker?.choices ?? []) { choice in
+				Button(choice.name ?? "GitHub account") { Task { await store.chooseInstallation(choice) } }
+			}
+		} message: {
+			Text("You can reach more than one. Pick the one Maskin should use.")
 		}
 		.confirmationDialog(
 			pendingDisconnect.map { "Disconnect \(store.displayName(for: $0))?" } ?? "Disconnect?",
@@ -69,17 +95,38 @@ struct IntegrationsView: View {
 				id: integration.id, title: store.displayName(for: integration),
 				subtitle: WorkspacePageState.integrationSubtitle(
 					integration.state, account: store.accountLabel(for: integration)),
-				accessory: .state(WorkspacePageState.integration(integration.state)),
-				action: store.canManage ? { actionTarget = integration } : nil)
+				accessory: .state(
+					isConnecting(integration.provider)
+						? WorkspacePageState.integrationConnecting
+						: WorkspacePageState.integration(integration.state)),
+				action: store.canManage && !store.isConnectInFlight ? { actionTarget = integration } : nil)
 		}
 		let available = store.available.map { provider in
 			PageRowModel(
 				id: "available-\(provider.id)", title: provider.displayName,
 				subtitle: WorkspacePageState.integrationAvailableSubtitle,
-				accessory: .state(WorkspacePageState.integrationAvailable),
-				action: store.canManage && webSetupURL != nil ? { openSetup() } : nil)
+				accessory: .state(
+					isConnecting(provider.id)
+						? WorkspacePageState.integrationConnecting : WorkspacePageState.integrationAvailable),
+				action: availableAction(provider))
 		}
 		return connected + available
+	}
+
+	private func isConnecting(_ providerID: String) -> Bool { store.connectPhase.provider == providerID }
+
+	private func startConnect(_ providerID: String) {
+		Task { await store.connect(providerID: providerID) }
+	}
+
+	/// Native providers connect in the sheet (and ignore taps while one is running); the rest keep
+	/// the browser hand-off.
+	private func availableAction(_ provider: IntegrationProvider) -> (() -> Void)? {
+		guard store.canManage else { return nil }
+		if store.supportsNativeConnect(provider.id) {
+			return store.isConnectInFlight ? nil : { startConnect(provider.id) }
+		}
+		return webSetupURL != nil ? { openSetup() } : nil
 	}
 
 	private func openSetup() { if let webSetupURL { openURL(webSetupURL) } }

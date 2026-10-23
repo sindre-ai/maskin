@@ -343,6 +343,14 @@ export type InteractiveTurnFinalizerOptions = {
 	 */
 	fallbackModel?: string | null
 	/**
+	 * Called when a turn has genuinely ended from the human's point of view:
+	 * its closing message was posted (or it ended with nothing to post).
+	 * NOT called while a replay or correction is pending, because the turn is
+	 * still going — the replay's own writeInput starts the next one. Drives the
+	 * iOS Live Activity lifecycle. Must not throw; errors are swallowed.
+	 */
+	onTurnFinished?: (sessionId: string, outcome: 'done' | 'failed') => void
+	/**
 	 * Called when a helper session (config.stop_on_result) closes a turn with a
 	 * result and is not waiting on an answer: the session is done. Injected for
 	 * the same reason as the options above — no session-manager import here.
@@ -399,6 +407,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
@@ -411,6 +420,7 @@ export class InteractiveTurnFinalizer {
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
+		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -458,6 +468,14 @@ export class InteractiveTurnFinalizer {
 					`Interactive turn finalizer failed to post final output for session ${sessionId} (log ${logId}): ${describeError(err)}`,
 				)
 			}
+		}
+	}
+
+	private turnFinished(sessionId: string, outcome: 'done' | 'failed'): void {
+		try {
+			this.onTurnFinished?.(sessionId, outcome)
+		} catch (err) {
+			logger.warn(`onTurnFinished failed for session ${sessionId}: ${describeError(err)}`)
 		}
 	}
 
@@ -590,6 +608,7 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Interactive session ${sessionId} closed a turn with no postable text (log ${logId}, subtype ${result.subtype ?? 'none'}); nothing to post`,
 			)
+			this.turnFinished(sessionId, 'done')
 			return
 		}
 
@@ -1077,11 +1096,13 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
+		const threadRootId = await this.resolveThreadRootId(turnMessageId)
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
 			workspaceId: gate.workspaceId,
 			actorId: gate.actorId,
+			threadRootId,
 			content,
 			metadata: {
 				source: 'final_output',
@@ -1123,7 +1144,11 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
+			return
 		}
+		const failed =
+			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
+		this.turnFinished(sessionId, failed ? 'failed' : 'done')
 	}
 
 	/**
@@ -1468,6 +1493,8 @@ export class InteractiveTurnFinalizer {
 				logger.warn(
 					`Interactive session ${sessionId} ${reason} notice was suppressed as a duplicate (dedupe_key ${dedupeKey}-${reason})`,
 				)
+			} else {
+				this.turnFinished(sessionId, 'failed')
 			}
 		} catch (err) {
 			logger.error(
@@ -1815,6 +1842,28 @@ export class InteractiveTurnFinalizer {
 	 * envelope can share a Docker chunk with its neighbours, and parsing the
 	 * whole row would throw and silently yield an unanchored message.
 	 */
+	/**
+	 * A reply to a message posted inside a thread answers in that thread. The turn's
+	 * triggering message is either the thread's root (which starts the thread) or one
+	 * of its replies; only a reply carries a root, so an agent answering a top-level
+	 * message still posts to the main timeline. Best-effort: a lookup failure posts
+	 * the reply top-level rather than losing it.
+	 */
+	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		if (turnMessageId === null) return null
+		try {
+			const [row] = await this.db
+				.select({ threadRootId: messages.threadRootId })
+				.from(messages)
+				.where(eq(messages.id, turnMessageId))
+				.limit(1)
+			return row?.threadRootId ?? null
+		} catch (err) {
+			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
+			return null
+		}
+	}
+
 	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		const [row] = await this.db
 			.select({ content: sessionLogs.content })

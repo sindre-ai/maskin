@@ -614,6 +614,72 @@ ${surviving}
 		).toBe(trigger.id)
 	})
 
+	it('posts the reply in the thread when the turn was triggered by a thread reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const [reply] = await db
+			.insert(messages)
+			.values({
+				conversationId,
+				actorId: humanId,
+				content: 'keep Qualifier',
+				threadRootId: root.id,
+			})
+			.returning()
+		if (!reply) throw new Error('no reply message')
+
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'keep Qualifier' },
+				maskin_message_id: reply.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+		expect(posted?.threadAlsoInChannel).toBe(false)
+	})
+
+	it('keeps a reply to a top-level message in the main timeline', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'top level question' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'top level question' },
+				maskin_message_id: trigger.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBeNull()
+	})
+
 	// The transport that fills session_logs must preserve the trailing newline
 	// on every row. onStdout re-splits what it is given with splitLines(), which
 	// pops the final segment as an incomplete "remainder" — so a row that does
@@ -667,6 +733,97 @@ ${surviving}
 		// The finalizer never calls evaluateAndRespond, so exactly one message
 		// appears and no responder chain can start from it.
 		expect(after).toHaveLength(before.length + 1)
+	})
+
+	describe('turn-finished signal (drives the Live Activity)', () => {
+		function withSignal() {
+			const finished: Array<{ sessionId: string; outcome: string }> = []
+			const calls: unknown[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: (sessionId, outcome) => finished.push({ sessionId, outcome }),
+				retryTurn: async (_s, payload) => {
+					calls.push(payload)
+				},
+				delay: async () => {},
+			})
+			return { instance, finished, calls }
+		}
+
+		it('signals done once when the reply is posted, and not again for a redelivered line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(31)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('signals done for a turn that replied through the chat tool and ended silently', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(32)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('does not signal while a blank turn is being retried', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			// A blank result with no reply is not silence by choice: it is replayed, so the turn
+			// is still going and the Live Activity must stay up.
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([])
+		})
+
+		it('signals failed when the human is told the turn failed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(33)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'failed' }])
+		})
+
+		it('does not signal while a transient failure is being replayed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished, calls } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'API Error: {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_x"}' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+			expect(finished).toEqual([])
+		})
+
+		it('survives a throwing listener', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: () => {
+					throw new Error('boom')
+				},
+			})
+			await feed(session.id, `${userTurnLine(35)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
 	})
 
 	describe('a turn that failed against the model API', () => {

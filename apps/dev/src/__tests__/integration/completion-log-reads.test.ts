@@ -109,11 +109,11 @@ describe('remote session completion — log reads', () => {
 		expect(contentReads(captured)).toHaveLength(1)
 	})
 
-	it('does not classify the tail for a user-initiated stop, but still takes usage', async () => {
+	it('does not classify the tail for a user-initiated stop, and leaves usage to the genuine report', async () => {
 		const { row } = await complete(1, [LIMIT_TAIL, RESULT_LINE], { stoppedByUser: true })
 
 		expect(row?.result).not.toHaveProperty('failure_reason')
-		expect(Number(row?.totalCostUsd)).toBeCloseTo(0.5)
+		expect(row?.totalCostUsd).toBeNull()
 	})
 })
 

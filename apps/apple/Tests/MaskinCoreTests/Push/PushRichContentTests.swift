@@ -67,4 +67,26 @@ struct ServerPushContractTests {
 		#expect(aps["category"] as? String == PushDecisionPayload.category)
 		#expect(aps["mutable-content"] as? Int == 1)
 	}
+
+	/// What `buildApnsPayload` emits for a chat reply: grouped per chat by `thread-id`, opening the
+	/// chat through the existing deep link. iOS itself turns `thread-id` into the Notification
+	/// Center group, so the client's part is to keep the link parseable and the key stable.
+	private static let chatPayloads = [
+		#"{"aps":{"alert":{"title":"Ada","body":"First"},"thread-id":"chat:c-9","mutable-content":1},"deep_link":"maskin://ws-1/chats/c-9","notification_id":"n-1"}"#,
+		#"{"aps":{"alert":{"title":"Ada","body":"Second"},"thread-id":"chat:c-9","mutable-content":1},"deep_link":"maskin://ws-1/chats/c-9","notification_id":"n-2"}"#,
+	]
+
+	@Test("chat pushes share a thread and open that chat")
+	func chatPush() throws {
+		var threads = Set<String>()
+		for raw in Self.chatPayloads {
+			let json = try #require(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+			let aps = try #require(json["aps"] as? [String: Any])
+			threads.insert(try #require(aps["thread-id"] as? String))
+			let link = try #require(json["deep_link"] as? String)
+			#expect(DeepLink(string: link) == .chat(workspaceId: "ws-1", id: "c-9"))
+			#expect(PushDecisionPayload(userInfo: json) == nil, "a chat reply carries no decision buttons")
+		}
+		#expect(threads == ["chat:c-9"])
+	}
 }

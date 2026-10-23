@@ -13,13 +13,8 @@ import { typeLabel } from '@/lib/constants'
 import { Check, LayoutList, ListFilter, Rows3 } from 'lucide-react'
 
 export type FeedMode = 'cards' | 'list'
-export type FeedSort = 'attention' | 'chrono'
 
 const MODE_LABEL: Record<FeedMode, string> = { cards: 'Cards', list: 'List' }
-const SORT_LABEL: Record<FeedSort, string> = {
-	attention: 'By attention',
-	chrono: 'Chronological',
-}
 
 // The chip's leading swatch uses the type's *foreground* token as a fill — the
 // `-bg` tint is a pale wash built to sit under text and reads as blank at 6px.
@@ -47,8 +42,6 @@ interface ForYouHeaderProps {
 	typeCounts: Map<string, number>
 	mode: FeedMode
 	onModeChange: (mode: FeedMode) => void
-	sort: FeedSort
-	onSortChange: (sort: FeedSort) => void
 	filterPills: boolean
 	onFilterPillsChange: (value: boolean) => void
 	/** The `···` menu's rows — bulk actions the feed owns (mockup `moreOpts`). */
@@ -72,8 +65,6 @@ export function ForYouHeader({
 	typeCounts,
 	mode,
 	onModeChange,
-	sort,
-	onSortChange,
 	filterPills,
 	onFilterPillsChange,
 	bulkActions,
@@ -89,7 +80,6 @@ export function ForYouHeader({
 	if (typeFilter) {
 		menuParts.push(typeOptions.find((option) => option.value === typeFilter)?.label ?? typeFilter)
 	}
-	if (sort !== 'attention') menuParts.push(SORT_LABEL[sort])
 
 	return (
 		<div className="mx-auto flex w-full max-w-[700px] items-center gap-1.5 pb-0.5">
@@ -181,17 +171,6 @@ export function ForYouHeader({
 							count={option.count}
 							selected={typeFilter === option.value}
 							onSelect={() => onTypeFilterChange(option.value)}
-						/>
-					))}
-
-					<DropdownMenuSeparator />
-					<DropdownMenuLabel className="eyebrow px-2.5 pb-1 pt-1.5">Sort</DropdownMenuLabel>
-					{(['attention', 'chrono'] as const).map((value) => (
-						<MenuRow
-							key={value}
-							label={SORT_LABEL[value]}
-							selected={sort === value}
-							onSelect={() => onSortChange(value)}
 						/>
 					))}
 

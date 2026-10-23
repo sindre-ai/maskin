@@ -14,6 +14,12 @@ export interface OAuthStatePayload {
 	 * when the state is minted, and sealed here, so the callback can trust it.
 	 */
 	returnTo?: string
+	/**
+	 * Native-app return target (one of `NATIVE_OAUTH_RETURN_URLS`), validated by
+	 * exact match when the state is minted and sealed here. When present the
+	 * callback ends by redirecting to it with an outcome instead of to the web UI.
+	 */
+	nativeReturn?: string
 }
 
 /**

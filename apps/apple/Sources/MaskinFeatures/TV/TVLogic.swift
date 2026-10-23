@@ -154,3 +154,12 @@ public enum TVDecisionAge {
 		return nil
 	}
 }
+
+/// The For you card's option row: the recommended option (else the first) and how many others hide
+/// behind "+ n more". The Decision screen lists every option.
+public enum TVCardOptions {
+	public static func summary(labels: [String], recommended: String?) -> (primary: String?, more: Int) {
+		let primary = recommended.flatMap { labels.contains($0) ? $0 : nil } ?? labels.first
+		return (primary, max(0, labels.count - (primary == nil ? 0 : 1)))
+	}
+}

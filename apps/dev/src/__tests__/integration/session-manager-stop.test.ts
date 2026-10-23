@@ -52,7 +52,7 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 		await sql`TRUNCATE agent_servers CASCADE`
 	})
 
-	it('stops the remote sandbox over HTTP and marks the session failed', async () => {
+	it('stops the remote sandbox over HTTP and marks the session user_stopped', async () => {
 		const server = await insertAgentServer()
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
@@ -83,11 +83,12 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 		expect(headers.get('authorization')).toBe(`Bearer ${server.secret}`)
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-		expect(row?.status).toBe('failed')
+		expect(row?.status).toBe('user_stopped')
 		expect(row?.completedAt).not.toBeNull()
 
 		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
-		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(true)
+		expect(eventRows.some((e) => e.action === 'session_stopped')).toBe(true)
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
 	})
 
 	it('propagates the error and leaves the session row untouched when the agent-server is unreachable', async () => {
@@ -224,20 +225,18 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 		expect(row?.durationMs).toBe(5000)
 	})
 
-	// Regression coverage for the null-exit-code race documented in
-	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3: stopSession()
-	// used to write result.exit_code: null unconditionally and authoritatively,
-	// so a genuine /complete report that landed moments later (carrying the
-	// agent's real exit code) matched 0 rows in the CAS UPDATE and silently
-	// no-op'd — session 4d1f3c8b ended up stored with exit_code: null even
-	// though msb's own log showed it successfully reported exitCode: 1.
-	//
-	// stopSession()'s null write is now marked provisional (stoppedByUser:
-	// true in markRemoteSessionComplete's opts, persisted as
-	// result.stopped_by_user), and a later genuine report is allowed to
-	// overwrite a row still carrying that marker.
-	describe('exit-code race between an explicit stop and a genuine completion report', () => {
-		it('stopSession() writes a provisional null exit code marked stopped_by_user', async () => {
+	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3: the agent-server's
+	// genuine /complete report is the only source of the real exit code, and used
+	// to be dropped when it landed after stopSession()'s write. A user stop is now
+	// final instead: it settles the session once as user_stopped (one
+	// session_stopped event), and the report that follows only back-fills the exit
+	// code onto that row. It no longer overwrites the row, so it cannot write a
+	// second session_failed event.
+	describe('a user stop and the agent-server completion report that follows it', () => {
+		const eventActions = async (sessionId: string) =>
+			(await db.select().from(events).where(eq(events.entityId, sessionId))).map((e) => e.action)
+
+		it('stopSession() settles the session as user_stopped with one session_stopped event', async () => {
 			const server = await insertAgentServer()
 			const session = await insertSession(db, workspaceId, actorId, actorId, {
 				status: 'running',
@@ -258,65 +257,79 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			}
 
 			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-			expect(row?.status).toBe('failed')
-			expect(row?.result).toMatchObject({ exit_code: null, stopped_by_user: true })
+			expect(row?.status).toBe('user_stopped')
+			// The exit code is not known yet at this point; the agent-server's own
+			// report back-fills it (next test).
+			expect(row?.result).not.toHaveProperty('failure_reason')
+
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
 		})
 
-		it("a genuine /complete report overwrites stopSession()'s provisional null exit code with the real one", async () => {
+		it('a genuine /complete report after the stop back-fills the real exit code and adds no second event', async () => {
 			const session = await insertSession(db, workspaceId, actorId, actorId, {
 				status: 'running',
 			})
 
 			const manager = new SessionManager(db, stubStorage())
 			try {
-				// Simulate stopSession()'s eager, provisional write winning the race
-				// first (as if a stop request landed just before the agent's own
-				// exit trap fired).
+				// stopSession()'s write lands first (as if a stop request landed just
+				// before the agent's own exit trap fired).
 				await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
 
 				const [afterStop] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-				expect(afterStop?.status).toBe('failed')
-				expect(afterStop?.result).toMatchObject({ exit_code: null, stopped_by_user: true })
+				expect(afterStop?.status).toBe('user_stopped')
 
 				// The agent-server's monitorSession loop was still alive and its
 				// genuine completion report (real exit code) arrives moments later.
-				await manager.markRemoteSessionComplete(session.id, 1)
+				await manager.markRemoteSessionComplete(session.id, 137)
 			} finally {
 				await manager.stop()
 			}
 
 			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-			expect(row?.status).toBe('failed')
-			// The real exit code must win — not stay stuck at null — and the
-			// provisional marker must be cleared by the genuine report.
-			expect(row?.result).toMatchObject({ exit_code: 1 })
-			expect((row?.result as { stopped_by_user?: boolean } | null)?.stopped_by_user).toBeFalsy()
-			// ...but the fact that the user asked for the stop survives as the
-			// UI-only flag, so the chat renders "stopped", not "failed".
-			expect(row?.result).toMatchObject({ user_stop_requested: true })
+			// Still a stop, not flipped to failed...
+			expect(row?.status).toBe('user_stopped')
+			// ...but the real exit code is no longer stuck at null.
+			expect(row?.result).toMatchObject({ exit_code: 137 })
 
-			// Both the provisional and the corrected write produced a terminal
-			// event — an operator inspecting the audit log can see the exit code
-			// was corrected, not just silently dropped.
-			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
-			expect(eventRows.filter((e) => e.action === 'session_failed')).toHaveLength(2)
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
 		})
 
-		// The logging side of this behavior (item 3 in the runbook's suggested
-		// fix — surfacing the previously-silent no-op) is covered by a mocked-DB
-		// unit test instead: apps/dev/src/__tests__/services/session-manager.test.ts,
-		// "logs a warning with the dropped exit code when the CAS update matches
-		// no row". Vitest's console/stdout attribution under this suite's
-		// `pool: 'forks', poolOptions: { forks: { singleFork: true } }` config
-		// (see apps/dev/vitest.integration.config.ts) intercepts `console.log`
-		// per-test in a way that defeats `vi.spyOn(console, 'log')` here — the
-		// real log line was confirmed (by hand, against this exact scenario) to
-		// print with the correct msg/sessionId/droppedExitCode/currentStatus,
-		// but that isn't reliably assertable from this test file. The behavioral
-		// (data-integrity) half of this scenario — that the stale report is
-		// correctly ignored and never overwrites the genuine completion — is
-		// still fully covered below.
-		it('a genuine /complete report is still dropped once a real (non-provisional) completion already landed', async () => {
+		it('a completion report that lands while the stop request is still in flight is still a stop', async () => {
+			const server = await insertAgentServer()
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				agentServerId: server.id,
+				containerId: 'sandbox-under-test',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			// The agent-server kills the sandbox and reports the forced-stop exit code
+			// before the stop RPC has even answered.
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				await manager.markRemoteSessionComplete(session.id, 137)
+				return new Response(JSON.stringify({ ok: true }), { status: 200 })
+			})
+			try {
+				await manager.stopSession(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('user_stopped')
+
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('a genuine /complete report is still dropped once a real (non-stop) completion already landed', async () => {
 			const session = await insertSession(db, workspaceId, actorId, actorId, {
 				status: 'running',
 			})
@@ -335,9 +348,9 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			expect(row?.status).toBe('completed')
 			expect(row?.result).toMatchObject({ exit_code: 0 })
 
-			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
-			expect(eventRows.filter((e) => e.action === 'session_completed')).toHaveLength(1)
-			expect(eventRows.filter((e) => e.action === 'session_failed')).toHaveLength(0)
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_completed')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
 		})
 
 		it('a late explicit stop never clobbers an already-terminal (genuinely completed) session', async () => {
@@ -349,7 +362,7 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			try {
 				await manager.markRemoteSessionComplete(session.id, 0)
 				// A stop request that arrives after the session already completed
-				// naturally must not downgrade it to failed/null.
+				// naturally must not downgrade it.
 				await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
 			} finally {
 				await manager.stop()
@@ -375,10 +388,92 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 			expect(row?.status).toBe('completed')
 			expect(row?.result).toMatchObject({ exit_code: 0 })
-			expect((row?.result as { stopped_by_user?: boolean } | null)?.stopped_by_user).toBeFalsy()
 
-			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
-			expect(eventRows.filter((e) => e.action === 'session_completed')).toHaveLength(1)
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_completed')).toHaveLength(1)
+		})
+	})
+
+	// The local Docker path: stopSession() records the request and kills the
+	// container, and the exit watcher then calls handleCompletion with the
+	// SIGTERM exit code. handleCompletion is private; the exit watcher is not
+	// reachable without Docker, so the tests drive it directly.
+	describe('handleCompletion — local sessions settle through settleSession', () => {
+		const handle = (manager: SessionManager) =>
+			(
+				manager as unknown as {
+					handleCompletion: (id: string, container: string, exit: number | null) => Promise<void>
+				}
+			).handleCompletion.bind(manager)
+		const eventActions = async (sessionId: string) =>
+			(await db.select().from(events).where(eq(events.entityId, sessionId))).map((e) => e.action)
+
+		it('a user stop ends as user_stopped with one session_stopped event', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				containerId: 'container-under-test',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				;(manager as unknown as { stopRequested: Set<string> }).stopRequested.add(session.id)
+				await handle(manager)(session.id, 'container-under-test', 143)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('user_stopped')
+			expect(row?.result).toMatchObject({ exit_code: 143 })
+
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('a clean exit still settles once as completed', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				containerId: 'container-under-test',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await handle(manager)(session.id, 'container-under-test', 0)
+				// A repeat of the same exit must not write a second event.
+				await handle(manager)(session.id, 'container-under-test', 0)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.result).toMatchObject({ exit_code: 0 })
+
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_completed')).toHaveLength(1)
+		})
+
+		it('a non-zero exit with no stop request still settles once as failed', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				containerId: 'container-under-test',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await handle(manager)(session.id, 'container-under-test', 1)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.result).toMatchObject({ exit_code: 1 })
+
+			const actions = await eventActions(session.id)
+			expect(actions.filter((a) => a === 'session_failed')).toHaveLength(1)
+			expect(actions).not.toContain('session_stopped')
 		})
 	})
 })

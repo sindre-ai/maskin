@@ -134,6 +134,7 @@ export function useMarkUnread(workspaceId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.subscriptions.unread(workspaceId),
 			})
+			queryClient.invalidateQueries({ queryKey: queryKeys.forYou.list(workspaceId) })
 		},
 	})
 }
@@ -197,6 +198,7 @@ export function useMarkRead(workspaceId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.subscriptions.unread(workspaceId),
 			})
+			queryClient.invalidateQueries({ queryKey: queryKeys.forYou.list(workspaceId) })
 		},
 	})
 }

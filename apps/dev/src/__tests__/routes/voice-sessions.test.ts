@@ -1,6 +1,4 @@
-import { VOICE_ALLOWED_TOOLS } from '@maskin/mcp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -16,19 +14,14 @@ const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const AGENT = '4a8d2f3b-ac5e-4032-9d7f-6b1e8c02f553'
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 
-const ENV_KEYS = ['FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES'] as const
-
-function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
-	for (const key of ENV_KEYS) {
-		if (vars[key] === undefined) delete process.env[key]
-		else process.env[key] = vars[key]
-	}
-	_resetFeatureFlagConfig()
-}
-
-function enableFlagFor(actorId: string) {
-	setEnv({ FF_TESTER_ACTOR_IDS: actorId, FF_TESTER_FEATURES: 'voice-mode-v1' })
-}
+const VOICE_TOOLS = [
+	{
+		type: 'function' as const,
+		name: 'list_objects',
+		description: 'List objects',
+		parameters: { type: 'object', properties: { cursor: { type: 'string' } } },
+	},
+]
 
 function membershipRow() {
 	return { workspaceId: WORKSPACE }
@@ -46,12 +39,10 @@ function agentRow(overrides?: Partial<{ metadata: unknown; type: string }>) {
 }
 
 beforeEach(() => {
-	setEnv({})
 	process.env.MASKIN_VOICE_OPENAI_API_KEY = 'test-key'
 })
 
 afterEach(() => {
-	setEnv({})
 	setCreateRealtimeCallFn(null)
 	setOpenRealtimeSocketFn(null)
 	setVoiceInvokeToolFactory(null)
@@ -60,16 +51,7 @@ afterEach(() => {
 })
 
 describe('POST /api/voice-sessions', () => {
-	it('404s when the voice-mode-v1 flag is off for the caller', async () => {
-		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		const res = await app.request(
-			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
-		)
-		expect(res.status).toBe(404)
-	})
-
 	it('404s when the target agent has no shared workspace with the caller', async () => {
-		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			// cross-workspace: membership self-join returns no row
@@ -82,7 +64,6 @@ describe('POST /api/voice-sessions', () => {
 	})
 
 	it('400s when the target actor is not an agent', async () => {
-		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
@@ -98,7 +79,6 @@ describe('POST /api/voice-sessions', () => {
 	})
 
 	it('409s on the unique-index violation when the caller already has a live session', async () => {
-		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[membershipRow()],
@@ -123,7 +103,6 @@ describe('POST /api/voice-sessions', () => {
 	})
 
 	it('429s with retry_after_seconds when the workspace has used its 60 daily voice minutes', async () => {
-		enableFlagFor(HUMAN)
 		const { app, mockResults, calls } = createTestApp(
 			voiceSessionsRoutes,
 			'/api/voice-sessions',
@@ -152,7 +131,6 @@ describe('POST /api/voice-sessions', () => {
 	})
 
 	it('returns 201 with only the session id: no vendor credential leaves the server', async () => {
-		enableFlagFor(HUMAN)
 		const insertedId = '11111111-1111-4111-8111-111111111111'
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
@@ -171,7 +149,6 @@ describe('POST /api/voice-sessions', () => {
 	})
 
 	it('rejects a body missing agent_actor_id with 400 VALIDATION_ERROR', async () => {
-		enableFlagFor(HUMAN)
 		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		const res = await app.request(jsonRequest('POST', '/api/voice-sessions', {}))
 		expect(res.status).toBe(400)
@@ -210,20 +187,13 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		})
 	}
 
-	it('404s when the voice-mode-v1 flag is off for the caller', async () => {
-		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-		expect((await post(app)).status).toBe(404)
-	})
-
 	it("404s for another human's session", async () => {
-		enableFlagFor(HUMAN)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [[sessionRow({ humanActorId: 'someone-else' })]]
 		expect((await post(app)).status).toBe(404)
 	})
 
 	it('404s when the minting human is no longer a member of the workspace', async () => {
-		enableFlagFor(HUMAN)
 		const createCall = vi.fn()
 		setCreateRealtimeCallFn(createCall)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
@@ -233,7 +203,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it('409s a session that already took an offer', async () => {
-		enableFlagFor(HUMAN)
 		const createCall = vi.fn()
 		setCreateRealtimeCallFn(createCall)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
@@ -243,7 +212,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it('409s and never calls the vendor when a concurrent offer won the claim', async () => {
-		enableFlagFor(HUMAN)
 		const createCall = vi.fn()
 		setCreateRealtimeCallFn(createCall)
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
@@ -253,10 +221,15 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(createCall).not.toHaveBeenCalled()
 	})
 
-	it('sends the offer to the GA calls endpoint with the pinned model and the tool whitelist', async () => {
-		enableFlagFor(HUMAN)
+	it('sends the offer to the GA calls endpoint with the pinned model and the full MCP tool list', async () => {
 		openSocketImmediately()
-		setVoiceInvokeToolFactory(() => vi.fn())
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set(['list_objects']),
+			unreachableServers: [],
+			close: async () => {},
+		}))
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response('v=0 vendor answer', {
 				status: 201,
@@ -297,12 +270,11 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		expect(sent.tools.map((t) => t.name).sort()).toEqual([...VOICE_ALLOWED_TOOLS].sort())
+		expect(sent.tools).toEqual(VOICE_TOOLS)
 		expect(sent.tool_choice).toBe('auto')
 	})
 
 	it('reports tools_available false when the server socket cannot attach', async () => {
-		enableFlagFor(HUMAN)
 		setCreateRealtimeCallFn(async () => ({
 			kind: 'ok',
 			callId: 'rtc_abc',
@@ -312,7 +284,13 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			queueMicrotask(() => handlers.onError(new Error('refused')))
 			return { send: vi.fn(), close: vi.fn() }
 		})
-		setVoiceInvokeToolFactory(() => vi.fn())
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
 		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		mockResults.selectQueue = [
 			[sessionRow()],
@@ -329,7 +307,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it('propagates 429 with retry_after_seconds from the vendor rate limit and releases the row', async () => {
-		enableFlagFor(HUMAN)
 		setCreateRealtimeCallFn(async () => ({ kind: 'rate_limited', retryAfterSeconds: 42 }))
 		const { app, mockResults, calls } = createTestApp(
 			voiceSessionsRoutes,
@@ -345,8 +322,25 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
 	})
 
+	it('500s with a clear message and releases the row when the operator key is unset', async () => {
+		process.env.MASKIN_VOICE_OPENAI_API_KEY = ''
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()]]
+
+		const res = await post(app)
+		expect(res.status).toBe(500)
+		expect(JSON.stringify(await res.json())).toContain('Voice is not configured')
+		expect(createCall).not.toHaveBeenCalled()
+		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
+	})
+
 	it('500s and releases the row when the vendor connect fails', async () => {
-		enableFlagFor(HUMAN)
 		setCreateRealtimeCallFn(async () => ({ kind: 'error', status: 502, body: 'bad gateway' }))
 		const { app, mockResults, calls } = createTestApp(
 			voiceSessionsRoutes,

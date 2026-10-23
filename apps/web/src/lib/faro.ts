@@ -6,6 +6,7 @@ import {
 	WebVitalsInstrumentation,
 	initializeFaro,
 } from '@grafana/faro-web-sdk'
+import { isClientErrorLoggingPaused } from './client-logging-pause'
 
 // Grafana Faro — browser-side observability, reporting into the same Grafana
 // Cloud stack as our backend logs and host metrics.
@@ -84,6 +85,7 @@ export function initFaro(): void {
 			// so strip the query and hash before anything leaves the browser. Ids in
 			// the path are fine; free text is not.
 			beforeSend: (item) => {
+				if (isClientErrorLoggingPaused()) return null
 				const page = item.meta?.page
 				if (page?.url) page.url = stripQuery(page.url)
 				return item
@@ -164,7 +166,7 @@ export function reportApiFailure(attrs: {
 	status: number
 	code?: string
 }): void {
-	if (!faro) return
+	if (!faro || isClientErrorLoggingPaused()) return
 	try {
 		faro.api.pushEvent('api_request_failed', {
 			method: attrs.method,
@@ -180,7 +182,7 @@ export function reportApiFailure(attrs: {
 }
 
 export function pushFaroError(error: Error): void {
-	if (!faro) return
+	if (!faro || isClientErrorLoggingPaused()) return
 	try {
 		faro.api.pushError(error)
 	} catch (err) {

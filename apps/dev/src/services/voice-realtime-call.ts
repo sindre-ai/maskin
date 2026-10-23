@@ -1,6 +1,5 @@
 import type { Database } from '@maskin/db'
-import { VOICE_REALTIME_TOOLS } from '@maskin/mcp'
-import type { InvokeTool } from '@maskin/mcp'
+import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import WebSocket from 'ws'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
@@ -15,9 +14,11 @@ import type { VoiceSessionRow } from './voice-transcript'
  * posts it to POST /v1/realtime/calls with the operator key, then attaches a
  * server-side WebSocket to the new call (wss://.../v1/realtime?call_id=...)
  * with the same key. Tool calls, transcript lines and turn telemetry all run
- * over that socket, through the same channel logic the whitelist, attention
- * cap, mentions refusal and bet refusal already live in
- * (services/voice-session-channel.ts).
+ * over that socket, through the channel logic in
+ * (services/voice-session-channel.ts). Tool calls run as the agent with the
+ * call's workspace. Every tool that is not read-only is held until the person
+ * says yes out loud (services/voice-write-gate.ts); there is no tool allow-list,
+ * attention cap, mentions refusal or bet refusal.
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -52,6 +53,7 @@ export interface CreateRealtimeCallInput {
 	instructions: string
 	voice: string
 	model: string
+	tools: VoiceRealtimeTool[]
 }
 
 export type CreateRealtimeCallOutcome =
@@ -91,10 +93,8 @@ async function defaultCreateRealtimeCall(
 			},
 			output: { voice: input.voice },
 		},
-		// The v1 whitelist, pinned here (tech spec §Auth flow step 3). The channel
-		// re-enforces it per call, so this list and the gate share one source:
-		// @maskin/mcp.
-		tools: VOICE_REALTIME_TOOLS,
+		// Every MCP tool chat has, read from the server (see createVoiceToolkit).
+		tools: input.tools,
 		tool_choice: 'auto',
 	}
 	const form = new FormData()
@@ -225,6 +225,10 @@ export interface AttachVoiceCallInput {
 	session: VoiceSessionRow
 	agentName: string
 	invokeTool: InvokeTool
+	/** Tools that only read; every other tool waits for the person's yes. */
+	readOnlyTools: ReadonlySet<string>
+	/** Releases what the call's tools hold open (connections to the agent's MCP servers). */
+	dispose?: () => Promise<void> | void
 	callId: string
 	apiKey: string
 	callsUrl?: string
@@ -236,6 +240,7 @@ export interface AttachVoiceCallInput {
 interface RealtimeEvent {
 	type?: string
 	call_id?: string
+	item_id?: string
 	name?: string
 	arguments?: string
 	transcript?: string
@@ -257,6 +262,13 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	const now = input.now ?? Date.now
 	const openSocket = input.openSocket ?? openSocketFn
 	const url = realtimeSocketUrl(input.callId, input.callsUrl)
+
+	let disposed = false
+	const dispose = () => {
+		if (disposed) return
+		disposed = true
+		Promise.resolve(input.dispose?.()).catch(() => {})
+	}
 
 	let socket: RealtimeSocket | null = null
 	let opened = false
@@ -307,6 +319,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		session,
 		agentName: input.agentName,
 		invokeTool: input.invokeTool,
+		isReadOnlyTool: (name) => input.readOnlyTools.has(name),
 		send: onChannelMessage,
 		now,
 	})
@@ -334,7 +347,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			case 'conversation.item.input_audio_transcription.completed': {
 				const text = evt.transcript?.trim()
-				if (text) feed({ type: 'transcript', role: 'user', text })
+				if (text) feed({ type: 'transcript', role: 'user', text, item_id: evt.item_id })
 				return
 			}
 			// GA name first; the beta name is kept so a fake or older edge still works.
@@ -345,6 +358,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			}
 			case 'input_audio_buffer.speech_started':
+				feed({ type: 'user_speech_started', item_id: evt.item_id })
 				userSpeechStartedAt = now()
 				// Speaking over an agent that is mid-response is a barge-in.
 				if (agentResponseStartedAt !== null) bargeIn = true
@@ -398,6 +412,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			resolve(ok)
 		}
 		const fail = (reason: string) => {
+			dispose()
 			closedByUs = true
 			try {
 				socket?.close()
@@ -422,6 +437,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				opened = true
 				liveCalls.set(session.id, {
 					close: () => {
+						dispose()
 						closedByUs = true
 						socket?.close()
 					},
@@ -442,6 +458,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 					if (!settled) fail('closed before open')
 					return
 				}
+				dispose()
 				if (closedByUs) return
 				liveCalls.delete(session.id)
 				logger.warn('Voice server socket dropped mid-call; ending the call', {

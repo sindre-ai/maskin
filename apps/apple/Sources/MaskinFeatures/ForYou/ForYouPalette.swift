@@ -17,7 +17,4 @@ enum ForYouPalette {
 	static let failureBackground = MaskinColor.noticeBg
 	static let failureBorder = MaskinColor.noticeBd
 	static let failureForeground = MaskinColor.noticeFg
-
-	/// "held 2d": a quiet note, grey (amber is only for error and warning).
-	static let heldNote = MaskinColor.ink4
 }

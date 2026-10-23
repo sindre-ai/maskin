@@ -122,43 +122,17 @@ const strategistTools = {
 		slack: slackTool,
 		github: githubTool,
 		maskin: maskinTool,
-		exa: {
-			url: 'https://mcp.exa.ai/mcp',
-			type: 'http',
-			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-		},
-		playwright: {
-			env: {},
-			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-			type: 'stdio',
-			command: 'npx',
-		},
 	},
-}
-
-const exaTool = {
-	url: 'https://mcp.exa.ai/mcp',
-	type: 'http',
-	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-}
-
-const playwrightTool = {
-	env: {},
-	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-	type: 'stdio',
-	command: 'npx',
 }
 
 const insightsTriageTools = {
 	mcpServers: {
-		exa: exaTool,
 		maskin: maskinTool,
 	},
 }
 
 const researchAgentTools = {
 	mcpServers: {
-		exa: exaTool,
 		slack: slackTool,
 		maskin: maskinTool,
 		sindre: {
@@ -171,7 +145,6 @@ const researchAgentTools = {
 			type: 'http',
 			headers: { 'x-api-token': '${SUPADATA_API_TOKEN}' },
 		},
-		playwright: playwrightTool,
 	},
 }
 
@@ -1384,7 +1357,7 @@ List what signals exist now and what gaps remain. Do not invent data. If no sign
 				name: 'deep-research',
 				content: `---
 name: deep-research
-description: Run a deep web research sweep on any topic using Exa. Produces grounded insight objects linked to a target workspace object. Use before drafting bets, enriching clusters, or gathering external evidence on any topic.
+description: Run a deep web research sweep on any topic using web search. Produces grounded insight objects linked to a target workspace object. Use before drafting bets, enriching clusters, or gathering external evidence on any topic.
 ---
 
 # Deep research
@@ -1417,17 +1390,8 @@ Keep queries specific and claim-shaped. "AI agent reliability in production" bea
 
 ## Step 2: Run the search
 
-Use \`web_search_exa\` with \`type: "deep-reasoning"\`. Run 1–3 queries. Target 3–6 high-quality, non-overlapping findings.
+Use web search. Run 1–3 queries. Target 3–6 high-quality, non-overlapping findings.
 
-\`\`\`
-tool: web_search_exa
-params:
-  query: <your query>
-  type: "deep-reasoning"
-  num_results: 5
-\`\`\`
-
-If \`deep-reasoning\` returns thin results, fall back to \`type: "auto"\` with \`use_autoprompt: true\`.
 
 ## Step 3: Create insight objects
 
@@ -2026,8 +1990,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 
 - **maskin MCP** — all workspace operations (list_objects, search_objects, get_objects, create_objects, update_objects, get_workspace_skill, create_comment)
 - **github MCP** — check PR status, verify merges, inspect open PRs on active bets, verify ship-metric event emitters at the measurement gate. Use this instead of Playwright for anything GitHub-related.
-- **exa MCP** — deep web research. Use per the \`deep-research\` skill.
-- **playwright** — external research only when exa is insufficient (non-GitHub web content, pages requiring interaction).`,
+- **web search** — deep web research. Use per the \`deep-research\` skill.`,
 	},
 	{
 		$id: 'insights_triage',
@@ -2088,7 +2051,7 @@ Every object you create MUST be linked. No orphans.
 - Paraphrase the canon from memory — \`insight-triage\` tells you when to fetch it fresh.
 
 ## Tools
-\`list_objects\`, \`search_objects\`, \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); exa MCP (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
+\`list_objects\`, \`search_objects\`, \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); web search (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
 	},
 	{
 		$id: 'research_agent',
@@ -2126,9 +2089,8 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 ## Tools available
 
 - **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_session\`, \`list_actors\`
-- **exa MCP** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
+- **web search** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
 - **sindre** — \`Sindre:query_meetings\` (meeting harvest mode only)
-- **playwright** — browser automation for JS-rendered sites (competitive scan when exa/web_search is insufficient)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)
 - **web_search / web_fetch** — general web research and text content fetching
 - **slack** — \`slack_send_message\` (Slack DM replies, social-extraction mode), \`slack_list_channels\` / \`slack_list_users\` to resolve a channel or person to an ID, \`slack_join_channel\`, \`slack_add_reaction\`, \`slack_get_permalink\`, \`slack_get_channel_history\` to read backlog before drafting a reply, \`slack_get_thread_replies\` to expand a thread parent, \`slack_update_message\` to edit your own progress messages instead of posting new ones (bot can only edit its own posts), \`slack_delete_message\` to retract a mistake you posted (bot can only delete its own posts), \`slack_open_conversation\` to start a 1:1 DM with a user for private handoff (find the user id via \`slack_list_users\`), \`slack_conversations_info\` to read a channel's topic/purpose/membership before deciding how to reply.

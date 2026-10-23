@@ -10,7 +10,7 @@
 // image input" and the whole turn is lost. Images are found in user messages
 // and inside tool_result content (screenshots, the get_file tool, attachments).
 //
-// Unlike cdp-retry-proxy.js this is not a byte relay: it reads and rewrites the
+// This is not a byte relay: it reads and rewrites the
 // request body, speaks TLS to the upstream, and streams the reply back
 // unbuffered. It fails open: anything it cannot safely rewrite is forwarded
 // byte for byte.

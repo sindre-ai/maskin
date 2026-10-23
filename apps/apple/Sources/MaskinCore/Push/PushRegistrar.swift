@@ -4,7 +4,8 @@ import Observation
 /// Keeps this device's APNs token registered with the backend for the signed-in actor.
 ///
 /// State machine (all transitions funnel through `sync()`):
-/// - permission is asked once, explicitly (`requestAuthorization()`), never on launch;
+/// - permission is asked once, explicitly (`requestAuthorization()`), never on launch, and the app
+///   only calls it after the in-app pre-prompt (`NotificationPromptCoordinator`) has been accepted;
 /// - once authorized, the OS is asked for a token (`registerForRemoteNotifications`), which the
 ///   app delegate hands back via `didReceive(deviceToken:)`;
 /// - the token is uploaded when it, or the signed-in actor, differs from what was last uploaded;
@@ -67,6 +68,13 @@ public final class PushRegistrar {
 		await sync()
 	}
 
+	/// Every return to the foreground: picks up a permission turned on in iOS Settings, asks for
+	/// the token again, and retries an upload that failed (no other trigger would: a failed
+	/// upload leaves nothing registered, and `didReceive` only fires when APNs hands over a token).
+	public func foregrounded() async {
+		await actorChanged(actorId)
+	}
+
 	/// Shows the system prompt if the user hasn't decided yet. A denied user is never re-prompted
 	/// (the OS wouldn't show it); the UI should point them to Settings instead.
 	public func requestAuthorization() async {
@@ -76,6 +84,12 @@ public final class PushRegistrar {
 		}
 		if permission == .authorized, actorId != nil { system.registerForRemoteNotifications() }
 		await sync()
+	}
+
+	/// Re-reads the system's answer (the person may have changed it in Settings).
+	public func refreshPermission() async -> PushPermission {
+		permission = await system.currentPermission()
+		return permission
 	}
 
 	public func didReceive(deviceToken: Data) async {

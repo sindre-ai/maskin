@@ -894,8 +894,8 @@ step exists because agent-server is **not** containerised — it runs as a plain
 Node process under systemd, so its runtime settings live in a file outside
 `/opt/maskin` that the code deploy would otherwise never touch. Before that
 step existed, edits to the unit sat in the repo doing nothing until someone
-copied them by hand. (The `agent-base` and `browser-sidecar` images *do* ship
-automatically, but those are the images sessions run *inside*, not this
+copied them by hand. (The `agent-base` image *does* ship
+automatically, but that is the image sessions run *inside*, not this
 service.)
 
 **Retention.** journald is the buffer between agent-server and the collector.

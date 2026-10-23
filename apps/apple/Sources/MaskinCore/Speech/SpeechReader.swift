@@ -14,6 +14,12 @@ public final class SpeechReader: NSObject {
 	/// The message being read, if any.
 	public private(set) var speakingID: String?
 	public private(set) var isInputActive = false
+	/// True while something else (a live call) owns the audio session: the reader then neither
+	/// configures nor releases it, so it speaks over the call's `.playAndRecord` session and keeps
+	/// working with the screen locked.
+	public var usesExternalAudioSession = false
+	/// `AVSpeechUtterance.rate` for what is read next (0.5 is the system default).
+	public var rate: Float = AVSpeechUtteranceDefaultSpeechRate
 
 	@ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
 	/// The utterance whose end we are waiting for. Delegate callbacks for any other (a replaced or
@@ -48,6 +54,7 @@ public final class SpeechReader: NSObject {
 		let utterance = AVSpeechUtterance(string: text)
 		utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
 			?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+		utterance.rate = rate
 		adopt(utterance, id: id)
 		synthesizer.speak(utterance)
 	}
@@ -96,6 +103,7 @@ public final class SpeechReader: NSObject {
 
 	private func activateSession() {
 		#if os(iOS)
+		guard !usesExternalAudioSession else { return }
 		let session = AVAudioSession.sharedInstance()
 		try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
 		try? session.setActive(true)
@@ -104,6 +112,7 @@ public final class SpeechReader: NSObject {
 
 	private func deactivateSession() {
 		#if os(iOS)
+		guard !usesExternalAudioSession else { return }
 		// Hand the session back so music resumes, and so Dictation can claim `.record`.
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 		#endif

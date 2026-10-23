@@ -83,7 +83,8 @@ async function slackUsersInfo(
  * not a bot token — posting as a user token here would defeat the whole
  * point of `chat:write.customize`.
  */
-function readBotToken(integrationCredentials: string): string {
+function readBotToken(integrationCredentials: string | null): string {
+	if (integrationCredentials === null) throw new Error('Integration has no stored credentials')
 	const credentials = JSON.parse(decrypt(integrationCredentials)) as StoredCredentials
 	const token = credentials.accessToken
 	if (!isSlackBotToken(token)) {
@@ -289,7 +290,7 @@ export function buildAccountLinkBlocks(args: {
 interface PromptArgs {
 	db: Database
 	integrationId: string
-	integrationCredentials: string
+	integrationCredentials: string | null
 	slackTeamId: string
 	slackUserId: string
 	channelId: string

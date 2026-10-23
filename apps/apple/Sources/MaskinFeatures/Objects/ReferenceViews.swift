@@ -83,11 +83,20 @@ struct ReferenceChip: View {
 	}
 }
 
-/// A file attached to a posted comment: icon, name and size.
+/// A file attached to a posted comment: icon, name and size. Tapping opens the file in the app.
 struct AttachedFileChip: View {
 	let file: FileSummary
+	@Environment(\.openAttachment) private var open
 
 	var body: some View {
+		Button { open?(file.id) } label: { chip }
+			.buttonStyle(.maskinPressed(.shrink))
+			.disabled(open == nil)
+			.accessibilityLabel("Attachment \(file.name)")
+			.accessibilityHint("Opens the file")
+	}
+
+	private var chip: some View {
 		HStack(spacing: MaskinSpace.s3) {
 			Image(systemName: file.mimeType.hasPrefix("image/") ? "photo" : "doc")
 				.foregroundStyle(MaskinColor.ink3).accessibilityHidden(true)
@@ -106,6 +115,6 @@ struct AttachedFileChip: View {
 		.overlay(
 			RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		.accessibilityElement(children: .combine)
+		.contentShape(Rectangle())
 	}
 }

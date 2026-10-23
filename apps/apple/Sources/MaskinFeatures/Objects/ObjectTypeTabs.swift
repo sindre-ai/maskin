@@ -14,7 +14,7 @@ struct ObjectTypeTab: Identifiable, Equatable {
 
 	var id: ObjectsScope { scope }
 
-	/// Needs you · All · one tab per type present, from the store.
+	/// Needs you · All · Favourites (when any) · one tab per type present, from the store.
 	@MainActor
 	static func tabs(for store: ObjectsStore) -> [ObjectTypeTab] {
 		var tabs = [
@@ -23,6 +23,10 @@ struct ObjectTypeTab: Identifiable, Equatable {
 				count: store.needsYouCount > 0 ? "\(store.needsYouCount)" : nil, isSignal: true),
 			ObjectTypeTab(scope: .all, label: "All", count: nil),
 		]
+		// Starred objects get their own tab once there are any, so they are one tap away.
+		if store.favouritesCount > 0 || store.scope == .favourites {
+			tabs.append(ObjectTypeTab(scope: .favourites, label: "Favourites", count: "\(store.favouritesCount)"))
+		}
 		tabs += store.typeSummaries.filter { $0.count > 0 || store.typeFilter == $0.id }.map {
 			ObjectTypeTab(scope: .type($0.id), label: $0.label, count: $0.count > 0 ? $0.countLabel : nil)
 		}

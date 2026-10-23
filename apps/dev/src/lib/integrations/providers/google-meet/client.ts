@@ -55,6 +55,15 @@ export async function callGoogleApi<T>(
 	const res = await fetch(target.toString(), { method, headers, body })
 	if (!res.ok) {
 		const raw = await res.text().catch(() => '')
+		// The classifier collapses most 403s into one generic message, so keep
+		// Google's own reason (e.g. SERVICE_DISABLED) in the logs for diagnosis.
+		logger.warn('Google API call failed', {
+			method,
+			host: target.host,
+			path: target.pathname,
+			httpStatus: res.status,
+			body: raw.slice(0, 2000),
+		})
 		throw classifyGoogleApiError(res.status, raw, res.headers.get('retry-after') ?? undefined)
 	}
 	if (res.status === 204) return undefined as unknown as T

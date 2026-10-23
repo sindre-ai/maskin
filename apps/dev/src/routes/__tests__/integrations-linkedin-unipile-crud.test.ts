@@ -59,16 +59,18 @@ vi.mock('../../lib/workspace-auth', () => ({
 }))
 
 vi.mock('../../lib/integrations/lookup', () => ({
-	getIntegrationCredential: async () => ({
+	findIntegrationRow: async () => ({
 		id: 'integration-1',
 		actorId: 'human-actor',
 		credentials: JSON.stringify({ account_id: 'mock-account-id', account_status: 'OK' }),
 	}),
+	getCredential: async () => ({
+		value: JSON.stringify({ account_id: 'mock-account-id', account_status: 'OK' }),
+	}),
 }))
 
 vi.mock('../../lib/crypto', () => ({
-	// The real preamble runs `JSON.parse(decrypt(row.credentials))`; since we
-	// hand it plain JSON above, `decrypt` becomes a pass-through.
+	// Pass-through: the stored values above are plain JSON.
 	decrypt: (s: string) => s,
 }))
 

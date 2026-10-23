@@ -15,6 +15,7 @@ import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
+import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -225,7 +226,14 @@ app.post('/:instanceSlug', async (c) => {
 	const routeError =
 		scoped.length === 0 ? routeErrorForUnmatchedSlug(requestedSlug, identities) : null
 
-	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped)
+	const gate = await toolGateFor(db, {
+		workspaceId,
+		actorId,
+		integrationId: scoped[0]?.integrationId ?? null,
+		provider: PROVIDER,
+		providerLabel: 'LinkedIn',
+	})
+	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped, gate)
 	if (routeError) serveRouteError(mcpServer, routeError)
 
 	const transport = new StreamableHTTPServerTransport({

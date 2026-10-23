@@ -25,20 +25,22 @@ describe('Actors Routes', () => {
 			expect(body.type).toBe('human')
 		})
 
-		it('does not return passwordHash in the 201 body for a human signup with a password', async () => {
-			const actor = buildActor({
-				passwordHash: '$2b$10$abcdefghijklmnopqrstuuvwxyz0123456789ABCDEFGHIJKLMNOPQ',
-			})
+		it('never returns passwordHash (or any undeclared column) on signup', async () => {
+			const actor = buildActor({ passwordHash: 'argon2id$secret-hash', metadata: { internal: 1 } })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insert = [actor]
 
 			const res = await app.request(jsonRequest('POST', '/api/actors', buildCreateActorBody()))
 
 			expect(res.status).toBe(201)
-			const body = await res.json()
-			expect(body).not.toHaveProperty('passwordHash')
-			expect(body).not.toHaveProperty('password_hash')
-			expect(body.api_key).toBeDefined()
+			const text = await res.text()
+			const body = JSON.parse(text)
+			expect(body.passwordHash).toBeUndefined()
+			expect(body.password_hash).toBeUndefined()
+			expect(body.apiKey).toBeUndefined()
+			expect(body.metadata).toBeUndefined()
+			expect(text).not.toContain('argon2id$secret-hash')
+			expect(body.api_key).toMatch(/^ank_/)
 		})
 
 		describe('creating an agent', () => {
@@ -1636,6 +1638,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			sessionManager.createSession.mockRejectedValueOnce(
 				new PlanCapExceededError({
@@ -1663,6 +1666,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1702,6 +1706,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[],
 				[],
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({

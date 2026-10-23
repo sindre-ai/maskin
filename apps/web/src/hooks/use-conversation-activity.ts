@@ -158,7 +158,9 @@ export function useConversationActivity(
 	const bootingSessions = latestSessions.filter(
 		(s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued',
 	)
-	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
+	const failedSessions = latestSessions.filter(
+		(s) => s.status === 'failed' || s.status === 'user_stopped',
+	)
 	// 'timeout' is not a failure — the 2-hour backstop (session-manager.ts's
 	// reaper) is expected lifecycle, and the next message in this conversation
 	// spawns a fresh interactive session seeded with the recent history (see
@@ -237,14 +239,17 @@ export function useConversationActivity(
 	for (const session of failedSessions) {
 		const config = session.config as { conversation?: { message_id?: number } } | null
 		const messageId = config?.conversation?.message_id
-		// A user-initiated stop lands as status 'failed' with a marker in
-		// result: `stopped_by_user` on the remote path's provisional write,
-		// `user_stop_requested` once the genuine completion report (or the
-		// local handleCompletion path) lands. Either way it's an expected
-		// outcome, not an error — render it neutrally, like the mid-turn
-		// timeout notice.
+		// A user-initiated stop lands as status 'user_stopped'. Rows written before
+		// that status was stored carry status 'failed' with a marker in result
+		// instead (`stopped_by_user` on the remote path's provisional write,
+		// `user_stop_requested` once the genuine completion report or the local
+		// handleCompletion path landed), so both shapes still read as a stop.
+		// Either way it's an expected outcome, not an error — render it
+		// neutrally, like the mid-turn timeout notice.
 		const stoppedByUser =
-			session.result?.stopped_by_user === true || session.result?.user_stop_requested === true
+			session.status === 'user_stopped' ||
+			session.result?.stopped_by_user === true ||
+			session.result?.user_stop_requested === true
 		// A session that reached `running` and later died from classified credit/rate-limit
 		// exhaustion carries its message in `result.failure_reason.human_message`, not
 		// `result.error` (see classifyCreditExhaustion() in session-manager.ts) — prefer

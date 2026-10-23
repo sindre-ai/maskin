@@ -161,7 +161,7 @@ import Testing
 	@Test func takeClearsTheEdit() {
 		let m = model()
 		m.beginEdit(messageID: "7", originalText: "fix this")
-		#expect(m.take()?.text == "fix this")
+		#expect(m.takeEdit()?.text == "fix this")
 		#expect(m.editing == nil)
 		#expect(m.text.isEmpty)
 	}

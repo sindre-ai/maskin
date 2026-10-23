@@ -258,9 +258,12 @@ public struct LoopMember: Identifiable, Equatable, Sendable {
 	public var type: String
 	public var title: String
 	public var status: String
+	/// The actor driving this member, when known.
+	public var driverID: String?
 
-	public init(id: String, type: String, title: String, status: String) {
+	public init(id: String, type: String, title: String, status: String, driverID: String? = nil) {
 		self.id = id
+		self.driverID = driverID
 		self.type = type
 		self.title = title
 		self.status = status

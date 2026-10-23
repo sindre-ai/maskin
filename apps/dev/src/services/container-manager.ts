@@ -378,12 +378,6 @@ export class ContainerManager {
 		}
 	}
 
-	async getIpOnNetwork(containerId: string, networkName: string): Promise<string | null> {
-		const container = this.docker.getContainer(containerId)
-		const info = await container.inspect()
-		return info.NetworkSettings?.Networks?.[networkName]?.IPAddress ?? null
-	}
-
 	async exec(containerId: string, cmd: string[]): Promise<{ exitCode: number; output: string }> {
 		const container = this.docker.getContainer(containerId)
 		const exec = await container.exec({
@@ -418,23 +412,6 @@ export class ContainerManager {
 	async copyFrom(containerId: string, srcPath: string): Promise<NodeJS.ReadableStream> {
 		const container = this.docker.getContainer(containerId)
 		return container.getArchive({ path: srcPath })
-	}
-
-	async createNetwork(name: string): Promise<string> {
-		const network = await this.docker.createNetwork({ Name: name, Driver: 'bridge' })
-		logger.info(`Network created: ${name}`, { networkId: network.id })
-		return network.id
-	}
-
-	async removeNetwork(nameOrId: string): Promise<void> {
-		try {
-			await this.docker.getNetwork(nameOrId).remove()
-			logger.info(`Network removed: ${nameOrId}`)
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err)
-			if (message.includes('No such network') || message.includes('not found')) return
-			throw err
-		}
 	}
 
 	async pullImage(image: string): Promise<void> {

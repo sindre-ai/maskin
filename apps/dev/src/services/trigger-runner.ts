@@ -29,6 +29,7 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
@@ -43,7 +44,7 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
-import { loadSenderLine } from './workspace-briefing'
+import { commentPromptHeadline } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -312,6 +313,9 @@ export class TriggerRunner {
 	// terminal event for a given session counts toward its trigger's
 	// failure/backoff accounting — otherwise every explicit stop of a
 	// trigger-spawned session double-counts as two failures instead of one.
+	// (A stop now settles once as session_stopped, which is not handled below,
+	// so it no longer counts as a failure at all; this map still covers any other
+	// double report of one outcome.)
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
@@ -1233,8 +1237,10 @@ export class TriggerRunner {
 		const expression = config.expression as string
 
 		try {
-			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				await this.fireCronTrigger(trigger)
+			const job = new Cron(expression, { timezone: 'UTC' }, async (self) => {
+				// The scheduled time, not the wall clock: two instances fire the same
+				// tick a few ms apart and must derive the same dedupe key.
+				await this.fireCronTrigger(trigger, self.currentRun() ?? new Date())
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -1246,7 +1252,7 @@ export class TriggerRunner {
 		}
 	}
 
-	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect, tick: Date): Promise<void> {
 		// Checked before the scope query and the `trigger_fired` event insert:
 		// a suppressed workspace should cost nothing per tick, and must not
 		// write an audit row claiming a trigger fired when no session follows.
@@ -1281,6 +1287,25 @@ export class TriggerRunner {
 				)
 				return
 			}
+		}
+
+		// Idempotency claim, same table and same reason as the event path: during a
+		// rolling deploy the old and new instance both hold this cron job, and the
+		// old one only stops once the new one is healthy. Every cron tick would
+		// otherwise start two sessions. A cron tick has no events row, so its key
+		// is the negative of the tick's unix seconds; real event ids are positive
+		// bigserials and can never collide with it. The 30-day purge covers these
+		// rows too.
+		const claimed = await this.db
+			.insert(triggerDispatches)
+			.values({ triggerId: trigger.id, eventId: -Math.floor(tick.getTime() / 1000) })
+			.onConflictDoNothing()
+			.returning({ triggerId: triggerDispatches.triggerId })
+		if (claimed.length === 0) {
+			logger.info(
+				`Cron trigger '${trigger.name}' tick ${tick.toISOString()} already fired by another process`,
+			)
+			return
 		}
 
 		logger.info(`Cron trigger '${trigger.name}' firing`)
@@ -2149,17 +2174,30 @@ export class CommentDispatcher {
 		authorSessionId: string | null
 	}): Promise<void> {
 		// The commenter rides along in the same lookup so the loop guards can tell
-		// an agent-authored mention from a human one without an extra query.
-		const mentionedActors = await this.db
-			.select({ id: actors.id, type: actors.type })
+		// an agent-authored mention from a human one without an extra query. The
+		// join marks which rows are members of this workspace: a mention of an
+		// actor from another workspace is dropped below, so it gets no
+		// notification and no session. The commenter is read whether or not it is
+		// a member, so the loop guards never lose track of an agent author.
+		const lookedUp = await this.db
+			.select({ id: actors.id, type: actors.type, memberWorkspaceId: workspaceMembers.workspaceId })
 			.from(actors)
+			.leftJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
 			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
-		const commenterIsAgent = mentionedActors.some(
-			(a) => a.id === ctx.commenterId && a.type === 'agent',
-		)
+		const commenterIsAgent = lookedUp.some((a) => a.id === ctx.commenterId && a.type === 'agent')
+		const mentionedActors = lookedUp
+			.filter((a) => a.memberWorkspaceId !== null)
+			.map((a) => ({ id: a.id, type: a.type }))
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
-		// don't resolve to an actor row; both cases quietly drop out here).
+		// don't resolve to a member of this workspace; both cases quietly drop out
+		// here).
 		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
 		const seen = new Set<string>()
 		let anyDispatched = false
@@ -2572,6 +2610,8 @@ export class CommentDispatcher {
 		// so its outcome can be sent back. A return never links: the session it wakes
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
+		let originConversationId: string | null = null
+		let notifyOnComplete = false
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2582,17 +2622,24 @@ export class CommentDispatcher {
 			if (link.linked) {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
+				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
 			}
 		}
 
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
-		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actor.id,
 			callerKind: 'trigger',
 			actionPrompt: buildMentionPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
@@ -2600,6 +2647,9 @@ export class CommentDispatcher {
 				parentEventId: ctx.parentEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.commenterId,
 				mention: {
 					object_id: ctx.objectId,
 					commenter_actor_id: ctx.commenterId,
@@ -2608,6 +2658,8 @@ export class CommentDispatcher {
 					...(isHelperReturn ? { helper_return: true } : {}),
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
+				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
@@ -2651,6 +2703,8 @@ export function buildMentionPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('Mentioned in a comment', ctx.content),
+		'',
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',

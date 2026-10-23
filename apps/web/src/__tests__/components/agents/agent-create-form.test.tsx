@@ -3,12 +3,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse } from '../../factories'
 
-vi.mock('@/components/agents/mcp-servers', () => ({
-	McpServers: ({ onUpdate }: { onUpdate: () => void }) => (
-		<div onClick={onUpdate} onKeyDown={onUpdate} role="button" tabIndex={0} />
-	),
-}))
-
 describe('AgentCreateForm', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

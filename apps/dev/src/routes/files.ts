@@ -5,6 +5,7 @@ import { files } from '@maskin/db/schema'
 import {
 	createFileSchema,
 	fileDetailSchema,
+	fileKindSchema,
 	fileListItemSchema,
 	isTextMimeType,
 	updateFileSchema,
@@ -63,6 +64,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
 	ids: z.string().optional(),
+	kind: fileKindSchema.optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 	order: z.enum(['asc', 'desc']).optional(),
@@ -136,6 +138,7 @@ app.openapi(createFileRoute, (async (c) => {
 			workspaceId,
 			name: body.name,
 			description: body.description ?? null,
+			kind: body.kind ?? null,
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
@@ -247,6 +250,7 @@ app.openapi(listFilesRoute, (async (c) => {
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
+	if (query.kind) conditions.push(eq(files.kind, query.kind))
 	conditions.push(
 		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
 	)
@@ -268,6 +272,7 @@ app.openapi(listFilesRoute, (async (c) => {
 			workspaceId: files.workspaceId,
 			name: files.name,
 			description: files.description,
+			kind: files.kind,
 			mimeType: files.mimeType,
 			sizeBytes: files.sizeBytes,
 			storageKey: files.storageKey,
@@ -409,6 +414,7 @@ app.openapi(updateFileRoute, (async (c) => {
 			.set({
 				name: body.name ?? locked.name,
 				description: body.description !== undefined ? body.description : locked.description,
+				kind: body.kind !== undefined ? body.kind : locked.kind,
 				mimeType: body.mime_type ?? locked.mimeType,
 				annotations: body.annotations ?? locked.annotations,
 				sizeBytes: newSize,

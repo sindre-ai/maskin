@@ -40,7 +40,7 @@ public enum ObjectsProperty: String, Sendable, CaseIterable, Identifiable, Codab
 	public var id: String { rawValue }
 	public var title: String {
 		switch self {
-		case .driver: "Driver"
+		case .driver: "Owner"
 		case .status: "Status"
 		case .updated: "Updated"
 		}

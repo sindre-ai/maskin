@@ -74,6 +74,85 @@ export async function returnToSender(
 	}
 }
 
+/**
+ * Tell a sender about helpers that failed while it was still busy.
+ *
+ * A helper that ends while its sender is mid-run has its return skipped as
+ * `sender_live`, so a sender that never stopped to wait would carry on without
+ * knowing the helper died. Called when the sender itself finishes: every helper of
+ * it that failed or timed out under that skip gets its one-shot claim back and is
+ * returned now, waking the sender for a follow-up run. A person's own stop is not
+ * reported, and neither are completed helpers (their result is not lost work the
+ * sender must hear about; a sender that wanted it used wait or notify_on_complete).
+ *
+ * Never throws: the caller is on a session's terminal path.
+ */
+export async function returnDeferredHelpers(
+	db: Database,
+	senderSessionId: string,
+	opts: { sessionManager?: SessionManager } = {},
+): Promise<void> {
+	try {
+		const helpers = await db
+			.select({
+				id: sessions.id,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+				status: sessions.status,
+				result: sessions.result,
+			})
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.spawnedBySessionId, senderSessionId),
+					inArray(sessions.status, ['failed', 'timeout']),
+					isNotNull(sessions.helperReturnedAt),
+					sql`exists (
+						select 1 from events
+						where events.entity_type = 'session'
+							and events.entity_id = ${sessions.id}
+							and events.action = 'helper_return_skipped'
+							and events.data->>'reason' = 'sender_live'
+					)`,
+					// Once only: a helper whose return was already retried is not retried again.
+					sql`not exists (
+						select 1 from events
+						where events.entity_type = 'session'
+							and events.entity_id = ${sessions.id}
+							and events.action = 'helper_return_retried'
+					)`,
+				),
+			)
+		for (const helper of helpers) {
+			if (classify(helper.status, helper.result) === 'user_stopped') continue
+			// The claim is given back only while the skip is the last word, so a helper
+			// already returned later is not reported twice.
+			const [reset] = await db
+				.update(sessions)
+				.set({ helperReturnedAt: null })
+				.where(and(eq(sessions.id, helper.id), isNotNull(sessions.helperReturnedAt)))
+				.returning({ id: sessions.id })
+			if (!reset) continue
+			await recordEvent(db, {
+				workspaceId: helper.workspaceId,
+				actorId: helper.actorId,
+				action: 'helper_return_retried',
+				entityType: 'session',
+				entityId: helper.id,
+				data: {},
+			}).catch((err) =>
+				logger.warn('Failed to record helper_return_retried', {
+					sessionId: helper.id,
+					error: String(err),
+				}),
+			)
+			await returnToSender(db, helper.id, opts)
+		}
+	} catch (err) {
+		logger.error('Deferred helper return failed', { senderSessionId, error: String(err) })
+	}
+}
+
 async function doReturn(
 	db: Database,
 	sessionId: string,
@@ -157,11 +236,13 @@ async function doReturn(
 
 	// A mention-spawned helper that completed has already answered in the thread:
 	// that reply is its return. Failures and timeouts leave no reply, so they return.
+	// Not when it was flagged to report to the sender's chat: the thread reply never
+	// reaches that chat, so the person would be left asking whether it finished.
 	const cfg = (helper.config ?? {}) as {
 		trigger_source?: unknown
 		mention?: { object_id?: unknown }
 	}
-	if (kind === 'completed' && cfg.trigger_source === 'comment_fallback' && cfg.mention) {
+	if (!notify && kind === 'completed' && cfg.trigger_source === 'comment_fallback' && cfg.mention) {
 		return skip('mention_reply_is_the_return')
 	}
 

@@ -40,7 +40,7 @@ describe('VoiceCallBoundary — start variant', () => {
 		const el = screen.getByTestId('voice-call-boundary')
 		expect(el).toHaveAttribute('data-variant', 'start')
 		expect(el.textContent).toMatch(
-			/^Voice call · 2:14 · \d{1,2}:\d{2}\s*(?:[AP]M)?\s*→\s*\d{1,2}:\d{2}/,
+			/^Voice call · 2:14 · \d{1,2}[:.]\d{2}\s*(?:[AP]M)?\s*→\s*\d{1,2}[:.]\d{2}/,
 		)
 	})
 

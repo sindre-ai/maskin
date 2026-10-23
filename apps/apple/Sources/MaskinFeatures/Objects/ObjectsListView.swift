@@ -37,8 +37,6 @@ struct ObjectsListView: View {
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
-	@State private var search = ""
-	@State private var searchPresented = false
 	@State private var showGoTo = false
 	@State private var holdTarget: ObjectAsk?
 	@State private var viewName = ""
@@ -59,14 +57,6 @@ struct ObjectsListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.undoToast($undoOffer)
-		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
-		.searchMinimized()
-		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
-		.task(id: search) {
-			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
-			if !Task.isCancelled { await store.setSearch(search) }
-		}
 		.sheet(isPresented: $showGoTo) {
 			GoToSheet(
 				store: store, onSelect: { scope in Task { await store.setScope(scope) } },
@@ -300,35 +290,35 @@ struct ObjectsListView: View {
 		case .needsYou where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "checkmark.circle", title: "Nothing needs you",
-				message: "Agents are working. Asks for you land here."
+				message: "You\u{2019}re all caught up. When an agent needs a decision, it shows up here."
 			) {
 				Button("See all objects") { Task { await store.setScope(.all) } }
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 			}
 		case .favourites where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "star", title: "No favourites yet",
-				message: "Star an object and it lands here, on every device.")
+				message: "Tap the star on any object to keep it here, on every device.")
 		default:
 			if store.isFiltered || store.display.needsYouOnly {
 				EmptyState(
-					symbol: "magnifyingglass", title: "No matches",
-					message: "Nothing fits these filters. Try a different type, status or word."
+					symbol: "magnifyingglass",
+					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
+					message: "Nothing fits these filters. Try a different type or status, or clear the filter."
 				) {
-					Button("Clear filters") {
-						search = ""
+					Button("Clear filter") {
 						store.setNeedsYouOnly(false)
 						Task {
 							await store.setStatus(nil)
 							await store.setScope(.all)
 						}
 					}
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 				}
 			} else {
 				EmptyState(
 					symbol: "square.stack.3d.up", title: "Nothing here yet",
-					message: "Objects from you and your agents land here."
+					message: "Create an object, or ask an agent to. What you and your agents make shows up here."
 				) {
 					Button("New object") { intents.create() }
 						.buttonStyle(.primaryAction)

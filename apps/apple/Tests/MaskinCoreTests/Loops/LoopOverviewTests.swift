@@ -108,6 +108,27 @@ struct LoopPhasesTests {
 		#expect(phases[1].steps.map(\.triggerID) == ["s1"])
 	}
 
+	@Test("in motion groups by status in workflow order and leaves out the last status")
+	func inMotion() {
+		let groups = LoopPhases.inMotion(
+			members: [m("a", "review"), m("b", "todo"), m("c", "done"), m("d", "review"), m("e", "weird")],
+			statusOrder: ["todo", "review", "done"])
+		#expect(groups.map(\.status) == ["todo", "review", "weird"])
+		#expect(groups[1].members.map(\.id) == ["a", "d"])
+	}
+
+	@Test("a member carries the driver of the linked object")
+	func driver() {
+		let graph = ObjectGraph(
+			object: WorkObject(id: "loop", type: "loop", status: "learning"),
+			links: [
+				ObjectLink(
+					id: "r", relation: "in_loop", isOutgoing: true, otherId: "x", otherType: "task",
+					otherTitle: "X", otherStatus: "todo", otherDriver: "agent-1")
+			], events: [])
+		#expect(LoopOverviewBuilder.members(from: graph).first?.driverID == "agent-1")
+	}
+
 	@Test("no members means no phases")
 	func empty() {
 		#expect(LoopPhases.build(members: [], steps: [], statusOrder: ["todo"]).isEmpty)

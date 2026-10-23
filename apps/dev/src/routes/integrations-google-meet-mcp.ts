@@ -1,8 +1,11 @@
 import type { Database } from '@maskin/db'
+import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { createGoogleMeetMcpServer } from '../lib/integrations/providers/google-meet/mcp-server'
+import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -56,7 +59,27 @@ app.post('/', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	const mcpServer = createGoogleMeetMcpServer({ db, workspaceId, actorId })
+	// Only the id is needed, to look up this agent's access. The credential is not read here.
+	const [meet] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'google-meet'),
+				eq(integrations.providerMode, 'registered'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+			),
+		)
+		.limit(1)
+	const gate = await toolGateFor(db, {
+		workspaceId,
+		actorId,
+		integrationId: meet?.id ?? null,
+		provider: 'google-meet',
+		providerLabel: 'Google Meet',
+	})
+	const mcpServer = createGoogleMeetMcpServer({ db, workspaceId, actorId }, gate)
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
