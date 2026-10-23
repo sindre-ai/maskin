@@ -11,13 +11,15 @@ import {
 	readState,
 	sessions,
 	subscriptions,
+	triggers,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
 import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { HEARTBEAT_PROMPT, heartbeatCronExpression } from '../../services/default-heartbeat'
 import {
 	buildAgentFile,
 	buildFile,
@@ -917,6 +919,51 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const [row] = await agentRowsNamed(name)
 			expect(Object.keys((row.tools as { mcpServers: object }).mcpServers)).toEqual(['maskin'])
 		})
+	})
+
+	it('gives a new agent a daily Heartbeat trigger, and a human none', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const name = `Heartbeat agent ${randomUUID()}`
+
+		const res = await post(
+			{ name, workspace_id: ws.id, system_prompt: 'You are a test agent', description: 'Test' },
+			bearer(TEST_ACTOR_KEY),
+		)
+		expect(res.status).toBe(201)
+		const created = await res.json()
+
+		const rows = await db.select().from(triggers).where(eq(triggers.targetActorId, created.id))
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({
+			workspaceId: ws.id,
+			name: 'Heartbeat',
+			type: 'cron',
+			enabled: true,
+			actionPrompt: HEARTBEAT_PROMPT,
+			config: { expression: heartbeatCronExpression(created.id) },
+		})
+		const [createdEvent] = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'trigger'), eq(events.entityId, rows[0].id)))
+		expect(createdEvent).toMatchObject({ action: 'created', workspaceId: ws.id })
+
+		const humanRes = await createApp().request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'Human Without Heartbeat',
+				email: `no-heartbeat-${randomUUID()}@example.com`,
+				password: 'correct-horse-battery',
+				auto_create_workspace: false,
+			}),
+		)
+		expect(humanRes.status).toBe(201)
+		const human = await humanRes.json()
+		const humanTriggers = await db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.targetActorId, human.id))
+		expect(humanTriggers).toHaveLength(0)
 	})
 
 	it('rejects workspace_id on a human signup', async () => {

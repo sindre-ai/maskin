@@ -563,6 +563,21 @@ app.openapi(listConversationsRoute, (async (c) => {
 	if (query.pinned !== undefined) conditions.push(eq(conversationParticipants.pinned, query.pinned))
 	if (query.subject_type) conditions.push(eq(conversations.subjectType, query.subject_type))
 	if (query.subject_id) conditions.push(eq(conversations.subjectId, query.subject_id))
+	if (query.updated_after) {
+		conditions.push(gt(conversations.lastMessageAt, new Date(query.updated_after)))
+	}
+	if (query.has_human) {
+		// Literal, table-qualified SQL for the same reason as the unread_only subquery below.
+		conditions.push(
+			sql`EXISTS (
+				SELECT 1 FROM conversation_participants cp
+				INNER JOIN actors a ON a.id = cp.actor_id
+				WHERE cp.conversation_id = conversations.id
+					AND cp.left_at IS NULL
+					AND a.type = 'human'
+			)`,
+		)
+	}
 	if (query.unread_only) {
 		// Table names (not Drizzle column refs) inside the correlated subquery —
 		// interpolating column objects here renders unqualified and silently
@@ -586,7 +601,11 @@ app.openapi(listConversationsRoute, (async (c) => {
 			eq(conversationParticipants.conversationId, conversations.id),
 		)
 		.where(and(...conditions))
-		.orderBy(desc(conversationParticipants.pinned), desc(conversations.lastMessageAt))
+		.orderBy(
+			...(query.sort === 'activity'
+				? [desc(conversations.lastMessageAt), desc(conversations.id)]
+				: [desc(conversationParticipants.pinned), desc(conversations.lastMessageAt)]),
+		)
 		.limit(query.limit + 1)
 		.offset(query.offset)
 
@@ -657,6 +676,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 			snippet: snippetByConversation.get(r.conversation.id)?.snippet ?? null,
 			snippet_actor_id: snippetByConversation.get(r.conversation.id)?.snippetActorId ?? null,
 			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
+			snippet_is_caller: snippetByConversation.get(r.conversation.id)?.snippetActorId === callerId,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,
