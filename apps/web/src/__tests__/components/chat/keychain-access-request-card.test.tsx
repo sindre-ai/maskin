@@ -25,6 +25,12 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useCardAnswer: () => cardAnswer,
 }))
 vi.mock('@/hooks/use-integrations', () => ({ useIntegrations: () => ({ data: integrations }) }))
+const continueMutate = vi.fn()
+const inputMutate = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useContinueSession: () => ({ mutate: continueMutate }),
+	useSendSessionInput: () => ({ mutate: inputMutate }),
+}))
 
 let role = 'member'
 vi.mock('@/lib/workspace-context', () => ({
@@ -59,7 +65,7 @@ function credential(over: Partial<IntegrationResponse> = {}) {
 	})
 }
 
-function renderCard() {
+function renderCard(req: MessageKeychainAccessRequest = request) {
 	return render(
 		<TestWrapper>
 			<KeychainAccessRequestCard
@@ -67,11 +73,13 @@ function renderCard() {
 				conversationId="conv-1"
 				messageId={7}
 				askingAgentId={AGENT}
-				request={request}
+				request={req}
 			/>
 		</TestWrapper>,
 	)
 }
+
+const helperRequest: MessageKeychainAccessRequest = { ...request, reply_to_session: true }
 
 beforeEach(() => {
 	vi.clearAllMocks()
@@ -108,6 +116,34 @@ describe('KeychainAccessRequestCard', () => {
 		expect(content).toContain('KEYCHAIN_BYO_APIKEY_STRIPE')
 		expect(await screen.findByText(/It stays until you remove it/)).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Always allow' })).not.toBeInTheDocument()
+	})
+
+	it('for a helper: no chat-only choice, and Always allow restarts it through its own session', async () => {
+		const user = userEvent.setup()
+		renderCard(helperRequest)
+		expect(screen.queryByRole('button', { name: 'Allow in this chat' })).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Always allow' }))
+
+		await waitFor(() =>
+			expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID, 'always'),
+		)
+		await waitFor(() => expect(continueMutate).toHaveBeenCalledTimes(1))
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(continueMutate.mock.calls[0]?.[0]).toMatchObject({ id: SESSION_ID })
+		expect(continueMutate.mock.calls[0]?.[0].content).toContain('allowed you to use Stripe')
+	})
+
+	it('for a helper: Not now goes to its session and is recorded for the card', async () => {
+		const user = userEvent.setup()
+		renderCard(helperRequest)
+		await user.click(screen.getByRole('button', { name: 'Not now' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate.mock.calls[0]?.[0]).toMatchObject({
+			id: SESSION_ID,
+			card_answer: { message_id: 7, outcome: 'declined' },
+		})
 	})
 
 	it('Allow in this chat: grants for this conversation only, and says so', async () => {

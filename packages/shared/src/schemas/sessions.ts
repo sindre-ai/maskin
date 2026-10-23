@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { messageQuestionAnswerSchema } from './conversations'
+import { messageCardAnswerSchema, messageQuestionAnswerSchema } from './conversations'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
@@ -402,6 +402,8 @@ export const sessionInputSchema = z.object({
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
 	/** Set when this input answers a question the session asked in a chat. */
 	question_answer: messageQuestionAnswerSchema.optional(),
+	/** Set when this input answers a card the session is waiting on in a chat. */
+	card_answer: messageCardAnswerSchema.optional(),
 })
 
 export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])
