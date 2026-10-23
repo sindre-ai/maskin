@@ -11,6 +11,8 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type McpEra,
+	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
@@ -99,6 +101,14 @@ export interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label for telemetry, next to
+	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
+	 * sets the fallback (legacy, none) because the SDK does not expose the
+	 * negotiated version on the server object. See `TelemetryConfig.mcpEra`.
+	 */
+	telemetryEra?: McpEra
+	telemetryProtocolVersion?: McpProtocolVersionLabel
 	/**
 	 * `events.id` of the comment that dispatched this agent session, when the
 	 * session was triggered by a comment. `create_comment` uses it as the
@@ -2539,6 +2549,8 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		mcpEra: config.telemetryEra,
+		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -8397,6 +8409,8 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		telemetryEra: 'legacy',
+		telemetryProtocolVersion: 'none',
 	}
 
 	const server = createMcpServer(config)

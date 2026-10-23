@@ -38,7 +38,11 @@ import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
@@ -644,8 +648,8 @@ app.openapi(listActorsRoute, (async (c) => {
 		const cursorOn = Boolean(query.snapshot_at)
 		const orderBy = cursorOn
 			? query.order === 'asc'
-				? [asc(actors.createdAt), asc(actors.id)]
-				: [desc(actors.createdAt), asc(actors.id)]
+				? [asc(msCreatedAt(actors.createdAt)), asc(actors.id)]
+				: [desc(msCreatedAt(actors.createdAt)), asc(actors.id)]
 			: [asc(actors.name), asc(actors.id)]
 
 		// X-Total-Count reflects the workspace's total under the snapshot upper
