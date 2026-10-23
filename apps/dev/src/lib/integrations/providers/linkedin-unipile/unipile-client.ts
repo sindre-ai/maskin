@@ -14,11 +14,7 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
-import {
-	INMAIL_CHAT_SPECIFICS,
-	type LinkedInInmailCreditsQuery,
-	inmailCreditsPath,
-} from './inmail'
+import { INMAIL_CHAT_SPECIFICS, type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
 import {
 	type LinkedInCancelRelationRequestPayload,
 	type LinkedInListRelationRequestsQuery,
