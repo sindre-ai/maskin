@@ -29,7 +29,7 @@ struct DecisionDraftMappingTests {
 			(draft.map { #","draft":\#($0)"# } ?? "") + (drafts.map { #","drafts":\#($0)"# } ?? "")
 		return """
 			{"items":[{
-			  "notification_id":"11111111-1111-4111-8111-111111111111","rank":1,
+			  "notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,
 			  "headline":"Send the note to Hans?","rationale":null,"created_at":"2026-10-20T10:00:00.000Z",
 			  "entity_type":"object","entity_id":"task-1","session_id":null,
 			  "latest_mention":{
@@ -62,7 +62,9 @@ struct DecisionDraftMappingTests {
 
 		#expect(
 			decision.draft
-				== DecisionDraft(label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?"))
+				== DecisionDraft(
+					label: "Email to Hans", to: "Hans Jensen", body: "Hej Hans, må jeg ringe?",
+					objectId: "task-1"))
 	}
 
 	@Test("falls back to the label Draft")
@@ -154,7 +156,7 @@ struct CuratedListMappingTests {
 		let entity = id.map { #""entity_type":"object","entity_id":"\#($0)""# }
 			?? #""entity_type":null,"entity_id":null"#
 		return """
-			{"notification_id":"11111111-1111-4111-8111-111111111111","rank":1,"headline":"\(headline)",
+			{"notification_id":"11111111-1111-4111-8111-111111111111","source":"curated","rank":1,"headline":"\(headline)",
 			 "rationale":null,"created_at":"2026-10-20T10:00:00.000Z",\(entity),"session_id":null}
 			"""
 	}

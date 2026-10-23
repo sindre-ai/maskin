@@ -68,6 +68,13 @@ public final class PushRegistrar {
 		await sync()
 	}
 
+	/// Every return to the foreground: picks up a permission turned on in iOS Settings, asks for
+	/// the token again, and retries an upload that failed (no other trigger would: a failed
+	/// upload leaves nothing registered, and `didReceive` only fires when APNs hands over a token).
+	public func foregrounded() async {
+		await actorChanged(actorId)
+	}
+
 	/// Shows the system prompt if the user hasn't decided yet. A denied user is never re-prompted
 	/// (the OS wouldn't show it); the UI should point them to Settings instead.
 	public func requestAuthorization() async {

@@ -19,8 +19,7 @@ import { cn } from '@/lib/cn'
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, Copy, Info } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-// The 4-step Resend self-serve connect Dialog. Governed at the call site by
-// `useFeatureFlag('resend-integration-ui')`. Every user-visible string is
+// The 4-step Resend self-serve connect Dialog. Every user-visible string is
 // verbatim from the design spec attached to the parent bet; do not paraphrase.
 
 export type ResendConnectScene =

@@ -269,7 +269,7 @@ struct DecisionCardView: View {
 	@ViewBuilder private var say: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			if let decision = card.decision {
-				ReadAllClamp { limit in messageText(decision.summary).lineLimit(limit) }
+				messageText(decision.summary)
 			} else {
 				Text(card.headline)
 					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold))

@@ -15,6 +15,7 @@ import {
 } from '../lib/integrations/chat-capture'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { CredentialNameError } from '../lib/integrations/credential-name'
+import { updateCredential } from '../lib/integrations/credential-update'
 import { CredentialValueError } from '../lib/integrations/credential-value'
 import {
 	LOGIN_PASSWORD_MAX_LENGTH,
@@ -700,6 +701,153 @@ app.openapi(removeRoute, (async (c) => {
 		: true
 	return c.json({ id, status: 'undone' as const, sessionEnded }, 200)
 }) as RouteHandler<typeof removeRoute, Env>)
+
+// ── POST /api/integrations/:id/update ────────────────────────────────────
+
+// A new name, a new secret, or both. A key takes rawSecret; a login takes username and password
+// together. No `request.body`: the handler owns the raw bytes so it can zero them.
+const updateBodySchema = z
+	.object({
+		displayName: z.string().trim().min(1).max(80).optional(),
+		rawSecret: z.string().min(1).max(4096).optional(),
+		username: z.string().min(1).max(LOGIN_USERNAME_MAX_LENGTH).optional(),
+		password: z.string().min(1).max(LOGIN_PASSWORD_MAX_LENGTH).optional(),
+	})
+	.strict()
+	.refine((b) => (b.username === undefined) === (b.password === undefined), {
+		message: 'username and password are replaced together',
+		path: ['username'],
+	})
+	.refine(
+		(b) =>
+			b.displayName !== undefined ||
+			b.rawSecret !== undefined ||
+			(b.username !== undefined && b.password !== undefined),
+		{ message: 'Nothing to change', path: ['displayName'] },
+	)
+	.refine((b) => b.rawSecret === undefined || b.username === undefined, {
+		message: 'a credential is a key or a login, not both',
+		path: ['rawSecret'],
+	})
+
+const updateRoute = createRoute({
+	method: 'post',
+	path: '/{id}/update',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Rename a saved API key or login, replace its secret, or both (humans only)',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description:
+				'Saved. A running session keeps what it started with; the next one gets the change',
+			content: {
+				'application/json': {
+					schema: z.object({
+						id: z.string().uuid(),
+						renamed: z.boolean(),
+						secretReplaced: z.boolean(),
+					}),
+				},
+			},
+		},
+		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
+		403: {
+			description: 'Not a person, or neither its creator nor a workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'NAME_TAKEN, or not an active saved key or login',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+
+	// Agents never change what the vault holds.
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can edit a credential'), 403)
+	}
+
+	const parsed = await readSecretBody(c, updateBodySchema)
+	if (!parsed.ok) return c.json(createApiError('BAD_REQUEST', parsed.message), 400)
+	const body = parsed.data
+
+	try {
+		const outcome = await updateCredential(
+			db,
+			getKmsProvider(),
+			{
+				workspaceId,
+				integrationId: id,
+				actorId: callerId,
+				displayName: body.displayName,
+				rawSecret: body.rawSecret,
+				login:
+					body.username !== undefined && body.password !== undefined
+						? { username: body.username, password: body.password }
+						: undefined,
+			},
+			// The same rule as removing it: the person who saved it, or a workspace admin or owner.
+			async (createdBy) =>
+				createdBy === callerId || (await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)),
+		)
+		if (outcome.kind === 'not_found') {
+			return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+		}
+		if (outcome.kind === 'forbidden') {
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'Only the person who saved this, or a workspace admin or owner, can edit it',
+				),
+				403,
+			)
+		}
+		if (outcome.kind === 'not_editable') {
+			return c.json(createApiError('CONFLICT', 'This is not an active saved key or login'), 409)
+		}
+		if (outcome.kind === 'wrong_shape') {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'An API key takes a key, and a login takes a username and password',
+				),
+				400,
+			)
+		}
+
+		void capturePosthogEvent('keychain_credential_updated', callerId, {
+			workspace_id: workspaceId,
+			integration_id: id,
+			renamed: outcome.renamed,
+			secret_replaced: outcome.secretReplaced,
+		})
+		return c.json({ id, renamed: outcome.renamed, secretReplaced: outcome.secretReplaced }, 200)
+	} catch (err) {
+		if (
+			err instanceof CredentialNameError ||
+			err instanceof CredentialValueError ||
+			err instanceof LoginValueError
+		) {
+			return c.json(createApiError(err.code, err.message), err.status)
+		}
+		// Error name only, never the request: a driver error can carry bound params.
+		logger.error('Keychain edit failed', {
+			workspaceId,
+			integrationId: id,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		throw err
+	}
+}) as RouteHandler<typeof updateRoute, Env>)
 
 // ── POST /api/integrations/:id/relaunch ──────────────────────────────────
 

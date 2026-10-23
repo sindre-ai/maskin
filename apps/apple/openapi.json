@@ -283,6 +283,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -338,6 +362,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -796,6 +821,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -851,6 +900,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -1421,6 +1471,30 @@
 															"null"
 														]
 													},
+													"details": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"label": {
+																	"type": "string"
+																},
+																"value": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"label",
+																"value"
+															]
+														}
+													},
+													"context": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"body": {
 														"type": "string"
 													},
@@ -1476,6 +1550,7 @@
 													"provider",
 													"recipients",
 													"subject",
+													"details",
 													"body",
 													"maxLength",
 													"missing",
@@ -2223,6 +2298,30 @@
 															"null"
 														]
 													},
+													"details": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"label": {
+																	"type": "string"
+																},
+																"value": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"label",
+																"value"
+															]
+														}
+													},
+													"context": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"body": {
 														"type": "string"
 													},
@@ -2278,6 +2377,7 @@
 													"provider",
 													"recipients",
 													"subject",
+													"details",
 													"body",
 													"maxLength",
 													"missing",
@@ -2545,6 +2645,30 @@
 																"null"
 															]
 														},
+														"details": {
+															"type": "array",
+															"items": {
+																"type": "object",
+																"properties": {
+																	"label": {
+																		"type": "string"
+																	},
+																	"value": {
+																		"type": "string"
+																	}
+																},
+																"required": [
+																	"label",
+																	"value"
+																]
+															}
+														},
+														"context": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
 														"body": {
 															"type": "string"
 														},
@@ -2600,6 +2724,7 @@
 														"provider",
 														"recipients",
 														"subject",
+														"details",
 														"body",
 														"maxLength",
 														"missing",
@@ -2840,6 +2965,30 @@
 																	"null"
 																]
 															},
+															"details": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"label": {
+																			"type": "string"
+																		},
+																		"value": {
+																			"type": "string"
+																		}
+																	},
+																	"required": [
+																		"label",
+																		"value"
+																	]
+																}
+															},
+															"context": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
 															"body": {
 																"type": "string"
 															},
@@ -2895,6 +3044,7 @@
 															"provider",
 															"recipients",
 															"subject",
+															"details",
 															"body",
 															"maxLength",
 															"missing",
@@ -3512,6 +3662,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -3567,6 +3741,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -3851,6 +4026,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -3906,6 +4105,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -4330,6 +4530,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -4385,6 +4609,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -4829,6 +5054,30 @@
 														"null"
 													]
 												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": {
+																"type": "string"
+															},
+															"value": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"label",
+															"value"
+														]
+													}
+												},
+												"context": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
 												"body": {
 													"type": "string"
 												},
@@ -4884,6 +5133,7 @@
 												"provider",
 												"recipients",
 												"subject",
+												"details",
 												"body",
 												"maxLength",
 												"missing",
@@ -8094,7 +8344,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													},
@@ -8109,6 +8358,7 @@
 														"type": "string",
 														"enum": [
 															"read",
+															"read_write",
 															"none"
 														]
 													},
@@ -8154,6 +8404,13 @@
 													"has_access": {
 														"type": "boolean"
 													},
+													"default_access": {
+														"type": "string",
+														"enum": [
+															"read",
+															"none"
+														]
+													},
 													"scope": {
 														"type": [
 															"string",
@@ -8177,6 +8434,7 @@
 													"name",
 													"kind",
 													"has_access",
+													"default_access",
 													"scope",
 													"chat_count",
 													"created_by"
@@ -25349,6 +25607,292 @@
 				}
 			}
 		},
+		"/api/integrations/{id}/update": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Rename a saved API key or login, replace its secret, or both (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Saved. A running session keeps what it started with; the next one gets the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"renamed": {
+											"type": "boolean"
+										},
+										"secretReplaced": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"renamed",
+										"secretReplaced"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person, or neither its creator nor a workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "NAME_TAKEN, or not an active saved key or login",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/{id}/relaunch": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -26042,6 +26586,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -26059,7 +26604,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -26187,7 +26731,6 @@
 													"enum": [
 														"none",
 														"read",
-														"ask_first",
 														"read_write"
 													]
 												}
@@ -26230,7 +26773,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -26528,7 +27070,6 @@
 										"enum": [
 											"none",
 											"read",
-											"ask_first",
 											"read_write"
 										]
 									}
@@ -26558,7 +27099,6 @@
 											"enum": [
 												"none",
 												"read",
-												"ask_first",
 												"read_write"
 											]
 										}
@@ -27125,6 +27665,7 @@
 										"type": "string",
 										"enum": [
 											"read",
+											"read_write",
 											"none"
 										]
 									}
@@ -27149,6 +27690,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										}
@@ -27712,7 +28254,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. \"Read & write\" access sends directly; \"Ask first\" access, and any protected recipient, needs an approval card a person answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -27788,8 +28330,7 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft",
-												"direct"
+												"approved_draft"
 											]
 										}
 									},
@@ -28262,6 +28803,7 @@
 												"type": "string",
 												"enum": [
 													"read",
+													"read_write",
 													"none"
 												]
 											},
@@ -28279,7 +28821,6 @@
 															"enum": [
 																"none",
 																"read",
-																"ask_first",
 																"read_write"
 															]
 														}
@@ -28670,6 +29211,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -28687,7 +29229,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -29116,6 +29657,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -29133,7 +29675,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -29931,6 +30472,7 @@
 											"type": "string",
 											"enum": [
 												"read",
+												"read_write",
 												"none"
 											]
 										},
@@ -29948,7 +30490,6 @@
 														"enum": [
 															"none",
 															"read",
-															"ask_first",
 															"read_write"
 														]
 													}
@@ -35031,11 +35572,16 @@
 															"format": "uuid",
 															"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
 														},
+														"file_id": {
+															"type": "string",
+															"format": "uuid",
+															"description": "The workspace file the card is about, when what you are asking about is a file and not text to send: an HTML page, a markdown document, an image, a plain-text file. The card shows the file itself (a rendered page, the formatted text, the picture) above the buttons, live, so a later version shows up. Save the file first (create_file), then give its id. Use object_id instead for a message that would be sent."
+														},
 														"label": {
 															"type": "string",
 															"minLength": 1,
 															"maxLength": 30,
-															"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+															"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\" (or the file name for a file)."
 														},
 														"to": {
 															"type": "string",
@@ -35069,11 +35615,16 @@
 														"format": "uuid",
 														"description": "The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text."
 													},
+													"file_id": {
+														"type": "string",
+														"format": "uuid",
+														"description": "The workspace file the card is about, when what you are asking about is a file and not text to send: an HTML page, a markdown document, an image, a plain-text file. The card shows the file itself (a rendered page, the formatted text, the picture) above the buttons, live, so a later version shows up. Save the file first (create_file), then give its id. Use object_id instead for a message that would be sent."
+													},
 													"label": {
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 30,
-														"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\"."
+														"description": "What kind of text it is, shown as a small label above it: \"Email to Hans\", \"LinkedIn note\", \"Slack message\". Plain words, at most 30 characters. Defaults to \"Draft\" (or the file name for a file)."
 													},
 													"to": {
 														"type": "string",
@@ -35088,7 +35639,7 @@
 														"description": "Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one."
 													}
 												},
-												"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary."
+												"description": "Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary."
 											}
 										},
 										"required": [
@@ -47080,7 +47631,7 @@
 				"tags": [
 					"For You"
 				],
-				"summary": "The Chief of Staff's ranked list of what needs the current actor",
+				"summary": "What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them",
 				"parameters": [
 					{
 						"schema": {
@@ -47106,11 +47657,27 @@
 												"type": "object",
 												"properties": {
 													"notification_id": {
-														"type": "string",
+														"type": [
+															"string",
+															"null"
+														],
 														"format": "uuid"
+													},
+													"source": {
+														"type": "string",
+														"enum": [
+															"curated",
+															"decision"
+														]
 													},
 													"rank": {
 														"type": "number"
+													},
+													"latest_event_id": {
+														"type": [
+															"number",
+															"null"
+														]
 													},
 													"headline": {
 														"type": "string"
@@ -47296,6 +47863,30 @@
 																			"null"
 																		]
 																	},
+																	"details": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"label": {
+																					"type": "string"
+																				},
+																				"value": {
+																					"type": "string"
+																				}
+																			},
+																			"required": [
+																				"label",
+																				"value"
+																			]
+																		}
+																	},
+																	"context": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -47351,6 +47942,7 @@
 																	"provider",
 																	"recipients",
 																	"subject",
+																	"details",
 																	"body",
 																	"maxLength",
 																	"missing",
@@ -47469,6 +48061,9 @@
 																				"object_id": {
 																					"type": "string"
 																				},
+																				"file_id": {
+																					"type": "string"
+																				},
 																				"label": {
 																					"type": "string"
 																				},
@@ -47531,6 +48126,30 @@
 																								"null"
 																							]
 																						},
+																						"details": {
+																							"type": "array",
+																							"items": {
+																								"type": "object",
+																								"properties": {
+																									"label": {
+																										"type": "string"
+																									},
+																									"value": {
+																										"type": "string"
+																									}
+																								},
+																								"required": [
+																									"label",
+																									"value"
+																								]
+																							}
+																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -47586,11 +48205,36 @@
 																						"provider",
 																						"recipients",
 																						"subject",
+																						"details",
 																						"body",
 																						"maxLength",
 																						"missing",
 																						"warnings",
 																						"content_hash"
+																					]
+																				},
+																				"file": {
+																					"type": "object",
+																					"properties": {
+																						"id": {
+																							"type": "string",
+																							"format": "uuid"
+																						},
+																						"name": {
+																							"type": "string"
+																						},
+																						"mime_type": {
+																							"type": "string"
+																						},
+																						"size_bytes": {
+																							"type": "number"
+																						}
+																					},
+																					"required": [
+																						"id",
+																						"name",
+																						"mime_type",
+																						"size_bytes"
 																					]
 																				}
 																			}
@@ -47603,6 +48247,9 @@
 																				"type": "string"
 																			},
 																			"object_id": {
+																				"type": "string"
+																			},
+																			"file_id": {
 																				"type": "string"
 																			},
 																			"label": {
@@ -47667,6 +48314,30 @@
 																							"null"
 																						]
 																					},
+																					"details": {
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"label": {
+																									"type": "string"
+																								},
+																								"value": {
+																									"type": "string"
+																								}
+																							},
+																							"required": [
+																								"label",
+																								"value"
+																							]
+																						}
+																					},
+																					"context": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
 																					"body": {
 																						"type": "string"
 																					},
@@ -47722,11 +48393,36 @@
 																					"provider",
 																					"recipients",
 																					"subject",
+																					"details",
 																					"body",
 																					"maxLength",
 																					"missing",
 																					"warnings",
 																					"content_hash"
+																				]
+																			},
+																			"file": {
+																				"type": "object",
+																				"properties": {
+																					"id": {
+																						"type": "string",
+																						"format": "uuid"
+																					},
+																					"name": {
+																						"type": "string"
+																					},
+																					"mime_type": {
+																						"type": "string"
+																					},
+																					"size_bytes": {
+																						"type": "number"
+																					}
+																				},
+																				"required": [
+																					"id",
+																					"name",
+																					"mime_type",
+																					"size_bytes"
 																				]
 																			}
 																		}
@@ -47753,7 +48449,9 @@
 												},
 												"required": [
 													"notification_id",
+													"source",
 													"rank",
+													"latest_event_id",
 													"headline",
 													"rationale",
 													"created_at",
@@ -49816,6 +50514,30 @@
 																			"null"
 																		]
 																	},
+																	"details": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"label": {
+																					"type": "string"
+																				},
+																				"value": {
+																					"type": "string"
+																				}
+																			},
+																			"required": [
+																				"label",
+																				"value"
+																			]
+																		}
+																	},
+																	"context": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -49871,6 +50593,7 @@
 																	"provider",
 																	"recipients",
 																	"subject",
+																	"details",
 																	"body",
 																	"maxLength",
 																	"missing",
@@ -49989,6 +50712,9 @@
 																				"object_id": {
 																					"type": "string"
 																				},
+																				"file_id": {
+																					"type": "string"
+																				},
 																				"label": {
 																					"type": "string"
 																				},
@@ -50051,6 +50777,30 @@
 																								"null"
 																							]
 																						},
+																						"details": {
+																							"type": "array",
+																							"items": {
+																								"type": "object",
+																								"properties": {
+																									"label": {
+																										"type": "string"
+																									},
+																									"value": {
+																										"type": "string"
+																									}
+																								},
+																								"required": [
+																									"label",
+																									"value"
+																								]
+																							}
+																						},
+																						"context": {
+																							"type": [
+																								"string",
+																								"null"
+																							]
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -50106,11 +50856,36 @@
 																						"provider",
 																						"recipients",
 																						"subject",
+																						"details",
 																						"body",
 																						"maxLength",
 																						"missing",
 																						"warnings",
 																						"content_hash"
+																					]
+																				},
+																				"file": {
+																					"type": "object",
+																					"properties": {
+																						"id": {
+																							"type": "string",
+																							"format": "uuid"
+																						},
+																						"name": {
+																							"type": "string"
+																						},
+																						"mime_type": {
+																							"type": "string"
+																						},
+																						"size_bytes": {
+																							"type": "number"
+																						}
+																					},
+																					"required": [
+																						"id",
+																						"name",
+																						"mime_type",
+																						"size_bytes"
 																					]
 																				}
 																			}
@@ -50123,6 +50898,9 @@
 																				"type": "string"
 																			},
 																			"object_id": {
+																				"type": "string"
+																			},
+																			"file_id": {
 																				"type": "string"
 																			},
 																			"label": {
@@ -50187,6 +50965,30 @@
 																							"null"
 																						]
 																					},
+																					"details": {
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"label": {
+																									"type": "string"
+																								},
+																								"value": {
+																									"type": "string"
+																								}
+																							},
+																							"required": [
+																								"label",
+																								"value"
+																							]
+																						}
+																					},
+																					"context": {
+																						"type": [
+																							"string",
+																							"null"
+																						]
+																					},
 																					"body": {
 																						"type": "string"
 																					},
@@ -50242,11 +51044,36 @@
 																					"provider",
 																					"recipients",
 																					"subject",
+																					"details",
 																					"body",
 																					"maxLength",
 																					"missing",
 																					"warnings",
 																					"content_hash"
+																				]
+																			},
+																			"file": {
+																				"type": "object",
+																				"properties": {
+																					"id": {
+																						"type": "string",
+																						"format": "uuid"
+																					},
+																					"name": {
+																						"type": "string"
+																					},
+																					"mime_type": {
+																						"type": "string"
+																					},
+																					"size_bytes": {
+																						"type": "number"
+																					}
+																				},
+																				"required": [
+																					"id",
+																					"name",
+																					"mime_type",
+																					"size_bytes"
 																				]
 																			}
 																		}
@@ -50550,6 +51377,30 @@
 																	"null"
 																]
 															},
+															"details": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"label": {
+																			"type": "string"
+																		},
+																		"value": {
+																			"type": "string"
+																		}
+																	},
+																	"required": [
+																		"label",
+																		"value"
+																	]
+																}
+															},
+															"context": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
 															"body": {
 																"type": "string"
 															},
@@ -50605,6 +51456,7 @@
 															"provider",
 															"recipients",
 															"subject",
+															"details",
 															"body",
 															"maxLength",
 															"missing",
@@ -57548,6 +58400,16 @@
 											},
 											"shape_error": {
 												"type": "boolean"
+											},
+											"view": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"slim",
+													"full"
+												]
 											}
 										},
 										"required": [
@@ -61591,7 +62453,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-				"description": "Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"description": "Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 				"requestBody": {
 					"required": true,
 					"content": {
@@ -61861,7 +62723,7 @@
 					"Voice"
 				],
 				"summary": "Connect a reserved voice session to the vendor",
-				"description": "Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
+				"description": "Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
 				"parameters": [
 					{
 						"schema": {
@@ -62019,7 +62881,7 @@
 						}
 					},
 					"500": {
-						"description": "Vendor connect failed — the session row is marked errored so the caller can start again",
+						"description": "Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -62084,7 +62946,7 @@
 					"Voice"
 				],
 				"summary": "End a voice call",
-				"description": "Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+				"description": "Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
 				"parameters": [
 					{
 						"schema": {

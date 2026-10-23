@@ -236,7 +236,10 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
-export const agentGrantAccessSchema = z.enum(['none', 'read', 'ask_first', 'read_write'])
+export const agentGrantAccessSchema = z.enum(['none', 'read', 'read_write'])
+
+/** What an agent with no grant row of its own gets. */
+export const defaultAgentAccessSchema = z.enum(['read', 'read_write', 'none'])
 
 export const agentGrantSchema = z.object({
 	actorId: z.string().uuid(),
@@ -276,7 +279,7 @@ export const integrationResponseSchema = z.object({
 	displayName: z.string().nullable().optional(),
 	// Agent grants. defaultAgentAccess is what an agent with no row of its own gets;
 	// agentGrants are the explicit rows. Keychain credentials are explicit-only.
-	defaultAgentAccess: z.enum(['read', 'none']).optional(),
+	defaultAgentAccess: defaultAgentAccessSchema.optional(),
 	agentGrants: z.array(agentGrantSchema).optional(),
 	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
 	chatGrants: z

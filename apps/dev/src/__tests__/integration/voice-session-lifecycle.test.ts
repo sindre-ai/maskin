@@ -2,7 +2,6 @@ import { actors, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import voiceSessionsRoutes, { setVoiceInvokeToolFactory } from '../../routes/voice-sessions'
 import {
 	type CreateRealtimeCallFn,
@@ -192,19 +191,6 @@ describe('endAllLiveVoiceSessions', () => {
 })
 
 describe('daily minute cap + hangup route against real Postgres', () => {
-	beforeEach(() => {
-		process.env.FF_TESTER_ACTOR_IDS = getTestActorId()
-		process.env.FF_TESTER_FEATURES = 'voice-mode-v1'
-		_resetFeatureFlagConfig()
-	})
-	afterEach(() => {
-		// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"
-		delete process.env.FF_TESTER_ACTOR_IDS
-		// biome-ignore lint/performance/noDelete: same
-		delete process.env.FF_TESTER_FEATURES
-		_resetFeatureFlagConfig()
-	})
-
 	const app = () =>
 		createIntegrationApp({ path: '/api/voice-sessions', module: voiceSessionsRoutes })
 	const post = (path: string, body: unknown) =>
@@ -319,6 +305,7 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 			setVoiceInvokeToolFactory(async () => ({
 				tools: [],
 				invokeTool: async () => ({ content: [] }),
+				readOnlyTools: new Set<string>(),
 				unreachableServers: [],
 				close: async () => {},
 			}))

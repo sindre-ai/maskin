@@ -70,6 +70,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
@@ -164,6 +165,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
+	[
+		'POST',
+		'/api/integrations/google-search-console/mcp',
+		'MCP endpoint, tools read as the workspace',
+	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
 	[
 		'POST',

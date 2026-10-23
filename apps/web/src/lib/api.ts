@@ -7,9 +7,7 @@ import type {
 	DisplaySettingsBody,
 	FileCommentDto,
 	FromSuggestedStep,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	NeededTool,
 	SafeMetadata,
@@ -29,9 +27,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	SendRoundInput,
 	SendRoundResponse,
@@ -536,8 +532,6 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
-		steps: (id: string, workspaceId: string) =>
-			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -603,6 +597,20 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		updateCredential: (
+			id: string,
+			workspaceId: string,
+			body: {
+				displayName?: string
+				rawSecret?: string
+				username?: string
+				password?: string
+			},
+		) =>
+			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
+				`/integrations/${id}/update`,
+				{ method: 'POST', body, workspaceId },
+			),
 		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
 			request<CredentialAuditLogPage>(
 				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
@@ -639,8 +647,8 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
-		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: 'read' | 'none') =>
-			request<{ defaultAgentAccess: 'read' | 'none' }>(`/integrations/${id}/default-access`, {
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: DefaultAgentAccess) =>
+			request<{ defaultAgentAccess: DefaultAgentAccess }>(`/integrations/${id}/default-access`, {
 				method: 'PUT',
 				body: { defaultAgentAccess },
 				workspaceId,
@@ -803,6 +811,18 @@ export const api = {
 			request<{ ok: true }>(`/sessions/${id}/input`, {
 				method: 'POST',
 				body,
+				workspaceId,
+			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
 				workspaceId,
 			}),
 		stop: (id: string, workspaceId: string) =>
@@ -1103,6 +1123,13 @@ export const api = {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
+	transcriptions: {
+		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
+		// so the workspace header is required (a read-only viewer is refused).
+		create: (workspaceId: string, body: { audio: string; language?: string }) =>
+			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
 	},
 
 	voiceSessions: {
@@ -1476,9 +1503,8 @@ export interface BillingUsageResponse {
 	// "Buy usage credits" entry points are hidden in that case.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
-	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
-	// `linkedin-addon-visible` flag is off OR the workspace has no connected
-	// linkedin-unipile credentials. Deliberately separate from
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
+	// connected linkedin-unipile credentials or is enterprise. Deliberately separate from
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
@@ -1560,6 +1586,9 @@ export interface UnreadItem {
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
 	latest_mention?: LatestMention
+	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
+	// shows when there is no source comment to lead with.
+	curated?: { headline: string; rationale: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1581,6 +1610,9 @@ export interface LatestMentionDecisionDraft {
 	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
 	id?: string
 	object_id?: string
+	/** The card is about a file (an HTML page, a document, a picture); the card draws the file. */
+	file_id?: string
+	file?: { id: string; name: string; mime_type: string; size_bytes: number }
 	label?: string
 	to?: string
 	body?: string
@@ -1614,8 +1646,12 @@ export interface UnreadResponse {
 
 /** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
 export interface ForYouItem {
-	notification_id: string
+	/** Null for a decision card an agent addressed to the person directly. */
+	notification_id: string | null
+	source: 'curated' | 'decision'
 	rank: number
+	/** What marking the item read moves the read position to. Null when there is nothing to mark. */
+	latest_event_id: number | null
 	headline: string
 	rationale: string | null
 	created_at: string | null
@@ -1963,7 +1999,7 @@ export interface IntegrationResponse {
 	/** Keychain: the name the member gave it. Null for the registered providers. */
 	displayName?: string | null
 	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
-	defaultAgentAccess?: 'read' | 'none'
+	defaultAgentAccess?: DefaultAgentAccess
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
@@ -1971,7 +2007,10 @@ export interface IntegrationResponse {
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+/** What an agent with no grant of its own gets. */
+export type DefaultAgentAccess = 'read' | 'read_write' | 'none'
 
 export interface AgentGrant {
 	actorId: string
@@ -1981,7 +2020,7 @@ export interface AgentGrant {
 export interface IntegrationGrants {
 	integrationId: string
 	mode: 'keychain' | 'standard'
-	defaultAgentAccess: 'read' | 'none'
+	defaultAgentAccess: DefaultAgentAccess
 	grants: AgentGrant[]
 }
 
@@ -2326,6 +2365,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -2401,9 +2442,9 @@ export interface AgentAccessView {
 		integration_id: string
 		provider: string
 		name: string
-		access: 'none' | 'read' | 'ask_first' | 'read_write'
+		access: 'none' | 'read' | 'read_write'
 		source: 'grant' | 'default'
-		default_access: 'read' | 'none'
+		default_access: DefaultAgentAccess
 		server_attached: boolean
 		created_by: string
 		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
@@ -2416,6 +2457,8 @@ export interface AgentAccessView {
 		name: string
 		kind: 'api_key' | 'login'
 		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access). */
+		default_access: 'read' | 'none'
 		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
 		scope: 'always' | 'this_chat' | null
 		/** In how many chats it is shared with this agent, apart from any grant. */
@@ -2478,6 +2521,10 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
@@ -2529,6 +2576,8 @@ export interface SpawnedSession {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**
@@ -2598,6 +2647,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {

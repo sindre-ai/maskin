@@ -73,11 +73,13 @@ export function SecretDetectedCard({
 			}}
 			className={cn(
 				'flex flex-col gap-3 rounded-xl border p-4',
-				high ? 'border-brand/40 bg-brand-subtle' : 'border-warning/40 bg-warning/10',
+				high ? 'border-border bg-muted/40' : 'border-warning/40 bg-warning/10',
 			)}
 		>
 			<div className="flex items-start gap-2">
-				{high ? <Lock size={16} className="mt-0.5 shrink-0 text-brand" aria-hidden /> : null}
+				{high ? (
+					<Lock size={16} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+				) : null}
 				<h3 id={headingId} className="text-sm font-semibold">
 					{high
 						? 'Maskin detected a secret in your message.'
@@ -180,7 +182,7 @@ export type VaultedPhase = 'resuming' | 'live' | 'failed' | 'undone'
 
 interface VaultedCardProps {
 	credentialName: string
-	/** Where View credential points. */
+	/** Where View in Keychain points. */
 	workspaceId: string
 	integrationId: string
 	agentCount: number
@@ -202,7 +204,6 @@ const PILL = 'shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs
 export function VaultedCard({
 	credentialName,
 	workspaceId,
-	integrationId,
 	agentCount,
 	agentName,
 	phase,
@@ -286,11 +287,8 @@ export function VaultedCard({
 						</Button>
 					) : null}
 					<Button asChild variant="outline" size="sm">
-						<Link
-							to="/$workspaceId/settings/keychain/$integrationId"
-							params={{ workspaceId, integrationId }}
-						>
-							View credential
+						<Link to="/$workspaceId/settings/keychain" params={{ workspaceId }}>
+							View in Keychain
 						</Link>
 					</Button>
 					{undoAvailable ? (

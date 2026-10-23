@@ -2,7 +2,7 @@ import MaskinCore
 import MaskinDesign
 import SwiftUI
 
-/// One card, several messages: each is its own preview with its own Send and Skip, stacked so
+/// One card, several messages: each is its own preview with its own quiet Send and Skip, stacked so
 /// the reader decides them one at a time. Send reaches a real person, so it asks first. A message
 /// that has been dealt with folds down to a one-line receipt, and once the last one is, the card
 /// is marked read (`allDone`). The card's own options still apply to the whole batch.
@@ -18,6 +18,11 @@ struct DraftStackView: View {
 	@State private var failedKey: String?
 
 	private func key(_ draft: DecisionDraft, _ index: Int) -> String { draft.id ?? String(index) }
+
+	/// Something to send: a file card or a draft already approved or sent has no Send and Skip.
+	private func offersActions(_ draft: DecisionDraft) -> Bool {
+		draft.file == nil && draft.preview?.delivery != .approved && draft.preview?.delivery != .sent
+	}
 
 	private func name(_ draft: DecisionDraft) -> String {
 		let to = draft.to?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -44,31 +49,36 @@ struct DraftStackView: View {
 				} else {
 					VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 						DraftPreview(draft: draft, showsReadOnlyNote: false)
-						HStack(spacing: MaskinSpace.s5) {
-							Button {
-								confirming = draft
-							} label: {
-								Text("Send")
-									.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold))
-									.foregroundStyle(MaskinSurface.onInverse)
-									.frame(minWidth: 88, minHeight: MaskinSpace.touchMin)
-									.background(MaskinSurface.inverse, in: Capsule())
-							}
-							.buttonStyle(.maskinPressed(.shrink))
-							.accessibilityLabel("Send to \(name(draft))")
-							Button {
-								settle(draft, index: index, action: .skip)
-							} label: {
-								Text("Skip")
-									.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
-									.foregroundStyle(MaskinColor.ink4)
-									.frame(minWidth: 64, minHeight: MaskinSpace.touchMin)
-							}
-							.accessibilityLabel("Skip \(name(draft))")
-							if failedKey == k {
-								Text("Couldn\u{2019}t send your reply. Try again.")
-									.font(MaskinTypeface.sans(MaskinFontSize.t12))
-									.foregroundStyle(MaskinColor.ink4)
+						if offersActions(draft) {
+							HStack(spacing: MaskinSpace.s5) {
+								Button {
+									confirming = draft
+								} label: {
+									// Quiet on purpose: the card's own ink bar is the main action, this is
+									// for sending one reply on its own.
+									Text("Send")
+										.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+										.foregroundStyle(MaskinColor.ink)
+										.frame(minWidth: MaskinSpace.touchMin * 2, minHeight: MaskinSpace.touchMin)
+										.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+										.contentShape(Capsule())
+								}
+								.buttonStyle(.maskinPressed(.shrink))
+								.accessibilityLabel("Send to \(name(draft))")
+								Button {
+									settle(draft, index: index, action: .skip)
+								} label: {
+									Text("Skip")
+										.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+										.foregroundStyle(MaskinColor.ink4)
+										.frame(minWidth: MaskinSpace.touchMin * 1.5, minHeight: MaskinSpace.touchMin)
+								}
+								.accessibilityLabel("Skip \(name(draft))")
+								if failedKey == k {
+									Text("Couldn\u{2019}t send your reply. Try again.")
+										.font(MaskinTypeface.sans(MaskinFontSize.t12))
+										.foregroundStyle(MaskinColor.ink4)
+								}
 							}
 						}
 					}
@@ -100,6 +110,6 @@ struct DraftStackView: View {
 		}
 		failedKey = nil
 		withAnimation(MaskinMotion.standard) { done[k] = action }
-		if done.count == drafts.count { allDone() }
+		if done.count == drafts.filter(offersActions).count { allDone() }
 	}
 }

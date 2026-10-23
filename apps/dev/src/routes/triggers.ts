@@ -11,7 +11,6 @@ import {
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
 	idParamSchema,
@@ -21,6 +20,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
@@ -46,9 +46,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
  * just removed, and the service needs to run to clear the outcomes the form
  * would otherwise keep showing.
- *
- * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
- * behaviour (no join, no confirmation, no metadata write).
  */
 /**
  * Write-time warning for filters whose values the matcher will never resolve
@@ -91,7 +88,6 @@ function kickOffSlackSetup(
 	},
 ): void {
 	if (row.type !== 'event') return
-	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
 	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
 	const hasStaleSetup =
 		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
@@ -157,6 +153,10 @@ app.openapi(createTriggerRoute, async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
+
+	// The trigger starts its target agent on every fire, so the agent has to be a
+	// member of this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
@@ -360,6 +360,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 			}
 		}
 	}
+
+	// Checked against the trigger's own workspace, which is where it will fire.
+	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
