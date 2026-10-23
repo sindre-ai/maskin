@@ -9,6 +9,10 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutate: sendMutate }),
 	useCardAnswer: () => cardAnswer,
 }))
+const inputMutate = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSendSessionInput: () => ({ mutate: inputMutate }),
+}))
 
 // The live view needs noVNC; the card only decides WHEN and for WHOM to show it.
 const mounted = vi.fn()
@@ -27,7 +31,7 @@ const request = {
 	task: 'Approve the 2FA prompt on e-conomic.',
 }
 
-const renderCard = () =>
+const renderCard = (req: typeof request & { reply_to_session?: boolean } = request) =>
 	render(
 		<TestWrapper>
 			<ComputerRequestCard
@@ -36,7 +40,7 @@ const renderCard = () =>
 				messageId={7}
 				agentId={AGENT}
 				agentName="Ledger"
-				request={request}
+				request={req}
 			/>
 		</TestWrapper>,
 	)
@@ -81,6 +85,23 @@ describe('ComputerRequestCard', () => {
 		expect(screen.getByText('Handed back to Ledger.')).toBeInTheDocument()
 		expect(screen.queryByTestId('live-computer')).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
+	})
+
+	it('for a helper another agent started, Done goes to its session and is recorded for the card', async () => {
+		const user = userEvent.setup()
+		renderCard({ ...request, reply_to_session: true })
+		await user.click(screen.getByRole('button', { name: 'Open computer' }))
+
+		await user.click(await screen.findByRole('button', { name: 'Done' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledTimes(1)
+		expect(inputMutate.mock.calls[0]?.[0]).toMatchObject({
+			id: request.session_id,
+			conversationId: 'conv-1',
+			card_answer: { message_id: 7, outcome: 'done' },
+		})
+		expect(screen.getByText('Handed back to Ledger.')).toBeInTheDocument()
 	})
 
 	it('has no Done before the computer is open: there is nothing to have finished', () => {

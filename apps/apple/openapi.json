@@ -243,6 +243,23 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 100
+									},
+									"chat": {
+										"type": "object",
+										"properties": {
+											"conversation_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"agent_id": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"required": [
+											"conversation_id",
+											"agent_id"
+										]
 									}
 								}
 							}
@@ -3899,6 +3916,23 @@
 											"null"
 										],
 										"format": "uuid"
+									},
+									"chat": {
+										"type": "object",
+										"properties": {
+											"conversation_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"agent_id": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"required": [
+											"conversation_id",
+											"agent_id"
+										]
 									}
 								}
 							}
@@ -26567,6 +26601,761 @@
 				}
 			}
 		},
+		"/api/keychain/lift": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"keychain"
+				],
+				"summary": "Move tokens from tool servers into saved keys (admin only). No body: dry run. {apply: true}: apply. {undo_event_id}: undo one lift",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Dry run: what would move (names and agents, never values). Apply: one result per key. Undo: what was restored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"anyOf": [
+										{
+											"type": "object",
+											"properties": {
+												"dryRun": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"keys": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"keyName": {
+																"type": "string"
+															},
+															"entries": {
+																"type": "number"
+															},
+															"actorIds": {
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"format": "uuid"
+																}
+															}
+														},
+														"required": [
+															"keyName",
+															"entries",
+															"actorIds"
+														]
+													}
+												},
+												"entries": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"integrationId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"serverName": {
+																"type": "string"
+															},
+															"location": {
+																"type": "string",
+																"enum": [
+																	"env",
+																	"headers",
+																	"args",
+																	"url"
+																]
+															},
+															"field": {
+																"type": "string"
+															},
+															"provider": {
+																"type": "string"
+															},
+															"keyName": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"actorIds": {
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"format": "uuid"
+																}
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"would_lift",
+																	"cannot_lift"
+																]
+															},
+															"reason": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"integrationId",
+															"serverName",
+															"location",
+															"field",
+															"provider",
+															"keyName",
+															"actorIds",
+															"status"
+														]
+													}
+												},
+												"agentConfigFindings": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"actorId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"serverName": {
+																"type": "string"
+															},
+															"location": {
+																"type": "string",
+																"enum": [
+																	"env",
+																	"headers"
+																]
+															},
+															"field": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"actorId",
+															"serverName",
+															"location",
+															"field"
+														]
+													}
+												}
+											},
+											"required": [
+												"dryRun",
+												"keys",
+												"entries",
+												"agentConfigFindings"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"dryRun": {
+													"type": "boolean",
+													"enum": [
+														false
+													]
+												},
+												"results": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"keyName": {
+																"type": "string"
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"lifted",
+																	"aborted"
+																]
+															},
+															"integrationId": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"eventId": {
+																"type": "string"
+															},
+															"entries": {
+																"type": "number"
+															},
+															"reason": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"keyName",
+															"status"
+														]
+													}
+												}
+											},
+											"required": [
+												"dryRun",
+												"results"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"undone": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"restored": {
+													"type": "number"
+												},
+												"skipped": {
+													"type": "number"
+												}
+											},
+											"required": [
+												"undone",
+												"restored",
+												"skipped"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Only a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such lift",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The lift was already undone, or its key is gone",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/keychain/credentials/{id}/replace-value": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"keychain"
+				],
+				"summary": "Replace the value of a saved API key in place (admin only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Replaced. The key keeps its id, name and grants. Running sessions keep the old value, the next launch gets the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"replaced"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"status"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid value",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Only a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Not an API key, or not active (undone or waiting out its undo window)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/{id}/grants": {
 			"get": {
 				"tags": [
@@ -35996,6 +36785,9 @@
 													"recovered": {
 														"type": "boolean"
 													},
+													"backfilled": {
+														"type": "boolean"
+													},
 													"is_error": {
 														"type": "boolean"
 													},
@@ -36199,6 +36991,9 @@
 														"type": "string",
 														"format": "uuid"
 													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
 													"provider": {
 														"type": "string",
 														"minLength": 1,
@@ -36216,6 +37011,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"kind": {
 														"type": "string",
@@ -36246,6 +37044,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"integration_id": {
 														"type": "string",
@@ -36282,6 +37083,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"task": {
 														"type": "string",
@@ -36821,6 +37625,36 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "updated_after",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "boolean"
+						},
+						"required": false,
+						"name": "has_human",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"pinned",
+								"activity"
+							],
+							"default": "pinned"
+						},
+						"required": false,
+						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"minimum": 1,
 							"maximum": 100,
@@ -36944,6 +37778,9 @@
 															"null"
 														]
 													},
+													"snippet_is_caller": {
+														"type": "boolean"
+													},
 													"participants": {
 														"type": "array",
 														"items": {
@@ -36999,6 +37836,7 @@
 													"snippet",
 													"snippet_actor_id",
 													"snippet_actor_name",
+													"snippet_is_caller",
 													"participants"
 												]
 											}
@@ -38848,6 +39686,9 @@
 													"recovered": {
 														"type": "boolean"
 													},
+													"backfilled": {
+														"type": "boolean"
+													},
 													"is_error": {
 														"type": "boolean"
 													},
@@ -39051,6 +39892,9 @@
 														"type": "string",
 														"format": "uuid"
 													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
 													"provider": {
 														"type": "string",
 														"minLength": 1,
@@ -39068,6 +39912,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"kind": {
 														"type": "string",
@@ -39098,6 +39945,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"integration_id": {
 														"type": "string",
@@ -39134,6 +39984,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"task": {
 														"type": "string",
@@ -43023,6 +43876,26 @@
 											"question_message_id",
 											"answers"
 										]
+									},
+									"card_answer": {
+										"type": "object",
+										"properties": {
+											"message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"outcome": {
+												"type": "string",
+												"enum": [
+													"declined",
+													"done"
+												]
+											}
+										},
+										"required": [
+											"message_id",
+											"outcome"
+										]
 									}
 								},
 								"required": [
@@ -43285,6 +44158,174 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/chat": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Open a session as a chat conversation",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The conversation the session is opened in",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"conversation_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"created": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"conversation_id",
+										"created"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}/continue": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -43392,6 +44433,26 @@
 										"required": [
 											"question_message_id",
 											"answers"
+										]
+									},
+									"card_answer": {
+										"type": "object",
+										"properties": {
+											"message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"outcome": {
+												"type": "string",
+												"enum": [
+													"declined",
+													"done"
+												]
+											}
+										},
+										"required": [
+											"message_id",
+											"outcome"
 										]
 									}
 								},
@@ -58703,6 +59764,32 @@
 													"process",
 													"unknown"
 												]
+											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
 											}
 										},
 										"required": [
@@ -58851,6 +59938,32 @@
 											"shape_error": {
 												"type": "boolean"
 											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
+											},
 											"view": {
 												"type": [
 													"string",
@@ -58911,6 +60024,32 @@
 													"type": "string"
 												},
 												"default": {}
+											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
 											}
 										},
 										"required": [
@@ -63173,7 +64312,7 @@
 					"Voice"
 				],
 				"summary": "Connect a reserved voice session to the vendor",
-				"description": "Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.",
+				"description": "Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.",
 				"parameters": [
 					{
 						"schema": {

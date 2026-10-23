@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { capturePosthogEvent } from '../../../lib/analytics/posthog'
+import { capturePosthogEvent, warnIfPosthogKeyUnset } from '../../../lib/analytics/posthog'
+import { logger } from '../../../lib/logger'
 
 describe('capturePosthogEvent', () => {
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -80,5 +81,45 @@ describe('capturePosthogEvent', () => {
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
 		await capturePosthogEvent('mcp_tool_call', distinctId, { foo: 'bar' })
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('warnIfPosthogKeyUnset', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	it('warns once when production has no key', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		vi.stubEnv('NODE_ENV', 'production')
+		vi.stubEnv('POSTHOG_API_KEY', '')
+		warnIfPosthogKeyUnset()
+		expect(warn).toHaveBeenCalledTimes(1)
+		expect(warn.mock.calls[0][0]).toContain('POSTHOG_API_KEY')
+	})
+
+	it('treats a whitespace-only key as unset', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		vi.stubEnv('NODE_ENV', 'production')
+		vi.stubEnv('POSTHOG_API_KEY', '   ')
+		warnIfPosthogKeyUnset()
+		expect(warn).toHaveBeenCalledTimes(1)
+	})
+
+	it('stays quiet when the key is set', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		vi.stubEnv('NODE_ENV', 'production')
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		warnIfPosthogKeyUnset()
+		expect(warn).not.toHaveBeenCalled()
+	})
+
+	it('stays quiet outside production, where the key is routinely unset', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		vi.stubEnv('NODE_ENV', 'development')
+		vi.stubEnv('POSTHOG_API_KEY', '')
+		warnIfPosthogKeyUnset()
+		expect(warn).not.toHaveBeenCalled()
 	})
 })

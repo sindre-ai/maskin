@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte } from 'drizzle-orm'
+import { and, asc, eq, lte, notInArray } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
@@ -56,11 +56,18 @@ export interface SessionDispatchQueueOptions {
 	baseBackoffMs?: number
 	/** Upper bound on exponential backoff. Default 5 min. */
 	maxBackoffMs?: number
-	/** Backoff when the queue is waiting on capacity. Default 10s. */
+	/**
+	 * Backoff when the queue is waiting on capacity. Default 2s, under `tickMs`
+	 * on purpose: every parked row must be ready again on the next tick, or a
+	 * row still backing off when a slot frees loses it to a younger ready one.
+	 */
 	noCapacityBackoffMs?: number
 	/** How often the worker wakes up. Default 5s. */
 	tickMs?: number
-	/** Rows to process per tick. Default 5. */
+	/**
+	 * Start calls to make per tick. Default 5. A `no_capacity` result makes no
+	 * start call, so it does not count against this.
+	 */
 	batchSize?: number
 	/**
 	 * How long a claimed row is leased before another worker may pick it up.
@@ -115,7 +122,7 @@ const DEFAULTS = {
 	maxAttempts: 5,
 	baseBackoffMs: 5_000,
 	maxBackoffMs: 5 * 60_000,
-	noCapacityBackoffMs: 10_000,
+	noCapacityBackoffMs: 2_000,
 	tickMs: 5_000,
 	batchSize: 5,
 	leaseMs: 60_000,
@@ -277,16 +284,24 @@ export class SessionDispatchQueue {
 			timer.unref?.()
 		})
 		const batch = (async () => {
-			for (let i = 0; i < this.batchSize; i++) {
+			// Rows already tried this tick. A parked row is not ready again until
+			// its backoff passes, but a long tick must not reclaim it either.
+			const tried: string[] = []
+			let startCalls = 0
+			while (startCalls < this.batchSize) {
 				current = null
-				const claimed = await this.claimOne()
+				const claimed = await this.claimOne(tried)
 				if (!claimed) break
 				current = claimed.row.sessionId
+				tried.push(current)
 				if (claimed.leaseExhausted) {
 					await this.handleStartTimedOut(claimed.row)
+					startCalls++
 					continue
 				}
-				await this.processOne(claimed.row)
+				// A row that can't get a slot (say its sticky agent server is full)
+				// must not use up the batch and starve the rows behind it.
+				if (await this.processOne(claimed.row)) startCalls++
 			}
 			return 'done' as const
 		})()
@@ -308,8 +323,9 @@ export class SessionDispatchQueue {
 	}
 
 	/**
-	 * Claim one ready row. Atomically selects the oldest `pending` row whose
-	 * `next_attempt_at` is in the past, pushes its `next_attempt_at` forward
+	 * Claim one ready row. Atomically selects the oldest-created `pending` row
+	 * whose `next_attempt_at` is in the past (that column says when a row is
+	 * ready, never where it stands in line) and that is not in `exclude`, pushes its `next_attempt_at` forward
 	 * by the lease, spends one attempt on it, and returns it. Returns `null`
 	 * when no row is ready.
 	 *
@@ -323,7 +339,7 @@ export class SessionDispatchQueue {
 	 * itself — keeps tail latency on other workers bounded by the lease, not
 	 * by the slowest in-flight HTTPS call.
 	 */
-	private async claimOne(): Promise<ClaimedRow | null> {
+	private async claimOne(exclude: string[]): Promise<ClaimedRow | null> {
 		return this.db.transaction(async (tx) => {
 			const [candidate] = await tx
 				.select()
@@ -332,9 +348,10 @@ export class SessionDispatchQueue {
 					and(
 						eq(sessionDispatchAttempts.status, 'pending'),
 						lte(sessionDispatchAttempts.nextAttemptAt, new Date()),
+						exclude.length > 0 ? notInArray(sessionDispatchAttempts.sessionId, exclude) : undefined,
 					),
 				)
-				.orderBy(asc(sessionDispatchAttempts.nextAttemptAt))
+				.orderBy(asc(sessionDispatchAttempts.createdAt))
 				.limit(1)
 				.for('update', { skipLocked: true })
 
@@ -357,7 +374,8 @@ export class SessionDispatchQueue {
 		})
 	}
 
-	private async processOne(row: typeof sessionDispatchAttempts.$inferSelect): Promise<void> {
+	/** Returns false when no start call was made (`no_capacity`). */
+	private async processOne(row: typeof sessionDispatchAttempts.$inferSelect): Promise<boolean> {
 		let result: DispatchResult
 		try {
 			result = await this.dispatchFn(row.sessionId, row.idempotencyKey)
@@ -371,16 +389,16 @@ export class SessionDispatchQueue {
 		switch (result.kind) {
 			case 'dispatched':
 				await this.handleDispatched(row)
-				return
+				return true
 			case 'no_capacity':
 				await this.handleNoCapacity(row)
-				return
+				return false
 			case 'transient_failure':
 				await this.handleTransientFailure(row, result.error)
-				return
+				return true
 			case 'permanent_failure':
 				await this.handlePermanentFailure(row, result.error, result.failureReason)
-				return
+				return true
 		}
 	}
 

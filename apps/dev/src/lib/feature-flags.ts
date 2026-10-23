@@ -61,6 +61,28 @@ export const FLAGS = {
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
 	/**
+	 * Gates the daily capability scan (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
+	 * `services/capability-scanner.ts`. Off means no scanner work and no
+	 * `capability_*` event is written. On ({workspaceId}:capability-scan in
+	 * `FF_WORKSPACE_FEATURES`, then restart) the scan runs in shadow mode: it
+	 * writes snapshots and findings as events and messages nobody. Backend only,
+	 * no UI reads it. Retire once the scan is on for every workspace.
+	 */
+	CAPABILITY_SCAN: 'capability-scan',
+	/**
+	 * Gates agent-started messages in a person's 1-1 chat (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Actor-scoped on the RECIPIENT, read with `isFlagEnabled(recipientId, ...)`
+	 * in `services/proactive-message.ts`. Off means `sendProactiveMessage` refuses
+	 * with flag_off and nobody is messaged; the capability scan keeps running in
+	 * shadow mode. Rollout: the tester's actor id in `FF_TESTER_ACTOR_IDS` and
+	 * this id in `FF_TESTER_FEATURES`, then restart. Backend only, no UI reads it.
+	 * Retire once agent-started notes are on for everyone.
+	 */
+	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
+	/**
 	 * Unipile webhook deliveries become `events` rows (message.new first). Read
 	 * per integration row on the dedicated linkedin-unipile webhook route, on the
 	 * integration's owner actor (actor_id, falling back to created_by), after
