@@ -245,6 +245,10 @@ export function CommentInput({
 			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
 		}, []),
 		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback((streamed: string, refined: string) => {
+			setContent((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
+		}, []),
 	)
 
 	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open

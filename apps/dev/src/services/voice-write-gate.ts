@@ -76,6 +76,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'disconnect_integration',
 	'update_integration_access',
 	'request_keychain_access',
+	'request_integration_access',
 	'request_keychain_credential',
 	'create_actor',
 	'update_actor',
