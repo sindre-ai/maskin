@@ -7,6 +7,7 @@ import {
 	triggerCooldowns,
 	triggerDispatches,
 	triggers,
+	workspaceMembers,
 	workspaceSuppressions,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
