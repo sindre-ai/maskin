@@ -183,6 +183,14 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+const CHAT_SNIPPET_MAX_LENGTH = 200
+
+/** A chat message can run to thousands of characters; a list row only needs the opening. */
+function truncateSnippet(text: string | null): string | null {
+	if (text === null || text.length <= CHAT_SNIPPET_MAX_LENGTH) return text
+	return `${text.slice(0, CHAT_SNIPPET_MAX_LENGTH - 1)}…`
+}
+
 /**
  * One line telling the agent which listed integrations are not live and how to
  * get them reconnected, or null when every row is active. `pending` rows are an
@@ -5221,6 +5229,80 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('get_conversation', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_chats',
+		{
+			description: tools.list_chats.description,
+			inputSchema: tools.list_chats.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
+			// The route pages by offset, so the position travels in the cursor as n.
+			const offset = pagination.cursor?.n ?? 0
+			const params = new URLSearchParams()
+			params.set('sort', 'activity')
+			params.set('limit', String(pagination.limit))
+			params.set('offset', String(offset))
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.has_human) params.set('has_human', 'true')
+			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as {
+				conversations: Array<{
+					id: string
+					title: string
+					lastMessageAt: string | null
+					unread_count: number
+					snippet: string | null
+					snippet_actor_id: string | null
+					snippet_actor_name: string | null
+					snippet_is_caller: boolean
+					participants: Array<{ actorName: string; actorType: string }>
+				}>
+				has_more: boolean
+			}
+			const chats = raw.conversations.map((c) => ({
+				id: c.id,
+				title: c.title,
+				participants: c.participants.map((p) => ({ name: p.actorName, type: p.actorType })),
+				last_message_at: c.lastMessageAt,
+				last_message: c.snippet_actor_id
+					? {
+							from: c.snippet_actor_name,
+							is_you: c.snippet_is_caller,
+							snippet: truncateSnippet(c.snippet),
+						}
+					: null,
+				unread_count: c.unread_count,
+			}))
+			const last = raw.conversations[raw.conversations.length - 1]
+			const nextOffset = offset + chats.length
+			const nextCursor =
+				raw.has_more && last?.lastMessageAt && nextOffset <= CURSOR_MAX_OFFSET
+					? encodeCursor({
+							s: pagination.snapshotAt,
+							o: pagination.order,
+							k: { sortValue: last.lastMessageAt, id: last.id },
+							n: nextOffset,
+						})
+					: null
+			return {
+				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				structuredContent: {
+					chats,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)

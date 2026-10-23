@@ -66,6 +66,7 @@ import {
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { addDefaultHeartbeat } from '../services/default-heartbeat'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -357,6 +358,9 @@ app.openapi(createActorRoute, async (c) => {
 					entityId: inserted.id,
 					data: { role: 'member', added_actor_id: inserted.id },
 				})
+				if (inserted.type === 'agent') {
+					await addDefaultHeartbeat(tx, { workspaceId, actorId: inserted.id })
+				}
 				return inserted
 			})
 		} else {
