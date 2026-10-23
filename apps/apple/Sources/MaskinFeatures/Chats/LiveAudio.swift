@@ -35,6 +35,7 @@ final class LiveAudioSession {
 		self.handlers = handlers
 		self.title = title
 		try configure()
+		keepSpeaker()
 		routeName = Self.currentRouteName()
 		observe()
 		registerCommands()
@@ -59,6 +60,7 @@ final class LiveAudioSession {
 	/// Bring the session back after an interruption or a media-services reset.
 	func reactivate() {
 		try? configure()
+		keepSpeaker()
 		let name = Self.currentRouteName()
 		if name != routeName {
 			routeName = name
@@ -99,12 +101,31 @@ final class LiveAudioSession {
 		handlers?.routeChanged(routeName)
 	}
 
+	/// `.defaultToSpeaker` is lost when something else sets the session's category (the voice call's
+	/// WebRTC audio unit does, as it starts), which sends the agent's voice to the earpiece. Whenever the
+	/// route changes, put the speaker back if that is what the person chose.
+	private func keepSpeaker() {
+		guard LiveAudioRoute.needsSpeakerOverride(wantsSpeaker: speakerOn, output: Self.currentOutput()) else {
+			return
+		}
+		try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+	}
+
 	private func configure() throws {
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(
 			.playAndRecord, mode: .voiceChat,
 			options: speakerOn ? [.defaultToSpeaker, .allowBluetoothHFP] : [.allowBluetoothHFP])
 		try session.setActive(true)
+	}
+
+	nonisolated private static func currentOutput() -> LiveAudioRoute.Output? {
+		guard let port = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType else { return nil }
+		switch port {
+		case .builtInReceiver: return .receiver
+		case .builtInSpeaker: return .speaker
+		default: return .other
+		}
 	}
 
 	nonisolated private static func currentRouteName() -> String {
@@ -129,6 +150,7 @@ final class LiveAudioSession {
 				forName: AVAudioSession.routeChangeNotification, object: session, queue: .main,
 				using: Self.simpleBlock { [weak self] in
 					guard let self else { return }
+					self.keepSpeaker()
 					let name = Self.currentRouteName()
 					guard name != self.routeName else { return }
 					self.routeName = name

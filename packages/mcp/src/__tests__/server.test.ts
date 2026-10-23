@@ -101,6 +101,13 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('create_trigger')
 	})
 
+	it('exposes no tool for the admin-only Keychain lift or value replacement', () => {
+		createMcpServer(config)
+		const registeredNames = vi.mocked(registerAppTool).mock.calls.map((call) => call[1] as string)
+		expect(registeredNames.filter((name) => /lift|rotate/i.test(name))).toEqual([])
+		expect(Object.keys(tools).filter((name) => /lift|rotate/i.test(name))).toEqual([])
+	})
+
 	it('registers tools with descriptions', () => {
 		createMcpServer(config)
 		const toolDefs = vi.mocked(registerAppTool).mock.calls.map((call) => call[2])
@@ -2079,6 +2086,25 @@ describe('tool handlers', () => {
 						object_ids: [],
 					}),
 				).rejects.toThrow(/unknown status/)
+			})
+
+			it('rejects closed_when referencing an object type the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad type',
+						closed_when: { nonexistent: ['loop_stage=live'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/closed_when references unknown object type/)
 			})
 
 			it('deletes just-created step triggers when the graph insert fails', async () => {
