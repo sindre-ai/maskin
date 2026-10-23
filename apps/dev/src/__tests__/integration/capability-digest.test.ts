@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
 	events,
 	actors,
+	agentGrants,
 	conversationParticipants,
 	integrations,
 	messages,
@@ -190,6 +191,11 @@ describe('capability digest (integration)', () => {
 				.from(integrations)
 				.where(eq(integrations.workspaceId, workspaceId))
 				.orderBy(asc(integrations.id)),
+			grants: await db
+				.select()
+				.from(agentGrants)
+				.where(eq(agentGrants.workspaceId, workspaceId))
+				.orderBy(asc(agentGrants.id)),
 		})
 	}
 
@@ -576,6 +582,7 @@ describe('capability digest (integration)', () => {
 						provider: 'google-meet',
 						status: 'active',
 						createdBy: ownerId,
+						defaultAgentAccess: 'none',
 						config: { token: 'ya29.token-like-string', note: '#channel-name' },
 					}) as never,
 				)
@@ -643,6 +650,7 @@ describe('capability digest (integration)', () => {
 						provider: 'google-meet',
 						status: 'active',
 						createdBy: ownerId,
+						defaultAgentAccess: 'none',
 					}) as never,
 				)
 				.returning()
@@ -653,20 +661,12 @@ describe('capability digest (integration)', () => {
 				source: `integration:google-meet:${meetId}`,
 				kind: 'available_not_attached',
 			})
-			await db
-				.update(actors)
-				.set({
-					tools: {
-						mcpServers: {
-							meet: {
-								type: 'http',
-								url: '${MASKIN_API_URL}/api/integrations/google-meet/mcp',
-								headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
-							},
-						},
-					},
-				})
-				.where(eq(actors.id, salesRepId))
+			await db.insert(agentGrants).values({
+				workspaceId,
+				integrationId: meetId,
+				actorId: salesRepId,
+				access: 'read',
+			})
 
 			const summary = await runCapabilityDigest(db, workspaceId)
 			expect(summary.sent).toBe(0)
