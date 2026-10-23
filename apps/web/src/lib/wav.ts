@@ -35,6 +35,31 @@ export function encodeWav(samples: Float32Array, sampleRate: number = WAV_SAMPLE
 	return new Blob([buffer], { type: 'audio/wav' })
 }
 
+const WAV_HEADER_BYTES = 44
+
+function readBytes(blob: Blob): Promise<ArrayBuffer> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onerror = () => reject(reader.error ?? new Error('Could not read audio'))
+		reader.onload = () => resolve(reader.result as ArrayBuffer)
+		reader.readAsArrayBuffer(blob)
+	})
+}
+
+/** Joins WAV files made by `encodeWav` (16 kHz mono) into one, back to back. */
+export async function concatWav(blobs: Blob[]): Promise<Blob> {
+	const pcm = await Promise.all(
+		blobs.map(async (blob) => new Int16Array((await readBytes(blob)).slice(WAV_HEADER_BYTES))),
+	)
+	const samples = new Float32Array(pcm.reduce((sum, part) => sum + part.length, 0))
+	let offset = 0
+	for (const part of pcm) {
+		for (let i = 0; i < part.length; i++) samples[offset + i] = (part[i] ?? 0) / 0x8000
+		offset += part.length
+	}
+	return encodeWav(samples)
+}
+
 /** Decodes any audio blob the browser can play and re-encodes it as 16 kHz mono WAV. */
 export async function blobToWav16k(blob: Blob): Promise<Blob> {
 	const encoded = await blob.arrayBuffer()

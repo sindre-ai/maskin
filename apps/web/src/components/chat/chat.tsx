@@ -492,6 +492,13 @@ export function Composer({
 			[setValue],
 		),
 		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback(
+			(streamed: string, refined: string) => {
+				setValue((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
+			},
+			[setValue],
+		),
 	)
 
 	// Abort every in-flight upload when the composer unmounts so a closed

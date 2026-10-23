@@ -65,6 +65,17 @@ describe('POST /api/transcriptions', () => {
 		expect(JSON.parse(String(init.body)).model).toBe('mistralai/voxtral-mini-transcribe-3-0')
 	})
 
+	it('honours MASKIN_TRANSCRIPTION_BASE_URL for EU in-region routing', async () => {
+		vi.stubEnv('MASKIN_TRANSCRIPTION_BASE_URL', 'https://eu.openrouter.ai/api/')
+		const fetchMock = vi.fn(async () => Response.json({ text: 'x' }))
+		vi.stubGlobal('fetch', fetchMock)
+
+		await post({ audio: 'QUJD' })
+
+		const [url] = fetchMock.mock.calls[0] as unknown as [string]
+		expect(url).toBe('https://eu.openrouter.ai/api/v1/audio/transcriptions')
+	})
+
 	it('400s when the audio is missing', async () => {
 		const res = await post({})
 		expect(res.status).toBe(400)
