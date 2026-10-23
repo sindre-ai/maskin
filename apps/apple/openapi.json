@@ -36996,6 +36996,9 @@
 														"type": "string",
 														"format": "uuid"
 													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
 													"provider": {
 														"type": "string",
 														"minLength": 1,
@@ -37013,6 +37016,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"kind": {
 														"type": "string",
@@ -37043,6 +37049,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"integration_id": {
 														"type": "string",
@@ -37079,6 +37088,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"task": {
 														"type": "string",
@@ -39885,6 +39897,9 @@
 														"type": "string",
 														"format": "uuid"
 													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
 													"provider": {
 														"type": "string",
 														"minLength": 1,
@@ -39902,6 +39917,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"kind": {
 														"type": "string",
@@ -39932,6 +39950,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"integration_id": {
 														"type": "string",
@@ -39968,6 +39989,9 @@
 													"session_id": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
 													},
 													"task": {
 														"type": "string",
@@ -43857,6 +43881,26 @@
 											"question_message_id",
 											"answers"
 										]
+									},
+									"card_answer": {
+										"type": "object",
+										"properties": {
+											"message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"outcome": {
+												"type": "string",
+												"enum": [
+													"declined",
+													"done"
+												]
+											}
+										},
+										"required": [
+											"message_id",
+											"outcome"
+										]
 									}
 								},
 								"required": [
@@ -44394,6 +44438,26 @@
 										"required": [
 											"question_message_id",
 											"answers"
+										]
+									},
+									"card_answer": {
+										"type": "object",
+										"properties": {
+											"message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
+											"outcome": {
+												"type": "string",
+												"enum": [
+													"declined",
+													"done"
+												]
+											}
+										},
+										"required": [
+											"message_id",
+											"outcome"
 										]
 									}
 								},
