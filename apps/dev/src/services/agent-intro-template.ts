@@ -8,6 +8,10 @@ const MAX_NEEDED_TOOLS = 3
 
 const STEPS_LINE = 'How can I help? Start with one of these, or tell me what you need.'
 const NO_STEPS_LINE = "How can I help? Tell me what you need and I'll get started."
+const SCAN_PENDING_LINE =
+	'Give me a moment while I look through your workspace, tools and keys to see where I can help first.'
+const SCANNED_STEPS_LINE =
+	"Here's where I can help first, based on what's connected here. Start with one of these, or tell me what you need."
 const NO_KEY_LINE =
 	"I can't run yet. Connect your Claude subscription or API key under Settings, Keys, then reply here."
 // The iPhone app adds Yes and No buttons under any message that ends in a
@@ -37,18 +41,22 @@ const GENERIC_FIRST_TASK_STEP: IntroStep = {
  */
 export function buildSuggestedSteps(input: {
 	creatorSteps?: IntroStep[]
+	/** Steps the agent wrote after looking at the workspace's tools, keys and work. */
+	scannedSteps?: IntroStep[]
 	skillNames?: string[]
 	canRun: boolean
 }): IntroStep[] {
 	if (!input.canRun) return []
 	const creatorSteps = (input.creatorSteps ?? []).slice(0, MAX_CREATOR_STEPS)
+	const scannedSteps = (input.scannedSteps ?? []).slice(0, MAX_CREATOR_STEPS)
 	const skillSteps = (input.skillNames ?? []).map(
 		(name): IntroStep => ({ label: `Try ${name}`, prompt: `Use ${name} on: `, action: 'fill' }),
 	)
 	const candidates = [
 		...creatorSteps,
+		...scannedSteps,
 		GENERIC_HELP_STEP,
-		...(creatorSteps.length === 0 ? [GENERIC_FIRST_TASK_STEP] : []),
+		...(creatorSteps.length === 0 && scannedSteps.length === 0 ? [GENERIC_FIRST_TASK_STEP] : []),
 		...skillSteps,
 	]
 	const seen = new Set<string>()
@@ -77,6 +85,12 @@ export type AgentIntroInput = {
 	creatorSteps?: IntroStep[]
 	/** Display names of the integrations the agent needs, already filtered to the catalog. */
 	neededToolNames?: string[]
+	/**
+	 * True when the agent is about to look around the workspace and a follow-up
+	 * message (renderIntroFollowUp) will carry the steps. The greeting then holds no
+	 * steps and no tools sentence.
+	 */
+	scanPending?: boolean
 }
 
 export type RenderedIntro = {
@@ -133,6 +147,14 @@ export function renderMinimalAgentIntro(input: AgentIntroInput): string {
  * body reads complete with no buttons drawn.
  */
 export function renderAgentIntro(input: AgentIntroInput): RenderedIntro {
+	if (input.canRun && input.scanPending) {
+		return {
+			content: [openingLine(input), SCAN_PENDING_LINE].join('\n\n'),
+			steps: [],
+			neededToolNames: [],
+			plainTailCount: 0,
+		}
+	}
 	const steps = buildSuggestedSteps({ creatorSteps: input.creatorSteps, canRun: input.canRun })
 	const neededToolNames = input.canRun
 		? (input.neededToolNames ?? []).slice(0, MAX_NEEDED_TOOLS)
@@ -144,7 +166,31 @@ export function renderAgentIntro(input: AgentIntroInput): RenderedIntro {
 	} else {
 		head.push(steps.length > 0 ? STEPS_LINE : NO_STEPS_LINE)
 	}
+	return composeBody(head, steps, neededToolNames)
+}
 
+/**
+ * The second message of a scanned intro: where the agent can help first, after it
+ * looked at the workspace. With no scanned steps (the scan failed, timed out or the
+ * workspace is out of credit) it carries the same generic steps a plain intro would.
+ */
+export function renderIntroFollowUp(input: {
+	creatorSteps?: IntroStep[]
+	scannedSteps?: IntroStep[]
+	neededToolNames?: string[]
+}): RenderedIntro {
+	const steps = buildSuggestedSteps({
+		creatorSteps: input.creatorSteps,
+		scannedSteps: input.scannedSteps,
+		canRun: true,
+	})
+	const neededToolNames = (input.neededToolNames ?? []).slice(0, MAX_NEEDED_TOOLS)
+	const scanned = (input.scannedSteps?.length ?? 0) > 0
+	const head = [scanned ? SCANNED_STEPS_LINE : steps.length > 0 ? STEPS_LINE : NO_STEPS_LINE]
+	return composeBody(head, steps, neededToolNames)
+}
+
+function composeBody(head: string[], steps: IntroStep[], neededToolNames: string[]): RenderedIntro {
 	const tail: string[] = []
 	if (steps.length > 0) {
 		tail.push(steps.map((step, i) => `${i + 1}. ${step.label}`).join('\n'))
