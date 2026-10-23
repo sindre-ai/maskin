@@ -30,7 +30,7 @@ import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/
 import { endSessionHoldingKey, relaunchChatSession } from '../services/chat-relaunch'
 import type { SessionManager } from '../services/session-manager'
 
-type Env = {
+export type Env = {
 	Variables: {
 		db: Database
 		actorId: string
@@ -51,7 +51,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * kept as short-lived as possible and is never logged or placed on an error.
  * On failure the message names fields only, never a value.
  */
-async function readSecretBody<S extends z.ZodTypeAny>(
+export async function readSecretBody<S extends z.ZodTypeAny>(
 	c: Context<Env>,
 	schema: S,
 ): Promise<{ ok: true; data: z.infer<S> } | { ok: false; message: string }> {

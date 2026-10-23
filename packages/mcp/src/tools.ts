@@ -4,6 +4,7 @@ import {
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
 	firstStepSchema,
+	loopTargetSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -189,6 +190,13 @@ const loopTagsSchema = z
 	.max(10)
 	.describe(
 		'Short labels saying which team, business unit or part of the business this loop belongs to, e.g. ["Sales", "EMEA"]. Shown as filter pills and chips on Flows. Replaces the current tags; pass [] to clear.',
+	)
+
+const loopTargetsSchema = z
+	.array(loopTargetSchema)
+	.max(50)
+	.describe(
+		'Targets the loop is measured against: a list of rows { label, source, actual, target }, optionally with ownerActorId and pace_policy ("strict" | "window"). Replaces the current targets; pass [] to clear. Must be a list, not a string. A bad row is rejected with its position and field.',
 	)
 
 const closedStatusesSchema = z
@@ -1200,6 +1208,29 @@ export const tools = {
 			conversation_id: z.string().uuid(),
 		}),
 	},
+	list_chats: {
+		description:
+			'List the chats you are a participant in, most recent activity first. Each row has the chat id and title, its participants (name and type), when the last message was posted, who wrote it and whether that was you (last_message.is_you), a short snippet of it, and unread_count for you. Read a chat you find here with list_conversation_messages. Use updated_after (ISO time) to see only chats with a message since then, and has_human to keep only chats that still include a person. Archived chats are left out. Paginated (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This tool is read-only.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe('ISO 8601 time. Only chats with a message after it are returned.'),
+			has_human: z
+				.boolean()
+				.optional()
+				.describe('When true, only chats with at least one human participant are returned.'),
+			limit: z.number().int().min(1).max(100).optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the walk continues where that page ended.',
+				),
+		}),
+	},
 	list_conversation_messages: {
 		description:
 			'List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history.',
@@ -1348,6 +1379,7 @@ export const tools = {
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
 			tags: loopTagsSchema.optional(),
+			targets: loopTargetsSchema.optional(),
 		}),
 	},
 	update_loop: {
@@ -1380,6 +1412,7 @@ export const tools = {
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
 			tags: loopTagsSchema.optional(),
+			targets: loopTargetsSchema.optional(),
 			add_steps: z
 				.array(loopStepSchema)
 				.max(20)
