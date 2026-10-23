@@ -6,6 +6,8 @@ const BAND_LABEL: Record<ClassifierVerdict['band'], string> = {
 	human_review_required: 'HUMAN REVIEW REQUIRED',
 }
 
+const MAX_GATES_SHOWN = 10
+
 export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {
 	const lines: string[] = []
 	lines.push('## Risk Score')
@@ -14,6 +16,7 @@ export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {
 	lines.push(`**Skill version:** ${verdict.skill_version}`)
 	lines.push(`**Commit:** ${verdict.commit_sha}`)
 	lines.push(`**Deterministic seed:** ${verdict.deterministic_seed}`)
+	lines.push(`**Lines changed:** ${linesNote(verdict)}`)
 	lines.push('')
 	lines.push('### Signals')
 	if (verdict.signals.length === 0) {
@@ -24,9 +27,9 @@ export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {
 		}
 	}
 	lines.push('')
-	lines.push('### Floors applied')
+	lines.push('### Gated by')
 	if (verdict.floors_applied.length === 0) {
-		lines.push('- (no floors triggered)')
+		lines.push('- (no gate triggered)')
 	} else {
 		for (const f of verdict.floors_applied) {
 			lines.push(`- \`${f.kind}\` — ${f.evidence}`)
@@ -34,6 +37,14 @@ export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {
 	}
 	lines.push('')
 	return lines.join('\n')
+}
+
+function linesNote(verdict: ClassifierVerdict): string {
+	const ignored =
+		verdict.generated_files_ignored > 0
+			? `, ${verdict.generated_files_ignored} generated file(s) not counted`
+			: ''
+	return `${verdict.total_lines_changed} (a note, not a gate${ignored})`
 }
 
 function sortByWeightDesc(signals: SignalHit[]): SignalHit[] {
@@ -51,9 +62,13 @@ export function checkRunConclusion(verdict: ClassifierVerdict): {
 			: verdict.band === 'agent_recommends_human'
 				? 'neutral'
 				: 'failure'
-	return {
-		name: 'maskin/risk-score',
-		conclusion,
-		summary: `Risk ${verdict.score}/100 — ${BAND_LABEL[verdict.band]}`,
-	}
+	const headline = `Risk ${verdict.score}/100 — ${BAND_LABEL[verdict.band]}`
+	const gates = verdict.floors_applied.slice(0, MAX_GATES_SHOWN).map((f) => `- ${f.evidence}`)
+	const hidden = verdict.floors_applied.length - gates.length
+	if (hidden > 0) gates.push(`- ...and ${hidden} more`)
+	const summary =
+		gates.length > 0
+			? `${headline}\n\nGated by:\n${gates.join('\n')}\n\nLines changed: ${linesNote(verdict)}`
+			: `${headline}\n\nLines changed: ${linesNote(verdict)}`
+	return { name: 'maskin/risk-score', conclusion, summary }
 }

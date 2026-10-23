@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const SKILL_VERSION = '0.1.0'
+export const SKILL_VERSION = '0.3.0'
 
 export type RiskBand = 'auto' | 'agent_recommends_human' | 'human_review_required'
 
@@ -25,8 +25,9 @@ export type SignalKind =
 	| 'protected_path'
 	| 'regex_floor_hit'
 	| 'squawk_blocking_lock'
-	| 'loc_gate'
-	| 'db_change_gate'
+	| 'core_table_gate'
+	| 'always_gated_sql'
+	| 'unparseable_sql'
 
 export interface SignalHit {
 	kind: SignalKind
@@ -48,6 +49,7 @@ export interface ClassifierInput {
 	protected_paths: string[]
 	regex_floors: RegexFloor[]
 	hot_tables: string[]
+	core_tables: string[]
 	new_deps_with_cve?: string[]
 	semgrep_alerts?: SemgrepAlert[]
 	incident_density?: Record<string, number>
@@ -84,6 +86,9 @@ export interface ClassifierVerdict {
 	band: RiskBand
 	signals: SignalHit[]
 	floors_applied: SignalHit[]
+	/** Added plus removed lines, generated files left out. A note for the reader, never a gate. */
+	total_lines_changed: number
+	generated_files_ignored: number
 	deterministic_seed: string
 }
 
@@ -102,4 +107,10 @@ export const ProtectedPathsFileSchema = z.object({
 
 export const HotTablesFileSchema = z.object({
 	hot_tables: z.array(z.string().min(1)).default([]),
+})
+
+export const CoreTablesFileSchema = z.object({
+	// Never empty: an empty list would quietly gate nothing. Names go into regular expressions, so
+	// they are held to plain snake_case.
+	core_tables: z.array(z.string().regex(/^[a-z][a-z0-9_]*$/)).min(1),
 })

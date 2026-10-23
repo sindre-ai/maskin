@@ -4,6 +4,10 @@
 # (HUMAN REVIEW REQUIRED), overriding the additive signal sum — see "Apply the
 # floors" in the risk-classifier skill and R1 in the risk-gate skill.
 #
+# These are the critical paths. Database changes are not listed here: a migration is judged by
+# what it does to the tables in .maskin/core-tables.yml, and packages/db/src/schema.ts by the
+# migration that goes with it.
+#
 # This file is itself a protected path (see the last entry below) — edits
 # here are always human-review PRs, per the classifier's own rule.
 #
@@ -36,10 +40,22 @@ protected_paths:
 
   # --- IAM / policy (workspace membership + role checks) ---
   - "packages/auth/src/middleware.ts"
-  - "packages/db/src/schema.ts"
 
-  # --- DB migrations / DDL ---
-  - "packages/db/drizzle/**"
+  # --- Keychain: saved keys, the credential access log, the lift and replace routes ---
+  - "apps/dev/src/lib/keychain-kms.ts"
+  - "apps/dev/src/lib/integrations/credential-*.ts"
+  - "apps/dev/src/lib/integrations/*keychain*.ts"
+  - "apps/dev/src/lib/integrations/replace-value.ts"
+  - "apps/dev/src/lib/integrations/rotate-dek.ts"
+  - "apps/dev/src/lib/integrations/login-value.ts"
+  - "apps/dev/src/lib/integrations/header-mint.ts"
+  - "apps/dev/src/lib/integrations/raw-secret-backstop.ts"
+  - "apps/dev/src/lib/integrations/agent-grants.ts"
+  - "apps/dev/src/routes/*keychain*.ts"
+  - "apps/dev/src/jobs/*keychain*.ts"
+  - "apps/dev/src/jobs/rotate-deks.ts"
+  - "apps/dev/src/jobs/upgrade-legacy-credentials.ts"
+  - "apps/dev/scripts/snapshot-chain.ts"
 
   # --- infra-as-code ---
   - "docker-compose*.yml"

@@ -1,0 +1,31 @@
+# Core tables for the `risk-classifier` skill (packages/risk-classifier).
+#
+# A migration (any .sql file under packages/db) that alters, updates, deletes from, inserts into,
+# creates an index or trigger on, or changes row security, grants or policies for one of these
+# tables needs a person. A migration that only creates new tables, with their own indexes and
+# constraints (foreign keys to a core table included), does not. DROP, TRUNCATE, grants, roles,
+# row security and policies are gated whatever the table. See packages/risk-classifier/README.md.
+#
+# Names are snake_case, as in SQL. Add a table here when losing or corrupting it would hurt the
+# whole product, not one feature.
+#
+# This file is itself a protected path (.maskin/protected-paths.yml) — edits here are always
+# human-review PRs.
+
+core_tables:
+  - actors
+  - workspaces
+  - objects
+  - relationships
+  - events
+  - integrations
+  - agent_grants
+  - agent_chat_grants
+  - credential_access_log
+  - credential_chain_snapshots
+  - sessions
+  - conversations
+  - messages
+  - files
+  - workspace_credit_ledger
+  - idempotency_records

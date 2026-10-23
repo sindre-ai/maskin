@@ -20,6 +20,6 @@ if (errors.length > 0) {
 }
 
 process.stdout.write(
-	'risk-classifier: all floor config files resolved (.maskin/protected-paths.yml, .maskin/risk-floors.yml, .maskin/hot-tables.yml)\n',
+	'risk-classifier: all floor config files resolved (.maskin/protected-paths.yml, .maskin/risk-floors.yml, .maskin/hot-tables.yml, .maskin/core-tables.yml)\n',
 )
 process.exit(0)

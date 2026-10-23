@@ -6,7 +6,12 @@ export const REGEX_FLOOR_SCORE = 80
 export const SIGNAL_WEIGHTS: Record<
 	Exclude<
 		SignalKind,
-		'protected_path' | 'regex_floor_hit' | 'codeql_or_semgrep_alert' | 'loc_gate' | 'db_change_gate'
+		| 'protected_path'
+		| 'regex_floor_hit'
+		| 'codeql_or_semgrep_alert'
+		| 'core_table_gate'
+		| 'always_gated_sql'
+		| 'unparseable_sql'
 	>,
 	number
 > = {

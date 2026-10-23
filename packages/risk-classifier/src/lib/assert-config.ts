@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
-import { HotTablesFileSchema, ProtectedPathsFileSchema, RegexFloorsFileSchema } from '../types.js'
+import {
+	CoreTablesFileSchema,
+	HotTablesFileSchema,
+	ProtectedPathsFileSchema,
+	RegexFloorsFileSchema,
+} from '../types.js'
 
 export interface FloorConfigError {
 	relPath: string
@@ -12,6 +17,7 @@ const REQUIRED_FLOOR_FILES = [
 	{ relPath: '.maskin/protected-paths.yml', schema: ProtectedPathsFileSchema },
 	{ relPath: '.maskin/risk-floors.yml', schema: RegexFloorsFileSchema },
 	{ relPath: '.maskin/hot-tables.yml', schema: HotTablesFileSchema },
+	{ relPath: '.maskin/core-tables.yml', schema: CoreTablesFileSchema },
 ] as const
 
 /**

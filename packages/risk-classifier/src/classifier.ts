@@ -1,18 +1,27 @@
 import { createHash } from 'node:crypto'
 import { collectGates } from './gates.js'
+import { isGeneratedFile } from './lib/generated.js'
 import { collectSignals } from './signals.js'
 import type { ClassifierInput, ClassifierVerdict, RiskBand, SignalHit } from './types.js'
 import { SKILL_VERSION } from './types.js'
 
 const AUTO_MAX_SCORE = 24
 
-export function classify(input: ClassifierInput): ClassifierVerdict {
+export function classify(rawInput: ClassifierInput): ClassifierVerdict {
+	// Generated files (lock files, the OpenAPI snapshot and client, drizzle snapshots) are left out of
+	// everything below: not counted, not gated.
+	const files = rawInput.files.filter((f) => !isGeneratedFile(f.path))
+	const input = { ...rawInput, files }
+
 	// Signals are still collected so the PR comment stays informative, but they no
-	// longer decide the outcome. Only the gates do (see gates.ts): a gate hit is
-	// human_review_required, everything else is auto. Protected paths and regex
-	// floors from .maskin/*.yml are not consulted for the band.
-	const { signals } = collectSignals(input)
-	const floors_applied = collectGates(input)
+	// longer decide the outcome. Only the gates do: a critical path from
+	// .maskin/protected-paths.yml, or a migration that trips a rule in gates.ts, is
+	// human_review_required; everything else is auto. Regex floors are not consulted for the band.
+	const { signals, floors_applied: signalFloors } = collectSignals(input)
+	const floors_applied = [
+		...signalFloors.filter((f) => f.kind === 'protected_path'),
+		...collectGates(input),
+	]
 
 	const sumWeights = signals.reduce((acc, s) => acc + s.weight, 0)
 	const cappedAdditive = Math.min(sumWeights, 100)
@@ -30,6 +39,8 @@ export function classify(input: ClassifierInput): ClassifierVerdict {
 		band,
 		signals,
 		floors_applied,
+		total_lines_changed: files.reduce((acc, f) => acc + f.additions + f.deletions, 0),
+		generated_files_ignored: rawInput.files.length - files.length,
 		deterministic_seed,
 	}
 }

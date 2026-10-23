@@ -1,63 +1,63 @@
-import type { ClassifierInput, DiffFile, SignalHit } from './types.js'
+import { analyzeSql } from './lib/sql.js'
+import type { ClassifierInput, DiffFile, SignalHit, SignalKind } from './types.js'
 
-export const LOC_GATE_THRESHOLD = 1000
-export const DB_CODE_LINES_GATE_THRESHOLD = 2
+const MIGRATION_PREFIX = 'packages/db/'
+const DOWN_MIGRATION = /^packages\/db\/drizzle\/down\//
 
-const DB_FILE_PATTERNS: RegExp[] = [
-	/\.sql$/i,
-	/(^|\/)schema\.prisma$/i,
-	/^packages\/db\/src\/schema\.ts$/i,
-]
-
-export function isDbFile(path: string): boolean {
-	return DB_FILE_PATTERNS.some((re) => re.test(path))
+export function isMigrationFile(path: string): boolean {
+	return path.startsWith(MIGRATION_PREFIX) && path.endsWith('.sql')
 }
 
-function isCommentOrBlank(content: string, path: string): boolean {
-	const text = content.trim()
-	if (text === '') return true
-	if (text.startsWith('/*') || text.startsWith('*')) return true
-	return path.toLowerCase().endsWith('.sql') ? text.startsWith('--') : text.startsWith('//')
+const KIND_FOR_FINDING: Record<'core_table' | 'always_gated' | 'unparseable', SignalKind> = {
+	core_table: 'core_table_gate',
+	always_gated: 'always_gated_sql',
+	unparseable: 'unparseable_sql',
 }
 
-/** Added + removed lines in a patch that are neither blank nor comments. */
-export function countCodeLines(file: DiffFile): number {
-	let count = 0
-	for (const line of file.patch.split('\n')) {
-		if (!(line.startsWith('+') || line.startsWith('-'))) continue
-		if (!isCommentOrBlank(line.slice(1), file.path)) count += 1
+function gate(kind: SignalKind, evidence: string): SignalHit {
+	return { kind, weight: 0, evidence }
+}
+
+/** The SQL a new file adds. Null when the diff does not carry it (binary file, no added lines). */
+function addedSql(file: DiffFile): string | null {
+	if (file.patch.includes('Binary files ')) return null
+	const lines = file.patch
+		.split('\n')
+		.filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+		.map((l) => l.slice(1))
+	if (lines.length === 0 && file.additions > 0) return null
+	return lines.join('\n')
+}
+
+function migrationGates(file: DiffFile, coreTables: string[]): SignalHit[] {
+	// A diff only shows the changed hunks of an existing file, so the whole migration cannot be read.
+	// An applied migration should not change anyway.
+	if (file.status !== 'added') {
+		return [
+			gate(
+				'unparseable_sql',
+				`${file.path}: existing migration ${file.status}, the full SQL is not in the diff`,
+			),
+		]
 	}
-	return count
+	const sql = addedSql(file)
+	if (sql === null) {
+		return [
+			gate('unparseable_sql', `${file.path}: the SQL is not in the diff, so it cannot be read`),
+		]
+	}
+	return analyzeSql(sql, { coreTables, isDown: DOWN_MIGRATION.test(file.path) }).map((f) =>
+		gate(KIND_FOR_FINDING[f.kind], `${file.path}: ${f.detail}`),
+	)
 }
 
 /**
- * The only conditions that block a PR: more than 1000 changed lines overall, or
- * more than 2 lines of real code changed in database files.
+ * The migration side of the gate: what a migration does to a core table, plus the statements that
+ * are gated whatever the table. Protected paths are gated in signals.ts. Total lines changed is
+ * not a gate; it is a note in the verdict.
  */
-export function collectGates(input: Pick<ClassifierInput, 'files'>): SignalHit[] {
-	const gates: SignalHit[] = []
-
-	const totalLoc = input.files.reduce((acc, f) => acc + f.additions + f.deletions, 0)
-	if (totalLoc > LOC_GATE_THRESHOLD) {
-		gates.push({
-			kind: 'loc_gate',
-			weight: 0,
-			evidence: `${totalLoc} lines changed (limit ${LOC_GATE_THRESHOLD})`,
-		})
-	}
-
-	const dbFiles = input.files
-		.filter((f) => isDbFile(f.path))
-		.map((f) => ({ path: f.path, codeLines: countCodeLines(f) }))
-	const dbCodeLines = dbFiles.reduce((acc, f) => acc + f.codeLines, 0)
-	if (dbCodeLines > DB_CODE_LINES_GATE_THRESHOLD) {
-		const changed = dbFiles.filter((f) => f.codeLines > 0).map((f) => f.path)
-		gates.push({
-			kind: 'db_change_gate',
-			weight: 0,
-			evidence: `${dbCodeLines} code lines changed in database files (limit ${DB_CODE_LINES_GATE_THRESHOLD}): ${changed.join(', ')}`,
-		})
-	}
-
-	return gates
+export function collectGates(input: Pick<ClassifierInput, 'files' | 'core_tables'>): SignalHit[] {
+	return input.files
+		.filter((f) => isMigrationFile(f.path))
+		.flatMap((f) => migrationGates(f, input.core_tables))
 }

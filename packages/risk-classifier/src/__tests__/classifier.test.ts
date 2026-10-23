@@ -21,6 +21,7 @@ function input(overrides: Partial<ClassifierInput> = {}): ClassifierInput {
 		protected_paths: [],
 		regex_floors: [],
 		hot_tables: [],
+		core_tables: ['actors', 'objects', 'events'],
 		...overrides,
 	}
 }
@@ -39,15 +40,18 @@ describe('classify', () => {
 		expect(a.score).toBe(b.score)
 	})
 
-	it('does not block on a protected path alone', () => {
+	it('requires human review when a file matches a protected path, and names it', () => {
 		const v = classify(
 			input({
 				files: [file({ path: 'packages/auth/src/index.ts' })],
 				protected_paths: ['packages/auth/**'],
 			}),
 		)
-		expect(v.band).toBe('auto')
-		expect(v.floors_applied).toEqual([])
+		expect(v.band).toBe('human_review_required')
+		expect(v.score).toBe(100)
+		expect(v.floors_applied).toHaveLength(1)
+		expect(v.floors_applied[0]?.kind).toBe('protected_path')
+		expect(v.floors_applied[0]?.evidence).toContain('packages/auth/src/index.ts')
 	})
 
 	it('does not block on a regex floor hit alone', () => {
@@ -61,47 +65,72 @@ describe('classify', () => {
 		expect(v.band).toBe('auto')
 	})
 
-	it('stays auto at exactly 1000 changed lines', () => {
-		const v = classify(input({ files: [file({ additions: 600, deletions: 400 })] }))
-		expect(v.band).toBe('auto')
-	})
-
-	it('requires human review above 1000 changed lines', () => {
-		const v = classify(input({ files: [file({ additions: 600, deletions: 401 })] }))
-		expect(v.band).toBe('human_review_required')
-		expect(v.score).toBe(100)
-		expect(v.floors_applied.some((f) => f.kind === 'loc_gate')).toBe(true)
-	})
-
-	it('stays auto with two code lines changed in a database file', () => {
+	it('does not gate a 1500-line feature diff that touches no critical path', () => {
 		const v = classify(
 			input({
 				files: [
+					file({ path: 'apps/dev/src/services/voice.ts', additions: 1200, deletions: 300 }),
+					file({ path: 'apps/dev/src/__tests__/voice.test.ts', additions: 100, deletions: 0 }),
+				],
+				protected_paths: ['packages/auth/**'],
+			}),
+		)
+		expect(v.band).toBe('auto')
+		expect(v.floors_applied).toEqual([])
+		expect(v.total_lines_changed).toBe(1600)
+	})
+
+	it('leaves generated files out of the line total and out of the gates', () => {
+		const v = classify(
+			input({
+				files: [
+					file({ path: 'apps/dev/src/a.ts', additions: 10, deletions: 0 }),
+					file({ path: 'apps/apple/openapi.json', additions: 3000, deletions: 500 }),
+					file({ path: 'apps/apple/Sources/MaskinAPI/Generated/Client.swift', additions: 900 }),
+					file({ path: 'pnpm-lock.yaml', additions: 400, deletions: 400 }),
 					file({
-						path: 'packages/db/drizzle/0099_x.sql',
-						patch:
-							'@@ -1,1 +1,1 @@\n+-- a comment\n+\n+ALTER TABLE a ADD COLUMN b text;\n+CREATE INDEX i ON a(b);',
+						path: 'packages/db/drizzle/meta/0108_snapshot.json',
+						status: 'added',
+						additions: 5000,
+						deletions: 0,
 					}),
 				],
+				protected_paths: ['**/pnpm-lock.yaml'],
+			}),
+		)
+		expect(v.total_lines_changed).toBe(10)
+		expect(v.generated_files_ignored).toBe(4)
+		expect(v.floors_applied).toEqual([])
+		expect(v.band).toBe('auto')
+	})
+
+	it('does not gate a schema.ts change on its own', () => {
+		const v = classify(
+			input({
+				files: [file({ path: 'packages/db/src/schema.ts' })],
+				protected_paths: ['packages/auth/**'],
 			}),
 		)
 		expect(v.band).toBe('auto')
 	})
 
-	it('requires human review with more than two code lines changed in a database file', () => {
+	it('gates a migration that changes a core table', () => {
 		const v = classify(
 			input({
 				files: [
 					file({
-						path: 'packages/db/src/schema.ts',
-						patch:
-							'@@ -1,1 +1,1 @@\n+// note\n+export const a = 1\n+export const b = 2\n-export const c = 3',
+						path: 'packages/db/drizzle/0108_x.sql',
+						status: 'added',
+						additions: 1,
+						deletions: 0,
+						patch: '@@ -0,0 +1,1 @@\n+ALTER TABLE "objects" ADD COLUMN "x" text;',
 					}),
 				],
 			}),
 		)
 		expect(v.band).toBe('human_review_required')
-		expect(v.floors_applied.some((f) => f.kind === 'db_change_gate')).toBe(true)
+		expect(v.floors_applied[0]?.kind).toBe('core_table_gate')
+		expect(v.floors_applied[0]?.evidence).toContain('core table objects')
 	})
 
 	it('keeps the additive score below the auto ceiling when no gate fires', () => {

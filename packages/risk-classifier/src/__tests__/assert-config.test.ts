@@ -24,6 +24,7 @@ describe('assertMaskinConfigResolves', () => {
 			'protected-paths.yml': 'protected_paths:\n  - "packages/auth/**"\n',
 			'risk-floors.yml': 'regex_floors:\n  - pattern: "AKIA[0-9A-Z]{16}"\n    description: test\n',
 			'hot-tables.yml': 'hot_tables:\n  - webhook_deliveries\n',
+			'core-tables.yml': 'core_tables:\n  - actors\n',
 			...overrides,
 		}
 		for (const [name, content] of Object.entries(files)) {
@@ -31,7 +32,7 @@ describe('assertMaskinConfigResolves', () => {
 		}
 	}
 
-	it('returns no errors when all three floor files resolve', () => {
+	it('returns no errors when all four floor files resolve', () => {
 		writeFloorFiles()
 		expect(assertMaskinConfigResolves(repoRoot)).toEqual([])
 	})
@@ -44,13 +45,14 @@ describe('assertMaskinConfigResolves', () => {
 		expect(errors).toEqual([{ relPath: '.maskin/risk-floors.yml', reason: 'file not found' }])
 	})
 
-	it('reports all three files missing when none exist', () => {
+	it('reports all four files missing when none exist', () => {
 		const errors = assertMaskinConfigResolves(repoRoot)
-		expect(errors).toHaveLength(3)
+		expect(errors).toHaveLength(4)
 		expect(errors.map((e) => e.relPath)).toEqual([
 			'.maskin/protected-paths.yml',
 			'.maskin/risk-floors.yml',
 			'.maskin/hot-tables.yml',
+			'.maskin/core-tables.yml',
 		])
 	})
 
@@ -60,6 +62,14 @@ describe('assertMaskinConfigResolves', () => {
 		const errors = assertMaskinConfigResolves(repoRoot)
 		expect(errors).toHaveLength(1)
 		expect(errors[0]?.relPath).toBe('.maskin/protected-paths.yml')
+	})
+
+	it('rejects an empty core-tables list, which would gate nothing', () => {
+		writeFloorFiles({ 'core-tables.yml': 'core_tables: []\n' })
+
+		const errors = assertMaskinConfigResolves(repoRoot)
+		expect(errors).toHaveLength(1)
+		expect(errors[0]?.relPath).toBe('.maskin/core-tables.yml')
 	})
 
 	it("resolves this repo's real .maskin config with no errors", () => {

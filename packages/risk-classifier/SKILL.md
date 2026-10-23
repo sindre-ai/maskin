@@ -1,6 +1,6 @@
 ---
 name: risk-classifier
-version: 0.1.0
+version: 0.3.0
 description: Use to score a PR diff on the 0–100 risk band that gates the auto-merge pipeline. Triggers on every `pull_request` opened/synchronize/reopened/ready_for_review event against `main`, and on demand from the `orchestrate-pr-review` skill. The skill produces a deterministic score from a fixed signal table (path sensitivity, DDL detection, secrets-like patterns, SAST alerts, incident density, and friends), applies the floors declared in `.maskin/protected-paths.yml` and `.maskin/risk-floors.yml`, and emits a `## Risk Score` block plus a `maskin/risk-score` check run. Do NOT use to *decide* whether to merge — that's `orchestrate-pr-review`'s job. Do NOT use to author code or critique style — score, output, stop.
 ---
 
@@ -69,6 +69,8 @@ Sum the weights of every triggered signal. Cap the sum at 100.
 
 ### 3. Apply the floors
 
+The band comes from the gates only: a critical path in `.maskin/protected-paths.yml`, or a migration that touches a table in `.maskin/core-tables.yml` or contains an always-gated statement (see README, "What blocks a PR"). Total lines changed is a note, never a gate, and generated files are not counted. The rules below are the older floor description and are kept for the signal table; the gates win.
+
 Floors override the additive sum. Apply in this order:
 
 - **Protected path** — any file matches a glob in `.maskin/protected-paths.yml` → score = 100, regardless of additive sum.
@@ -93,7 +95,7 @@ Write the verdict on the **task** linked from the PR's `github_link`, under a `#
 ## Risk Score
 
 **Score:** <0-100>/100 — <BAND LABEL>
-**Skill version:** 0.1.0
+**Skill version:** 0.3.0
 **Commit:** <head-sha>
 **Deterministic seed:** <16-hex>
 
@@ -101,7 +103,7 @@ Write the verdict on the **task** linked from the PR's `github_link`, under a `#
 - `paths_auth_session` +15 — packages/auth/src/session.ts
 - `diff_loc` +12 — 240 lines changed across 3 files
 
-### Floors applied
+### Gated by
 - `protected_path` — packages/auth/** matches packages/auth/src/session.ts
 ```
 
@@ -115,7 +117,7 @@ The check-run summary includes the score and band; the full block goes on the ta
 
 ## Attestation
 
-Record the skill version (`0.1.0`) and the deterministic seed in the in-toto attestation built by `orchestrate-pr-review`. The orchestrator binds the version to the verdict; bumping `version:` in this skill's frontmatter must accompany any change to the signal table, weights, floors, or output format.
+Record the skill version (`0.3.0`) and the deterministic seed in the in-toto attestation built by `orchestrate-pr-review`. The orchestrator binds the version to the verdict; bumping `version:` in this skill's frontmatter must accompany any change to the signal table, weights, floors, or output format.
 
 ## What NOT to do
 

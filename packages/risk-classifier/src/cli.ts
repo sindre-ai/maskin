@@ -87,6 +87,7 @@ export function runCli(argv: string[]): { exitCode: number; stdout: string } {
 		protected_paths: config.protected_paths,
 		regex_floors: config.regex_floors,
 		hot_tables: config.hot_tables,
+		core_tables: config.core_tables,
 		new_deps_with_cve: opts.cveDeps,
 		semgrep_alerts: semgrepAlerts,
 		squawk_findings: squawkFindings,
