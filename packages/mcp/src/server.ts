@@ -7160,6 +7160,87 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'request_integration_access',
+		{
+			description: tools.request_integration_access.description,
+			inputSchema: tools.request_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat; the person allows it there, which sets the same per-agent access
+			// as Settings → Integrations. The agent can never widen its own access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/integration-access-card`,
+					{
+						integration_id: args.integration_id,
+						level: args.level,
+						...(args.reason ? { reason: args.reason } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: 'You already have that access to this integration. If a call was refused, you were started before it was allowed, so ask the user to send you a new message.',
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No connected integration with that id. Call list_integrations for the ids, or connect_integration if it is not connected yet.',
+					)
+				}
+				if (status === 400) {
+					return fail(
+						'That integration cannot be asked for this way. For a saved key or login use list_keychain_credentials and request_keychain_access. A tool server that runs inside you cannot be limited to reading: ask for read_write.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'show_computer',
 		{
 			description: tools.show_computer.description,

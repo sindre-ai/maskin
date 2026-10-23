@@ -274,6 +274,31 @@ export const messageKeychainAccessRequestSchema = z.object({
 	hint: z.string().min(1).max(300).optional(),
 })
 
+/** The levels an agent can ask for on an integration that is already connected. */
+export const INTEGRATION_ACCESS_REQUEST_LEVELS = ['read', 'read_write'] as const
+export type IntegrationAccessRequestLevel = (typeof INTEGRATION_ACCESS_REQUEST_LEVELS)[number]
+
+/**
+ * An agent's request for more access to an integration that is connected but not allowed for
+ * it, shown as a card with Allow / Not now. Never accepted from a client. The card only names
+ * the integration and the level the agent asked for: allowing it is the person's own call to
+ * the server, which sets the same per-agent access as Settings → Integrations.
+ */
+export const messageIntegrationAccessRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the right agent. */
+	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema,
+	/** The connected integration being asked for. */
+	integration_id: z.string().uuid(),
+	/** Its provider name, e.g. 'slack'. */
+	provider: z.string().min(1).max(100),
+	/** The name the person knows it by, e.g. "Slack". */
+	display_name: z.string().min(1).max(100),
+	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
+	/** One line on what the agent needs it for. */
+	reason: z.string().min(1).max(300).optional(),
+})
+
 /**
  * An agent's request for the person to act on the agent's own computer, shown as a card
  * in the chat. Never accepted from a client. Holds nothing sensitive: it only says what
@@ -324,6 +349,8 @@ export const messageMetadataSchema = z.object({
 	keychain_request: messageKeychainRequestSchema.optional(),
 	/** Backend-owned: an agent's request to use an existing credential, shown as a card. */
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
+	/** Backend-owned: an agent's request for more access to a connected integration, shown as a card. */
+	integration_access_request: messageIntegrationAccessRequestSchema.optional(),
 	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
 	computer_request: messageComputerRequestSchema.optional(),
 	/**
@@ -374,6 +401,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		plain_tail: _plainTail,
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
+		integration_access_request: _integrationAccessRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
 		...rest
@@ -574,6 +602,24 @@ export function formatKeychainAccessRequestAsMarkdown(
 ): string {
 	const why = hint ? ` ${hint}` : ''
 	return `I'd like to use **${credentialName}** from your Keychain.${why} Allow it with the card below, or in Settings → Keychain. I never see the secret itself.`
+}
+
+/** The `integration-access-card` request body: the tool input, minus the session the server knows. */
+export const sessionIntegrationAccessCardSchema = z.object({
+	integration_id: z.string().uuid(),
+	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
+	reason: z.string().trim().min(1).max(300).optional(),
+})
+
+/** The plain-markdown rendering of an integration access card, for every reader that isn't the chat UI. */
+export function formatIntegrationAccessRequestAsMarkdown(
+	displayName: string,
+	level: IntegrationAccessRequestLevel,
+	reason?: string,
+): string {
+	const what = level === 'read_write' ? 'read and write access' : 'read access'
+	const why = reason ? ` ${reason}` : ''
+	return `I'd like ${what} to **${displayName}**.${why} Allow it with the card below, or in Settings → Integrations.`
 }
 
 /** The `computer-card` request body: the tool input, minus the session the server knows. */
