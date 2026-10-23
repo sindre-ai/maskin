@@ -8,7 +8,11 @@ import {
 	detectSuspiciousFilterEntries,
 	trackTriggerConfigSuspicious,
 } from '../lib/analytics/trigger-matcher-events'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import {
@@ -264,8 +268,8 @@ app.openapi(listTriggersRoute, (async (c) => {
 
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(triggers.createdAt), asc(triggers.id)]
-			: [desc(triggers.createdAt), asc(triggers.id)]
+			? [asc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
+			: [desc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
 		: []
 
 	const skipOffset = useKeysetSeek(query)
