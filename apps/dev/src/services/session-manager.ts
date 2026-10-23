@@ -96,7 +96,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
 	attachesServer,
@@ -2302,7 +2302,14 @@ export class SessionManager extends EventEmitter {
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
-		const accessPreamble = buildAccessPreamble(accessRows)
+		// A person can answer a card in a chat, and for a helper started from one.
+		const personReachable =
+			Boolean(sessionConfig.conversation) ||
+			(sessionConfig.stop_on_result === true &&
+				(typeof sessionConfig.ask_conversation_id === 'string' ||
+					typeof sessionConfig.origin_conversation_id === 'string'))
+		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
+		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2311,7 +2318,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are

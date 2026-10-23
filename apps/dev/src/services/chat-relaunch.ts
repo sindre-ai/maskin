@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { TERMINAL_STATUSES } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -115,6 +115,17 @@ async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<R
 	// Nothing running, or still queued: a queued session reads the key when it is
 	// dispatched, and the vault already committed.
 	if (!holder || holder.status === 'pending' || holder.status === 'queued') return 'stopped'
+
+	// A helper has no chat to respawn it: the card's answer carries on in a follow-up (the
+	// continue route). Mark the stop so the sender is not told a person stopped the helper.
+	if (!origin.conversationId) {
+		await deps.db
+			.update(sessions)
+			.set({
+				config: sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{relaunching}', 'true')`,
+			})
+			.where(eq(sessions.id, holder.id))
+	}
 
 	try {
 		await deps.sessionManager.stopSession(holder.id)
