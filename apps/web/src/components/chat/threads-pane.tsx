@@ -13,6 +13,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { type ConversationThread, useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
+import { useOpenSessionChat } from '@/hooks/use-open-session-chat'
 import { useSendSessionInput, useSession, useSessionLogs } from '@/hooks/use-sessions'
 import type { SessionLogResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -26,7 +27,7 @@ import {
 	threadPill,
 } from '@/lib/handed-off-strip'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, ExternalLink, Send, X } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, ExternalLink, Send, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 const GROUP_LABEL: Record<ThreadGroup, string> = {
@@ -161,19 +162,31 @@ function ThreadsList({
 	)
 }
 
-function ThreadView({
+/**
+ * One session as a thread, with the pane's header: who is working, what on, and its state.
+ * Shared by the chat's Threads tab and a background run opened from an agent's page, which
+ * has no conversation (`conversationId` null) and no list to go back to (no `onBack`).
+ */
+export function ThreadView({
 	workspaceId,
 	conversationId,
 	thread,
+	title,
 	onBack,
 	onClose,
+	closeLabel = 'Close Overview',
 }: {
 	workspaceId: string
-	conversationId: string
+	conversationId: string | null
 	thread: ConversationThread
-	onBack: () => void
+	/** What the thread is called; defaults to the first line of its prompt. */
+	title?: string
+	onBack?: () => void
 	onClose?: () => void
+	closeLabel?: string
+	/** Shows a "Chat" link that opens this session on the full chat page. */
 }) {
+	const { open: openChat, opening: openingChat } = useOpenSessionChat(workspaceId, thread.id)
 	const pill = statusToPill(thread.status)
 	const display = threadPill(thread.status, thread.awaiting !== null)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
@@ -189,16 +202,18 @@ function ThreadView({
 	return (
 		<>
 			<div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-6 w-6"
-					onClick={onBack}
-					aria-label="Back to threads"
-				>
-					<ArrowLeft size={14} />
-				</Button>
+				{onBack ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-6 w-6"
+						onClick={onBack}
+						aria-label="Back to threads"
+					>
+						<ArrowLeft size={14} />
+					</Button>
+				) : null}
 				<ActorAvatar
 					id={thread.actorId}
 					name={thread.actorName}
@@ -211,7 +226,7 @@ function ThreadView({
 						{thread.actorName}
 					</span>
 					<span className="truncate text-[11px] text-muted-foreground">
-						{handoffTitle(thread.actionPrompt, thread.actorName)}
+						{title ?? handoffTitle(thread.actionPrompt, thread.actorName)}
 					</span>
 				</div>
 				{display ? (
@@ -224,6 +239,17 @@ function ThreadView({
 						{idle && display.label === 'WORKING' ? 'IDLE' : display.label}
 					</span>
 				) : null}
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className="h-6 shrink-0 gap-1 px-1.5 text-[12px] text-muted-foreground hover:text-foreground"
+					onClick={openChat}
+					disabled={openingChat}
+				>
+					Chat
+					<ArrowUpRight size={12} aria-hidden />
+				</Button>
 				{onClose ? (
 					<Button
 						type="button"
@@ -231,14 +257,19 @@ function ThreadView({
 						size="icon"
 						className="h-6 w-6"
 						onClick={onClose}
-						aria-label="Close Overview"
+						aria-label={closeLabel}
 					>
 						<X size={14} />
 					</Button>
 				) : null}
 			</div>
 
-			<SessionThread workspaceId={workspaceId} conversationId={conversationId} thread={thread} />
+			<SessionThread
+				workspaceId={workspaceId}
+				conversationId={conversationId}
+				thread={thread}
+				promptAuthorName={title}
+			/>
 		</>
 	)
 }

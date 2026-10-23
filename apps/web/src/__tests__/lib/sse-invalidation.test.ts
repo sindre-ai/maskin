@@ -132,6 +132,20 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes a draft card when it is approved or sent, whatever its object type', () => {
+		for (const action of ['approved', 'delivered']) {
+			const qc = createMockQueryClient()
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'content',
+				entity_id: entityId,
+				action,
+			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: queryKeys.objects.detail(entityId),
+			})
+		}
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
