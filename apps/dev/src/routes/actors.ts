@@ -44,6 +44,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -65,6 +66,7 @@ import {
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
+import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { addDefaultHeartbeat } from '../services/default-heartbeat'
 import { stopSessionsForActors } from '../services/session-cleanup'
@@ -406,6 +408,7 @@ app.openapi(createActorRoute, async (c) => {
 	// The new agent says hello to the person it was made for. Fire and forget,
 	// after the commit: the service never throws, so creation is unaffected.
 	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		const sessionManager = c.get('sessionManager')
 		void introduceAgentToRecipient({
 			db,
 			actor,
@@ -414,6 +417,12 @@ app.openapi(createActorRoute, async (c) => {
 			claimedSessionId: c.get('maskinSessionId'),
 			clientSource,
 			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+			// The agent looks around the workspace before suggesting first steps. Not in an
+			// E2E stack, where every workspace lacks credentials and the session would only churn.
+			scan:
+				sessionManager && !shouldSkipOnboardingKickoff()
+					? createIntroScanRunner({ db, sessionManager })
+					: undefined,
 		})
 	}
 
