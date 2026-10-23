@@ -5,7 +5,7 @@
 -- phone reports. The server now adds to these columns on each completed turn and each tool call.
 -- Existing rows get 0, which endVoiceSession treats as "nothing recorded" (it then uses the
 -- client report, as before). Constant defaults, so no table rewrite.
--- Down: drizzle/down/0108_voice_sessions_live_counters_down.sql.
+-- Down: drizzle/down/0109_voice_sessions_live_counters_down.sql.
 
 ALTER TABLE "voice_sessions"
 	ADD COLUMN IF NOT EXISTS "input_audio_ms" integer NOT NULL DEFAULT 0,
