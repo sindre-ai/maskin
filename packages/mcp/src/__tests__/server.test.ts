@@ -101,6 +101,13 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('create_trigger')
 	})
 
+	it('exposes no tool for the admin-only Keychain lift or value replacement', () => {
+		createMcpServer(config)
+		const registeredNames = vi.mocked(registerAppTool).mock.calls.map((call) => call[1] as string)
+		expect(registeredNames.filter((name) => /lift|rotate/i.test(name))).toEqual([])
+		expect(Object.keys(tools).filter((name) => /lift|rotate/i.test(name))).toEqual([])
+	})
+
 	it('registers tools with descriptions', () => {
 		createMcpServer(config)
 		const toolDefs = vi.mocked(registerAppTool).mock.calls.map((call) => call[2])
