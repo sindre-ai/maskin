@@ -457,11 +457,16 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 
 		// Reached 'running' successfully — clear heartbeat so the reaper's
 		// stale-heartbeat check no longer applies to this row, and stamp the
-		// transition so the wall-timeout cutoff measures 2h from here.
+		// transition so the wall-timeout cutoff measures 2h from here. Only a row
+		// whose status is 'running' really started. A remote dispatch only hands
+		// the row to the dispatch queue (status 'starting', session_state
+		// 'waiting_for_machine') and returns while it waits for an agent-server
+		// slot; stamping 'running' here would let idle-pause fail it as
+		// containerless. The dispatcher stamps 'running' itself once it starts.
 		await db
 			.update(sessions)
 			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
-			.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'running')))
 			.catch((err) => {
 				logger.warn('_driveToRunning failed to enter running state', {
 					sessionId,
