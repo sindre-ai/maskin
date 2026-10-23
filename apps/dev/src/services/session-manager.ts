@@ -5466,7 +5466,9 @@ ${cont.continues_prompt}
 		const [row] = await this.db
 			.select({
 				count: countFn(),
-				oldest: sql<Date | string | null>`min(coalesce(${sessions.stateEnteredAt}, ${sessions.createdAt}))`,
+				oldest: sql<
+					Date | string | null
+				>`min(coalesce(${sessions.stateEnteredAt}, ${sessions.createdAt}))`,
 			})
 			.from(sessions)
 			.where(

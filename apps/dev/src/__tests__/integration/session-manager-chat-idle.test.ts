@@ -63,7 +63,6 @@ async function runWatchdogWithStubbedFetch() {
 	}
 }
 
-
 describe('SessionManager conversation-turn drain + idle chat close (Integration)', () => {
 	let workspaceId: string
 	let actorId: string
@@ -423,8 +422,6 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 	})
 
 	describe('watchdog idle chat close (edge cases)', () => {
-
-
 		it('leaves an idle-eligible session running when its newest message is unanswered', async () => {
 			const server = await insertAgentServer()
 			const conversation = await insertConversation(workspaceId, actorId)
