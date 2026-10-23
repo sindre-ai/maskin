@@ -288,76 +288,8 @@ export async function evaluateAndRespond(ctx: {
 				delivery,
 			})
 
-			const turnPayload = {
-				type: 'user' as const,
-				message: {
-					role: 'user' as const,
-					content: buildConversationTurnPrompt({
-						authorName: message.authorName,
-						authorType: message.authorType,
-						authorActorId: message.actorId,
-						newMessageContent: messageForPrompt.content,
-						isDirectConversation,
-						wasMentioned,
-					}),
-				},
-			}
-
-			const existing = await sessionManager.findConversationSessionAnyActive(
-				conversationId,
-				agent.id,
-			)
-			if (existing && existing.status !== 'running') {
-				// The agent's session is still booting (pending/starting/queued) —
-				// its stdin isn't attached yet, so a writeInput would fail and a
-				// second createSession would lose to sessions_conversation_actor_
-				// active_uniq. Buffer the turn; drainPendingConversationTurns
-				// delivers it once the session comes up.
-				await bufferPendingTurn(db, {
-					conversationId,
-					agentId: agent.id,
-					messageId,
-					payload: turnPayload,
-				})
-				// Close the race: the session may have reached `running` (and
-				// already drained) between the lookup above and the buffer insert —
-				// nothing would ever drain this row, so re-check and drain now.
-				const nowRunning = await sessionManager.findActiveConversationSession(
-					conversationId,
-					agent.id,
-				)
-				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-				return woke('buffered_for_booting_session')
-			}
-			if (existing) {
-				try {
-					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
-					return woke('wrote_to_running_session')
-				} catch (err) {
-					logger.warn(
-						'writeInput to existing interactive conversation session failed — spawning a fresh one',
-						{ agentId: agent.id, conversationId, sessionId: existing.id, error: String(err) },
-					)
-					// The old session is dead (detached stdin, container gone), not
-					// just momentarily busy. Mark it failed now — otherwise it keeps
-					// satisfying sessions_conversation_actor_active_uniq and the
-					// fresh createSession() below collides with its own zombie.
-					await sessionManager
-						.markSessionFailedAfterContainerLoss(existing.id, existing.workspaceId)
-						.catch((markErr: unknown) =>
-							logger.warn('Failed to mark dead conversation session as failed', {
-								agentId: agent.id,
-								conversationId,
-								sessionId: existing.id,
-								error: String(markErr),
-							}),
-						)
-					// Fall through to spawn fresh below.
-				}
-			}
-
 			return woke(
-				await spawnOrJoinConversationSession({
+				await deliverTurnToAgent({
 					db,
 					sessionManager,
 					workspaceId,
@@ -478,6 +410,115 @@ function emitGroupChatRouting(ctx: {
 			error: String(err),
 		}),
 	)
+}
+
+/**
+ * Hands one turn to an agent in a conversation: written into its running session, buffered
+ * while that session boots, or seeding a fresh session when there is none. `messageId` is
+ * the chat message the turn answers; the agent's reply is anchored after it.
+ *
+ * Shared by the responder (a turn for a message just posted) and a chat card's approve or
+ * status change, which tells the agent without posting a message (see chat-card-wake.ts).
+ */
+export async function deliverTurnToAgent(params: {
+	db: Database
+	sessionManager: SessionManager
+	workspaceId: string
+	conversationId: string
+	messageId: number
+	agentId: string
+	message: { actorId: string; content: string; authorName: string; authorType: string }
+	conversationHistory: Array<{ actorName: string; content: string }>
+	isDirectConversation: boolean
+	wasMentioned: boolean
+}): Promise<GroupChatDelivery> {
+	const {
+		db,
+		sessionManager,
+		workspaceId,
+		conversationId,
+		messageId,
+		agentId,
+		message,
+		conversationHistory,
+		isDirectConversation,
+		wasMentioned,
+	} = params
+
+	const turnPayload = {
+		type: 'user' as const,
+		message: {
+			role: 'user' as const,
+			content: buildConversationTurnPrompt({
+				authorName: message.authorName,
+				authorType: message.authorType,
+				authorActorId: message.actorId,
+				newMessageContent: message.content,
+				isDirectConversation,
+				wasMentioned,
+			}),
+		},
+	}
+
+	const existing = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
+	if (existing && existing.status !== 'running') {
+		// The agent's session is still booting (pending/starting/queued) —
+		// its stdin isn't attached yet, so a writeInput would fail and a
+		// second createSession would lose to sessions_conversation_actor_
+		// active_uniq. Buffer the turn; drainPendingConversationTurns
+		// delivers it once the session comes up.
+		await bufferPendingTurn(db, {
+			conversationId,
+			agentId,
+			messageId,
+			payload: turnPayload,
+		})
+		// Close the race: the session may have reached `running` (and
+		// already drained) between the lookup above and the buffer insert —
+		// nothing would ever drain this row, so re-check and drain now.
+		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
+		return 'buffered_for_booting_session'
+	}
+	if (existing) {
+		try {
+			await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
+			return 'wrote_to_running_session'
+		} catch (err) {
+			logger.warn(
+				'writeInput to existing interactive conversation session failed — spawning a fresh one',
+				{ agentId, conversationId, sessionId: existing.id, error: String(err) },
+			)
+			// The old session is dead (detached stdin, container gone), not
+			// just momentarily busy. Mark it failed now — otherwise it keeps
+			// satisfying sessions_conversation_actor_active_uniq and the
+			// fresh createSession() below collides with its own zombie.
+			await sessionManager
+				.markSessionFailedAfterContainerLoss(existing.id, existing.workspaceId)
+				.catch((markErr: unknown) =>
+					logger.warn('Failed to mark dead conversation session as failed', {
+						agentId,
+						conversationId,
+						sessionId: existing.id,
+						error: String(markErr),
+					}),
+				)
+			// Fall through to spawn fresh below.
+		}
+	}
+
+	return spawnOrJoinConversationSession({
+		db,
+		sessionManager,
+		workspaceId,
+		conversationId,
+		messageId,
+		agentId,
+		message,
+		conversationHistory,
+		isDirectConversation,
+		wasMentioned,
+	})
 }
 
 /**
