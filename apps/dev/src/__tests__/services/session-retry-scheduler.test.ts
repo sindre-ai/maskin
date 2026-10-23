@@ -126,6 +126,19 @@ describe('SessionRetryScheduler', () => {
 		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(true)
 	})
 
+	it('hands the rerun to whoever handed the original work over', async () => {
+		const { db } = fakeDb([
+			buildDueRow({ spawnedBySessionId: 'session-sender', spawnedByMessageId: 17903 }),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const call = vi.mocked(startSession).mock.calls[0][0]
+		expect(call.spawnedBySessionId).toBe('session-sender')
+		expect(call.spawnedByMessageId).toBe(17903)
+	})
+
 	it('caps at MAX_RETRY_ATTEMPTS and emits session_retry_capped', async () => {
 		const { db, inserts } = fakeDb([buildDueRow({ attemptNumber: MAX_RETRY_ATTEMPTS })])
 		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
