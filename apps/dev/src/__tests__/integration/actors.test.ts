@@ -265,6 +265,121 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		expect(res.status).toBe(403)
 		expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
 	})
+
+	describe('tools.envFrom needs a human admin or owner', () => {
+		const storedEnvFrom = ['AGENT_SECRET_FAKE_STORED']
+
+		/** An app where the caller is the given agent, as with an agent API key. */
+		function createAgentCallerApp(agentId: string) {
+			const app = new OpenAPIHono<{ Variables: Record<string, unknown> }>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', agentId)
+				c.set('actorType', 'agent')
+				c.set('sessionManager', { stopSession: async () => {} })
+				await next()
+			})
+			app.route('/api/actors', actorsRoutes as never)
+			return app
+		}
+
+		async function seedAgentWithEnvFrom(callerRole?: 'member' | 'admin') {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { ws, agent } = await seedAgentInWorkspaceOf(otherOwner.id, callerRole)
+			await db
+				.update(actors)
+				.set({ tools: { mcpServers: {}, envFrom: storedEnvFrom } })
+				.where(eq(actors.id, agent.id))
+			return { ws, agent }
+		}
+
+		it('returns 403 and leaves the row unchanged when an agent adds a name to its own tools', async () => {
+			const { agent } = await seedAgentWithEnvFrom()
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: [...storedEnvFrom, 'AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('returns 403 when an agent with no stored envFrom adds one to its own tools', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
+		})
+
+		it('returns 403 when an agent with the admin role changes envFrom on another agent', async () => {
+			const { ws, agent } = await seedAgentWithEnvFrom()
+			const adminAgent = await insertActor(db, { type: 'agent', name: 'Admin Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: adminAgent.id, role: 'admin' })
+
+			const res = await createAgentCallerApp(adminAgent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('lets an agent edit its other tools while envFrom stays as stored', async () => {
+			const { agent } = await seedAgentWithEnvFrom()
+
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { ...fakeTools, envFrom: storedEnvFrom },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await readAgent(agent.id)).tools).toMatchObject({
+				...fakeTools,
+				envFrom: storedEnvFrom,
+			})
+		})
+
+		it('returns 403 when a plain human member changes envFrom', async () => {
+			const { agent } = await seedAgentWithEnvFrom('member')
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('lets a human admin change envFrom', async () => {
+			const { agent } = await seedAgentWithEnvFrom('admin')
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await readAgent(agent.id)).tools).toMatchObject({
+				envFrom: ['AGENT_SECRET_FAKE_ADDED'],
+			})
+		})
+	})
 })
 
 function createMemoryStorage(): StorageProvider {
@@ -746,6 +861,28 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const name = `Agent admin with tools ${randomUUID()}`
 
 			const res = await post({ name, workspace_id: ws.id, tools: fakeTools }, bearer(callerKey))
+
+			expect(res.status).toBe(403)
+			expect(await agentRowsNamed(name)).toHaveLength(0)
+		})
+
+		it('returns 403 and writes no rows when an agent caller with the admin role sends envFrom', async () => {
+			const ws = await workspaceWithTestActor('member')
+			const callerKey = `ank_envfromagent${randomUUID()}`
+			const caller = await insertActor(db, {
+				type: 'agent',
+				name: 'Env Admin Agent',
+				apiKey: callerKey,
+			})
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: caller.id, role: 'admin' })
+			const name = `Agent admin with envFrom ${randomUUID()}`
+
+			const res = await post(
+				{ name, workspace_id: ws.id, tools: { envFrom: ['AGENT_SECRET_FAKE_NAME'] } },
+				bearer(callerKey),
+			)
 
 			expect(res.status).toBe(403)
 			expect(await agentRowsNamed(name)).toHaveLength(0)
