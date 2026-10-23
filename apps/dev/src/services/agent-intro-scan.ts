@@ -149,7 +149,7 @@ export function createIntroScanRunner(deps: {
 						if (!finished) nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_AFTER_MS)
 						return
 					}
-					await new Promise((resolve) => setTimeout(resolve, 500))
+					await new Promise((resolve) => setTimeout(resolve, 1000))
 				}
 			}
 			void startNudgeClockWhenRunning().catch((err: unknown) =>
