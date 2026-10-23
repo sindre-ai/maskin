@@ -5074,6 +5074,12 @@ ${cont.continues_prompt}
 				// idle; if it's still running, leave the reattach loop in
 				// streamContainerLogs to recover and try again next tick.
 				if (!session.containerId) {
+					// A row still waiting for a workspace or agent-server slot has no
+					// container yet, however long its last log line is. It is not
+					// dead; the dispatcher stamps it running once it starts. How long
+					// a row may wait is bounded by the waiting-bound step, not here.
+					if (session.status !== 'running') continue
+
 					// A `running` row with no containerId is unrecoverable — pauseSession
 					// would reject on the same guard and the watchdog would log-spam
 					// every minute forever. Route to terminal-failed instead.
