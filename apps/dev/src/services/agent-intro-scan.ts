@@ -7,8 +7,11 @@ import type { IntroStep } from './agent-intro-template'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
-/** How long the person waits for the agent to look around before the generic steps go out. */
-export const INTRO_SCAN_TIMEOUT_MS = 60_000
+/** There is no cap on the scan. After this long the agent is asked to answer with what it has. */
+export const INTRO_SCAN_NUDGE_AFTER_MS = 20_000
+const INTRO_SCAN_NUDGE_RETRY_MS = 5_000
+export const INTRO_SCAN_NUDGE =
+	'Time is short. Stop looking now and reply with the JSON object, using what you have found so far.'
 /** The scan offers at most this many steps; the template adds its own closing step. */
 const MAX_SCANNED_STEPS = 3
 const MAX_SCANNED_INTEGRATIONS = 4
@@ -34,7 +37,7 @@ export function buildIntroScanPrompt(args: IntroScanArgs): string {
 	return [
 		`You were just created in this workspace as "${args.agent.name}"${description ? ` (${description})` : ''}, for ${recipient}. They are about to read your first message in a chat with you.`,
 		'',
-		'Before they see suggestions, take a quick look around so the suggestions fit this workspace. Be fast: at most 6 tool calls, read-only, and finish in under a minute. Do not write, send or change anything.',
+		'Before they see suggestions, take a quick look around so the suggestions fit this workspace. Be quick and read-only: do not write, send or change anything. You may be asked to stop and answer with what you have so far; if so, reply with the JSON straight away.',
 		'1. list_integrations: which tools are connected and active.',
 		'2. list_keychain_credentials: which credentials exist. Look at names only.',
 		'3. list_objects (and list_loops if useful): what is going on right now, such as open bets and tasks.',
@@ -108,6 +111,8 @@ export function createIntroScanRunner(deps: {
 }): IntroScanRunner {
 	return async (args) => {
 		try {
+			let finished = false
+			let nudgeTimer: ReturnType<typeof setTimeout> | undefined
 			const handle = await startSession({
 				workspaceId: args.workspaceId,
 				actorId: args.agent.id,
@@ -116,11 +121,30 @@ export function createIntroScanRunner(deps: {
 				createdBy: args.recipient.id,
 				initiatedFromObjectId: null,
 				await: 'terminal',
-				awaitTimeoutMs: INTRO_SCAN_TIMEOUT_MS,
 			})
-			const outcome = await handle.awaitResult
+			// No cap on the scan itself. Past the nudge time the agent is told to wrap up;
+			// if its session is not accepting input yet (still booting), try again shortly.
+			const nudge = async () => {
+				if (finished) return
+				try {
+					await deps.sessionManager.writeInput(handle.sessionId, {
+						type: 'user',
+						message: { role: 'user', content: INTRO_SCAN_NUDGE },
+					})
+				} catch {
+					if (!finished) nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_RETRY_MS)
+				}
+			}
+			nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_AFTER_MS)
+			let outcome: Awaited<typeof handle.awaitResult>
+			try {
+				outcome = await handle.awaitResult
+			} finally {
+				finished = true
+				if (nudgeTimer) clearTimeout(nudgeTimer)
+			}
 			if (outcome?.kind === 'timed-out') {
-				// The wait is over; the session would keep spending, so end it.
+				// The lifecycle's own wait ran out; the session would keep spending, so end it.
 				await deps.sessionManager.stopSession(handle.sessionId).catch((err: unknown) =>
 					logger.warn('Agent intro scan: could not stop a timed-out session', {
 						sessionId: handle.sessionId,
