@@ -931,7 +931,9 @@
 			cursor: default;
 		}
 		/* Unchecked boxes darken on hover; read-only (disabled) boxes stay still. */
-		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:hover:not(:disabled, :checked) {
+		&
+			:is(li[data-checked], li.task-list-item)
+			input[type="checkbox"]:hover:not(:disabled, :checked) {
 			border-color: var(--muted-foreground);
 		}
 		/* appearance: none drops the native look, so keep an explicit keyboard

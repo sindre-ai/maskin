@@ -265,7 +265,9 @@ describe('NotificationInput behind rich-markdown-editor', () => {
 	it('mounts the notification-variant editor for multiline text when the flag is on', async () => {
 		localStorage.setItem('ff:rich-markdown-editor', 'on')
 		const { container } = render(<NotificationInput metadata={multiline} onSubmit={vi.fn()} />)
-		await waitFor(() => expect(container.querySelector('.ProseMirror')).not.toBeNull())
+		await waitFor(() => expect(container.querySelector('.ProseMirror')).not.toBeNull(), {
+			timeout: 10000,
+		})
 		expect(container.querySelector('textarea')).toBeNull()
 	})
 

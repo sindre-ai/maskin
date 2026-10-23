@@ -221,7 +221,7 @@ function buildShortcutExtension(
 	return Extension.create({
 		name: 'maskinEditorShortcuts',
 		// Higher than the default 100 so this extension's key handlers run
-		// before StarterKit's (Bold/Italic/Strike/etc.) — we need to see the
+		// before the base extensions' (Bold/Italic/Strike/etc.) — we need to see the
 		// shortcut firing to emit the PostHog event. If the default handler
 		// consumed the key first, the emit never fires.
 		priority: 1000,

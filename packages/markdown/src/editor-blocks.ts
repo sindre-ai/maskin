@@ -19,11 +19,12 @@ export function editorMarkdownIt(editor: Editor): MarkdownItLike {
 /** The editor's markdown for each top-level block of its document, one string per block. */
 export function serializeTopLevelBlocks(editor: Editor): string[] {
 	const blocks: string[] = []
-	editor.state.doc.forEach((child) => {
-		const single = editor.schema.topNodeType.create(null, [child])
+	const { doc } = editor.state
+	for (let index = 0; index < doc.childCount; index++) {
+		const single = editor.schema.topNodeType.create(null, [doc.child(index)])
 		const markdown = editor.storage.markdown.serializer.serialize(single) as string
 		blocks.push(markdown.replace(/\n+$/, ''))
-	})
+	}
 	return blocks
 }
 
@@ -47,7 +48,8 @@ export function nodeFeatures(node: ProseMirrorNode): BlockFeatures {
 
 		if (current.isTextblock) {
 			let linkHref: string | null = null
-			current.forEach((child) => {
+			for (let index = 0; index < current.childCount; index++) {
+				const child = current.child(index)
 				const href = child.marks.find((mark) => mark.type.name === 'link')?.attrs.href ?? null
 				if (href !== null && href !== linkHref) {
 					features.linkTargets.push(String(href))
@@ -55,7 +57,7 @@ export function nodeFeatures(node: ProseMirrorNode): BlockFeatures {
 					features.linkTitles.push('')
 				}
 				linkHref = href
-			})
+			}
 		}
 		if (current.isText) text += current.text ?? ''
 		current.forEach(visit)
