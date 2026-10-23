@@ -30,6 +30,8 @@ final class LiveMeetingSession {
 	var showsCaptions = true
 	/// Loudspeaker (true) or earpiece.
 	private(set) var usesSpeaker = true
+	/// What was said in a voice call, as it was transcribed. Observed, so the thread's card follows it.
+	private(set) var lines: [LiveCallLine] = []
 
 	@ObservationIgnored private let now: () -> Date
 	@ObservationIgnored let dictation: LiveVoiceController
@@ -70,9 +72,18 @@ final class LiveMeetingSession {
 		if let realtime {
 			voice = realtime
 			realtime.onFallBack = { [weak self] in self?.useDictation() }
+			realtime.onLine = { [weak self] isYou, text in self?.keep(isYou: isYou, text: text) }
 		} else {
 			voice = dictation
 		}
+	}
+
+	/// A finished line of a voice call goes to the call's record on this device: the call posts nothing
+	/// to the chat, so this is what the card shows during the call and after it.
+	private func keep(isYou: Bool, text: String) {
+		let line = LiveCallLine(isYou: isYou, text: text, at: now())
+		lines.append(line)
+		if let id = callRef.id { log.update(id) { $0.lines.append(line) } }
 	}
 
 	/// The server can't take a voice call for this person: carry on as a dictated conversation.
