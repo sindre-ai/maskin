@@ -14,7 +14,11 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
-import { type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
+import {
+	INMAIL_CHAT_SPECIFICS,
+	type LinkedInInmailCreditsQuery,
+	inmailCreditsPath,
+} from './inmail'
 import {
 	type LinkedInCancelRelationRequestPayload,
 	type LinkedInListRelationRequestsQuery,
@@ -42,6 +46,11 @@ export type LinkedInSendMessagePayload = {
 	attachments?: unknown[]
 	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
 	inbox_id?: string
+	/**
+	 * Start the chat as a classic InMail, which spends one credit. Only `send_inmail` sets it.
+	 * A wrong key is silently a plain chat start, so the body is pinned by a test (see inmail.ts).
+	 */
+	inmail?: boolean
 }
 
 export type LinkedInReplyPayload = {
@@ -562,6 +571,7 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			if (payload.attachments && payload.attachments.length > 0) {
 				body.attachments = payload.attachments
 			}
+			if (payload.inmail) body.specifics = INMAIL_CHAT_SPECIFICS
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/inboxes/${inbox}/chats/send`,

@@ -88,6 +88,10 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs).toContain('react_to_post')
 	})
 
+	it('personal registers the outreach verb send_inmail', () => {
+		expect(toolsForIdentity(personal)).toContain('send_inmail')
+	})
+
 	it('page with messagingEnabled=true registers posts + messaging suites but never personal-only ones', () => {
 		const verbs = new Set(toolsForIdentity(pageMessagingEnabled))
 		expect(verbs.has('publish_post')).toBe(true)
@@ -111,6 +115,7 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
 		expect(verbs.has('react_to_post')).toBe(false)
+		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('page with messagingEnabled=false registers posts suite only', () => {
@@ -137,6 +142,7 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
 		expect(verbs.has('react_to_post')).toBe(false)
+		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('preserves canonical order (spec order, not alphabetical) — stable tools/list diffs', () => {
