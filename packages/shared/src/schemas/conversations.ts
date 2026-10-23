@@ -287,7 +287,7 @@ export type IntegrationAccessRequestLevel = (typeof INTEGRATION_ACCESS_REQUEST_L
 export const messageIntegrationAccessRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
-	reply_to_session: replyToSessionSchema,
+	reply_to_session: replyToSessionSchema(),
 	/** The connected integration being asked for. */
 	integration_id: z.string().uuid(),
 	/** Its provider name, e.g. 'slack'. */
