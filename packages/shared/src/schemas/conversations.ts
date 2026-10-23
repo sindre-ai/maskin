@@ -49,6 +49,11 @@ export const messageFinalOutputSchema = z.object({
 	 * it makes the over-eager cases findable without hunting through logs.
 	 */
 	recovered: z.boolean().optional(),
+	/**
+	 * Copied in from a background run when it was opened as a chat, not posted live. Its
+	 * thinking and tool calls are read back from that run's own log (`messages.session_id`).
+	 */
+	backfilled: z.boolean().optional(),
 	is_error: z.boolean().optional(),
 	/**
 	 * How a failed turn (`is_error`) was read: 'transient' means the model API

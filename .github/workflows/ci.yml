@@ -7,6 +7,12 @@ on:
   # Without it they report nothing until the aggregate bet -> main PR.
   pull_request:
     branches: [main, 'bet/**']
+  # GitHub merge queue: runs the required checks on a temporary branch holding
+  # main plus the queued PRs. Without this trigger the checks never report on
+  # that branch and every queued PR times out. The `changes` job only diffs on
+  # pull_request, so a queue run falls through to "run everything".
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
