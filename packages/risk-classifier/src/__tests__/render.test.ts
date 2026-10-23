@@ -35,6 +35,7 @@ describe('renderRiskScoreBlock', () => {
 	it('names the rule that gated the PR in both outputs', () => {
 		const v = classify({
 			...trivialInput(),
+			core_tables: ['events'],
 			files: [
 				{
 					path: 'packages/db/drizzle/0108_x.sql',
