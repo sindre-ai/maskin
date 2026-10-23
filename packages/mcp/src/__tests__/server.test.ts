@@ -101,6 +101,13 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('create_trigger')
 	})
 
+	it('exposes no tool for the admin-only Keychain lift or value replacement', () => {
+		createMcpServer(config)
+		const registeredNames = vi.mocked(registerAppTool).mock.calls.map((call) => call[1] as string)
+		expect(registeredNames.filter((name) => /lift|rotate/i.test(name))).toEqual([])
+		expect(Object.keys(tools).filter((name) => /lift|rotate/i.test(name))).toEqual([])
+	})
+
 	it('registers tools with descriptions', () => {
 		createMcpServer(config)
 		const toolDefs = vi.mocked(registerAppTool).mock.calls.map((call) => call[2])
@@ -2081,6 +2088,25 @@ describe('tool handlers', () => {
 				).rejects.toThrow(/unknown status/)
 			})
 
+			it('rejects closed_when referencing an object type the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad type',
+						closed_when: { nonexistent: ['loop_stage=live'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/closed_when references unknown object type/)
+			})
+
 			it('deletes just-created step triggers when the graph insert fails', async () => {
 				const deleted: string[] = []
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -2167,6 +2193,40 @@ describe('tool handlers', () => {
 
 				expect(patches[0]?.metadata).toEqual({ tags: ['Sales', 'EMEA'] })
 				expect(patches[1]?.metadata).toEqual({ tags: [] })
+			})
+
+			it('sets metadata.targets from the targets argument and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: {},
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const rows = [{ label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }]
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', targets: rows })
+				await handler({ id: 'loop-1', targets: [] })
+
+				expect(patches[0]?.metadata).toEqual({ targets: rows })
+				expect(patches[1]?.metadata).toEqual({ targets: [] })
 			})
 
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {

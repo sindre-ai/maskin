@@ -49,6 +49,9 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 			mcp.tool('send email', 'Send an email', { to: z.string() }, async ({ to }) => ({
 				content: [{ type: 'text', text: `sent to ${to}` }],
 			}))
+			mcp.tool('read inbox', 'Read the inbox', {}, { readOnlyHint: true }, async () => ({
+				content: [{ type: 'text', text: 'empty' }],
+			}))
 			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
 			res.on('close', () => transport.close())
 			await mcp.connect(transport)
@@ -80,6 +83,20 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 			)) as { content: Array<{ text: string }> }
 			expect(result.content[0]?.text).toBe('sent to a@b.c')
 			expect(ext.seenAuth).toContain('Bearer tok')
+			await toolkit.close()
+		} finally {
+			ext.stop()
+		}
+	})
+
+	it('counts a platform read and an agent-server tool that declares readOnlyHint as reads, nothing else', async () => {
+		const ext = await startExternalServer()
+		try {
+			const toolkit = await createVoiceToolkit(config, { gmail: { url: ext.url } })
+			expect(toolkit.readOnlyTools.has('list_objects')).toBe(true)
+			expect(toolkit.readOnlyTools.has('gmail__read_inbox')).toBe(true)
+			expect(toolkit.readOnlyTools.has('gmail__send_email')).toBe(false)
+			expect(toolkit.readOnlyTools.has('create_comment')).toBe(false)
 			await toolkit.close()
 		} finally {
 			ext.stop()

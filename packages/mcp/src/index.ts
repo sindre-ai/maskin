@@ -84,6 +84,7 @@ export type {
 // Live (voice) calls get the same tools as chat, read straight from the MCP
 // server. See ./voice-tools.ts.
 export { createVoiceToolkit } from './voice-tools.js'
+export { READ_ONLY_TOOLS } from './annotations.js'
 export type {
 	VoiceExternalMcpServer,
 	VoiceRealtimeTool,
