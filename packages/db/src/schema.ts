@@ -235,8 +235,7 @@ export const relationships = pgTable(
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
-		// Applied live via migration 0074; hook itself gated on
-		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
 			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
@@ -592,11 +591,8 @@ export const triggers = pgTable('triggers', {
 	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
 	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
 	escalateAfterMs: integer('escalate_after_ms'),
-	// D6b idempotency guard: the last time the escalation reconciler posted
-	// an escalation comment for this step. The reconciler skips a step whose
-	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
-	// timestamp for the hands-off actor), so a new wait spell re-arms
-	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
 	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
@@ -1147,6 +1143,12 @@ export const voiceSessions = pgTable('voice_sessions', {
 	transcriptStorageKey: text('transcript_storage_key'),
 	inputAudioSeconds: integer('input_audio_seconds'),
 	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
 	inputTokens: integer('input_tokens'),
 	outputTokens: integer('output_tokens'),
 	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),

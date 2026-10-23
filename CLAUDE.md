@@ -54,7 +54,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 73 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 88 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -242,7 +242,7 @@ promoting it, so the config can't become a graveyard of undeleted code.
 - Flags gate **per-actor behaviour**, never shared state. A flag may gate any
   behaviour whose off-state is the already-shipped state — visual (a UI branch)
   or behavioural (an action the system takes for the flagging actor, read per
-  driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+  driver-actor). A flag must
   **never** make a data-layer, API, or migration change safe: those change
   shared state for everyone, and an actor-scoped flag read at runtime cannot
   isolate the un-flagged population, so such changes must be safe for all users

@@ -1,5 +1,5 @@
 import { Children, type ReactElement, type ReactNode, isValidElement, useMemo } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { type Components, type Options } from 'react-markdown'
 import { remarkPlugins } from '../plugins'
 import { type MentionActor, MentionedText } from './mentioned-text'
 import { MARKDOWN_PROSE_CLASS } from './prose'
@@ -21,6 +21,14 @@ export interface RenderImageArgs {
 	src: string | undefined
 	alt: string | undefined
 	title: string | undefined
+}
+
+export interface ComponentOverridesContext {
+	/**
+	 * Wraps text children so @mentions render inside them. The identity when
+	 * `mentionActors` is not set, so an override can call it unconditionally.
+	 */
+	wrap: (children: ReactNode) => ReactNode
 }
 
 export interface MarkdownRendererProps {
@@ -49,6 +57,19 @@ export interface MarkdownRendererProps {
 	 * import). Return `undefined` to fall back to a plain `<img>`.
 	 */
 	renderImage?: (args: RenderImageArgs) => ReactNode | undefined
+	/**
+	 * Extra rehype plugins, run after the built-in remark plugins. Lets
+	 * `apps/web` annotate the tree (for example to place chat cards) without
+	 * this package knowing about them. Keep the array's identity stable.
+	 */
+	rehypePlugins?: Options['rehypePlugins']
+	/**
+	 * Injected component overrides, merged over the defaults (including the
+	 * mention-wrapping ones). Lets `apps/web` draw app-only elements such as
+	 * chat cards. Keep its identity stable (`useCallback`), or every render
+	 * rebuilds the component map and remounts what it draws.
+	 */
+	getComponentOverrides?: (context: ComponentOverridesContext) => Components
 }
 
 function readCodeLanguage(child: ReactNode): string | undefined {
@@ -119,6 +140,8 @@ export function MarkdownRenderer({
 	renderVisuals = false,
 	renderCodeBlock,
 	renderImage,
+	rehypePlugins,
+	getComponentOverrides,
 }: MarkdownRendererProps) {
 	const components = useMemo<Components>(() => {
 		const code: Components['code'] = ({ children, className: codeClass }) => {
@@ -193,8 +216,10 @@ export function MarkdownRenderer({
 				)
 			}
 
-		if (!mentionActors) return { code, img, pre, table, a: link() }
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
+		const wrap = (children: ReactNode) =>
+			mentionActors ? wrapWithMentions(children, mentionActors, onMentionClick) : children
+		const overrides = getComponentOverrides?.({ wrap })
+		if (!mentionActors) return { code, img, pre, table, a: link(), ...overrides }
 		return {
 			code,
 			img,
@@ -209,8 +234,16 @@ export function MarkdownRenderer({
 			a: link(wrap),
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
+			...overrides,
 		}
-	}, [mentionActors, onMentionClick, renderVisuals, renderCodeBlock, renderImage])
+	}, [
+		mentionActors,
+		onMentionClick,
+		renderVisuals,
+		renderCodeBlock,
+		renderImage,
+		getComponentOverrides,
+	])
 
 	const proseClass =
 		size === 'xs'
@@ -229,6 +262,7 @@ export function MarkdownRenderer({
 					remarkPlugins={remarkPlugins as unknown as never[]}
 					disallowedElements={disallowedElements}
 					unwrapDisallowed={effectiveUnwrap}
+					rehypePlugins={rehypePlugins}
 					components={components}
 				>
 					{content}

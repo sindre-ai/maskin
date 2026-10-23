@@ -159,8 +159,6 @@ struct ProfileSheet: View {
 				workspaceId: services.workspaceId ?? "", apiKey: services.apiKey)
 		case .settings:
 			SettingsScreen(environment: environment)
-		case .notifications:
-			NotificationsPage(flows: loops?.loops ?? [], workspaces: environment.workspaces.workspaces)
 		case .autonomy:
 			if let workspaceID = environment.workspaceId {
 				AutonomyView(
@@ -333,7 +331,6 @@ extension ProfileMenuItem {
 		case .integrations: "puzzlepiece.extension"
 		case .billing: "creditcard"
 		case .keys: "key"
-		case .notifications: "bell"
 		case .autonomy: "slider.horizontal.3"
 		}
 	}

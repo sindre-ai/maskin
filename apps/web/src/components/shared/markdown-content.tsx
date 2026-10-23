@@ -5,9 +5,17 @@ import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { captureEditorParseError } from '@/lib/editor-events'
+import {
+	type HastNode,
+	LINKED_CARDS_TAG,
+	type LinkedTarget,
+	type StandaloneCard,
+	placeLinkedCards,
+} from '@/lib/linked-objects'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
 import { capture } from '@/lib/posthog'
 import {
+	type ComponentOverridesContext,
 	MarkdownRenderer,
 	type MentionActor,
 	type RenderCodeBlockArgs,
@@ -19,6 +27,8 @@ import type {
 	ToolbarActionInfo,
 } from '@maskin/markdown/react/editor'
 import {
+	Fragment,
+	type ReactNode,
 	Suspense,
 	lazy,
 	useCallback,
@@ -28,6 +38,7 @@ import {
 	useRef,
 	useState,
 } from 'react'
+import type { Components } from 'react-markdown'
 
 // Dynamic-imported so Tiptap never bundles into a read-only route — read paths
 // (feeds, notifications, marketing) never touch this chunk. The Vite chunk-
@@ -354,6 +365,39 @@ function locateOffset(root: HTMLElement, target: number): { node: Node; offset: 
 	return null
 }
 
+/**
+ * Where a message's links to objects and files turn into cards. A link that stands alone in its
+ * paragraph or list item is replaced by its card in place; any other link's card goes under the
+ * text, and an id drawn in place is never drawn again there.
+ */
+export interface LinkedCardsOptions {
+	workspaceId: string
+	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
+	conversationId?: string
+	agentId?: string
+	/** Ids whose card an earlier message in the chat already shows: their links stay links. */
+	skipIds?: ReadonlySet<string>
+	/**
+	 * Draws the card for a link, or `fallback` when it deserves none. Passed in rather than
+	 * imported because the cards render markdown themselves. Keep its identity stable.
+	 */
+	renderCard: (
+		target: LinkedTarget,
+		fallback: ReactNode,
+		context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+	) => ReactNode
+}
+
+// Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
+function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
+	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds)
+}
+
+// A list item holding a card gives up its bullet (a numbered one keeps its number, so the
+// count does not skip). `data-linked-card` is on the card's root.
+const CARD_ITEM_CLASS =
+	'[ul>&]:has-[>[data-linked-card]]:list-none [ul>&]:has-[>[data-linked-card]]:before:hidden'
+
 /** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
 const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
 
@@ -378,6 +422,7 @@ function TextareaMarkdownContent({
 	onMentionClick,
 	renderVisuals = false,
 	editorLabel,
+	linkedCards: linkedCardsOption,
 }: {
 	content: string
 	// May return a promise. If it rejects, the editor is reopened with the
@@ -400,8 +445,79 @@ function TextareaMarkdownContent({
 	renderVisuals?: boolean
 	/** Accessible name for the editing field — it has no visible label. */
 	editorLabel?: string
+	/**
+	 * Opt-in, for chat messages: links to drafts and previewable files become cards, in place
+	 * where the link stands alone and under the text where it sits in a sentence. Without it
+	 * the markdown renders exactly as before.
+	 */
+	linkedCards?: LinkedCardsOptions
 }) {
 	const [editing, setEditing] = useState(false)
+	// Keyed on the values, not the object: a caller passing a fresh literal each render must not
+	// change the component map, or every card in the message would remount.
+	const cardsWorkspaceId = linkedCardsOption?.workspaceId
+	const cardsConversationId = linkedCardsOption?.conversationId
+	const cardsAgentId = linkedCardsOption?.agentId
+	const cardsRenderer = linkedCardsOption?.renderCard
+	const cardsSkipIds = linkedCardsOption?.skipIds
+	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
+		() =>
+			cardsWorkspaceId && cardsRenderer
+				? {
+						workspaceId: cardsWorkspaceId,
+						conversationId: cardsConversationId,
+						agentId: cardsAgentId,
+						renderCard: cardsRenderer,
+					}
+				: undefined,
+		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer],
+	)
+	// With linkedCards on, a paragraph or list item that is only a link to a draft or a
+	// previewable file renders as its card; the original element is what shows until the
+	// card is known to qualify, so a link never vanishes.
+	const getComponentOverrides = useMemo(() => {
+		if (!linkedCards) return undefined
+		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
+			const card = (node as HastNode | undefined)?.data?.linkedCard as StandaloneCard | undefined
+			if (!card) return original
+			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
+				...linkedCards,
+				label: card.label ?? undefined,
+			})
+		}
+		return ({ wrap }: ComponentOverridesContext) =>
+			({
+				p: ({ node, children }: { node?: HastNode; children?: ReactNode }) =>
+					withCard(node, <p>{wrap(children)}</p>, wrap(children)),
+				li: ({ children }: { children?: ReactNode }) => (
+					<li className={CARD_ITEM_CLASS}>{wrap(children)}</li>
+				),
+				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
+					const list = (key: string) =>
+						String(node?.properties?.[key] ?? '')
+							.split(',')
+							.filter(Boolean)
+					return (
+						<>
+							{list('objects').map((id) => (
+								<Fragment key={`object:${id}`}>
+									{linkedCards.renderCard({ kind: 'object', id }, null, linkedCards)}
+								</Fragment>
+							))}
+							{list('files').map((id) => (
+								<Fragment key={`file:${id}`}>
+									{linkedCards.renderCard({ kind: 'file', id }, null, linkedCards)}
+								</Fragment>
+							))}
+						</>
+					)
+				},
+			}) as unknown as Components
+	}, [linkedCards])
+	const rehypePlugins = useMemo(
+		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
+		[linkedCards, cardsSkipIds],
+	)
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -809,6 +925,8 @@ function TextareaMarkdownContent({
 					renderVisuals={renderVisuals}
 					renderCodeBlock={renderChartBlock}
 					renderImage={renderMarkdownImage}
+					rehypePlugins={rehypePlugins as unknown as never[] | undefined}
+					getComponentOverrides={getComponentOverrides}
 				/>
 			</div>
 		</>

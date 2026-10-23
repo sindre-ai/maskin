@@ -5,6 +5,7 @@
 
 export { MarkdownRenderer } from './renderer'
 export type {
+	ComponentOverridesContext,
 	MarkdownRendererProps,
 	MarkdownRendererSize,
 	RenderCodeBlockArgs,
