@@ -1,5 +1,12 @@
 import { randomBytes } from 'node:crypto'
-import { events, actors, integrations, sessions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	agentGrants,
+	integrations,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, asc, eq, inArray, like } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
@@ -78,6 +85,29 @@ describe('CapabilityScanner (integration)', () => {
 			)
 			.returning()
 		return { workspaceId: ws.id, chiefOfStaffId: cos, agentIds: ids, slackId: slack.id }
+	}
+
+	/** A hand-added tool server on the workspace, granted to one agent. */
+	async function addCustomServer(agentId: string) {
+		const [custom] = await db
+			.insert(integrations)
+			.values(
+				buildIntegration({
+					workspaceId,
+					provider: 'custom-mcp',
+					status: 'active',
+					createdBy: getTestActorId(),
+					displayName: 'Hand-added server',
+					defaultAgentAccess: 'none',
+				}) as never,
+			)
+			.returning()
+		await db.insert(agentGrants).values({
+			workspaceId,
+			integrationId: custom.id,
+			actorId: agentId,
+			access: 'read_write',
+		})
 	}
 
 	function flagOn(id: string) {
@@ -232,7 +262,7 @@ describe('CapabilityScanner (integration)', () => {
 	})
 
 	it('a tool added to a source nobody holds is stored and never flagged', async () => {
-		// Opt-in provider with no agent attached: google-meet declares a server and is not auto-injected.
+		// google-meet declares a server; with the workspace default off and no grant, no agent can use it.
 		const humanId = getTestActorId()
 		const [meet] = await db
 			.insert(integrations)
@@ -242,6 +272,7 @@ describe('CapabilityScanner (integration)', () => {
 					provider: 'google-meet',
 					status: 'active',
 					createdBy: humanId,
+					defaultAgentAccess: 'none',
 				}) as never,
 			)
 			.returning()
@@ -364,11 +395,8 @@ describe('CapabilityScanner (integration)', () => {
 	})
 
 	it('suggesting is not granting: agent tools and integrations are unchanged by a full tick', async () => {
-		// Give one agent a hand-attached server so the config is non-trivial.
-		await db
-			.update(actors)
-			.set({ tools: { mcpServers: { custom: { type: 'http', url: 'https://example.com/mcp' } } } })
-			.where(eq(actors.id, agentIds[1]))
+		// Give one agent a grant on a hand-added server so the config is non-trivial.
+		await addCustomServer(agentIds[1])
 
 		const snapshotOf = async () => ({
 			actorTools: await db
@@ -381,6 +409,11 @@ describe('CapabilityScanner (integration)', () => {
 				.from(integrations)
 				.where(eq(integrations.workspaceId, workspaceId))
 				.orderBy(asc(integrations.id)),
+			grants: await db
+				.select()
+				.from(agentGrants)
+				.where(eq(agentGrants.workspaceId, workspaceId))
+				.orderBy(asc(agentGrants.id)),
 		})
 
 		const before = JSON.stringify(await snapshotOf())
@@ -402,6 +435,7 @@ describe('CapabilityScanner (integration)', () => {
 						provider: 'gmail',
 						status: 'active',
 						createdBy: getTestActorId(),
+						defaultAgentAccess: 'none',
 					}) as never,
 				)
 				.returning()
@@ -437,7 +471,7 @@ describe('CapabilityScanner (integration)', () => {
 			})
 			const before = JSON.stringify(await snapshotOf())
 
-			// Tick 1: baseline. Gmail declares a server, is opt-in and nobody holds it.
+			// Tick 1: baseline. Gmail declares a server, its default is off and nobody holds it.
 			const first = await scanner().scanWorkspace(workspaceId)
 			expect(first).toEqual({ status: 'scanned', mode: 'baseline', findingsWritten: 1 })
 
@@ -509,11 +543,13 @@ describe('CapabilityScanner (integration)', () => {
 				.update(integrations)
 				.set({ credentials: encrypt(everyScope) })
 				.where(eq(integrations.id, slackIntegrationId))
-			// A hand-attached server whose transport matches Gmail's declared one.
-			await db
-				.update(actors)
-				.set({ tools: { mcpServers: { gmail: { ...getProvider('gmail').config.mcp?.server } } } })
-				.where(eq(actors.id, agentIds[1]))
+			// One agent is granted Gmail.
+			await db.insert(agentGrants).values({
+				workspaceId,
+				integrationId: gmail.id,
+				actorId: agentIds[1],
+				access: 'read',
+			})
 
 			await scanner().scanWorkspace(workspaceId)
 			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_search: 'h-search' }))
@@ -525,11 +561,8 @@ describe('CapabilityScanner (integration)', () => {
 		})
 	})
 
-	it('counts hand-attached servers no provider covers as unscanned_servers', async () => {
-		await db
-			.update(actors)
-			.set({ tools: { mcpServers: { custom: { type: 'http', url: 'https://example.com/mcp' } } } })
-			.where(eq(actors.id, agentIds[1]))
+	it('counts hand-added servers no provider covers as unscanned_servers', async () => {
+		await addCustomServer(agentIds[1])
 		await scanner().scanWorkspace(workspaceId)
 		const [scan] = await eventsFor('capability_scan_completed')
 		expect(scan.data).toMatchObject({ unscanned_servers: 1 })

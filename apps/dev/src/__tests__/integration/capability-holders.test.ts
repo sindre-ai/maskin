@@ -1,5 +1,4 @@
-import { actors, integrations, workspaceMembers } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { agentGrants, integrations, workspaceMembers } from '@maskin/db/schema'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
 	countUnscannedServers,
@@ -25,12 +24,6 @@ describe('capabilities holders (integration)', () => {
 		await db.insert(workspaceMembers).values({ workspaceId: ws, actorId, role })
 	}
 
-	const MEET_SERVER = {
-		type: 'http',
-		url: '${MASKIN_API_URL}/api/integrations/google-meet/mcp',
-		headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
-	}
-
 	beforeEach(async () => {
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
@@ -49,20 +42,36 @@ describe('capabilities holders (integration)', () => {
 		await join(researcherId, 'member')
 	})
 
-	async function addIntegration(provider: string, config: Record<string, unknown> = {}) {
+	async function addIntegration(
+		provider: string,
+		opts: {
+			config?: Record<string, unknown>
+			defaultAgentAccess?: 'read' | 'read_write' | 'none'
+			workspace?: string
+		} = {},
+	) {
 		const [row] = await db
 			.insert(integrations)
 			.values(
 				buildIntegration({
-					workspaceId,
+					workspaceId: opts.workspace ?? workspaceId,
 					provider,
 					status: 'active',
 					createdBy: ownerId,
-					config,
+					config: opts.config ?? {},
+					...(opts.defaultAgentAccess ? { defaultAgentAccess: opts.defaultAgentAccess } : {}),
 				}) as never,
 			)
 			.returning()
 		return { key: `integration:${provider}:${row.id}`, provider, integrationId: row.id }
+	}
+
+	async function grant(
+		integrationId: string,
+		actorId: string,
+		access: 'none' | 'read' | 'read_write',
+	) {
+		await db.insert(agentGrants).values({ workspaceId, integrationId, actorId, access })
 	}
 
 	describe('recipientCanAct', () => {
@@ -96,36 +105,53 @@ describe('capabilities holders (integration)', () => {
 			expect(await holdersOf(ctx, { key: 'maskin:builtin' }, 'create_objects')).toEqual(all)
 		})
 
-		it('auto-injected provider: every agent unless the integration is not exposed', async () => {
-			const slack = await addIntegration('slack')
-			expect(await holdersOf(ctx, slack)).toHaveLength(3)
+		it('an agent with a grant is a holder, one without is not (default off)', async () => {
+			const slack = await addIntegration('slack', { defaultAgentAccess: 'none' })
+			await grant(slack.integrationId, salesRepId, 'read')
+			expect(await holdersOf(ctx, slack)).toEqual([salesRepId])
+		})
 
-			const hidden = await addIntegration('posthog', { expose_to_agent_sessions: false })
+		it('with the workspace default on, every agent without a grant is a holder', async () => {
+			const slack = await addIntegration('slack', { defaultAgentAccess: 'read' })
+			expect(await holdersOf(ctx, slack)).toEqual(
+				[agentWithAdminRoleId, salesRepId, researcherId].sort(),
+			)
+		})
+
+		it('with the default switched off and no grant, nobody is a holder', async () => {
+			const slack = await addIntegration('slack', { defaultAgentAccess: 'none' })
+			expect(await holdersOf(ctx, slack)).toEqual([])
+		})
+
+		it("an agent's own none grant beats the default", async () => {
+			const slack = await addIntegration('slack', { defaultAgentAccess: 'read' })
+			await grant(slack.integrationId, researcherId, 'none')
+			expect(await holdersOf(ctx, slack)).toEqual([agentWithAdminRoleId, salesRepId].sort())
+		})
+
+		it('an integration switched off for agent sessions has no holders, grants or not', async () => {
+			const hidden = await addIntegration('slack', {
+				config: { expose_to_agent_sessions: false },
+				defaultAgentAccess: 'read',
+			})
+			await grant(hidden.integrationId, salesRepId, 'read_write')
 			expect(await holdersOf(ctx, hidden)).toEqual([])
 		})
 
-		it('opt-in provider: only agents whose config has the same transport', async () => {
-			const meet = await addIntegration('google-meet')
-			await db
-				.update(actors)
-				.set({ tools: { mcpServers: { anything: MEET_SERVER } } })
-				.where(eq(actors.id, salesRepId))
-			expect(await holdersOf(ctx, meet)).toEqual([salesRepId])
+		it('a hand-added server living on the workspace counts for the agents granted it', async () => {
+			const custom = await addIntegration('custom-mcp', { defaultAgentAccess: 'none' })
+			await grant(custom.integrationId, researcherId, 'read_write')
+			expect(await holdersOf(ctx, custom)).toEqual([researcherId])
 		})
 
-		it('opt-in provider nobody attached: no holders', async () => {
-			const meet = await addIntegration('google-meet')
-			expect(await holdersOf(ctx, meet)).toEqual([])
-		})
-
-		it('a provider with no declared server and no auto-inject has no holders', async () => {
-			const linkedin = await addIntegration('linkedin-unipile')
-			expect(await holdersOf(ctx, linkedin)).toEqual([])
+		it('a provider this build has no server for has no holders', async () => {
+			const unknown = await addIntegration('no-such-provider', { defaultAgentAccess: 'read' })
+			expect(await holdersOf(ctx, unknown)).toEqual([])
 		})
 
 		it('holdersForSources answers every source in one call', async () => {
-			const slack = await addIntegration('slack')
-			const meet = await addIntegration('google-meet')
+			const slack = await addIntegration('slack', { defaultAgentAccess: 'read' })
+			const meet = await addIntegration('google-meet', { defaultAgentAccess: 'none' })
 			const map = await holdersForSources(ctx, [{ key: 'maskin:builtin' }, slack, meet])
 			expect(map.get('maskin:builtin')).toHaveLength(3)
 			expect(map.get(slack.key)).toHaveLength(3)
@@ -134,23 +160,11 @@ describe('capabilities holders (integration)', () => {
 
 		it("does not read another workspace's integration", async () => {
 			const otherWs = await insertWorkspace(db, ownerId)
-			const [row] = await db
-				.insert(integrations)
-				.values(
-					buildIntegration({
-						workspaceId: otherWs.id,
-						provider: 'slack',
-						status: 'active',
-						createdBy: ownerId,
-					}) as never,
-				)
-				.returning()
-			const holders = await holdersOf(ctx, {
-				key: `integration:slack:${row.id}`,
-				provider: 'slack',
-				integrationId: row.id,
+			const other = await addIntegration('slack', {
+				defaultAgentAccess: 'read',
+				workspace: otherWs.id,
 			})
-			expect(holders).toEqual([])
+			expect(await holdersOf(ctx, other)).toEqual([])
 		})
 	})
 
@@ -185,23 +199,16 @@ describe('capabilities holders (integration)', () => {
 	})
 
 	describe('countUnscannedServers', () => {
-		it('counts distinct hand-attached transports no provider covers', async () => {
-			const custom = { type: 'http', url: 'https://example.com/mcp' }
-			await db
-				.update(actors)
-				.set({
-					tools: {
-						mcpServers: {
-							a: custom,
-							b: custom,
-							meet: MEET_SERVER,
-							maskin: { type: 'http', url: '${MASKIN_API_URL}/mcp' },
-							gh: { type: 'stdio', command: 'github-mcp-server', args: ['stdio'] },
-						},
-					},
-				})
-				.where(eq(actors.id, salesRepId))
+		it('counts hand-added servers on the workspace that at least one agent can use', async () => {
+			const used = await addIntegration('custom-mcp', { defaultAgentAccess: 'none' })
+			await grant(used.integrationId, salesRepId, 'read_write')
+			await addIntegration('custom-mcp', { defaultAgentAccess: 'none' })
+			await addIntegration('slack', { defaultAgentAccess: 'read' })
 			expect(await countUnscannedServers(ctx)).toBe(1)
+		})
+
+		it('is zero when no hand-added server exists', async () => {
+			expect(await countUnscannedServers(ctx)).toBe(0)
 		})
 	})
 })

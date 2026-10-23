@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -7,7 +7,8 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../..')
 const CAPABILITIES_DIR = join(SRC, 'lib/capabilities')
 
 // holders.ts is the single place that answers who may use a source and who may
-// be told about it. Everything else on the capability path asks it.
+// be told about it, from main's grants model. Everything else on the capability
+// path asks it.
 const GUARDED = [
 	...readdirSync(CAPABILITIES_DIR)
 		.filter((name) => name.endsWith('.ts') && name !== 'holders.ts')
@@ -27,9 +28,17 @@ const FORBIDDEN = [
 	'workspace_grants',
 	'workspaceGrants',
 	'tool_grants',
+	'agentGrants',
+	'agent_grants',
+	'defaultAgentAccess',
+	'describeAgentAccess',
+	'listAgentAccess',
+	'resolveAgentAccess',
+	'effectiveAccess',
+	'attachesServer',
 ]
 
-describe('holders.ts is the single reader of agent tool config', () => {
+describe('holders.ts is the single reader of agent grants and tool config', () => {
 	it('guards the scanner and every capabilities file except holders.ts', () => {
 		expect(GUARDED.length).toBeGreaterThanOrEqual(6)
 		expect(GUARDED.some((p) => p.endsWith('services/capability-scanner.ts'))).toBe(true)
@@ -48,25 +57,6 @@ describe('holders.ts is the single reader of agent tool config', () => {
 			/['"](owner|admin)['"]/.test(readFileSync(path, 'utf8')),
 		)
 		expect(offenders).toEqual([])
-	})
-})
-
-function walk(dir: string): string[] {
-	return readdirSync(dir).flatMap((name) => {
-		const path = join(dir, name)
-		if (statSync(path).isDirectory()) return name === '__tests__' ? [] : walk(path)
-		return path.endsWith('.ts') ? [path] : []
-	})
-}
-
-describe('transportOf', () => {
-	it('is imported from holders.ts only', () => {
-		const importers = walk(SRC).filter(
-			(path) =>
-				!path.endsWith('lib/actor-tools-redaction.ts') &&
-				/import[^;]*\btransportOf\b[^;]*actor-tools-redaction/s.test(readFileSync(path, 'utf8')),
-		)
-		expect(importers.map((p) => p.slice(SRC.length + 1))).toEqual(['lib/capabilities/holders.ts'])
 	})
 })
 
@@ -91,10 +81,23 @@ describe('holders.ts contract', () => {
 		expect(/['"](owner|admin)['"]/.test(source)).toBe(false)
 	})
 
-	it('selects the implementation with one constant', () => {
-		expect(source.match(/const HOLDERS_IMPLEMENTATION/g)).toHaveLength(1)
-		expect(source).toContain('class AgentConfigHolders')
-		expect(source).toContain('class WorkspaceGrantHolders')
+	it("reuses main's access answer and keeps no copy of its rules", () => {
+		expect(source).toMatch(
+			/import \{ describeAgentAccess \} from '\.\.\/integrations\/agent-access-view'/,
+		)
+		for (const term of [
+			'agentGrants',
+			'defaultAgentAccess',
+			'providerMode',
+			'expose_to_agent_sessions',
+			'effectiveAccess',
+			'attachesServer',
+			'transportOf',
+			'mcpServers',
+			'actors.tools',
+		]) {
+			expect(source, term).not.toContain(term)
+		}
 	})
 
 	it('never writes agent config, integrations or grants', () => {
