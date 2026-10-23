@@ -17,6 +17,7 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -73,6 +74,8 @@ const db = createDb(databaseUrl)
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
