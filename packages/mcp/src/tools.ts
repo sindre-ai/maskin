@@ -4,6 +4,7 @@ import {
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
 	firstStepSchema,
+	loopTargetSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -189,6 +190,13 @@ const loopTagsSchema = z
 	.max(10)
 	.describe(
 		'Short labels saying which team, business unit or part of the business this loop belongs to, e.g. ["Sales", "EMEA"]. Shown as filter pills and chips on Flows. Replaces the current tags; pass [] to clear.',
+	)
+
+const loopTargetsSchema = z
+	.array(loopTargetSchema)
+	.max(50)
+	.describe(
+		'Targets the loop is measured against: a list of rows { label, source, actual, target }, optionally with ownerActorId and pace_policy ("strict" | "window"). Replaces the current targets; pass [] to clear. Must be a list, not a string. A bad row is rejected with its position and field.',
 	)
 
 const closedStatusesSchema = z
@@ -1348,6 +1356,7 @@ export const tools = {
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
 			tags: loopTagsSchema.optional(),
+			targets: loopTargetsSchema.optional(),
 		}),
 	},
 	update_loop: {
@@ -1380,6 +1389,7 @@ export const tools = {
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
 			tags: loopTagsSchema.optional(),
+			targets: loopTargetsSchema.optional(),
 			add_steps: z
 				.array(loopStepSchema)
 				.max(20)

@@ -5534,6 +5534,7 @@ export function createMcpServer(config: McpConfig) {
 				closed_statuses,
 				closed_when,
 				tags,
+				targets,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
@@ -5590,6 +5591,7 @@ export function createMcpServer(config: McpConfig) {
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
 				if (closed_when !== undefined) metadata.closed_when = closed_when
 				if (tags !== undefined) metadata.tags = tags
+				if (targets !== undefined) metadata.targets = targets
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
@@ -5703,6 +5705,7 @@ export function createMcpServer(config: McpConfig) {
 				closed_statuses,
 				closed_when,
 				tags,
+				targets,
 				add_steps,
 				add_trigger_ids,
 				remove_trigger_ids,
@@ -5799,6 +5802,7 @@ export function createMcpServer(config: McpConfig) {
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
 					if (closed_when !== undefined) metadataPatch.closed_when = closed_when
 					if (tags !== undefined) metadataPatch.tags = tags
+					if (targets !== undefined) metadataPatch.targets = targets
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
