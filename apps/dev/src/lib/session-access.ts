@@ -42,6 +42,20 @@ export async function startedByPerson(
 	return creator?.type === 'human'
 }
 
+/**
+ * Background work no chat owns: started by a trigger or an agent, with no chat of its own and
+ * none it asks in. Like reading it, writing to it is open to the workspace's people (the route
+ * keeps other agents out), since
+ * there is no one person or chat to scope it to.
+ */
+export async function isSharedBackgroundSession(
+	db: Database,
+	session: Pick<SessionRow, 'conversationId' | 'config' | 'triggerId' | 'createdBy'>,
+): Promise<boolean> {
+	if (session.conversationId || helperAskConversationId(session)) return false
+	return !(await startedByPerson(db, session))
+}
+
 /** The chats a session shows up in: its own, the one a helper asks in, and its anchor message's. */
 async function chatsOf(db: Database, session: SessionRow): Promise<string[]> {
 	const ids = new Set<string>()

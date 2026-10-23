@@ -49,6 +49,7 @@ import {
 	canReadSession,
 	canUpdateSessionActivity,
 	helperAskConversationId,
+	isSharedBackgroundSession,
 	sessionListVisibility,
 } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
@@ -61,6 +62,7 @@ import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
+import { ensureChatForSession } from '../services/session-chat'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 import {
@@ -184,10 +186,9 @@ app.openapi(createSessionRoute, (async (c) => {
 	// InteractiveTurnFinalizer). `ask_conversation_id` is where its questions go —
 	// kept in config rather than on `conversation_id`, so the helper is not a chat
 	// participant's session (no capacity exemption, no per-chat uniqueness).
-	const askConversationId =
-		link.linked && body.interactive !== false
-			? await resolveAskConversationId(db, link.spawnedBySessionId)
-			: null
+	const askConversationId = link.linked
+		? await resolveAskConversationId(db, link.spawnedBySessionId)
+		: null
 	// A helper started from a chat returns into that chat unless the caller said
 	// otherwise: when the sender is in a 1-1 chat,
 	// notify_on_complete defaults on (helper-return.ts then prefers the chat to the
@@ -1006,7 +1007,10 @@ app.openapi(inputSessionRoute, (async (c) => {
 		const inAskChat = askConversationId
 			? await isConversationParticipant(db, askConversationId, actorId)
 			: false
-		if (!inAskChat) {
+		if (
+			!inAskChat &&
+			!(c.get('actorType') === 'human' && (await isSharedBackgroundSession(db, session)))
+		) {
 			return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 		}
 	}
@@ -1040,6 +1044,9 @@ app.openapi(inputSessionRoute, (async (c) => {
 				message: { role: 'user', content: body.content },
 			},
 			body.attachments,
+			undefined,
+			// Who typed it, so the run can be read back with each message credited to its author.
+			{ maskin_actor_id: actorId },
 		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
@@ -1074,6 +1081,50 @@ app.openapi(inputSessionRoute, (async (c) => {
 
 	return c.json({ ok: true as const })
 }) as RouteHandler<typeof inputSessionRoute, Env>)
+
+// POST /:id/chat - Open a session as a chat
+//
+// A background run (a trigger, a cron) has no conversation, so there is no /chats/<id> to open
+// it in. The first call makes one with the person and the agent in it, hangs the run from a
+// message in it (so it is a thread of that chat) and lets the chat's people write to it; later
+// calls return the same chat.
+const chatSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/chat',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Open a session as a chat conversation',
+	request: { headers: workspaceIdHeader, params: sessionParamsSchema },
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ conversation_id: z.string().uuid(), created: z.boolean() }),
+				},
+			},
+			description: 'The conversation the session is opened in',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(chatSessionRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (!(await canReadSession(db, session, actorId, c.get('workspaceRole')))) {
+		return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
+	}
+
+	const { conversationId, created } = await ensureChatForSession(db, session, actorId)
+	return c.json({ conversation_id: conversationId, created }, 200)
+}) as RouteHandler<typeof chatSessionRoute, Env>)
 
 // POST /:id/continue - Carry on with a helper that has already ended
 //
@@ -1139,7 +1190,7 @@ app.openapi(continueSessionRoute, (async (c) => {
 				.limit(1)
 			if (anchor) chatIds.add(anchor.conversationId)
 		}
-		let entitled = false
+		let entitled = c.get('actorType') === 'human' && (await isSharedBackgroundSession(db, session))
 		for (const chatId of chatIds) {
 			if (await isConversationParticipant(db, chatId, actorId)) {
 				entitled = true

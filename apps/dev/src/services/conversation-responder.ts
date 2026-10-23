@@ -7,7 +7,14 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { HUMAN_MESSAGE_STYLE_SHORT } from '@maskin/shared'
-import { and, count, desc, eq, isNull, lte, ne, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
+import {
+	type AgentRoutingOutcome,
+	type GroupChatDelivery,
+	type GroupChatRoutingTrigger,
+	type GroupChatWakeReason,
+	trackGroupChatMessageRouted,
+} from '../lib/analytics/group-chat-routing-events'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -138,7 +145,16 @@ export async function evaluateAndRespond(ctx: {
 				isNull(conversationParticipants.leftAt),
 			),
 		)
-	const isDirectConversation = (totalParticipantsRow[0]?.value ?? 0) === 2
+	const participantCount = totalParticipantsRow[0]?.value ?? 0
+	const isDirectConversation = participantCount === 2
+	const emitsRoutingEvent = participantCount >= 3
+	const trigger: GroupChatRoutingTrigger = options?.isEdit
+		? 'edit'
+		: options?.forceRespond
+			? options.targetAgentId
+				? 'redo'
+				: 'retry'
+			: 'new_message'
 
 	// Loop-prevention cap: walk from the most recent message back, count
 	// consecutive agent-authored messages at the tail (the new message is
@@ -172,6 +188,24 @@ export async function evaluateAndRespond(ctx: {
 			conversationId,
 			consecutiveAgents,
 		})
+		if (emitsRoutingEvent) {
+			emitGroupChatRouting({
+				db,
+				workspaceId,
+				conversationId,
+				message,
+				participantCount,
+				trigger,
+				candidateCount: candidates.length,
+				outcomes: candidates.map((a) => ({
+					agentId: a.id,
+					decision: 'skip' as const,
+					reason: 'dropped_agent_cap' as const,
+					delivery: 'none' as const,
+				})),
+				capHit: true,
+			})
+		}
 		return 'agent_cap'
 	}
 
@@ -214,43 +248,168 @@ export async function evaluateAndRespond(ctx: {
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
 
-	await Promise.allSettled(
-		candidates.map(async (agent) => {
+	// Recorded before delivery so a delivery that throws still reports the reason.
+	const wokenReasons = new Map<string, GroupChatWakeReason>()
+	const settled = await Promise.allSettled(
+		candidates.map(async (agent): Promise<AgentRoutingOutcome> => {
 			const wasMentioned = mentioned.has(agent.id)
 			// Direct 1:1 conversations and explicit @mentions are unambiguous
 			// signals to respond — skip the relevance heuristic (and its
 			// narrower, non-OAuth credential resolver) entirely and let the
 			// real session launch, whose resolveLlmRoute is the sole authority
 			// on available credentials, be the final word.
-			const shouldRespond =
-				options?.forceRespond || wasMentioned || isDirectConversation
-					? true
-					: await checkRelevance({
-							agent,
-							wsSettings,
-							wsEntitlement,
-							conversationHistory,
-							newMessageContent: messageForPrompt.content,
-							isDirectConversation,
-						})
-			if (!shouldRespond) return undefined
-
-			await deliverTurnToAgent({
-				db,
-				sessionManager,
-				workspaceId,
-				conversationId,
-				messageId,
+			const relevance: { respond: boolean; reason: GroupChatWakeReason } = options?.forceRespond
+				? { respond: true, reason: 'forced_retry' }
+				: wasMentioned
+					? { respond: true, reason: 'tagged' }
+					: isDirectConversation
+						? { respond: true, reason: 'direct_1to1' }
+						: await checkRelevance({
+								agent,
+								wsSettings,
+								wsEntitlement,
+								conversationHistory,
+								newMessageContent: messageForPrompt.content,
+								isDirectConversation,
+							})
+			if (!relevance.respond) {
+				return {
+					agentId: agent.id,
+					decision: 'skip',
+					reason: relevance.reason,
+					delivery: 'none',
+				}
+			}
+			wokenReasons.set(agent.id, relevance.reason)
+			const woke = (delivery: GroupChatDelivery): AgentRoutingOutcome => ({
 				agentId: agent.id,
-				message: messageForPrompt,
-				conversationHistory,
-				isDirectConversation,
-				wasMentioned,
+				decision: 'wake',
+				reason: relevance.reason,
+				delivery,
 			})
-			return undefined
+
+			return woke(
+				await deliverTurnToAgent({
+					db,
+					sessionManager,
+					workspaceId,
+					conversationId,
+					messageId,
+					agentId: agent.id,
+					message: messageForPrompt,
+					conversationHistory,
+					isDirectConversation,
+					wasMentioned,
+				}),
+			)
 		}),
 	)
+
+	if (emitsRoutingEvent) {
+		emitGroupChatRouting({
+			db,
+			workspaceId,
+			conversationId,
+			message,
+			participantCount,
+			trigger,
+			candidateCount: candidates.length,
+			outcomes: settled.map((result, i): AgentRoutingOutcome => {
+				if (result.status === 'fulfilled') return result.value
+				// The candidate threw: a decided wake reports nothing delivered, else it is a skip.
+				const agentId = candidates[i]?.id ?? ''
+				const woken = wokenReasons.get(agentId)
+				return woken
+					? { agentId, decision: 'wake', reason: woken, delivery: 'start_failed' }
+					: { agentId, decision: 'skip', reason: 'model_no_decision', delivery: 'none' }
+			}),
+			capHit: false,
+		})
+	}
 	return undefined
+}
+
+/** Fire-and-forget, never throws: its lookups and the capture can never delay a wake. */
+function emitGroupChatRouting(ctx: {
+	db: Database
+	workspaceId: string
+	conversationId: string
+	message: {
+		id: number
+		actorId: string
+		authorType: string
+		metadata: unknown
+	}
+	participantCount: number
+	trigger: GroupChatRoutingTrigger
+	candidateCount: number
+	outcomes: AgentRoutingOutcome[]
+	capHit: boolean
+}): void {
+	const { db, message, conversationId } = ctx
+	const run = async () => {
+		const rawMentions = (message.metadata as { mentions?: unknown } | null)?.mentions
+		const taggedActorIds = Array.isArray(rawMentions)
+			? [...new Set(rawMentions.filter((m): m is string => typeof m === 'string'))]
+			: []
+		const taggedRows =
+			taggedActorIds.length > 0
+				? await db
+						.select({ id: actors.id, type: actors.type })
+						.from(actors)
+						.where(inArray(actors.id, taggedActorIds))
+				: []
+		const [agentParticipants] = await db
+			.select({ value: count() })
+			.from(conversationParticipants)
+			.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, conversationId),
+					isNull(conversationParticipants.leftAt),
+					eq(actors.type, 'agent'),
+				),
+			)
+		// Latest writer other than the author (an auto-posted end-of-turn reply counts).
+		const [previous] = await db
+			.select({ actorId: messages.actorId })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.conversationId, conversationId),
+					eq(messages.kind, 'message'),
+					lt(messages.id, message.id),
+					ne(messages.actorId, message.actorId),
+				),
+			)
+			.orderBy(desc(messages.id))
+			.limit(1)
+
+		await trackGroupChatMessageRouted({
+			workspaceId: ctx.workspaceId,
+			conversationId,
+			messageId: message.id,
+			trigger: ctx.trigger,
+			authorActorId: message.actorId,
+			authorType: message.authorType === 'agent' ? 'agent' : 'human',
+			participantCount: ctx.participantCount,
+			agentParticipantCount: agentParticipants?.value ?? 0,
+			candidateCount: ctx.candidateCount,
+			taggedActorIds,
+			taggedAgentIds: taggedRows.filter((r) => r.type === 'agent').map((r) => r.id),
+			taggedHumanCount: taggedRows.filter((r) => r.type === 'human').length,
+			previousOtherActorId: previous?.actorId ?? '',
+			outcomes: ctx.outcomes,
+			capHit: ctx.capHit,
+		})
+	}
+	run().catch((err: unknown) =>
+		logger.warn('Failed to assemble group_chat_message_routed', {
+			conversationId,
+			messageId: message.id,
+			error: String(err),
+		}),
+	)
 }
 
 /**
@@ -272,7 +431,7 @@ export async function deliverTurnToAgent(params: {
 	conversationHistory: Array<{ actorName: string; content: string }>
 	isDirectConversation: boolean
 	wasMentioned: boolean
-}): Promise<void> {
+}): Promise<GroupChatDelivery> {
 	const {
 		db,
 		sessionManager,
@@ -319,12 +478,12 @@ export async function deliverTurnToAgent(params: {
 		// nothing would ever drain this row, so re-check and drain now.
 		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-		return
+		return 'buffered_for_booting_session'
 	}
 	if (existing) {
 		try {
 			await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
-			return
+			return 'wrote_to_running_session'
 		} catch (err) {
 			logger.warn(
 				'writeInput to existing interactive conversation session failed — spawning a fresh one',
@@ -348,7 +507,7 @@ export async function deliverTurnToAgent(params: {
 		}
 	}
 
-	await spawnOrJoinConversationSession({
+	return spawnOrJoinConversationSession({
 		db,
 		sessionManager,
 		workspaceId,
@@ -384,7 +543,7 @@ async function spawnOrJoinConversationSession(params: {
 	conversationHistory: Array<{ actorName: string; content: string }>
 	isDirectConversation: boolean
 	wasMentioned: boolean
-}): Promise<void> {
+}): Promise<GroupChatDelivery> {
 	const {
 		db,
 		sessionManager,
@@ -444,7 +603,7 @@ async function spawnOrJoinConversationSession(params: {
 				error: String(err),
 			})
 		}
-		return
+		return 'started_new_session'
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
 			logger.error('Failed to create conversation-responder session', {
@@ -452,7 +611,7 @@ async function spawnOrJoinConversationSession(params: {
 				conversationId,
 				error: String(err),
 			})
-			return
+			return 'start_failed'
 		}
 	}
 
@@ -480,18 +639,21 @@ async function spawnOrJoinConversationSession(params: {
 			agentId,
 			conversationId,
 		})
-		return
+		return 'start_failed'
 	}
 	if (winner.status !== 'running') {
 		// Winner is still booting — same buffer-and-recheck as the primary path.
 		await bufferPendingTurn(db, { conversationId, agentId, messageId, payload: turnPayload })
 		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
-		return
+		return 'joined_race_winner'
 	}
+	let delivery: GroupChatDelivery = 'joined_race_winner'
 	await sessionManager
 		.writeInput(winner.id, turnPayload, undefined, messageId)
 		.catch(async (err: unknown) => {
+			// The turn never reached the winner.
+			delivery = 'start_failed'
 			logger.warn('Failed to join winning conversation session after race', {
 				agentId,
 				conversationId,
@@ -513,6 +675,7 @@ async function spawnOrJoinConversationSession(params: {
 					}),
 				)
 		})
+	return delivery
 }
 
 /**
@@ -591,6 +754,15 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 	return false
 }
 
+export type RelevanceReason = Extract<
+	GroupChatWakeReason,
+	| 'model_yes'
+	| 'model_no'
+	| 'model_no_decision'
+	| 'default_yes_no_credentials'
+	| 'default_yes_check_error'
+>
+
 export async function checkRelevance(params: {
 	agent: {
 		id: string
@@ -605,7 +777,7 @@ export async function checkRelevance(params: {
 	conversationHistory: Array<{ actorName: string; content: string }>
 	newMessageContent: string
 	isDirectConversation: boolean
-}): Promise<boolean> {
+}): Promise<{ respond: boolean; reason: RelevanceReason }> {
 	const {
 		agent,
 		wsSettings,
@@ -636,7 +808,7 @@ export async function checkRelevance(params: {
 			'Conversation relevance check has no chat-callable credentials — defaulting to respond and letting session launch decide',
 			{ agentId: agent.id },
 		)
-		return true
+		return { respond: true, reason: 'default_yes_no_credentials' }
 	}
 
 	try {
@@ -670,7 +842,10 @@ export async function checkRelevance(params: {
 			],
 		})
 		const call = response.tool_calls.find((tc) => tc.name === 'decide_response')
-		return call?.arguments.should_respond === true
+		if (!call) return { respond: false, reason: 'model_no_decision' }
+		return call.arguments.should_respond === true
+			? { respond: true, reason: 'model_yes' }
+			: { respond: false, reason: 'model_no' }
 	} catch (err) {
 		// Every throw in the block above is a call/infra failure (network error,
 		// non-2xx HTTP, malformed response) — the model's actual "no, don't
@@ -686,7 +861,7 @@ export async function checkRelevance(params: {
 			'Conversation relevance check call failed — defaulting to respond and letting session launch decide',
 			{ agentId: agent.id, error: String(err) },
 		)
-		return true
+		return { respond: true, reason: 'default_yes_check_error' }
 	}
 }
 
