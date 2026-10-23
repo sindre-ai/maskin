@@ -4776,31 +4776,49 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
-			const qs = params.toString()
-			const raw = (await apiCall(
-				config,
-				'GET',
-				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
-				undefined,
-				{ workspaceId: wsId },
-			)) as Array<{
+			const skillsPath = `/api/workspaces/${wsId}/skills`
+			type SkillListRow = {
 				id: string
 				name: string
 				description?: string | null
 				isValid?: boolean
 				createdAt?: string | null
-			}>
+			}
+			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+				workspaceId: wsId,
+			})) as SkillListRow[]
+			const lastRaw = raw[raw.length - 1]
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw?.createdAt &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastRaw.createdAt)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
+					workspaceId: wsId,
+				})) as SkillListRow[]
+				raw = [...raw, ...probe]
+			}
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as typeof raw
+			const result = trimmed as SkillListRow[]
 			return {
 				_meta: meta(
 					'list_workspace_skills',
@@ -4816,11 +4834,23 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					skills: result,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of ending at the pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as SkillListRow
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
 				},
 			}
 		},
