@@ -10,7 +10,7 @@ vi.mock('../../../lib/events/record-event', () => ({
 	recordEvent: (...a: unknown[]) => recordEvent(...(a as [])),
 }))
 
-import { buildAccessPreamble } from '../../../lib/integrations/access-preamble'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../../../lib/integrations/access-preamble'
 import {
 	type AgentAccess,
 	canRead,
@@ -242,6 +242,30 @@ describe('buildAccessPreamble', () => {
 		expect(text).toMatch(/- gmail: No access/i)
 		expect(text).toContain('do not retry')
 		expect(text.endsWith('\n\n')).toBe(true)
+	})
+
+	it('points an agent with a person to ask at the missing-tool steps, others at Settings', () => {
+		const rows = [row('slack', 'read')]
+		const withPerson = buildAccessPreamble(rows, { personReachable: true })
+		expect(withPerson).toContain('Follow "When a tool or login is missing" below.')
+		expect(withPerson).not.toContain('Settings')
+		const alone = buildAccessPreamble(rows)
+		expect(alone).toContain('a workspace admin can change it under Settings')
+		expect(alone).not.toContain('Tell the person')
+	})
+
+	it('names the card tools in the missing-tool steps', () => {
+		for (const tool of [
+			'list_integrations',
+			'list_keychain_credentials',
+			'list_integration_providers',
+			'request_keychain_access',
+			'request_keychain_credential',
+			'connect_integration',
+		]) {
+			expect(MISSING_TOOL_BLOCK).toContain(tool)
+		}
+		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
 	})
 
 	it('tells the agent that Gmail still needs a person to approve each email', () => {
