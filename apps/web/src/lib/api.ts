@@ -302,10 +302,12 @@ export const api = {
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
 		// hash is the preview's `content_hash`, so a draft that changed since is refused.
-		approve: (id: string, contentHash?: string) =>
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
 			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
 				method: 'POST',
-				body: contentHash ? { content_hash: contentHash } : {},
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
 			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
@@ -1719,6 +1721,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -2406,6 +2416,8 @@ export interface MessageQuestion {
 /** An agent's request to connect an integration, surfaced into chat as a Connect card. */
 export interface MessageIntegrationConnect {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	provider: string
 }
 
@@ -2428,6 +2440,8 @@ export interface CustomMcpServerResponse {
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
@@ -2469,6 +2483,8 @@ export interface AgentAccessView {
 
 export interface MessageKeychainAccessRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	integration_id: string
 	credential_name: string
 	kind: 'api_key' | 'login'
@@ -2478,7 +2494,15 @@ export interface MessageKeychainAccessRequest {
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2522,7 +2546,7 @@ export interface MessageMetadata {
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
-	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	card_answer?: MessageCardAnswer
 	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
 	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
@@ -2685,6 +2709,7 @@ export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
 	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

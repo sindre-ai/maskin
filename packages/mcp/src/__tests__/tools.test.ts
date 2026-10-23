@@ -58,6 +58,7 @@ const ALL_TOOL_NAMES = [
 	'get_comments',
 	'create_comment',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'post_conversation_message',
 	'create_trigger',
@@ -1069,6 +1070,29 @@ describe('create_loop schema', () => {
 	it('rejects an unknown loop status', () => {
 		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
 	})
+
+	describe('targets', () => {
+		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
+		const base = { workspace_id: uuid, name: 'X' }
+
+		it('accepts a list of rows and keeps them', () => {
+			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
+		})
+
+		it('accepts [] to clear', () => {
+			expect(schema.parse({ ...base, targets: [] }).targets).toEqual([])
+		})
+
+		it('rejects a string', () => {
+			expect(() => schema.parse({ ...base, targets: JSON.stringify([row]) })).toThrow()
+		})
+
+		it('names the bad row and field', () => {
+			const result = schema.safeParse({ ...base, targets: [row, { ...row, actual: 'three' }] })
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.error.issues[0]?.path).toEqual(['targets', 1, 'actual'])
+		})
+	})
 })
 
 describe('update_loop schema', () => {
@@ -1086,6 +1110,29 @@ describe('update_loop schema', () => {
 
 	it('requires a uuid loop id', () => {
 		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+
+	describe('targets', () => {
+		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
+		const base = { id: uuid }
+
+		it('accepts a list of rows and keeps them', () => {
+			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
+		})
+
+		it('accepts [] to clear', () => {
+			expect(schema.parse({ ...base, targets: [] }).targets).toEqual([])
+		})
+
+		it('rejects a string', () => {
+			expect(() => schema.parse({ ...base, targets: JSON.stringify([row]) })).toThrow()
+		})
+
+		it('names the bad row and field', () => {
+			const result = schema.safeParse({ ...base, targets: [row, { ...row, actual: 'three' }] })
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.error.issues[0]?.path).toEqual(['targets', 1, 'actual'])
+		})
 	})
 })
 

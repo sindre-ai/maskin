@@ -8,10 +8,12 @@ import { listProviders } from '../lib/integrations/registry'
 import { hasConfiguredOAuthSlot, resolveChatCredentials } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import type { IntroScanRunner } from './agent-intro-scan'
 import {
 	type AgentIntroInput,
 	type RenderedIntro,
 	renderAgentIntro,
+	renderIntroFollowUp,
 	renderMinimalAgentIntro,
 } from './agent-intro-template'
 import { findOrCreateDirectChat, postToDirectChat } from './direct-chat'
@@ -22,7 +24,7 @@ const INTRO_CAP = 5
 /** The intro names at most this many needed tools. */
 const MAX_NEEDED_TOOLS = 3
 
-type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render'
+type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render' | 'scan'
 type ResolvedVia = 'creator' | 'chat' | 'person_started'
 type SkipReason =
 	| 'no_session'
@@ -48,6 +50,12 @@ export type IntroduceArgs = {
 	claimedSessionId: string | undefined
 	clientSource: string | undefined
 	hints?: IntroHints
+	/**
+	 * Looks around the workspace as the new agent and suggests where it can help. When
+	 * given, the hello goes out at once with no buttons and a second message with the
+	 * steps follows; without it the one-message intro with generic steps is posted.
+	 */
+	scan?: IntroScanRunner
 }
 
 /**
@@ -75,7 +83,12 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 
 		stage = 'render'
 		const neededTools = resolveNeededTools(args.hints?.neededIntegrations)
-		const rendered = await renderIntro(args, recipient.humanId, neededTools.names)
+		const { rendered, scanPending } = await renderIntro(
+			args,
+			recipient.humanId,
+			neededTools.names,
+			args.scan !== undefined,
+		)
 
 		stage = 'lock'
 		const posted = await args.db.transaction(async (tx) => {
@@ -126,7 +139,15 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 			steps_count: rendered.steps.length,
 			needed_tools_count: rendered.neededToolNames.length,
 			hints_dropped: neededTools.dropped,
+			scan_pending: scanPending,
 		})
+
+		// The hello is out. The agent now looks around and the steps follow; this is the
+		// slow part, so it runs after the capture above and never holds the hello back.
+		if (scanPending && args.scan) {
+			stage = 'scan'
+			await postScannedFollowUp(args, args.scan, recipient.humanId, posted)
+		}
 	} catch (err) {
 		logger.error('Agent intro failed', { agentId: actor.id, stage, err })
 		void capturePosthogEvent('agent_intro_failed', creator.id, {
@@ -135,6 +156,78 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 			stage,
 		})
 	}
+}
+
+/**
+ * Second message of a scanned intro. Runs the scan, then posts the steps: the agent's own
+ * when the scan produced any, the generic ones when it did not (no credentials, billing
+ * cap, a failed or slow session, unreadable output). Skipped when the person has already
+ * written in the chat: the agent is talking with them and buttons would only get in the way.
+ */
+async function postScannedFollowUp(
+	args: IntroduceArgs,
+	scan: IntroScanRunner,
+	humanId: string,
+	chatId: string,
+): Promise<void> {
+	const { db, actor, workspaceId } = args
+	const startedAt = Date.now()
+	const [human] = await db
+		.select({ name: actors.name })
+		.from(actors)
+		.where(eq(actors.id, humanId))
+		.limit(1)
+
+	const result = await scan({
+		workspaceId,
+		agent: { id: actor.id, name: actor.name, description: actor.description },
+		recipient: { id: humanId, name: human?.name ?? '' },
+	}).catch((err: unknown) => {
+		logger.warn('Agent intro scan threw', { agentId: actor.id, err })
+		return null
+	})
+
+	const [written] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.where(and(eq(messages.conversationId, chatId), eq(actors.type, 'human')))
+		.limit(1)
+	if (written) {
+		void capturePosthogEvent('agent_intro_followup_skipped', humanId, {
+			agent_id: actor.id,
+			workspace_id: workspaceId,
+			reason: 'person_replied',
+		})
+		return
+	}
+
+	const tools = resolveNeededTools([
+		...(args.hints?.neededIntegrations ?? []),
+		...(result?.neededIntegrations ?? []),
+	])
+	const rendered = renderIntroFollowUp({
+		creatorSteps: args.hints?.firstSteps,
+		scannedSteps: result?.steps,
+		neededToolNames: tools.names,
+	})
+	await postToDirectChat(db, {
+		conversationId: chatId,
+		workspaceId,
+		agentId: actor.id,
+		content: rendered.content,
+		delivery: { kind: 'agent_intro_steps', version: 1 },
+		extraMetadata: introMetadata(rendered, tools.providers),
+	})
+	void capturePosthogEvent('agent_intro_followup_sent', humanId, {
+		agent_id: actor.id,
+		workspace_id: workspaceId,
+		conversation_id: chatId,
+		variant: result ? 'scanned' : 'generic_fallback',
+		ms_scan: Date.now() - startedAt,
+		steps_count: rendered.steps.length,
+		needed_tools_count: rendered.neededToolNames.length,
+	})
 }
 
 /**
@@ -260,7 +353,8 @@ async function renderIntro(
 	args: IntroduceArgs,
 	recipientId: string,
 	neededToolNames: string[],
-): Promise<RenderedIntro> {
+	scanRequested: boolean,
+): Promise<{ rendered: RenderedIntro; scanPending: boolean }> {
 	const { db, actor, workspaceId, creator } = args
 	const [recipient] = await db
 		.select({ name: actors.name })
@@ -314,7 +408,11 @@ async function renderIntro(
 			isEnterprise(ws) &&
 			hasConfiguredOAuthSlot((ws.settings as WorkspaceSettings)?.claude_oauth)
 		input.canRun = credentials !== null || hasClaudeSubscription
-		return renderAgentIntro(input)
+		// A workspace that cannot run an agent has nothing to scan with: it gets the
+		// connect-a-key hello, the same as without a scan.
+		const scanPending = scanRequested && input.canRun
+		input.scanPending = scanPending
+		return { rendered: renderAgentIntro(input), scanPending }
 	} catch (err) {
 		// A failure here must not cost the person their hello: fall back to name and
 		// description only.
@@ -328,10 +426,13 @@ async function renderIntro(
 			stage: 'render',
 		})
 		return {
-			content: renderMinimalAgentIntro(input),
-			steps: [],
-			neededToolNames: [],
-			plainTailCount: 0,
+			rendered: {
+				content: renderMinimalAgentIntro(input),
+				steps: [],
+				neededToolNames: [],
+				plainTailCount: 0,
+			},
+			scanPending: false,
 		}
 	}
 }

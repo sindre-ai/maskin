@@ -4,7 +4,6 @@ import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
@@ -23,8 +22,8 @@ interface PreviewProps {
 	/** Open straight away instead of contracted (the drawer's working view). */
 	defaultExpanded?: boolean
 	className?: string
-	/** The chat the message is in and the agent that wrote it; together they let a
-	 *  status change tell that agent. Without them the card only previews. */
+	/** The chat the message is in and the agent that wrote it; together they let an approval
+	 *  or a status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
 }
@@ -44,7 +43,6 @@ export function LinkedObjectCard({
 	const update = useUpdateObject(workspaceId)
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
-	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
 	const [expanded, setExpanded] = useState(defaultExpanded)
@@ -60,6 +58,10 @@ export function LinkedObjectCard({
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
+	// Sent with an approval or a status change so the server tells the agent behind the card.
+	// Nothing is posted in the chat: the person did not write a message.
+	const chat =
+		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
 	const properties = describeObjectProperties(object.metadata)
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
@@ -76,46 +78,18 @@ export function LinkedObjectCard({
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
-	// The agent is always told. The text goes in the message so it can compare it
+	// The agent is always told, by the server, with the text as it stands so it can compare it
 	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
-		update.mutate(
-			{ id: object.id, data: { status } },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Moved "${object.title || 'Untitled'}" to ${statusLabel(status)}. The text as it stands:\n\n${body
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		update.mutate({ id: object.id, data: { status, chat } })
 	}
 
-	// The person's yes to this exact text. The agent is told with the text it can send, the same
-	// way a status change tells it, so it does not have to guess what was approved.
+	// The person's yes to this exact text. The server tells the agent to send it, with the text,
+	// so it does not have to guess what was approved.
 	const approveDraft = () => {
 		if (!preview) return
-		approve.mutate(
-			{ id: object.id, contentHash: preview.content_hash },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
 	return (
@@ -245,7 +219,7 @@ export function LinkedObjectCard({
 							) : delivery === 'approved' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
-									Approved
+									Approved, sending
 								</span>
 							) : (
 								<Button

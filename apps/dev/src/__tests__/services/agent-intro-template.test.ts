@@ -4,6 +4,7 @@ import {
 	type IntroStep,
 	buildSuggestedSteps,
 	renderAgentIntro,
+	renderIntroFollowUp,
 	renderMinimalAgentIntro,
 } from '../../services/agent-intro-template'
 
@@ -282,5 +283,66 @@ describe('renderMinimalAgentIntro', () => {
 		).toBe(
 			"Hey Sam, I'm Scout. Chief of Staff set me up for you. I keep an eye on competitor launches.",
 		)
+	})
+})
+
+describe('scanned intro', () => {
+	it('holds the greeting back from steps and tools while the scan runs', () => {
+		const out = renderAgentIntro({
+			...base,
+			scanPending: true,
+			creatorSteps: [send('Read my inbox')],
+			neededToolNames: ['Gmail'],
+		})
+		expect(paragraphs(out.content)).toHaveLength(2)
+		expect(out.content).toContain('look through your workspace')
+		expect(out.steps).toEqual([])
+		expect(out.neededToolNames).toEqual([])
+		expect(out.plainTailCount).toBe(0)
+	})
+
+	it('still asks for a key when the workspace cannot run, scan or not', () => {
+		const out = renderAgentIntro({ ...base, canRun: false, scanPending: true })
+		expect(out.content).toContain(NO_KEY_LINE)
+	})
+
+	it('puts scanned steps after the creator steps and before the generic ones', () => {
+		const steps = buildSuggestedSteps({
+			creatorSteps: [send('Creator step')],
+			scannedSteps: [send('Scanned one'), send('Scanned two'), send('Scanned three')],
+			canRun: true,
+		})
+		expect(steps.map((s) => s.label)).toEqual([
+			'Creator step',
+			'Scanned one',
+			'Scanned two',
+			'Scanned three',
+		])
+	})
+
+	it('keeps the generic help step as the last option and drops the first-task step', () => {
+		const steps = buildSuggestedSteps({ scannedSteps: [send('Scanned one')], canRun: true })
+		expect(steps.map((s) => s.label)).toEqual(['Scanned one', 'What can you help me with?'])
+	})
+
+	it('renders the follow-up with the scanned wording, a list, and the tools sentence', () => {
+		const out = renderIntroFollowUp({
+			scannedSteps: [send('Triage Linear')],
+			neededToolNames: ['Linear'],
+		})
+		const parts = paragraphs(out.content)
+		expect(parts[0]).toContain("Here's where I can help first")
+		expect(parts[1]).toBe('1. Triage Linear\n2. What can you help me with?')
+		expect(parts[2]).toContain('For this job I use Linear.')
+		expect(out.plainTailCount).toBe(2)
+	})
+
+	it('renders the plain generic steps when the scan found nothing', () => {
+		const out = renderIntroFollowUp({})
+		expect(paragraphs(out.content)[0]).toBe(STEPS_LINE)
+		expect(out.steps.map((s) => s.label)).toEqual([
+			'What can you help me with?',
+			'Give me a first task',
+		])
 	})
 })

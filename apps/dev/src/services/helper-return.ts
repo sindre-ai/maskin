@@ -48,6 +48,7 @@ export type HelperReturnSkipReason =
 	| 'return_cap'
 	| 'no_destination'
 	| 'agent_message_cap'
+	| 'relaunching'
 
 export type HelperReturnOutcome =
 	| { returned: true; destination: 'object' | 'conversation' }
@@ -221,6 +222,12 @@ async function doReturn(
 	if (!sender || sender.workspaceId !== helper.workspaceId) return skip('sender_missing')
 
 	const notify = isNotifyOnComplete(helper.config)
+
+	// Stopped to start again with a credential or access a person just gave it (see
+	// chat-relaunch.ts): its follow-up reports instead, so this is not an ending.
+	if ((helper.config as { relaunching?: unknown } | null)?.relaunching === true) {
+		return skip('relaunching')
+	}
 
 	// create_session wait:true callers still waiting inline already get the result there.
 	// Accepted loss: a sender that is live now and finishes later without ever
