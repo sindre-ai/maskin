@@ -1571,7 +1571,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 }
 
 const UPDATE_ENTRY_FIELDS =
-	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+	'title, content, status, metadata, driver, working, attach_file_ids, detach_file_ids'
 
 /**
  * True when an update_objects entry asks for at least one write: a field change,
@@ -1735,6 +1735,7 @@ interface RawObject {
 	id: string
 	type: string
 	title?: string | null
+	active_session_actor_id?: string | null
 	status?: string | null
 	driver?: string | null
 	createdAt?: string | null
@@ -2874,7 +2875,10 @@ export function createMcpServer(config: McpConfig) {
 			const driverIds = rawObjects
 				.map((o) => o.driver)
 				.filter((v): v is string => typeof v === 'string')
-			const actors = await resolveActors(config, driverIds, workspace_id)
+			const workerIds = rawObjects
+				.map((o) => o.active_session_actor_id)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, [...driverIds, ...workerIds], workspace_id)
 			const heroObjects = rawObjects.map((o) =>
 				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 			)
@@ -2943,6 +2947,20 @@ export function createMcpServer(config: McpConfig) {
 						workspaceId: withUrl.workspaceId,
 					}
 					if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+					// Another agent (or this one) may be mid-run on this object. Surfaced
+					// by default so a caller can avoid duplicating or clobbering the work.
+					if (withUrl.activeSessionId) {
+						const workerId = withUrl.active_session_actor_id
+						projectedObject.working_on = {
+							session_id: withUrl.activeSessionId,
+							state: withUrl.active_session_state ?? null,
+							agent:
+								typeof workerId === 'string'
+									? { id: workerId, name: actors.get(workerId)?.name ?? null }
+									: null,
+							activity: withUrl.activeSessionCurrentActivity ?? null,
+						}
+					}
 					// A draft an integration can deliver always carries its preview: who it goes to,
 					// the subject, the exact text and whether a person approved it. Small, and the
 					// reason anyone reads it. Absent for every other object.

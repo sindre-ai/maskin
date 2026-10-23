@@ -32,6 +32,7 @@ import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
+import { startWorkingOnObject } from './object-work'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -240,6 +241,19 @@ export async function startSession(
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
+	// The object this session is for shows as being worked on from now until the
+	// session ends (cleared in SessionManager.clearActiveSession). Every way of
+	// starting a session lands here, so none has to link it on its own.
+	const workedObjectId = objectBeingWorkedOn(input)
+	if (workedObjectId) {
+		await startWorkingOnObject(db, {
+			workspaceId: input.workspaceId,
+			objectId: workedObjectId,
+			sessionId: session.id,
+			actorId: input.actorId,
+		})
+	}
+
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
 	// and state_entered_at=NOW() are schema defaults; attempt_number defaults
 	// to 1. Only patch when a non-default is supplied.
@@ -313,6 +327,15 @@ function withBackgroundDefaults(input: StartSessionInput): SessionConfig | undef
 	if (hasChat) return config
 	// Everything else is interactive, whatever the caller asked for, and ends on its result.
 	return { ...config, interactive: true, stop_on_result: true }
+}
+
+/** The object a session is about: where it was started from, or the comment thread it answers. */
+function objectBeingWorkedOn(input: StartSessionInput): string | null {
+	if (input.initiatedFromObjectId) return input.initiatedFromObjectId
+	const config = input.config as
+		| { mention?: { object_id?: string }; thread_reply?: { object_id?: string } }
+		| undefined
+	return config?.mention?.object_id ?? config?.thread_reply?.object_id ?? null
 }
 
 function readIdempotencyKey(config: SessionConfig | undefined): string | undefined {

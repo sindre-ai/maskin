@@ -374,3 +374,33 @@ describe('isErrorEvent', () => {
 		expect(isErrorEvent(event)).toBe(false)
 	})
 })
+
+describe('formatEventDescription — agent working', () => {
+	it('words the start of work', () => {
+		const event = buildEvent({ action: 'agent_started_working', entityType: 'object' })
+		expect(formatEventDescription(event)).toBe('started working on this')
+	})
+
+	it('words the end of work with minutes when it ran that long', () => {
+		const event = buildEvent({
+			action: 'agent_finished_working',
+			entityType: 'object',
+			data: { duration_seconds: 720 },
+		})
+		expect(formatEventDescription(event)).toBe('finished working on this after 12 min')
+	})
+
+	it('words the end of work with seconds when it was short', () => {
+		const event = buildEvent({
+			action: 'agent_finished_working',
+			entityType: 'object',
+			data: { duration_seconds: 20 },
+		})
+		expect(formatEventDescription(event)).toBe('finished working on this after 20s')
+	})
+
+	it('drops the duration when none was recorded', () => {
+		const event = buildEvent({ action: 'agent_finished_working', entityType: 'object', data: null })
+		expect(formatEventDescription(event)).toBe('finished working on this')
+	})
+})

@@ -23,6 +23,8 @@ const SESSION_ACTIONS = new Set([
 	'session_timeout',
 	'session_stopped',
 	'session_paused',
+	'agent_started_working',
+	'agent_finished_working',
 ])
 
 function isObjectEntity(entityType: string): boolean {

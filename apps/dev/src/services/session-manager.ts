@@ -188,6 +188,7 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
+import { stopWorkingOnObjects } from './object-work'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -6394,12 +6395,6 @@ ${cont.continues_prompt}
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
 		this.mcpHealth.delete(sessionId)
-		await this.db
-			.update(objects)
-			.set({ activeSessionId: null, updatedAt: new Date() })
-			.where(eq(objects.activeSessionId, sessionId))
-			.catch((err) =>
-				logger.warn('Failed to clear activeSessionId', { sessionId, error: String(err) }),
-			)
+		await stopWorkingOnObjects(this.db, { sessionId })
 	}
 }

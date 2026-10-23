@@ -90,6 +90,8 @@ import {
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
 import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
+import { startWorkingOnObject, stopWorkingOnObjects } from '../services/object-work'
+import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -1244,7 +1246,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+					.select({
+						currentActivity: sessions.currentActivity,
+						status: sessions.status,
+						actorId: sessions.actorId,
+					})
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
@@ -1359,6 +1365,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				...serialize(object),
 				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 				active_session_state: activeSession?.status ?? null,
+				active_session_actor_id: activeSession?.actorId ?? null,
 				is_subscribed: subscribed,
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
@@ -1742,7 +1749,11 @@ app.openapi(getObjectRoute, async (c) => {
 		}),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+					.select({
+						currentActivity: sessions.currentActivity,
+						status: sessions.status,
+						actorId: sessions.actorId,
+					})
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
@@ -1756,6 +1767,7 @@ app.openapi(getObjectRoute, async (c) => {
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
+			active_session_actor_id: activeSession?.actorId ?? null,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
@@ -1785,6 +1797,10 @@ const updateObjectRoute = createRoute({
 						chat: z
 							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
 							.optional(),
+						/** An agent saying it is (true) or is no longer (false) working on this object. */
+						working: z.boolean().optional(),
+						/** What the agent is doing, shown beside the working badge. Only read with working: true. */
+						working_activity: z.string().max(200).optional(),
 					}),
 				},
 			},
@@ -1810,13 +1826,78 @@ app.openapi(updateObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { chat, ...body } = c.req.valid('json')
+	const { chat, working, working_activity: workingActivity, ...body } = c.req.valid('json')
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
 	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	// An agent claiming or releasing the object. It acts as its own running
+	// session, named by X-Maskin-Session-Id; the header is only a claim, so it
+	// counts when that session is the caller's, in this workspace, and not over.
+	if (working !== undefined) {
+		const [own] = c.get('maskinSessionId')
+			? await db
+					.select({ id: sessions.id, actorId: sessions.actorId, status: sessions.status })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.id, c.get('maskinSessionId') as string),
+							eq(sessions.workspaceId, existing.workspaceId),
+						),
+					)
+					.limit(1)
+			: []
+		const ownLive =
+			own &&
+			own.actorId === actorId &&
+			!(TERMINAL_STATUSES as readonly string[]).includes(own.status)
+				? own
+				: null
+		if (working && !ownLive) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'working: true can only be set from inside a running agent session',
+				),
+				400,
+			)
+		}
+		if (ownLive) {
+			if (working) {
+				await startWorkingOnObject(db, {
+					workspaceId: existing.workspaceId,
+					objectId: id,
+					sessionId: ownLive.id,
+					actorId,
+				})
+				if (workingActivity !== undefined) {
+					await db
+						.update(sessions)
+						.set({ currentActivity: workingActivity, updatedAt: new Date() })
+						.where(eq(sessions.id, ownLive.id))
+					await recordEvent(db, {
+						workspaceId: existing.workspaceId,
+						actorId,
+						action: 'session_updated',
+						entityType: 'session',
+						entityId: ownLive.id,
+						data: {},
+					})
+				}
+			} else {
+				await stopWorkingOnObjects(db, { sessionId: ownLive.id, objectId: id })
+			}
+		}
+		// A call that only claims or releases changes no field, so it writes no
+		// 'updated' event.
+		if (Object.values(body).every((v) => v === undefined) && !chat) {
+			const [fresh] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+			return c.json(serialize(fresh ?? existing) as z.infer<typeof objectResponseSchema>, 200)
+		}
 	}
 
 	// If status is being updated, validate against workspace settings

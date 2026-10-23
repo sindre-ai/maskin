@@ -45,6 +45,10 @@ export function formatEventDescription(event: EventLike, ctx?: FormatContext): s
 			return 'stopped session'
 		case 'session_paused':
 			return 'paused session'
+		case 'agent_started_working':
+			return 'started working on this'
+		case 'agent_finished_working':
+			return formatFinishedWorking(event)
 		case 'trigger_fired':
 			return 'fired trigger'
 		case 'verified':
@@ -63,6 +67,15 @@ export function formatEventDescription(event: EventLike, ctx?: FormatContext): s
 		default:
 			return `${action.replace(/_/g, ' ')} ${entityType}`
 	}
+}
+
+function formatFinishedWorking(event: EventLike): string {
+	const seconds = (event.data as { duration_seconds?: unknown } | null)?.duration_seconds
+	if (typeof seconds !== 'number' || seconds < 1) return 'finished working on this'
+	const minutes = Math.round(seconds / 60)
+	return minutes < 1
+		? `finished working on this after ${seconds}s`
+		: `finished working on this after ${minutes} min`
 }
 
 export function isErrorEvent(event: EventLike): boolean {

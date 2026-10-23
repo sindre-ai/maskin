@@ -1127,21 +1127,8 @@ export class TriggerRunner {
 								error: String(err),
 							}),
 						)
-
-					// Link the object to the active session
-					if (event.entity_id) {
-						await this.db
-							.update(objects)
-							.set({ activeSessionId: handle.sessionId, updatedAt: new Date() })
-							.where(eq(objects.id, event.entity_id))
-							.catch((err) =>
-								logger.debug('Could not link object to active session', {
-									sessionId: handle.sessionId,
-									entityId: event.entity_id,
-									error: String(err),
-								}),
-							)
-					}
+					// The object this session is for is linked to it inside startSession
+					// (initiatedFromObjectId), so every way of starting a session shares it.
 				})
 				.catch((err) =>
 					this.handleSessionCreateFailure(event.workspace_id, err, trigger.name).catch(
