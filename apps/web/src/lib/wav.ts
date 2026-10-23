@@ -5,10 +5,11 @@
 
 export const WAV_SAMPLE_RATE = 16_000
 
-/** Encodes mono float samples in [-1, 1] as a 16-bit PCM WAV file. */
-export function encodeWav(samples: Float32Array, sampleRate: number = WAV_SAMPLE_RATE): Blob {
-	const dataBytes = samples.length * 2
-	const buffer = new ArrayBuffer(44 + dataBytes)
+const WAV_HEADER_BYTES = 44
+
+/** The 44-byte header of a mono 16-bit PCM WAV file holding `dataBytes` of samples. */
+function wavHeader(dataBytes: number, sampleRate: number): ArrayBuffer {
+	const buffer = new ArrayBuffer(WAV_HEADER_BYTES)
 	const view = new DataView(buffer)
 	const writeText = (offset: number, text: string) => {
 		for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
@@ -27,15 +28,18 @@ export function encodeWav(samples: Float32Array, sampleRate: number = WAV_SAMPLE
 	view.setUint16(34, 16, true) // bits per sample
 	writeText(36, 'data')
 	view.setUint32(40, dataBytes, true)
-
-	for (let i = 0; i < samples.length; i++) {
-		const s = Math.max(-1, Math.min(1, samples[i] ?? 0))
-		view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-	}
-	return new Blob([buffer], { type: 'audio/wav' })
+	return buffer
 }
 
-const WAV_HEADER_BYTES = 44
+/** Encodes mono float samples in [-1, 1] as a 16-bit PCM WAV file. */
+export function encodeWav(samples: Float32Array, sampleRate: number = WAV_SAMPLE_RATE): Blob {
+	const pcm = new DataView(new ArrayBuffer(samples.length * 2))
+	for (let i = 0; i < samples.length; i++) {
+		const s = Math.max(-1, Math.min(1, samples[i] ?? 0))
+		pcm.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+	}
+	return new Blob([wavHeader(pcm.byteLength, sampleRate), pcm.buffer], { type: 'audio/wav' })
+}
 
 function readBytes(blob: Blob): Promise<ArrayBuffer> {
 	return new Promise((resolve, reject) => {
@@ -46,18 +50,17 @@ function readBytes(blob: Blob): Promise<ArrayBuffer> {
 	})
 }
 
-/** Joins WAV files made by `encodeWav` (16 kHz mono) into one, back to back. */
+/**
+ * Joins WAV files made by `encodeWav` (16 kHz mono) into one, back to back.
+ * The samples are copied as they are: re-encoding them would lose a little
+ * each time a joined file is joined again.
+ */
 export async function concatWav(blobs: Blob[]): Promise<Blob> {
 	const pcm = await Promise.all(
-		blobs.map(async (blob) => new Int16Array((await readBytes(blob)).slice(WAV_HEADER_BYTES))),
+		blobs.map(async (blob) => (await readBytes(blob)).slice(WAV_HEADER_BYTES)),
 	)
-	const samples = new Float32Array(pcm.reduce((sum, part) => sum + part.length, 0))
-	let offset = 0
-	for (const part of pcm) {
-		for (let i = 0; i < part.length; i++) samples[offset + i] = (part[i] ?? 0) / 0x8000
-		offset += part.length
-	}
-	return encodeWav(samples)
+	const dataBytes = pcm.reduce((sum, part) => sum + part.byteLength, 0)
+	return new Blob([wavHeader(dataBytes, WAV_SAMPLE_RATE), ...pcm], { type: 'audio/wav' })
 }
 
 /** Decodes any audio blob the browser can play and re-encodes it as 16 kHz mono WAV. */
