@@ -99,6 +99,8 @@ describe('refusal messages', () => {
 		expect(msg).toContain('"Read"')
 		expect(msg).toContain('do not retry')
 		expect(msg).toContain('Settings → Integrations')
+		// In a chat the agent asks with a card, naming the level the call needed.
+		expect(msg).toContain('request_integration_access for Slack with level "read_write"')
 	})
 
 	it('names a missing grant plainly', () => {
@@ -262,6 +264,7 @@ describe('buildAccessPreamble', () => {
 			'request_keychain_access',
 			'request_keychain_credential',
 			'connect_integration',
+			'request_integration_access',
 		]) {
 			expect(MISSING_TOOL_BLOCK).toContain(tool)
 		}
