@@ -11,6 +11,8 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type McpEra,
+	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
@@ -99,6 +101,14 @@ export interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label for telemetry, next to
+	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
+	 * sets the fallback (legacy, none) because the SDK does not expose the
+	 * negotiated version on the server object. See `TelemetryConfig.mcpEra`.
+	 */
+	telemetryEra?: McpEra
+	telemetryProtocolVersion?: McpProtocolVersionLabel
 	/**
 	 * `events.id` of the comment that dispatched this agent session, when the
 	 * session was triggered by a comment. `create_comment` uses it as the
@@ -2650,6 +2660,8 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		mcpEra: config.telemetryEra,
+		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -4875,31 +4887,49 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
-			const qs = params.toString()
-			const raw = (await apiCall(
-				config,
-				'GET',
-				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
-				undefined,
-				{ workspaceId: wsId },
-			)) as Array<{
+			const skillsPath = `/api/workspaces/${wsId}/skills`
+			type SkillListRow = {
 				id: string
 				name: string
 				description?: string | null
 				isValid?: boolean
 				createdAt?: string | null
-			}>
+			}
+			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+				workspaceId: wsId,
+			})) as SkillListRow[]
+			const lastRaw = raw[raw.length - 1]
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw?.createdAt &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastRaw.createdAt)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
+					workspaceId: wsId,
+				})) as SkillListRow[]
+				raw = [...raw, ...probe]
+			}
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as typeof raw
+			const result = trimmed as SkillListRow[]
 			return {
 				_meta: meta(
 					'list_workspace_skills',
@@ -4915,11 +4945,23 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					skills: result,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of ending at the pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as SkillListRow
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
 				},
 			}
 		},
@@ -7404,6 +7446,87 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'request_integration_access',
+		{
+			description: tools.request_integration_access.description,
+			inputSchema: tools.request_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat; the person allows it there, which sets the same per-agent access
+			// as Settings → Integrations. The agent can never widen its own access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/integration-access-card`,
+					{
+						integration_id: args.integration_id,
+						level: args.level,
+						...(args.reason ? { reason: args.reason } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: 'You already have that access to this integration. If a call was refused, you were started before it was allowed, so ask the user to send you a new message.',
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No connected integration with that id. Call list_integrations for the ids, or connect_integration if it is not connected yet.',
+					)
+				}
+				if (status === 400) {
+					return fail(
+						'That integration cannot be asked for this way. For a saved key or login use list_keychain_credentials and request_keychain_access. A tool server that runs inside you cannot be limited to reading: ask for read_write.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'show_computer',
 		{
 			description: tools.show_computer.description,
@@ -8611,6 +8734,8 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		telemetryEra: 'legacy',
+		telemetryProtocolVersion: 'none',
 	}
 
 	const server = createMcpServer(config)

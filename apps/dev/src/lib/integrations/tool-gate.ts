@@ -49,7 +49,7 @@ export function accessDeniedMessage(input: {
 	return [
 		`Access denied: ${toolName} needs ${need} access to ${providerLabel}. ${have}`,
 		'This is a permission set by a person, not an outage, so do not retry and do not look for a workaround.',
-		`Tell the person that this agent needs ${need} access to ${providerLabel}; a workspace admin can grant it under Settings → Integrations.`,
+		`If a person is in this chat, call request_integration_access for ${providerLabel} with level "${need === 'read' ? 'read' : 'read_write'}" and end your turn; you are restarted if they allow it. Otherwise say in your reply that this agent needs ${need} access to ${providerLabel}; a workspace admin can grant it under Settings → Integrations.`,
 	].join(' ')
 }
 

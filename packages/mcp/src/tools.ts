@@ -1150,7 +1150,7 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed). Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration|capability_source|workspace) and action (created|updated|deleted|status_changed|capability_changed|capability_snapshot|capability_scan_completed). The daily capability scan writes: capability_changed (entity_type capability_source) lists tools newly available to agents, capability_snapshot (capability_source) is the stored tool list per source, capability_scan_completed (entity_type workspace) is one count per workspace per day. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -2026,6 +2026,28 @@ export const tools = {
 				.optional()
 				.describe(
 					'One line shown on the card on what you need it for, e.g. "To read the latest invoices."',
+				),
+		}),
+	},
+	request_integration_access: {
+		description:
+			'Ask the user to let you use an integration that is already connected but that you are not allowed to use (or not at the level you need), by showing an Allow / Not now card in the chat. Use it when a call to a connected integration was refused for access, or `list_integrations` shows you have no access or only read when you need to write. Use `connect_integration` when it is not connected at all, and `request_keychain_access` for a saved key or login. You cannot change your own access: only the person can allow it, and `update_integration_access` refuses agents. If they allow it you are restarted with the new access. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			integration_id: z
+				.string()
+				.uuid()
+				.describe('The id of the connected integration, as listed by list_integrations.'),
+			level: z
+				.enum(['read', 'read_write'])
+				.describe('What you need: "read" to look things up, "read_write" to also change things.'),
+			reason: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To post the weekly summary in Slack."',
 				),
 		}),
 	},

@@ -437,6 +437,31 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # `playwright install-deps` apt-installs ~24 MB (mostly fonts) on every shard. Some runners
+      # are throttled to ~40 kB/s on azure.archive.ubuntu.com, which turned that into a 10 minute
+      # download and pushed shards past the job timeout. Cache the downloaded .debs so a shard
+      # only fetches what is missing. Fonts stay installed, so screenshot baselines are unchanged.
+      - name: Cache Playwright apt packages
+        if: needs.changes.outputs.e2e == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/playwright-apt
+            !~/.cache/playwright-apt/lock
+            !~/.cache/playwright-apt/partial
+          key: playwright-apt-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-apt-${{ runner.os }}-
+
+      - name: Point apt at the cached package directory
+        if: needs.changes.outputs.e2e == 'true'
+        run: |
+          mkdir -p "$HOME/.cache/playwright-apt/partial"
+          {
+            echo "Dir::Cache::archives \"$HOME/.cache/playwright-apt\";"
+            # Keep downloaded .debs so the cache has something to save.
+            echo 'APT::Keep-Downloaded-Packages "true";'
+          } | sudo tee /etc/apt/apt.conf.d/99playwright-cache
+
       - name: Install Playwright browsers
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium

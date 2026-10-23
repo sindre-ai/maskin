@@ -3,9 +3,6 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/components/chat/threads-pane', () => ({ ThreadsPane: () => <div>threads body</div> }))
-vi.mock('@/components/objects/produced-pane', () => ({
-	ProducedPane: () => <div>produced body</div>,
-}))
 vi.mock('@/components/chat/computers-pane', () => ({
 	ComputersPane: () => <div>computers body</div>,
 }))
@@ -17,7 +14,6 @@ const props = {
 	onTabChange: vi.fn(),
 	threadsCount: 1,
 	computersCount: 2,
-	producedCount: 2,
 	openSessionId: null,
 	onOpenSession: vi.fn(),
 	producedObjects: [],
@@ -52,7 +48,6 @@ const props = {
 			createdAt: null,
 		},
 	] as const,
-	linkedCount: 3,
 	linkedFocus: null,
 	onFocusConsumed: vi.fn(),
 	onJumpToMessage: vi.fn(),
@@ -60,19 +55,18 @@ const props = {
 }
 
 describe('OverviewPane tabs', () => {
-	it('offers Linked with its count and renders its body', () => {
-		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="linked" />)
-		expect(screen.getByRole('tab', { name: /Linked/ })).toHaveTextContent('3')
+	it('offers Items with its count and renders linked and produced items in one body', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="produced" />)
+		expect(screen.getByRole('tab', { name: /Items/ })).toHaveTextContent('3')
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Threads, Produced, Computers and Linked', () => {
+	it('offers Threads, Items and Computers', () => {
 		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="threads" />)
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
 			'Threads',
-			'Produced',
+			'Items',
 			'Computers',
-			'Linked',
 		])
 	})
 

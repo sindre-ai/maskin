@@ -183,6 +183,7 @@ const ROWS: Record<string, Row> = {
 	request_keychain_credential: row('Request keychain credential'),
 	list_keychain_credentials: row('List keychain credentials'),
 	request_keychain_access: row('Request keychain access'),
+	request_integration_access: row('Request integration access'),
 	show_computer: row('Show computer'),
 	// Workspace desktop
 	desktop_screenshot: row('Desktop screenshot'),
