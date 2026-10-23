@@ -31,10 +31,7 @@ import {
 	createRealtimeCall,
 	realtimeCallsUrl,
 } from '../services/voice-realtime-call'
-import {
-	endVoiceSession,
-	setCloseVendorSessionFn,
-} from '../services/voice-session-lifecycle'
+import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
 import { withConfirmationArg } from '../services/voice-write-gate'
 
