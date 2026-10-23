@@ -1,0 +1,11 @@
+{
+  "name": "maskin-mcp-canary",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hourly modern-path canary for the Maskin MCP server. Run by .github/workflows/mcp-canary.yml.",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.3.1"
+  }
+}
