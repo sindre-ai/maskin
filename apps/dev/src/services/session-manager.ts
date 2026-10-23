@@ -64,6 +64,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { resolveChatIdleCloseMs } from '../config/session-idle'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -590,10 +591,12 @@ export class SessionManager extends EventEmitter {
 	 * How long an interactive conversation session may sit with no log
 	 * activity (no user turn, no agent output) before the watchdog closes it
 	 * gracefully as `completed`. Well below the 2h hard timeout: an idle chat
-	 * container serves no one, and the conversation responder transparently
-	 * spawns a fresh session (seeded with history) on the next message.
+	 * container serves no one and holds an agent-server slot that queued
+	 * background sessions are waiting for, and the conversation responder
+	 * transparently spawns a fresh session (seeded with history) on the next
+	 * message. 15 min by default; CHAT_IDLE_CLOSE_MINUTES overrides it.
 	 */
-	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
+	private readonly chatIdleCloseMs = resolveChatIdleCloseMs()
 	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
@@ -4813,6 +4816,7 @@ ${cont.continues_prompt}
 		// after it, and its duration is logged once per pass.
 		const passStartedAt = Date.now()
 		const stepDurationsMs: Record<string, number> = {}
+		let queuedForCapacity: number | null = null
 		const runStep = async (name: string, step: () => Promise<void>): Promise<void> => {
 			const stepStartedAt = Date.now()
 			try {
@@ -5004,7 +5008,7 @@ ${cont.continues_prompt}
 			// NULL`) is intentionally gone — every terminal writer now stamps
 			// session_state='done' via settleSession, and §16.2 collapses to five
 			// sections; the primary wall-timeout above catches every stuck row.
-			const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
+			const chatIdleCutoff = new Date(Date.now() - this.chatIdleCloseMs)
 			const idleChatCandidates = await this.db
 				.select()
 				.from(sessions)
@@ -5429,10 +5433,51 @@ ${cont.continues_prompt}
 			}
 		})
 
+		await runStep('queue-depth', async () => {
+			// 11. Queue depth — sessions waiting for a slot, either a workspace
+			// session budget (status='queued') or an agent-server machine
+			// (session_state='waiting_for_machine'). A non-zero count means work is
+			// stuck behind full slots; alert on this line. Read-only.
+			const queued = await this.getQueuedForCapacity()
+			queuedForCapacity = queued.count
+			if (queued.count > 0) {
+				logger.warn('Sessions queued for capacity', {
+					queuedForCapacity: queued.count,
+					oldestWaitSeconds:
+						queued.oldestWaitMs === null ? null : Math.round(queued.oldestWaitMs / 1000),
+				})
+			}
+		})
+
 		logger.info('Session watchdog pass complete', {
 			totalMs: Date.now() - passStartedAt,
+			queuedForCapacity,
 			stepDurationsMs,
 		})
+	}
+
+	/**
+	 * How many live sessions are waiting for a slot, and how long the oldest has
+	 * waited. Counts both queues: the per-workspace session budget
+	 * (status='queued') and the agent-server's machine slots
+	 * (session_state='waiting_for_machine'). Terminal rows never count.
+	 */
+	async getQueuedForCapacity(): Promise<{ count: number; oldestWaitMs: number | null }> {
+		const [row] = await this.db
+			.select({
+				count: countFn(),
+				oldest: sql<Date | string | null>`min(coalesce(${sessions.stateEnteredAt}, ${sessions.createdAt}))`,
+			})
+			.from(sessions)
+			.where(
+				and(
+					notInArray(sessions.status, [...TERMINAL_STATUSES]),
+					or(eq(sessions.status, 'queued'), eq(sessions.sessionState, 'waiting_for_machine')),
+				),
+			)
+		const count = Number(row?.count ?? 0)
+		const oldest = row?.oldest ? new Date(row.oldest) : null
+		return { count, oldestWaitMs: oldest ? Math.max(0, Date.now() - oldest.getTime()) : null }
 	}
 
 	private async reportSkillPullFailures(
