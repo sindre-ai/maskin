@@ -5,6 +5,7 @@ import { MessageBubble } from '@/components/chat/message-bubble'
 import { QuestionOptions } from '@/components/chat/question-options'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+import { useActors } from '@/hooks/use-actors'
 import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
 import type { ConversationThread } from '@/hooks/use-conversation-threads'
 import {
@@ -40,10 +41,14 @@ export function SessionThread({
 	workspaceId,
 	conversationId,
 	thread,
+	promptAuthorName,
 }: {
 	workspaceId: string
-	conversationId: string
+	/** The chat the thread belongs to; null for a background run, which has no chat. */
+	conversationId: string | null
 	thread: ConversationThread
+	/** Who the first message is from when no chat message carries it, such as a trigger. */
+	promptAuthorName?: string
 }) {
 	const pill = statusToPill(thread.status)
 	const live = pill === 'WORKING' || pill === 'QUEUED'
@@ -52,8 +57,24 @@ export function SessionThread({
 	const chainLogs = useSessionChainLogs(thread.sessionIds, workspaceId, { live })
 	const isLoading = chainLogs.some((q) => q.isLoading)
 	const logs = chainLogs[chainLogs.length - 1]?.data
-	const { data: pages } = useConversationMessages(conversationId, workspaceId)
+	const { data: pages } = useConversationMessages(conversationId ?? '', workspaceId, {
+		enabled: !!conversationId,
+	})
 	const me = getStoredActor()
+	// Names for whoever typed into the run, so each message carries its own author.
+	const { data: actors } = useActors(workspaceId)
+	const resolveActor = useMemo(() => {
+		const byId = new Map((actors ?? []).map((a) => [a.id, a]))
+		return (id: string) => {
+			const actor = byId.get(id)
+			if (!actor) return undefined
+			return {
+				id: actor.id,
+				name: actor.name,
+				type: actor.type === 'agent' ? ('agent' as const) : ('human' as const),
+			}
+		}
+	}, [actors])
 
 	// Whoever handed the work off wrote the message the thread hangs from: that is who
 	// the first bubble belongs to.
@@ -67,8 +88,8 @@ export function SessionThread({
 		const from = flattenMessagesOldestFirst(pages).find((m) => m.id === thread.messageId)
 		return from
 			? { id: from.actorId, name: from.actorName, type: from.actorType }
-			: { id: '', name: 'Handed off', type: 'agent' as const }
-	}, [pages, thread.messageId])
+			: { id: '', name: promptAuthorName ?? 'Handed off', type: 'agent' as const }
+	}, [pages, thread.messageId, promptAuthorName])
 
 	// One conversation: the first session, then each follow-up the person wrote, all in order.
 	const chainData = chainLogs.map((q) => q.data)
@@ -76,17 +97,24 @@ export function SessionThread({
 		const parts = thread.sessionIds.map((sessionId, i) => {
 			const follow = i > 0 ? thread.followUps[i - 1] : undefined
 			return buildThreadChat(chainData[i] ?? [], {
-				conversationId,
+				conversationId: conversationId ?? '',
 				sessionId,
 				agent: { id: thread.actorId, name: thread.actorName, type: 'agent' },
 				me: author,
+				resolveActor,
 				prompt: follow
 					? {
 							author,
 							content: promptText(follow.actionPrompt, true),
 							createdAt: follow.createdAt,
 						}
-					: { author: handedOffBy, content: thread.actionPrompt, createdAt: thread.createdAt },
+					: {
+							author: handedOffBy,
+							// A background run's own prompt is its trigger's instructions and the event
+							// that fired it, not something anyone said: only what people write is shown.
+							content: conversationId ? thread.actionPrompt : '',
+							createdAt: thread.createdAt,
+						},
 			})
 		})
 		let nextId = -1
@@ -94,7 +122,7 @@ export function SessionThread({
 			.flatMap((p) => p.items)
 			.map((item) => ({ ...item, message: { ...item.message, id: nextId-- } }))
 		return { items, liveSteps: parts[parts.length - 1]?.liveSteps ?? [] }
-	}, [chainData, conversationId, thread, author, handedOffBy])
+	}, [chainData, conversationId, thread, author, handedOffBy, resolveActor])
 
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const working = live && !idle && !thread.awaiting
@@ -106,7 +134,11 @@ export function SessionThread({
 		!!session &&
 		session.config?.interactive === true &&
 		session.status === 'running' &&
-		(session.createdBy === me?.id || session.config?.ask_conversation_id === conversationId)
+		// A background run belongs to the workspace, so anyone who can see it may write to it;
+		// the server has the final say.
+		(!conversationId ||
+			session.createdBy === me?.id ||
+			session.config?.ask_conversation_id === conversationId)
 	const mode: ComposerMode = canWriteLive
 		? 'live'
 		: ENDED.has(thread.status)
@@ -166,7 +198,7 @@ export function SessionThread({
 						{failureText(thread.result)}
 					</p>
 				) : null}
-				{thread.awaiting ? (
+				{thread.awaiting && conversationId ? (
 					<div className="rounded-lg border border-border bg-card px-3 py-2">
 						<span className="eyebrow">Waiting on you</span>
 						<QuestionOptions
@@ -210,7 +242,7 @@ function SessionComposer({
 	mode,
 }: {
 	workspaceId: string
-	conversationId: string
+	conversationId: string | null
 	thread: ConversationThread
 	mode: ComposerMode
 }) {

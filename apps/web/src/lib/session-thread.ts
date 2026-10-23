@@ -1,6 +1,86 @@
 import { type ActivityStep, describeEvent } from '@/components/agents/session-log-transcript'
-import type { MessageResponse, SessionLogResponse } from '@/lib/api'
+import type { ConversationThread } from '@/hooks/use-conversation-threads'
+import type { MessageResponse, SessionLogResponse, SessionResponse } from '@/lib/api'
 import { parseChatLine } from '@/lib/chat-stream'
+
+/**
+ * What a background run is called: its trigger's name. A run with no trigger (or whose
+ * trigger is gone) falls back to the first line of its prompt.
+ */
+export function backgroundTitle(triggerName: string | undefined, actionPrompt: string): string {
+	const name = triggerName?.trim()
+	if (name) return name
+	const firstLine = actionPrompt
+		.split('\n')
+		.find((l) => l.trim().length > 0)
+		?.trim()
+	if (!firstLine) return 'Untitled session'
+	return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
+}
+
+const continuesOf = (s: SessionResponse): string | null => {
+	const id = s.config?.continues_session_id
+	return typeof id === 'string' ? id : null
+}
+
+/**
+ * Background runs as threads, the way a chat shows its handed-off work: a follow-up the
+ * person wrote after a run ended carries on in that run's thread instead of being a row of
+ * its own, and the thread shows the newest session's state. Oldest run first.
+ */
+export function buildBackgroundThreads(
+	sessions: SessionResponse[],
+	actorName: string,
+): ConversationThread[] {
+	const byId = new Map(sessions.map((s) => [s.id, s]))
+	const rootOf = (s: SessionResponse): SessionResponse => {
+		const from = continuesOf(s)
+		const parent = from ? byId.get(from) : undefined
+		return parent ? rootOf(parent) : s
+	}
+	const threads = new Map<string, ConversationThread>()
+	const byAge = [...sessions].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
+	for (const s of byAge) {
+		const root = rootOf(s)
+		const thread = threads.get(root.id)
+		if (!thread) {
+			threads.set(root.id, {
+				id: s.id,
+				status: s.status,
+				actorId: s.actorId,
+				actorName,
+				actionPrompt: s.actionPrompt,
+				createdAt: s.createdAt,
+				startedAt: s.startedAt,
+				completedAt: s.completedAt,
+				durationMs: null,
+				result: s.result,
+				currentActivity: s.currentActivity,
+				depends_on_session_ids: [],
+				awaiting: null,
+				messageId: null,
+				sessionIds: [s.id],
+				followUps: [],
+				latestId: s.id,
+			})
+			continue
+		}
+		threads.set(root.id, {
+			...thread,
+			status: s.status,
+			result: s.result,
+			completedAt: s.completedAt,
+			currentActivity: s.currentActivity,
+			sessionIds: [...thread.sessionIds, s.id],
+			followUps: [
+				...thread.followUps,
+				{ id: s.id, actionPrompt: s.actionPrompt, createdAt: s.createdAt },
+			],
+			latestId: s.id,
+		})
+	}
+	return [...threads.values()]
+}
 
 export interface ThreadChatItem {
 	message: MessageResponse
@@ -33,6 +113,8 @@ export function buildThreadChat(
 		sessionId: string
 		agent: Party
 		me: Party
+		/** Who a message was typed by, when its turn says; unknown ids fall back to `me`. */
+		resolveActor?: (id: string) => Party | undefined
 		prompt: { author: Party; content: string; createdAt: string | null }
 	},
 ): ThreadChat {
@@ -83,7 +165,8 @@ export function buildThreadChat(
 				}
 				const text = event.text.trim()
 				if (!text) return
-				items.push({ message: make(ctx.me, text, log.createdAt, null), steps: [] })
+				const typedBy = event.actorId ? ctx.resolveActor?.(event.actorId) : undefined
+				items.push({ message: make(typedBy ?? ctx.me, text, log.createdAt, null), steps: [] })
 				steps = []
 				return
 			}

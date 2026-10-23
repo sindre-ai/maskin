@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
+import { useBackfilledRunActivity } from '@/hooks/use-backfilled-run-activity'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -100,6 +101,8 @@ export function ThreadMessages({
 		conversationId,
 		messages,
 	)
+	// Replies copied in from a background run, whose thinking and tool calls live in that run's log.
+	const backfilledActivity = useBackfilledRunActivity(workspaceId, messages)
 	// Every session `useActiveSessionsForConversation` returns already carries
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
@@ -397,7 +400,8 @@ export function ThreadMessages({
 					// it; turns this message triggered (still in progress, no
 					// reply yet) render below it, in the gap before that reply
 					// lands — see useConversationActivity's doc comment.
-					const turnsAbove = byReplyMessageId.get(message.id) ?? []
+					const turnsAbove =
+						byReplyMessageId.get(message.id) ?? backfilledActivity.get(message.id) ?? []
 					const turnsBelow = dropRedoneFailedTurns(
 						[
 							...(byTriggerMessageId.get(message.id) ?? []),
