@@ -6,9 +6,9 @@
  */
 
 /** Longest title we keep intact; past this the title is cut on a word boundary. */
-const MAX_TITLE_LENGTH = 72
+const MAX_TITLE_LENGTH = 48
 /** Below this a word-boundary cut would leave a stub, so we cut mid-word instead. */
-const MIN_WORD_BOUNDARY = 40
+const MIN_WORD_BOUNDARY = 28
 /**
  * Shorter than this, a "sentence" is almost certainly an abbreviation we cut on
  * by mistake ("Dr.", "e.g.") rather than a real one, so we keep the whole
