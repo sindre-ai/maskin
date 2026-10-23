@@ -892,15 +892,17 @@ async function assertLoopTypesValid(
 	config: McpConfig,
 	input: {
 		closedStatuses?: Record<string, string[]>
+		closedWhen?: Record<string, string[]>
 		steps?: LoopStepInput[]
 	},
 	workspaceId?: string,
 ): Promise<void> {
 	const closedEntries = Object.entries(input.closedStatuses ?? {})
+	const closedWhenTypes = Object.keys(input.closedWhen ?? {})
 	const stepTypes = (input.steps ?? [])
 		.map((s) => ('object_type' in s.when ? s.when.object_type : undefined))
 		.filter((t): t is string => typeof t === 'string')
-	if (closedEntries.length === 0 && stepTypes.length === 0) return
+	if (closedEntries.length === 0 && closedWhenTypes.length === 0 && stepTypes.length === 0) return
 
 	const wsId = workspaceId ?? config.defaultWorkspaceId
 	if (!wsId) return // downstream calls raise the standard no-workspace hint
@@ -919,6 +921,14 @@ async function assertLoopTypesValid(
 		if (bad.length > 0) {
 			throw new Error(
 				`closed_statuses for type '${type}' references unknown status(es): ${bad.join(', ')}. Valid statuses for '${type}': ${valid.join(', ')}.`,
+			)
+		}
+	}
+
+	for (const type of closedWhenTypes) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`closed_when references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types.`,
 			)
 		}
 	}
@@ -5522,6 +5532,7 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
@@ -5542,7 +5553,7 @@ export function createMcpServer(config: McpConfig) {
 				),
 				assertLoopTypesValid(
 					config,
-					{ closedStatuses: closed_statuses, steps: stepList },
+					{ closedStatuses: closed_statuses, closedWhen: closed_when, steps: stepList },
 					workspace_id,
 				),
 			])
@@ -5577,6 +5588,7 @@ export function createMcpServer(config: McpConfig) {
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+				if (closed_when !== undefined) metadata.closed_when = closed_when
 				if (tags !== undefined) metadata.tags = tags
 
 				const node: Record<string, unknown> = {
@@ -5689,6 +5701,7 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
 				add_steps,
 				add_trigger_ids,
@@ -5731,7 +5744,11 @@ export function createMcpServer(config: McpConfig) {
 					),
 					assertLoopTypesValid(
 						config,
-						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
+						{
+							closedStatuses: closed_statuses,
+							closedWhen: closed_when,
+							steps: add_steps as LoopStepInput[] | undefined,
+						},
 						workspace_id,
 					),
 				])
@@ -5780,6 +5797,7 @@ export function createMcpServer(config: McpConfig) {
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+					if (closed_when !== undefined) metadataPatch.closed_when = closed_when
 					if (tags !== undefined) metadataPatch.tags = tags
 
 					const body: Record<string, unknown> = {}
