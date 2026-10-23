@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// startSession() checks that the agent is a member of the workspace. These tests drive startSession against a hand-rolled DB, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 const { warnMock } = vi.hoisted(() => ({ warnMock: vi.fn() }))
 vi.mock('../../lib/logger', () => ({
 	logger: { warn: warnMock, info: vi.fn(), error: vi.fn(), debug: vi.fn() },

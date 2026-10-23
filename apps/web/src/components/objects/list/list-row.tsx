@@ -157,10 +157,13 @@ export function ListRow({
 			)}
 		>
 			{/* The leading slot is star-sized on pointer devices. On touch it holds the
-			    16px checkbox and the star side by side; each keeps a 44px tap area
-			    through a pseudo-element, so the row stays slim without shrinking
-			    what a thumb can hit. */}
-			<span className="grid size-5 shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-10 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-10 pointer-coarse:gap-2">
+			    16px checkbox and the star side by side; each keeps a ~44px tap area
+			    as real padding cancelled by an equal negative margin, so the row stays
+			    slim without shrinking what a thumb can hit. The slot is 52px wide so
+			    the star's tap area ends inside its own box (an overflowing child is
+			    what the mobile-QA scrollWidth gate flags); the -mr-3 hands those 12px
+			    back out of the row's gap-3, so the title column keeps its width. */}
+			<span className="grid size-5 shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
 				{showStar && (
 					<button
 						type="button"
@@ -176,10 +179,11 @@ export function ListRow({
 							// Touch has no hover, so the checkbox sits in the slot at rest and
 							// the star stays beside it, to its right. The 1024.02px cutoff is
 							// Tailwind's `max-lg` nudged past 1024 (it is exclusive of 1024), so
-							// iPad landscape gets the touch layout too. The pseudo-element is
-							// the 44px tap area; z-10 keeps it above the checkbox's own.
-							'max-[1024.02px]:relative max-[1024.02px]:z-10 max-[1024.02px]:order-2 max-[1024.02px]:after:absolute max-[1024.02px]:after:-inset-3.5 max-[1024.02px]:after:content-[""]',
-							'pointer-coarse:relative pointer-coarse:z-10 pointer-coarse:order-2 pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-[""]',
+							// iPad landscape gets the touch layout too. The padding is the
+							// 44px tap area and the equal negative margin keeps the slot's
+							// layout at the glyph's size; z-10 keeps it above the checkbox's.
+							'max-[1024.02px]:relative max-[1024.02px]:z-10 max-[1024.02px]:order-2 max-[1024.02px]:p-3.5 max-[1024.02px]:-m-3.5',
+							'pointer-coarse:relative pointer-coarse:z-10 pointer-coarse:order-2 pointer-coarse:p-3.5 pointer-coarse:-m-3.5',
 							// Amber-filled when on (SPEC §D5 — parity with detail meta row).
 							// `--ink-3` (border-strong) → `--ink-2` (muted-foreground) on hover
 							// when off, per SPEC.
@@ -191,38 +195,53 @@ export function ListRow({
 						{isStarred ? '★' : '☆'}
 					</button>
 				)}
-				<Checkbox
-					checked={isSelected}
-					onCheckedChange={(value) => onSelect(!!value)}
-					onClick={(e) => e.stopPropagation()}
-					aria-label="Select row"
-					className={cn(
-						'shrink-0 touch-none select-none',
-						// Touch: the visible box stays 16px; the pseudo-element reaches 44px.
-						'max-[1024.02px]:relative max-[1024.02px]:after:absolute max-[1024.02px]:after:-inset-3.5 max-[1024.02px]:after:content-[""]',
-						'pointer-coarse:relative pointer-coarse:after:absolute pointer-coarse:after:-inset-3.5 pointer-coarse:after:content-[""]',
-						// One checkbox per row, in one of two places. In selection mode it
-						// sits in the slot; at rest the star has the slot, so the checkbox
-						// moves out into the page gutter and fades in on hover — that way
-						// both controls stay hittable instead of trading the same 20px.
-						// Touch viewports have no hover, so it stays visible there;
-						// `pointer-coarse` carries iPad landscape, which sits at the `lg`
-						// breakpoint but still has no hover.
-						showStar && [
-							// Pointer devices: the star owns the slot, so the checkbox waits
-							// in the row's select lane and fades in on row hover — both
-							// controls stay hittable instead of trading the same 20px.
-							'absolute left-2 top-1/2 -translate-y-1/2 opacity-0 transition-opacity',
-							'group-hover:opacity-100 focus-visible:opacity-100',
-							// Touch: no hover to reveal it, and the lane is dead space there.
-							// It takes the slot back, in flow, to the star's left.
-							// `relative` (set above) keeps the 44px pseudo-element anchored, so the
-							// lane offsets must be cleared rather than left to nudge the box.
-							'max-[1024.02px]:inset-auto max-[1024.02px]:translate-y-0 max-[1024.02px]:opacity-100',
-							'pointer-coarse:inset-auto pointer-coarse:translate-y-0 pointer-coarse:opacity-100',
-						],
-					)}
-				/>
+				{/* The checkbox's own box is the visible 16px square, so its tap area
+				    cannot be padding on the box. On touch this wrapper carries it (same
+				    padding / negative margin as the star) and forwards a tap on that
+				    padding to the selection; elsewhere it is display: contents, so the
+				    checkbox still positions against the row exactly as before. */}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: tap-area extension only, keyboard users reach the checkbox inside it */}
+				<span
+					onClick={(e) => {
+						e.stopPropagation()
+						onSelect(!isSelected)
+					}}
+					className="contents max-[1024.02px]:grid max-[1024.02px]:touch-none max-[1024.02px]:select-none max-[1024.02px]:p-3.5 max-[1024.02px]:-m-3.5 pointer-coarse:grid pointer-coarse:touch-none pointer-coarse:select-none pointer-coarse:p-3.5 pointer-coarse:-m-3.5"
+				>
+					<Checkbox
+						checked={isSelected}
+						onCheckedChange={(value) => onSelect(!!value)}
+						onClick={(e) => e.stopPropagation()}
+						aria-label="Select row"
+						className={cn(
+							'shrink-0 touch-none select-none',
+							// Touch: the visible box stays 16px; the wrapper reaches 44px. `relative`
+							// also cancels the lane's `absolute` below.
+							'max-[1024.02px]:relative',
+							'pointer-coarse:relative',
+							// One checkbox per row, in one of two places. In selection mode it
+							// sits in the slot; at rest the star has the slot, so the checkbox
+							// moves out into the page gutter and fades in on hover — that way
+							// both controls stay hittable instead of trading the same 20px.
+							// Touch viewports have no hover, so it stays visible there;
+							// `pointer-coarse` carries iPad landscape, which sits at the `lg`
+							// breakpoint but still has no hover.
+							showStar && [
+								// Pointer devices: the star owns the slot, so the checkbox waits
+								// in the row's select lane and fades in on row hover — both
+								// controls stay hittable instead of trading the same 20px.
+								'absolute left-2 top-1/2 -translate-y-1/2 opacity-0 transition-opacity',
+								'group-hover:opacity-100 focus-visible:opacity-100',
+								// Touch: no hover to reveal it, and the lane is dead space there.
+								// It takes the slot back, in flow, to the star's left.
+								// `relative` (set above) takes it out of the lane, so the lane offsets
+								// must be cleared rather than left to nudge the box.
+								'max-[1024.02px]:inset-auto max-[1024.02px]:translate-y-0 max-[1024.02px]:opacity-100',
+								'pointer-coarse:inset-auto pointer-coarse:translate-y-0 pointer-coarse:opacity-100',
+							],
+						)}
+					/>
+				</span>
 			</span>
 			{showType && <TypeBadge type={object.type} label={typeLabel} variant="pill" />}
 			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">

@@ -46,6 +46,15 @@ struct SettingsServicesTests {
 		#expect(services.webURL("billing")?.path == "/ws-2/settings/billing")
 	}
 
+	@Test("webSettingsURL is the workspace settings root, where Privacy & data lives, and follows the workspace")
+	func webSettingsURLPath() {
+		let environment = AppEnvironment.preview()
+		let services = SettingsServices(environment: environment)
+		#expect(services.webSettingsURL?.path == "/ws-1/settings")
+		environment.auth.selectWorkspace("ws-2")
+		#expect(services.webSettingsURL?.path == "/ws-2/settings")
+	}
+
 	@Test("a masked key is announced as hidden, never as bullets")
 	func keyAccessibility() {
 		#expect(SecretKeyCard.accessibilityText("ank••••••••ab12", isRevealed: false) == "API key hidden")

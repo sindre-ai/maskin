@@ -6,7 +6,7 @@ import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
  * R11-A · Admin refresh-identities endpoint.
@@ -53,7 +53,7 @@ app.post('/refresh-identities', async (c) => {
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
 	}
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

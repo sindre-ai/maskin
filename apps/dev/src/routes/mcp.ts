@@ -5,6 +5,7 @@ import { createMcpServer } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,7 +13,12 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import {
+	type McpSessionSource,
+	argKeys,
+	captureMcpToolCall,
+	normalizeActorType,
+} from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
@@ -178,6 +184,7 @@ app.post('/', async (c) => {
 			apiKey,
 			workspaceId,
 			requestBody: body,
+			userAgent: c.req.header('User-Agent'),
 			responseBytes: captured.consume(),
 			session,
 			elapsedMs,
@@ -274,7 +281,7 @@ const MAX_SESSION_ID_LEN = 128
 // every workspace, into one bucket with interleaved seq numbers, labelled
 // `maskin-session`: the tag that means "this is a real sessions.id". Wrong data
 // wearing the highest-confidence label is worse than no data, so these fall
-// through to `unknown`. agent-run.sh guards BROWSER_CDP_URL the same way.
+// through to `unknown`. agent-run.sh guards unexpanded placeholders the same way.
 const UNEXPANDED_PLACEHOLDER_RE = /^\$\{[^}]*\}$/
 
 // `sessions.id` is a uuid. `X-Maskin-Session-Id` is the only header that earns
@@ -391,7 +398,13 @@ const ACTOR_CACHE_MAX = 5_000
 // Keyed by a SHA-256 of the API key, never the key itself: this map outlives
 // the 60s TTL of any individual entry, and plaintext credentials sitting in a
 // long-lived process map end up in every heap dump.
-const actorCache = new Map<string, { actorId: string | null; at: number }>()
+const actorCache = new Map<string, { actor: ResolvedActor | null; at: number }>()
+
+/** What validateApiKey told us about the caller; null when the key did not resolve. */
+interface ResolvedActor {
+	actorId: string
+	actorType: 'human' | 'agent' | null
+}
 
 function actorCacheKey(apiKey: string): string {
 	return createHash('sha256').update(apiKey).digest('hex')
@@ -403,7 +416,7 @@ function actorCacheKey(apiKey: string): string {
  * request into a `validateApiKey` query — trading bounded memory for unbounded
  * DB load. The cap below is what keeps the memory side honest.
  */
-function rememberActor(key: string, actorId: string | null, at: number): void {
+function rememberActor(key: string, actor: ResolvedActor | null, at: number): void {
 	if (!actorCache.has(key) && actorCache.size >= ACTOR_CACHE_MAX) {
 		for (const [k, v] of actorCache) {
 			if (at - v.at >= ACTOR_CACHE_TTL_MS) actorCache.delete(k)
@@ -415,7 +428,7 @@ function rememberActor(key: string, actorId: string | null, at: number): void {
 			actorCache.delete(oldest.value)
 		}
 	}
-	actorCache.set(key, { actorId, at })
+	actorCache.set(key, { actor, at })
 }
 
 /**
@@ -471,6 +484,8 @@ interface EmitMcpTraceArgs {
 	apiKey: string
 	workspaceId: string
 	requestBody: unknown
+	/** Reduced to a client family before it is emitted; never stored raw. */
+	userAgent: string | undefined
 	responseBytes: Buffer
 	session: McpSessionIdentity
 	/**
@@ -483,15 +498,18 @@ interface EmitMcpTraceArgs {
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	let responses: JsonRpcMessage[]
-	let agentActorId: string | null = null
+	let actor: ResolvedActor | null = null
 	try {
 		responses = parseJsonRpcResponses(args.responseBytes)
 		if (args.plannedCalls.length === 0 && responses.length === 0) return
-		agentActorId = args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+		actor = args.apiKey && args.db ? await resolveAgentActor(args.db, args.apiKey) : null
 	} catch (err) {
 		logger.warn('mcp trace response parse failed', { error: String(err) })
 		return
 	}
+
+	const agentActorId = actor?.actorId ?? null
+	const client = classifyMcpClient(args.userAgent)
 
 	const responsesById = new Map<string, JsonRpcMessage>()
 	for (const r of responses) {
@@ -546,6 +564,11 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					responseBytes,
 					transport: 'http',
 					agentActorId,
+					// `api_key` only when the key resolved: an unknown caller or a bad
+					// token is null, never an authenticated-looking value.
+					authMethod: actor ? 'api_key' : null,
+					client,
+					actorType: actor?.actorType ?? null,
 				})
 			}),
 		)
@@ -573,6 +596,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
+				errorMessage: error.message ?? '',
 				sessionId: misfireSessionId,
 				agentActorId,
 			}
@@ -690,15 +714,15 @@ function extractToolName(
 	return match?.[1] ?? null
 }
 
-async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
+async function resolveAgentActor(db: Database, apiKey: string): Promise<ResolvedActor | null> {
 	const key = actorCacheKey(apiKey)
 	const cached = actorCache.get(key)
-	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
+	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actor
 	try {
-		const actor = await validateApiKey(db, apiKey)
-		const actorId = actor?.actorId ?? null
-		rememberActor(key, actorId, Date.now())
-		return actorId
+		const row = await validateApiKey(db, apiKey)
+		const actor = row ? { actorId: row.actorId, actorType: normalizeActorType(row.type) } : null
+		rememberActor(key, actor, Date.now())
+		return actor
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })
 		return null

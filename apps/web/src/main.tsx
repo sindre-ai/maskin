@@ -10,6 +10,7 @@ import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
 import { queryClient } from './lib/query'
 import { initSentry } from './lib/sentry'
+import { initStaleBuildReload } from './lib/stale-build-reload'
 import { ThemeProvider } from './lib/theme'
 import { routeTree } from './routeTree.gen'
 
@@ -25,6 +26,9 @@ initPosthog()
 // by a browser back to the list would fire popstate before the objects route
 // module ran, and the back-nav landing would go uncounted.
 initBackNavTracker()
+// A tab left open across a deploy asks for renamed files; reload once instead
+// of showing an error (e.g. the agent desktop viewer).
+initStaleBuildReload()
 
 const router = createRouter({
 	routeTree,

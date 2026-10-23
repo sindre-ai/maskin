@@ -1,8 +1,10 @@
 import type { Database } from '@maskin/db'
-import { integrations, objects } from '@maskin/db/schema'
+import { objects } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { logger } from '../../../logger'
+import { getIntegrationCredential } from '../../lookup'
 import { TokenManager } from '../../oauth/token-manager'
+import { readContextFor } from '../../read-context'
 import { getProvider } from '../../registry'
 import { callGoogleApi } from './client'
 import { makeMeetError } from './errors'
@@ -13,9 +15,9 @@ interface ReadContext {
 	db: Database
 	workspaceId: string
 	/**
-	 * Optional actor id. When present, the tools bind to that actor's Meet
-	 * integration row; when absent, they fall through to the workspace's
-	 * single google-meet row (Meet is workspace-scoped for v1).
+	 * The authenticated caller. Required in practice: the Keychain read is
+	 * attributed to it, and resolveHostToken fails closed when it is absent.
+	 * Meet is workspace-scoped for v1, so it does not pick the row.
 	 */
 	actorId?: string
 }
@@ -34,6 +36,18 @@ export async function resolveHostToken(
 	ctx: ReadContext,
 	linkedMeetingId?: string,
 ): Promise<string> {
+	// The Keychain read is attributed to the authenticated caller. Captured
+	// before step (2) below, which can overwrite ctx.actorId with a meeting
+	// owner who is not the one asking. No caller, no read.
+	const requestingActorId = ctx.actorId
+	if (!requestingActorId) {
+		throw makeMeetError(
+			'PERMISSION_DENIED',
+			'Google Meet credentials are only read on behalf of an authenticated actor.',
+			{ hint: 'Call this tool through the authenticated Google Meet MCP route.' },
+		)
+	}
+
 	// (2) — resolve host actor via linked meeting object.
 	if (!ctx.actorId && linkedMeetingId) {
 		const [meeting] = await ctx.db
@@ -48,18 +62,11 @@ export async function resolveHostToken(
 	}
 
 	// (3) — workspace-scoped row (Meet is not on actorScopedProviders in v1).
-	const rows = await ctx.db
-		.select()
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.workspaceId, ctx.workspaceId),
-				eq(integrations.provider, 'google-meet'),
-				eq(integrations.status, 'active'),
-			),
-		)
-		.limit(1)
-	const row = rows[0]
+	// Gate and audit first (scope check, one credential_access_log row). The
+	// token itself still comes from TokenManager below on its own legacy path.
+	const row = await getIntegrationCredential(ctx.db, ctx.workspaceId, 'google-meet', null, {
+		ctx: readContextFor(requestingActorId, 'meet.googleapis.com'),
+	})
 	if (!row) {
 		throw makeMeetError(
 			'INTEGRATION_MISSING',

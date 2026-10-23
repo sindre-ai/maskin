@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The full-screen brief: a sequence of slides (the daily briefing as text, then each loop's HTML
+/// The full-screen brief: a sequence of slides (the Chief of Staff's briefing page, then each loop's
 /// pages) under a wrapper that owns the pacing. Segmented progress on top, tap the right or left
 /// half to move, hold to pause, swipe down or the close button to leave. Each slide is marked
 /// seen as it is reached. The slides themselves render through the same sandboxed web view as
@@ -16,9 +16,10 @@ struct BriefViewer: View {
 
 	@State private var playback: BriefPlayback
 	@State private var fullPage: LoopOutput?
-	/// Cards parsed from each loaded page, by story card id; drives the PRESENTATION block.
-	@State private var presentations: [String: [PresentationSlide]] = [:]
-	@State private var playingPresentation: StoryCard?
+	/// The loaded page's web view, so a tap forward can turn the deck's own cards.
+	@State private var deck = HTMLProbe()
+	/// Pages fetched ahead of the reader, by file id, so the next slide opens without a spinner.
+	@State private var preloaded: [String: FileDetail] = [:]
 	@State private var dragY: CGFloat = 0
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -74,10 +75,14 @@ struct BriefViewer: View {
 		.accessibilityElement(children: .contain)
 		.accessibilityAction(.escape, close)
 		.task(id: autoAdvances) { await runClock() }
+		.task(id: playback.index) { await prefetchNext() }
 		.onChange(of: playback.index, initial: true) { _, _ in
 			guard let card else { return }
 			stories.markSeen(card)
 			AccessibilityNotification.Announcement("\(playback.position). \(card.headline)").post()
+		}
+		.onChange(of: playback.step) { _, step in
+			Task { await deck.showCard(step) }
 		}
 		.onChange(of: playback.isFinished) { _, finished in if finished { close() } }
 		.onChange(of: fullPage) { _, page in
@@ -85,11 +90,6 @@ struct BriefViewer: View {
 		}
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { playback.release() } else { playback.hold() }
-		}
-		.storyCover(item: $playingPresentation) { story in
-			PresentationPlayer(title: story.headline, slides: presentations[story.id] ?? []) {
-				playingPresentation = nil
-			}
 		}
 		.sheet(item: $fullPage) { output in
 			OutcomePresenter(environment: environment, output: output, sourceName: card?.unit ?? "")
@@ -112,6 +112,15 @@ struct BriefViewer: View {
 			let elapsed = last.duration(to: now)
 			last = now
 			playback.tick(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
+		}
+	}
+
+	/// Fetches the next pages in the background. A failure is ignored: that slide just loads when reached.
+	private func prefetchNext() async {
+		let remote = APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)
+		for output in sequence.pagesToPrefetch(after: playback.index) where preloaded[output.id] == nil {
+			guard let file = try? await remote.file(id: output.id), !Task.isCancelled else { return }
+			preloaded[output.id] = file
 		}
 	}
 
@@ -179,7 +188,7 @@ struct BriefViewer: View {
 						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
 						.foregroundStyle(Color.white)
 						.lineLimit(1)
-					Text("\(card.unit) \u{00B7} \(Self.clock(BriefSequence.duration(of: card)))")
+					Text("\(card.unit) \u{00B7} \(Self.clock(playback.currentDuration))")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14))
 						.foregroundStyle(MaskinColor.patina100.opacity(0.7))
 						.lineLimit(1)
@@ -222,40 +231,25 @@ struct BriefViewer: View {
 	@ViewBuilder
 	private func slide(_ card: StoryCard) -> some View {
 		switch card.content {
-		case .briefing(let headline, let script):
-			ScrollView {
-				VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-					Text(headline).maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
-					Text(script).maskinText(.body).foregroundStyle(MaskinColor.patina100)
-				}
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(.vertical, MaskinSpace.s9)
-			}
-			.scrollBounceBehavior(.basedOnSize)
-			.id(card.id)
+		case .briefing:
+			// Only the TV builds these (it reads the script aloud); a phone's row is briefing pages.
+			EmptyView()
 		case .page(let output):
 			BriefPageSlide(
-				environment: environment, output: output,
+				environment: environment, output: output, deck: deck,
+				preload: preloaded[output.id] ?? stories.preloadedFile(for: output.id),
 				loading: { loading in playback.setWaiting(loading) },
 				loaded: { html in
-					let slides = PresentationParser.parse(html: html)
-					if slides.count >= 2 { presentations[card.id] = slides }
+					// A page of several cards is a deck: a tap forward turns its cards before moving on.
+					let cards = PresentationParser.totalCount(html: html)
+					if cards >= 2, self.card?.id == card.id { playback.setSteps(cards) }
 				})
 			.id(card.id)
 		}
 	}
 
-	@ViewBuilder
 	private func actions(_ card: StoryCard) -> some View {
-		VStack(spacing: MaskinSpace.s5) {
-			if let slides = presentations[card.id] {
-				PresentationBlock(title: card.headline, slides: slides) {
-					playback.hold()
-					playingPresentation = card
-				}
-			}
-			actionRow(card)
-		}
+		actionRow(card)
 	}
 
 	private func actionRow(_ card: StoryCard) -> some View {
@@ -325,23 +319,26 @@ private struct ProgressSegment: View {
 /// here, so taps belong to the viewer; "Open page" hands it to the full presenter to scroll.
 private struct BriefPageSlide: View {
 	let output: LoopOutput
+	let deck: HTMLProbe
 	let loading: (Bool) -> Void
 	/// Called with the page's HTML once it has loaded, so the viewer can build its presentation.
 	let loaded: (String) -> Void
 	@State private var store: FileStore
 
 	init(
-		environment: AppEnvironment, output: LoopOutput, loading: @escaping (Bool) -> Void,
-		loaded: @escaping (String) -> Void
+		environment: AppEnvironment, output: LoopOutput, deck: HTMLProbe, preload: FileDetail?,
+		loading: @escaping (Bool) -> Void, loaded: @escaping (String) -> Void
 	) {
 		self.output = output
+		self.deck = deck
 		self.loading = loading
 		self.loaded = loaded
 		_store = State(
 			initialValue: FileStore(
 				fileId: output.id,
 				remote: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider)))
+					client: environment.client, credentials: environment.auth.credentialsProvider),
+				preload: preload))
 	}
 
 	var body: some View {
@@ -356,8 +353,26 @@ private struct BriefPageSlide: View {
 					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			case .loaded:
 				if let file = store.file, file.kind == .html {
-					PresentedHTMLView(
-						html: store.text ?? file.text ?? "", revision: store.contentRevision, isInteractive: false)
+					let html = store.text ?? file.text ?? ""
+					if MiniAppHTML.needsNetwork(html) {
+						// The sandbox refuses the page's scripts and stylesheets, so it would show as bare markup.
+						VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+							Text(StoryDerivation.headline(html: html, fileName: output.name))
+								.maskinText(.largeTitle).foregroundStyle(MaskinColor.patina50)
+							Text("This page needs a browser to show properly. Open it to see the full page.")
+								.maskinText(.body).foregroundStyle(MaskinColor.patina100)
+						}
+						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+						.padding(.vertical, MaskinSpace.s9)
+					} else {
+						// The preview is cut off where the actions begin; fade the edge so a half-drawn
+						// tile reads as "more below" and not as a rendering fault.
+						PresentedHTMLView(html: html, revision: store.contentRevision, isInteractive: false, probe: deck)
+							.mask(
+								LinearGradient(
+									stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+									startPoint: .top, endPoint: .bottom))
+					}
 				} else {
 					Text(output.name).maskinText(.subhead).foregroundStyle(MaskinColor.patina100)
 						.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -366,8 +381,11 @@ private struct BriefPageSlide: View {
 		}
 		.clipShape(shape)
 		.task {
-			loading(true)
-			await store.load()
+			// A page fetched ahead is already here: no spinner, no pause, no second request.
+			if store.phase != .loaded {
+				loading(true)
+				await store.load()
+			}
 			if let file = store.file, file.kind == .html { loaded(store.text ?? file.text ?? "") }
 			loading(false)
 		}

@@ -2,7 +2,11 @@ import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
 import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
-import { LEGACY_TOKENS_PER_USD_CENT, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import {
+	LEGACY_TOKENS_PER_USD_CENT,
+	LLM_ROUTE_CUSTOM,
+	LLM_ROUTE_MASKIN_PLAN,
+} from '../lib/llm-routing'
 import { getModelPricing } from '../lib/openrouter-pricing'
 
 export type SessionUsage = {
@@ -79,6 +83,88 @@ export async function readSessionStdoutChunks(db: Database, sessionId: string): 
 
 	// Rows came back newest-first; flip so chunks are in arrival order.
 	return rows.map((r) => r.content).reverse()
+}
+
+/**
+ * Token-only fallback for a session whose stdout holds no `result` envelope —
+ * a non-interactive run killed at the wall-time ceiling never emits one, so the
+ * result-based parse above returns null even though the session did real work.
+ *
+ * Sums the `usage` block of each top-level `assistant` message, counting every
+ * message id once: stream-json emits one `assistant` line per content block and
+ * repeats the message's usage on each, so the last line seen for an id wins.
+ * Counting restarts after the last `result` envelope, because everything before
+ * it was already accumulated by an earlier pause or turn.
+ *
+ * Cost and duration stay null on purpose — the CLI only reports cost on
+ * `result`, and a token price guessed here would sit in the cost column with
+ * nothing marking it as a guess. Returns null when no assistant usage is found.
+ */
+export function parseAssistantUsageFromLogChunks(chunks: string[]): SessionUsage | null {
+	const byMessageId = new Map<string, Record<string, unknown>>()
+	for (const line of chunks.join('').split('\n')) {
+		const trimmed = line.trim()
+		if (!trimmed || trimmed[0] !== '{') continue
+		if (parseResultLine(trimmed)) {
+			byMessageId.clear()
+			continue
+		}
+		let obj: Record<string, unknown>
+		try {
+			obj = JSON.parse(trimmed)
+		} catch {
+			continue
+		}
+		if (!obj || obj.type !== 'assistant' || obj.parent_tool_use_id != null) continue
+		const message = obj.message as { id?: unknown; usage?: unknown } | undefined
+		if (typeof message?.id !== 'string' || !message.usage || typeof message.usage !== 'object') {
+			continue
+		}
+		byMessageId.set(message.id, message.usage as Record<string, unknown>)
+	}
+	if (byMessageId.size === 0) return null
+
+	const total = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }
+	for (const usage of byMessageId.values()) {
+		total.input += finiteOrNull(usage.input_tokens) ?? 0
+		total.output += finiteOrNull(usage.output_tokens) ?? 0
+		total.cacheCreation += finiteOrNull(usage.cache_creation_input_tokens) ?? 0
+		total.cacheRead += finiteOrNull(usage.cache_read_input_tokens) ?? 0
+	}
+	return {
+		totalCostUsd: null,
+		inputTokens: total.input,
+		outputTokens: total.output,
+		cacheCreationInputTokens: total.cacheCreation,
+		cacheReadInputTokens: total.cacheRead,
+		durationMs: null,
+	}
+}
+
+/**
+ * Runs `parseAssistantUsageFromLogChunks` over the session's stdout in
+ * `session_logs`. `extractSessionUsage` reads only the newest 50 rows, which
+ * cannot cover a session that ran for an hour, so this scans every row that
+ * carries an `assistant` or `result` line (capped at the newest
+ * `MAX_LIVE_RESULT_ROWS_FETCHED`).
+ */
+export async function sumAssistantUsage(
+	db: Database,
+	sessionId: string,
+): Promise<SessionUsage | null> {
+	const rows = await db
+		.select({ content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'stdout'),
+				sql`(${sessionLogs.content} LIKE '%"type":"assistant"%' OR ${sessionLogs.content} LIKE '%"type":"result"%')`,
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
+	return parseAssistantUsageFromLogChunks(rows.map((r) => r.content).reverse())
 }
 
 /**
@@ -187,13 +273,19 @@ export interface SessionCostInput {
  * price (or no model name was recorded), it bills the tokens at the legacy
  * blended rate instead — conservative, and never Anthropic-scale for a
  * DeepSeek-priced session.
+ *
+ * `workspace_custom` (a BYO endpoint) is priced the same way, but only when its
+ * model has a published price. The CLI cannot price a non-Anthropic model id
+ * and reports a made-up figure (`costBasis: "unknown"`); an endpoint serving a
+ * model OpenRouter does not list keeps the CLI figure, as there is nothing
+ * better to bill against.
  */
 export async function resolveSessionCostUsd({
 	route,
 	modelName,
 	usage,
 }: SessionCostInput): Promise<number | null> {
-	if (route !== LLM_ROUTE_MASKIN_PLAN) return usage.totalCostUsd
+	if (route !== LLM_ROUTE_MASKIN_PLAN && route !== LLM_ROUTE_CUSTOM) return usage.totalCostUsd
 
 	const inputTokens = usage.inputTokens ?? 0
 	const outputTokens = usage.outputTokens ?? 0
@@ -211,6 +303,8 @@ export async function resolveSessionCostUsd({
 			)
 		}
 	}
+
+	if (route === LLM_ROUTE_CUSTOM) return usage.totalCostUsd
 
 	// No priced model to bill against — fall back to the legacy blended rate.
 	// Input + output tokens only, mirroring `getWorkspacePlanUsdCentsUsage`'s

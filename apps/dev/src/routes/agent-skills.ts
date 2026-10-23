@@ -11,6 +11,7 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 
 type Env = {
@@ -18,6 +19,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		workspaceRole?: string
 	}
 }
 
@@ -187,6 +189,7 @@ app.openapi(getSkillRoute, (async (c) => {
 const saveSkillRoute = createRoute({
 	method: 'put',
 	path: '/{actorId}/skills/{skillName}',
+	'x-viewer-policy': 'writer',
 	tags: ['Skills'],
 	summary: 'Create or update a skill',
 	request: {
@@ -220,6 +223,7 @@ const saveSkillRoute = createRoute({
 })
 
 app.openapi(saveSkillRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
 	const { actorId, skillName } = c.req.valid('param')
@@ -274,6 +278,7 @@ app.openapi(saveSkillRoute, (async (c) => {
 const deleteSkillRoute = createRoute({
 	method: 'delete',
 	path: '/{actorId}/skills/{skillName}',
+	'x-viewer-policy': 'writer',
 	tags: ['Skills'],
 	summary: 'Delete a skill',
 	request: {
@@ -296,6 +301,7 @@ const deleteSkillRoute = createRoute({
 })
 
 app.openapi(deleteSkillRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
 	const { actorId, skillName } = c.req.valid('param')

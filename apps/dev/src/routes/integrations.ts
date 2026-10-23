@@ -2,10 +2,22 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
+import {
+	type AgentGrantAccess,
+	actors,
+	agentChatGrants,
+	agentGrants,
+	integrations,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
+	NATIVE_OAUTH_RETURN_URLS,
+	type NativeOAuthOutcome,
+	buildNativeOAuthReturnUrl,
+	parseNativeOAuthReturnUrl,
 	skjaldOutcomePayloadSchema,
 	skjaldTranscriptionCompletedPayloadSchema,
 } from '@maskin/shared'
@@ -19,11 +31,16 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { requireCredentials } from '../lib/integrations/credential-column'
+import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
+import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
+import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
@@ -109,12 +126,15 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		storageProvider: StorageProvider
@@ -150,9 +170,40 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.from(integrations)
 		.where(eq(integrations.workspaceId, workspaceId))
 
+	const grantRows = await db
+		.select({
+			integrationId: agentGrants.integrationId,
+			actorId: agentGrants.actorId,
+			access: agentGrants.access,
+		})
+		.from(agentGrants)
+		.where(eq(agentGrants.workspaceId, workspaceId))
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			actorId: agentChatGrants.actorId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(eq(agentChatGrants.workspaceId, workspaceId))
+	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+	for (const g of chatRows) {
+		const list = chatsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		chatsByIntegration.set(g.integrationId, list)
+	}
+	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
+	for (const g of grantRows) {
+		const list = grantsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, access: g.access })
+		grantsByIntegration.set(g.integrationId, list)
+	}
+
 	// Never expose credentials
 	const safe = results.map((r) => {
-		const { credentials, ...rest } = r
+		// dekCiphertext is the wrapped data key: ciphertext, but it has no
+		// business leaving the server.
+		const { credentials, dekCiphertext: _dekCiphertext, ...rest } = r
 
 		// Flag installs whose token predates a scope the provider now requires.
 		// Only the scope NAMES leave this function — the decrypted blob does not.
@@ -160,7 +211,8 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		// undecryptable blob (almost always an encryption-key rotation) or an
 		// inactive row must never take the whole integrations list down.
 		let missingScopes: string[] = []
-		if (rest.status === 'active' && credentials) {
+		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
+		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
 			try {
 				const provider = getProvider(rest.provider)
 				if (provider) {
@@ -177,7 +229,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			}
 		}
 
-		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0 }
+		return {
+			...rest,
+			missingScopes,
+			needsReconnect: missingScopes.length > 0,
+			agentGrants: grantsByIntegration.get(rest.id) ?? [],
+			chatGrants: chatsByIntegration.get(rest.id) ?? [],
+		}
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
@@ -199,24 +257,26 @@ const listProvidersRoute = createRoute({
 })
 
 app.openapi(listProvidersRoute, (async (c) => {
-	const providers = listProviders().map((p) => ({
-		name: p.config.name,
-		displayName: p.config.displayName,
-		authType: p.config.auth.type,
-		events: p.config.events?.definitions ?? [],
-		externalIdDisplay: p.config.externalIdDisplay,
-		// Serve the MCP surface so clients that aren't the web UI can discover
-		// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
-		// provider with autoInject=false is otherwise undiscoverable and reads
-		// as "OAuth connected, zero tools" with nothing explaining the gap.
-		...(p.config.mcp && {
-			mcp: {
-				envKey: p.config.mcp.envKey,
-				autoInject: p.config.mcp.autoInject ?? false,
-				...(p.config.mcp.server && { server: p.config.mcp.server }),
-			},
-		}),
-	}))
+	const providers = listProviders()
+		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.map((p) => ({
+			name: p.config.name,
+			displayName: p.config.displayName,
+			authType: p.config.auth.type,
+			events: p.config.events?.definitions ?? [],
+			externalIdDisplay: p.config.externalIdDisplay,
+			// Serve the MCP surface so clients that aren't the web UI can discover
+			// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
+			// provider with autoInject=false is otherwise undiscoverable and reads
+			// as "OAuth connected, zero tools" with nothing explaining the gap.
+			...(p.config.mcp && {
+				mcp: {
+					envKey: p.config.mcp.envKey,
+					autoInject: p.config.mcp.autoInject ?? false,
+					...(p.config.mcp.server && { server: p.config.mcp.server }),
+				},
+			}),
+		}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
 }) as RouteHandler<typeof listProvidersRoute, Env>)
@@ -440,6 +500,7 @@ app.openapi(listLinkableRoute, (async (c) => {
 const linkInstallationRoute = createRoute({
 	method: 'post',
 	path: '/github/link',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Bind an existing GitHub App installation to this workspace',
 	request: {
@@ -472,6 +533,7 @@ app.openapi(linkInstallationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { installation_id: installationId } = c.req.valid('json')
 
 	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
@@ -498,7 +560,7 @@ app.openapi(linkInstallationRoute, (async (c) => {
 
 	// Re-encrypt rather than copying the source ciphertext, so the rows stay
 	// independent if credential storage ever becomes per-row keyed.
-	const credentials: StoredCredentials = JSON.parse(decrypt(source.credentials))
+	const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(source)))
 	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
 
 	const row = await bindGithubInstallation({
@@ -663,6 +725,7 @@ app.openapi(getPendingSelectionRoute, (async (c) => {
 const selectInstallationRoute = createRoute({
 	method: 'post',
 	path: '/github/select-installation',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Finalize a GitHub connect by choosing one of the authorized installations',
 	request: {
@@ -698,6 +761,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { integration_id: integrationId, installation_id: installationId } = c.req.valid('json')
 
 	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
@@ -772,6 +836,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/{provider}/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Start integration connection flow',
 	request: {
@@ -816,7 +881,15 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const { provider: providerName } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const actorId = c.get('actorId')
+
+	if (providerName === CUSTOM_MCP_PROVIDER) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
+			400,
+		)
+	}
 
 	let resolved: ResolvedProvider
 	try {
@@ -829,6 +902,7 @@ app.openapi(connectRoute, (async (c) => {
 				undefined,
 				`Available providers: ${listProviders()
 					.map((p) => p.config.name)
+					.filter((name) => name !== CUSTOM_MCP_PROVIDER)
 					.join(', ')}`,
 			),
 			400,
@@ -839,7 +913,10 @@ app.openapi(connectRoute, (async (c) => {
 	// so we activate the integration synchronously from the configured env var
 	// and return a redirect back to the same settings page.
 	if (resolved.config.auth.type === 'api_key') {
-		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
+		const body = (await c.req.json().catch(() => ({}))) as {
+			api_key?: string
+			return_to?: unknown
+		}
 		const apiKey = body.api_key
 		if (!apiKey) {
 			logger.warn(`api_key provider ${providerName} missing request body api_key`)
@@ -930,8 +1007,14 @@ app.openapi(connectRoute, (async (c) => {
 			authType: 'api_key',
 		})
 
-		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+		// The client navigates to this URL once the key is saved. A caller that
+		// started from a chat passes `return_to` so the user stays in that chat.
+		return c.json({
+			install_url: frontendUrlForReturn(
+				workspaceId,
+				sanitizeReturnPath(body.return_to, workspaceId),
+			),
+		})
 	}
 
 	// manual providers have no OAuth redirect and no outbound-callable API key —
@@ -1011,6 +1094,22 @@ app.openapi(connectRoute, (async (c) => {
 			typeof rawBody.expose_to_agent_sessions === 'boolean'
 				? rawBody.expose_to_agent_sessions
 				: null
+
+		// A key we are about to ignore must fail here, not later. Without this the
+		// fall-through insert below writes empty credentials and the caller gets a
+		// row that looks connected, then a webhook 500 at delivery time.
+		if (resendApiKey && !(providerName === 'resend' && resendSubdomain)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					providerName === 'resend'
+						? 'Resend needs receive_subdomain together with api_key, send both to POST /api/integrations/resend/connect'
+						: `Provider ${providerName} does not take an api_key on connect`,
+					[{ field: 'code', message: 'API_KEY_NOT_ACCEPTED' }],
+				),
+				400,
+			)
+		}
 
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
 			// Server-side guard behind the dialog's advisory pre-check: a malformed
@@ -1234,6 +1333,31 @@ app.openapi(connectRoute, (async (c) => {
 		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
 	}
 
+	const oauthBody = (await c.req.json().catch(() => ({}))) as {
+		install_new_org?: boolean
+		return_to?: unknown
+		native_return_url?: unknown
+	}
+
+	// Native app return target. Strictly allowlisted by exact match; a value that
+	// is supplied but not allowed is refused outright rather than ignored, so a
+	// native client never silently falls back to the web redirect.
+	let nativeReturn: string | undefined
+	if (oauthBody.native_return_url !== undefined && oauthBody.native_return_url !== null) {
+		nativeReturn = parseNativeOAuthReturnUrl(oauthBody.native_return_url)
+		if (!nativeReturn) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'native_return_url is not an allowed return target',
+					undefined,
+					`Allowed: ${NATIVE_OAUTH_RETURN_URLS.join(', ')}`,
+				),
+				400,
+			)
+		}
+	}
+
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
 	const statePayload: OAuthStatePayload = {
@@ -1241,6 +1365,8 @@ app.openapi(connectRoute, (async (c) => {
 		actorId,
 		ts: Date.now(),
 		nonce,
+		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
+		...(nativeReturn ? { nativeReturn } : {}),
 	}
 
 	// If provider uses PKCE, generate and include code verifier in state
@@ -1255,10 +1381,7 @@ app.openapi(connectRoute, (async (c) => {
 	// appear there. This sends them to the App's install page instead, carrying
 	// the same signed state, so the post-install callback matches the pending row
 	// minted below and handleCallback binds the new installation directly.
-	const installNewOrg =
-		providerName === 'github' &&
-		((await c.req.json().catch(() => ({}))) as { install_new_org?: boolean }).install_new_org ===
-			true
+	const installNewOrg = providerName === 'github' && oauthBody.install_new_org === true
 
 	// Bind the state to *this* browser. `state` is a sealed envelope with no
 	// session binding, so on its own it authorizes whoever presents it — and the
@@ -1351,8 +1474,93 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
+	// Native: the cookie set above lands in the app's URL session, not in the
+	// web-auth browser that will finish the flow. Route that browser through our
+	// own launch endpoint first so the binding cookie is set where it is checked.
+	if (nativeReturn) {
+		const ticket = encodeLaunchTicket({
+			kind: 'native-launch',
+			provider: providerName,
+			nonce,
+			installUrl,
+			ts: Date.now(),
+			workspaceId,
+			nativeReturn,
+		})
+		const origin = resolvePublicOrigin(c.req.url, c.req.header())
+		return c.json({
+			install_url: `${origin}/api/integrations/${providerName}/native-launch?ticket=${ticket}`,
+		})
+	}
+
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
+
+// ── GET /api/integrations/:provider/native-launch ────────────────────────
+
+app.get('/:provider/native-launch', async (c) => {
+	const db = c.get('db')
+	const providerName = c.req.param('provider')
+	const ticket = decodeLaunchTicket(c.req.query('ticket') ?? '')
+	if (!ticket || ticket.provider !== providerName) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid or expired launch link — please start again'),
+			400,
+		)
+	}
+	// Single-use: claim the pending row with one compare-and-set UPDATE. The
+	// marker lives in the row's (otherwise unused on pending rows) metadata, so
+	// concurrent opens race on the row lock and exactly one sees the marker unset.
+	// A launch link for a flow that already completed (or was never persisted)
+	// matches no pending row at all.
+	const [claimed] = await db
+		.update(integrations)
+		.set({
+			metadata: sql`coalesce(${integrations.metadata}, '{}'::jsonb) || jsonb_build_object('native_launched_at', now()::text)`,
+		})
+		.where(
+			and(
+				eq(integrations.provider, providerName),
+				eq(integrations.externalId, ticket.nonce),
+				eq(integrations.status, 'pending'),
+				sql`${integrations.metadata} ->> 'native_launched_at' IS NULL`,
+			),
+		)
+		.returning({ id: integrations.id })
+	if (!claimed) {
+		const [stillPending] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.provider, providerName),
+					eq(integrations.externalId, ticket.nonce),
+					eq(integrations.status, 'pending'),
+				),
+			)
+			.limit(1)
+		// Already opened: end the web-auth session in the app rather than on a bare error.
+		if (stillPending && ticket.workspaceId && parseNativeOAuthReturnUrl(ticket.nativeReturn)) {
+			c.header('Cache-Control', 'no-store')
+			return c.redirect(
+				buildNativeOAuthReturnUrl(ticket.nativeReturn as string, {
+					provider: providerName,
+					workspaceId: ticket.workspaceId,
+					status: 'error',
+					reason: 'state_expired',
+				}),
+			)
+		}
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid or expired launch link — please start again'),
+			400,
+		)
+	}
+	setOAuthNonceCookie(c, providerName, ticket.nonce)
+	c.header('Cache-Control', 'no-store')
+	return c.redirect(ticket.installUrl)
+})
 
 // ── GET /api/integrations/:provider/callback ─────────────────────────────
 
@@ -1397,9 +1605,34 @@ app.openapi(callbackRoute, (async (c) => {
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
+	// A sealed blob that decrypts but is not a connect state (e.g. a native launch
+	// ticket, which carries a nonce and workspaceId but never an actorId) must not
+	// reach the nonce/workspace lookups below.
+	if (
+		typeof stateData?.nonce !== 'string' ||
+		typeof stateData.workspaceId !== 'string' ||
+		typeof stateData.actorId !== 'string'
+	) {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
+	}
+
+	// Native-app flows end by redirecting to the app with an outcome rather than
+	// to the web UI or a bare JSON error the web-auth session would just display.
+	// The target was allowlisted when the state was minted and is sealed in it;
+	// it is re-checked by buildNativeOAuthReturnUrl before it reaches a 302.
+	const nativeEnd = (outcome: Omit<NativeOAuthOutcome, 'provider' | 'workspaceId'>) =>
+		c.redirect(
+			buildNativeOAuthReturnUrl(stateData.nativeReturn as string, {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				...outcome,
+			}),
+		)
+	const native = parseNativeOAuthReturnUrl(stateData.nativeReturn) !== undefined
 
 	// Check state age (max 10 minutes)
 	if (Date.now() - stateData.ts > 10 * 60 * 1000) {
+		if (native) return nativeEnd({ status: 'error', reason: 'state_expired' })
 		return c.json(
 			createApiError('BAD_REQUEST', 'State expired — please restart the connection flow'),
 			400,
@@ -1422,6 +1655,7 @@ app.openapi(callbackRoute, (async (c) => {
 			actorId: stateData.actorId,
 			hadCookie: boundNonce !== undefined,
 		})
+		if (native) return nativeEnd({ status: 'error', reason: 'not_bound' })
 		return c.json(
 			createApiError(
 				'BAD_REQUEST',
@@ -1446,6 +1680,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!pendingIntegration) {
+		if (native) return nativeEnd({ status: 'error', reason: 'invalid_state' })
 		return c.json(createApiError('BAD_REQUEST', 'Invalid or already used state token'), 400)
 	}
 
@@ -1462,7 +1697,17 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!member) {
+		if (native) return nativeEnd({ status: 'error', reason: 'not_member' })
 		return c.json(createApiError('FORBIDDEN', 'Actor is no longer a member of this workspace'), 400)
+	}
+
+	// The user declined consent on the provider's page: it calls back with
+	// `error=access_denied` and no code. The web flow keeps its existing response;
+	// a native session gets told, so it can close instead of showing a bare error.
+	// The pending row is left for the TTL, exactly as an abandoned web flow is.
+	if (native && query.error && !query.code) {
+		clearOAuthNonceCookie(c, providerName)
+		return nativeEnd({ status: 'error', reason: 'denied' })
 	}
 
 	// Handle provider-specific callback
@@ -1474,11 +1719,13 @@ app.openapi(callbackRoute, (async (c) => {
 		} else if (resolved.config.auth.type === 'oauth2') {
 			const code = query.code
 			if (!code) {
+				if (native) return nativeEnd({ status: 'error', reason: 'missing_code' })
 				return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 			}
 			const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
 			credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 		} else {
+			if (native) return nativeEnd({ status: 'error', reason: 'unsupported' })
 			return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
 		}
 	} catch (err) {
@@ -1503,6 +1750,7 @@ app.openapi(callbackRoute, (async (c) => {
 				error: err.message,
 			})
 			clearOAuthNonceCookie(c, providerName)
+			if (native) return nativeEnd({ status: 'error', reason: 'installation_unauthorized' })
 			return c.json(
 				createApiError(
 					'FORBIDDEN',
@@ -1515,6 +1763,7 @@ app.openapi(callbackRoute, (async (c) => {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
 		})
+		if (native) return nativeEnd({ status: 'error', reason: 'token_exchange_failed' })
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
 			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
@@ -1566,8 +1815,17 @@ app.openapi(callbackRoute, (async (c) => {
 		// POST /github/select-installation, which carries its own `createdBy` check,
 		// so the binding cookie has no further job.
 		clearOAuthNonceCookie(c, providerName)
+		if (native) {
+			return nativeEnd({ status: 'selection_required', integrationId: pendingIntegration.id })
+		}
+		// The org picker lives on the settings page, so this one stops there; it
+		// carries the return path so the page can send the user on to the chat
+		// once they have picked.
+		const selectReturnTo = sanitizeReturnPath(stateData.returnTo, stateData.workspaceId)
 		return c.redirect(
-			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}`,
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}${
+				selectReturnTo ? `&return_to=${encodeURIComponent(selectReturnTo)}` : ''
+			}`,
 		)
 	}
 
@@ -1673,8 +1931,9 @@ app.openapi(callbackRoute, (async (c) => {
 				workspaceId: stateData.workspaceId,
 				error: err instanceof Error ? err.message : String(err),
 			})
-			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 			clearOAuthNonceCookie(c, providerName)
+			if (native) return nativeEnd({ status: 'error', reason: 'people_id_fetch_failed' })
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 			return c.redirect(
 				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=people_id_fetch_failed`,
 			)
@@ -1767,6 +2026,10 @@ app.openapi(callbackRoute, (async (c) => {
 				.update(integrations)
 				.set({ status: 'error', updatedAt: new Date() })
 				.where(eq(integrations.id, integrationId))
+			if (native) {
+				clearOAuthNonceCookie(c, providerName)
+				return nativeEnd({ status: 'error', reason: 'post_install_failed' })
+			}
 			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 			return c.redirect(
 				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=post_install_failed`,
@@ -1798,10 +2061,17 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	// Redirect to frontend settings/integrations page
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+	// Back to where the user started the connect (an agent's Connect card in a
+	// chat), or the settings page when the flow began there. Re-checked even
+	// though the state is sealed: this value ends up in a 302.
 	clearOAuthNonceCookie(c, providerName)
-	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
+	if (native) return nativeEnd({ status: 'connected', integrationId })
+	return c.redirect(
+		frontendUrlForReturn(
+			stateData.workspaceId,
+			sanitizeReturnPath(stateData.returnTo, stateData.workspaceId),
+		),
+	)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 // ── DELETE /api/integrations/:id ──────────────────────────────────────
@@ -1809,6 +2079,7 @@ app.openapi(callbackRoute, (async (c) => {
 const deleteIntegrationRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Disconnect an integration',
 	request: {
@@ -1824,6 +2095,10 @@ const deleteIntegrationRoute = createRoute({
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'Keychain credential: use POST /integrations/:id/remove',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -1833,6 +2108,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const [existing] = await db
 		.select()
@@ -1840,6 +2116,19 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	// A vaulted Keychain credential is removed through POST /:id/remove, which
+	// limits it to its creator or an admin, zeroises the secret and appends to the
+	// audit chain. This route would only flip the status and leave the ciphertext.
+	if (existing.providerMode === 'byo_apikey' || existing.providerMode === 'byo_login') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This is a Keychain credential. Remove it from Keychain (POST /api/integrations/:id/remove).',
+			),
+			409,
+		)
+	}
 
 	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
 	// credentials are still readable so the provider can call its remote API
@@ -1852,7 +2141,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(existing)))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
@@ -1914,7 +2203,10 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// outlives the credential behind it. Left in place, the agent boots with
 	// the server attached, advertises its tools, and fails every call — so it
 	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	//
+	// What counts as this integration's entry is declared in the provider's own
+	// config.ts, and only this credential's entries go (mcp-detach.ts).
+	await detachProviderMcpServers(db, existing, actorId)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
@@ -1927,6 +2219,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 const updateIntegrationRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Update integration settings',
 	request: {
@@ -1963,6 +2256,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { expose_to_agent_sessions } = c.req.valid('json')
 
 	const [existing] = await db
@@ -1996,7 +2290,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
 	// Never expose credentials
-	const { credentials: _credentials, ...safe } = updated
+	const { credentials: _credentials, dekCiphertext: _dekCiphertext, ...safe } = updated
 	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
 }) as RouteHandler<typeof updateIntegrationRoute, Env>)
 
@@ -2009,6 +2303,7 @@ app.openapi(updateIntegrationRoute, (async (c) => {
 const completeIntegrationRoute = createRoute({
 	method: 'post',
 	path: '/{id}/complete',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Complete a manual-auth integration handshake by supplying the provider secret',
 	request: {
@@ -2036,6 +2331,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = (await c.req.json().catch(() => ({}))) as { secret?: string }
 	const secret = body.secret?.trim()
@@ -2281,8 +2577,11 @@ app.openapi(githubTokenRoute, (async (c) => {
 
 	if (recoveryRepo) {
 		try {
-			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
-			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(integration)))
+			const result = await mintInstallationTokenWithRecovery(credentials, {
+				repo: recoveryRepo,
+				expectedOwnerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+			})
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
 				if (oldInstallationId) {
@@ -2935,7 +3234,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 		if (typeof value === 'string') headers[key.toLowerCase()] = value
 	}
 
-	const secret = decrypt(integration.credentials)
+	const secret = decrypt(requireCredentials(integration))
 	const verified = verifyTimestampSignature(body, headers, secret, {
 		signatureHeader: 'x-skjald-signature',
 		timestampHeader: 'x-skjald-timestamp',
@@ -3139,7 +3438,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
 	let stored: { accessToken: string; webhookSecret: string }
 	try {
-		stored = JSON.parse(decrypt(integration.credentials)) as {
+		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
 			accessToken: string
 			webhookSecret: string
 		}

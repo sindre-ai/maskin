@@ -12,6 +12,13 @@ import {
 	createTestContext,
 } from '../setup'
 
+// Mirroring a comment into the object's chat runs its own queries, which would consume the
+// positional mock-DB results these tests queue for the route itself. It has its own integration
+// coverage (conversation-subjects.test.ts).
+vi.mock('../../services/object-chat-sync', () => ({
+	mirrorCommentIntoChat: vi.fn().mockResolvedValue(undefined),
+}))
+
 const { default: eventsRoutes } = await import('../../routes/events')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
@@ -949,6 +956,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
 					[{ driver: null }],
@@ -973,6 +982,8 @@ describe('Events Routes', () => {
 							data: { content: 'Root' },
 						},
 					],
+					[], // thread-reply fan-out: object lookup
+					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
 
@@ -1039,6 +1050,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
 					[{ driver: driverAgentId }],
@@ -1108,6 +1121,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
@@ -1127,6 +1142,8 @@ describe('Events Routes', () => {
 					],
 					// Actor resolution for the mentioned candidate
 					[{ id: agentAId, type: 'agent' }],
+					[], // thread-reply fan-out: object lookup
+					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
 
@@ -1188,6 +1205,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
 						{
@@ -1256,6 +1275,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
@@ -1331,6 +1352,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
 					// Mention resolution inside postComment
 					[{ id: agentAId }],
 					// resolveMentionedAgentIds — the excludedAgentIds source

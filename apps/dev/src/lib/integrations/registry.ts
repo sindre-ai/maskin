@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -9,7 +10,6 @@ import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/r
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
-import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleMeetConfig } from './providers/google-meet/config'
 import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
@@ -20,6 +20,8 @@ import {
 	meetWebhookVerifier,
 	resolveMeetInstallationId,
 } from './providers/google-meet/webhooks'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { startGscBackfill } from './providers/google-search-console/sync'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -105,7 +107,6 @@ providers.set('gmail', {
 providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
-	preDisconnect: revokeGoogleCalendarGrant,
 })
 
 // google-meet — provider registration + Task 3 (read-path / async ingest) webhook
@@ -130,6 +131,13 @@ providers.set('google-meet', {
 	preDisconnect: stopMeetWatch,
 })
 
+// google-search-console — `postInstall` starts the detached 16-month backfill; the
+// daily delta sync runs from services/gsc-sync-scheduler.ts.
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	postInstall: startGscBackfill,
+})
+
 providers.set('posthog', {
 	config: posthogConfig,
 })
@@ -145,6 +153,10 @@ providers.set('posthog', {
 // spells the same warning out at the source of truth (spec §12.3).
 providers.set('resend', {
 	config: resendConfig,
+})
+
+providers.set('custom-mcp', {
+	config: customMcpConfig,
 })
 
 providers.set('skjald', {

@@ -8,6 +8,7 @@ vi.mock('@grafana/faro-web-sdk', () => ({
 	SessionInstrumentation: class {},
 }))
 
+import { pauseClientErrorLogging } from '@/lib/client-logging-pause'
 import {
 	__setFaroForTesting,
 	initFaro,
@@ -272,5 +273,31 @@ describe('reporting helpers once initialised', () => {
 
 		expect(() => pushFaroError(new Error('boom'))).not.toThrow()
 		expect(consoleSpy).toHaveBeenCalledOnce()
+	})
+})
+
+describe('while client error logging is paused', () => {
+	it('beforeSend drops the signal, and lets it through once released', () => {
+		const beforeSend = initWithForceEnable().beforeSend
+		// biome-ignore lint/suspicious/noExplicitAny: partial TransportItem is all beforeSend touches
+		const item = { meta: { page: { url: 'https://app.example/ws/1' } } } as any
+
+		const release = pauseClientErrorLogging()
+		expect(beforeSend?.(item)).toBeNull()
+		release()
+
+		expect(beforeSend?.(item)).toBe(item)
+	})
+
+	it('pushFaroError and reportApiFailure send nothing', () => {
+		__setFaroForTesting(fakeFaro)
+		const release = pauseClientErrorLogging()
+
+		pushFaroError(new Error('boom'))
+		reportApiFailure({ method: 'POST', path: '/integrations/chat-capture', status: 500 })
+		release()
+
+		expect(fakeFaro.api.pushError).not.toHaveBeenCalled()
+		expect(fakeFaro.api.pushEvent).not.toHaveBeenCalled()
 	})
 })

@@ -36,6 +36,7 @@ describe('workspaceResponseSchema', () => {
 	const validWorkspace = {
 		...ws,
 		enterprise: enterpriseGranted,
+		llm_configured: { anthropic: false, openai: false, custom_llm: false },
 		createdAt: ws.createdAt.toISOString(),
 		updatedAt: ws.updatedAt.toISOString(),
 	}

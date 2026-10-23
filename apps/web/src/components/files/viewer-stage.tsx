@@ -34,7 +34,16 @@ import {
 	type ViewerVariantOverride,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
-import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
+import {
+	AlertTriangle,
+	ChevronLeft,
+	ChevronRight,
+	Code,
+	Download,
+	Maximize2,
+	Minus,
+	Plus,
+} from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
@@ -692,6 +701,14 @@ function HtmlViewerStage({
 						</div>
 					</div>
 				)}
+				{isPaged && page && page.total > 1 && !blocked && (
+					<PageControls
+						index={page.index}
+						total={page.total}
+						onPrev={() => gotoPage(page.index - 1)}
+						onNext={() => gotoPage(page.index + 1)}
+					/>
+				)}
 				{fitSize && !blocked && (
 					<ZoomControls
 						zoom={zoom}
@@ -702,6 +719,58 @@ function HtmlViewerStage({
 				)}
 			</div>
 		</StageFrame>
+	)
+}
+
+// On-stage prev/next pager for paged docs. The thumbnail rail only shows at xl
+// and up, so below that this is the pointer/touch way to change pages. It
+// calls gotoPage, so the page-navigated analytics event fires like any other
+// page change.
+function PageControls({
+	index,
+	total,
+	onPrev,
+	onNext,
+}: {
+	index: number
+	total: number
+	onPrev: () => void
+	onNext: () => void
+}) {
+	return (
+		<div
+			className="pointer-events-none absolute bottom-20 left-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md sm:bottom-4 xl:hidden"
+			data-testid="viewer-page-controls"
+		>
+			<div className="pointer-events-auto flex items-center gap-1">
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onPrev}
+					disabled={index <= 0}
+					aria-label="Previous page"
+				>
+					<ChevronLeft size={14} />
+				</Button>
+				<span
+					className="min-w-12 text-center text-xs font-mono tabular-nums text-muted-foreground"
+					aria-live="polite"
+				>
+					{index + 1} / {total}
+				</span>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onNext}
+					disabled={index >= total - 1}
+					aria-label="Next page"
+				>
+					<ChevronRight size={14} />
+				</Button>
+			</div>
+		</div>
 	)
 }
 

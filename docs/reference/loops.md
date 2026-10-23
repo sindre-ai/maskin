@@ -24,6 +24,7 @@ A loop is not a separate table. It is composed from existing primitives:
 | Member objects | `in_loop` relationship edges — source = loop, target = member object (any type) |
 | Entry / close conditions | `metadata.entry_condition`, `metadata.close_condition` (plain language) |
 | Per-loop terminal statuses | `metadata.closed_statuses` — `{ "<type>": ["status", ...] }` |
+| Per-loop metadata close rules | `metadata.closed_when` — `{ "<type>": ["field=value", ...] }` |
 
 Member objects can be **any workspace-defined type**, including custom types added via
 extensions. Loop membership is the edge, never a back-reference on the member.
@@ -70,13 +71,20 @@ Whether a member counts as **closed** is resolved per loop: the loop's own
 table in `loops.ts` applies (bet/task/insight). Custom object types have no fallback —
 a loop flowing custom types **must** set `closed_statuses` or its closed counts stay at zero.
 
+A loop can also close members by a metadata value, without a status change, with
+`metadata.closed_when` (for example `{ "insight": ["loop_stage=live"] }`): a member is closed when
+its status is closed **or** any rule for its type matches. Rules are `field=value` strings (the same
+string-array map shape as `closed_statuses`), and a malformed rule is dropped. For a member closed
+only by a rule, time to close runs to the last update event that moved the metadata into a matching
+state (the event stores the old and new metadata), falling back to `updated_at` when there is none.
+
 ## MCP tools
 
 The MCP server exposes loops as first-class tools (`packages/mcp`):
 
 - **`create_loop`** — one call creates the whole loop: the loop object, inline `steps` (each
   becomes a trigger — `when: { cron }` or `when: { object_type, action, filter? }`), attached
-  pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, and `closed_statuses`. A step and
+  pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, `closed_statuses` and `closed_when`. A step and
   a trigger are the same thing; `steps` authors new ones inline, `trigger_ids` attaches existing
   ones. All ids, types, and statuses are validated against the workspace before anything is
   created; if the loop insert fails, just-created step triggers are rolled back. The response
@@ -85,7 +93,7 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
   effective status of `paused` starts its triggers disabled.
 - **`update_loop`** — rename/status/conditions, `add_steps`, `add_trigger_ids` /
   `remove_trigger_ids` (safe read-modify-write of `metadata.trigger_ids`), `add_object_ids` /
-  `remove_object_ids` (membership edges), `closed_statuses`.
+  `remove_object_ids` (membership edges), `closed_statuses`, `closed_when`.
 - **`list_loops`** — wraps `GET /api/loops` with deep links to `/{workspace}/loops/{id}`.
 
 Do not author loops through raw `create_objects` — the tools above wire the metadata and edges

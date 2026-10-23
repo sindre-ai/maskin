@@ -11,7 +11,6 @@ import {
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
 	idParamSchema,
@@ -20,13 +19,16 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 	}
 }
@@ -44,9 +46,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
  * just removed, and the service needs to run to clear the outcomes the form
  * would otherwise keep showing.
- *
- * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
- * behaviour (no join, no confirmation, no metadata write).
  */
 /**
  * Write-time warning for filters whose values the matcher will never resolve
@@ -89,7 +88,6 @@ function kickOffSlackSetup(
 	},
 ): void {
 	if (row.type !== 'event') return
-	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
 	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
 	const hasStaleSetup =
 		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
@@ -110,6 +108,7 @@ function kickOffSlackSetup(
 const createTriggerRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Create a trigger',
 	request: {
@@ -142,6 +141,7 @@ app.openapi(createTriggerRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
 
@@ -153,6 +153,10 @@ app.openapi(createTriggerRoute, async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
+
+	// The trigger starts its target agent on every fire, so the agent has to be a
+	// member of this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
@@ -295,6 +299,7 @@ app.openapi(listTriggersRoute, (async (c) => {
 const updateTriggerRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Update a trigger',
 	request: {
@@ -327,7 +332,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	// Verify trigger exists and actor is a workspace member
 	const [trigger] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!trigger || !(await isWorkspaceMember(db, actorId, trigger.workspaceId))) {
+	if (!trigger || !(await isWorkspaceWriter(db, actorId, trigger.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
@@ -355,6 +360,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 			}
 		}
 	}
+
+	// Checked against the trigger's own workspace, which is where it will fire.
+	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
@@ -416,6 +424,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 const deleteTriggerRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Delete a trigger',
 	request: {
@@ -439,7 +448,7 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 

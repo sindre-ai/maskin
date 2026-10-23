@@ -73,6 +73,11 @@ describe('formatEventDescription', () => {
 		expect(formatEventDescription(event)).toBe('session timed out')
 	})
 
+	it('returns "stopped session"', () => {
+		const event = buildEvent({ action: 'session_stopped', entityType: 'session' })
+		expect(formatEventDescription(event)).toBe('stopped session')
+	})
+
 	it('returns "paused session"', () => {
 		const event = buildEvent({ action: 'session_paused', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('paused session')

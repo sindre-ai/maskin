@@ -16,7 +16,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	detectCsvOptions,
 	executeImport,
@@ -28,6 +28,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		storageProvider: StorageProvider
 	}
@@ -64,6 +66,7 @@ function findImport(db: Database, id: string, workspaceId: string) {
 const createImportRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Upload a file and create an import job with auto-mapped fields',
 	request: {
@@ -103,6 +106,7 @@ app.openapi(createImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace for settings
 	const [workspace] = await db
@@ -236,6 +240,7 @@ app.openapi(createImportRoute, async (c) => {
 const updateMappingRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/mapping',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Update the field mapping for an import job',
 	request: {
@@ -273,6 +278,7 @@ app.openapi(updateMappingRoute, async (c) => {
 	const db = c.get('db')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 	const { mapping } = c.req.valid('json')
 
@@ -464,6 +470,7 @@ function runImportInBackground(opts: {
 const confirmImportRoute = createRoute({
 	method: 'post',
 	path: '/{id}/confirm',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Confirm and execute the import, creating objects in batches',
 	request: {
@@ -495,6 +502,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	// Fetch import record (needed for 404 and mapping check)

@@ -9,7 +9,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
-import { captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import { captureMcpToolCall, normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -137,6 +137,13 @@ app.openapi(recordRoute, (async (c) => {
 				responseBytes: null,
 				transport: 'stdio',
 				agentActorId: actorId,
+				// Behind authMiddleware, which only admits API keys today, so the
+				// caller is authenticated by key and its type is on the context.
+				authMethod: 'api_key',
+				// This request comes from our own stdio package, not the end client,
+				// so its User-Agent says nothing about Claude Code or Cursor.
+				client: 'other',
+				actorType: normalizeActorType(c.get('actorType')),
 			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
 		}
 	} else if (body.event_type === 'mutation') {
@@ -201,6 +208,9 @@ app.openapi(recordRoute, (async (c) => {
 			// Always emitted (never omitted) so a dashboard can filter on it
 			// without having to treat "absent" as a third state.
 			shape_error: body.shape_error ?? false,
+			// Named here because this object is built key by key: a property not
+			// listed is dropped silently. null when the tool sets no view.
+			view: body.view ?? null,
 			// Derived here rather than in a dashboard query so the "is each row
 			// too fat?" question is answerable by grouping alone. Guarded against
 			// a zero row count, which is a real and frequent response.

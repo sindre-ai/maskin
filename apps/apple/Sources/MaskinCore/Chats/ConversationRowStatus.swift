@@ -32,8 +32,14 @@ public struct ConversationRowStatus: Equatable, Sendable {
 	public var preview: String
 	public var isDraft: Bool
 	public var mentionsYou: Bool
+	/// Who is running, by first name, so the row can say "Forge is working".
+	public var workingNames: [String]
 
-	public init(prefix: Prefix? = nil, preview: String, isDraft: Bool = false, mentionsYou: Bool = false) {
+	public init(
+		prefix: Prefix? = nil, preview: String, isDraft: Bool = false, mentionsYou: Bool = false,
+		workingNames: [String] = []
+	) {
+		self.workingNames = workingNames
 		self.prefix = prefix
 		self.preview = preview
 		self.isDraft = isDraft
@@ -42,6 +48,16 @@ public struct ConversationRowStatus: Equatable, Sendable {
 
 	/// The label for a working prefix.
 	public static func workingLabel(_ count: Int) -> String { count <= 1 ? "Working" : "\(count) working" }
+
+	/// "Forge is working", "Forge and Ida are working", "3 working"; the plain label without names.
+	public var workingText: String {
+		guard case .working(let n) = prefix else { return "" }
+		switch workingNames.count {
+		case 1 where n == 1: return "\(workingNames[0]) is working"
+		case 2 where n == 2: return "\(workingNames[0]) and \(workingNames[1]) are working"
+		default: return Self.workingLabel(n)
+		}
+	}
 
 	/// What the row says when the conversation has no message yet.
 	public static let noMessages = "No messages yet"
@@ -54,7 +70,7 @@ public struct ConversationRowStatus: Equatable, Sendable {
 	///   - mentionsYou: an unread message mentions you.
 	public static func make(
 		conversation: ConversationSummary, draft: String? = nil, typing: Bool = false,
-		workingAgents: Int = 0, tick: Tick? = nil, mentionsYou: Bool = false
+		workingAgents: Int = 0, workingNames: [String] = [], tick: Tick? = nil, mentionsYou: Bool = false
 	) -> ConversationRowStatus {
 		let mention = mentionsYou && conversation.isUnread
 		if typing { return ConversationRowStatus(prefix: .typing, preview: "", mentionsYou: mention) }
@@ -66,12 +82,16 @@ public struct ConversationRowStatus: Equatable, Sendable {
 		var prefix: Prefix?
 		if workingAgents > 0 {
 			prefix = .working(workingAgents)
+		} else if tick == .sent, !text.isEmpty {
+			// Your own last message reads "You: …" rather than a tick; sending and failed keep their mark.
+			preview = "You: \(text)"
 		} else if let tick {
 			prefix = .tick(tick)
 		} else if !text.isEmpty, let who = conversation.snippetActorName, !who.isEmpty {
 			preview = "\(who): \(text)"
 		}
-		return ConversationRowStatus(prefix: prefix, preview: preview, mentionsYou: mention)
+		return ConversationRowStatus(
+			prefix: prefix, preview: preview, mentionsYou: mention, workingNames: workingNames)
 	}
 
 	/// A flow row: `{agent}: {first clause of the last post}` with a working prefix while agents run.
@@ -88,7 +108,7 @@ public struct ConversationRowStatus: Equatable, Sendable {
 		var parts: [String] = []
 		switch prefix {
 		case .typing: parts.append("typing")
-		case .working(let n): parts.append(Self.workingLabel(n))
+		case .working: parts.append(workingText)
 		case .tick(.sending): parts.append("sending")
 		case .tick(.sent): parts.append("sent")
 		case .tick(.read): parts.append("read")

@@ -14,10 +14,6 @@ vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: async () => 'AAAA',
 }))
 
-vi.mock('@/components/chat/slash-picker', () => ({
-	SlashPicker: () => null,
-}))
-
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},

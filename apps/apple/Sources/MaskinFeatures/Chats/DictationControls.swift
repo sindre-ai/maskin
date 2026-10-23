@@ -15,7 +15,7 @@ struct DictationDiscardButton: View {
 		} label: {
 			Image(systemName: "xmark")
 				.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
-				.foregroundStyle(MaskinColor.ink2)
+				.foregroundStyle(MaskinColor.ink3)
 				.frame(width: size, height: size)
 				.background(MaskinSurface.fill, in: Circle())
 		}

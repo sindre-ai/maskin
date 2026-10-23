@@ -59,6 +59,22 @@ export function useObject(id: string, options?: { enabled?: boolean }) {
 	})
 }
 
+/**
+ * A person's yes to sending a drafted object exactly as it reads. The hash is the preview's
+ * `content_hash`, so a draft that changed since it was drawn is refused. The object is
+ * re-read afterwards so its card shows the approval.
+ */
+export function useApproveObject() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, contentHash }: { id: string; contentHash?: string }) =>
+			api.objects.approve(id, contentHash),
+		onSuccess: (_data, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+		},
+	})
+}
+
 // Shared search engine for the command palette's active-query results and the
 // /search view — one server-side ranking so both surfaces show the same order.
 // `enabled` is driven by the trimmed query: no request fires for an empty

@@ -51,10 +51,6 @@ vi.mock('@/components/agents/session-detail-panel', () => ({
 	parseFailureReason: () => null,
 }))
 
-vi.mock('@/components/agents/mcp-servers', () => ({
-	McpServers: () => null,
-}))
-
 vi.mock('@/components/agents/skills', () => ({
 	Skills: () => null,
 }))
@@ -109,7 +105,6 @@ describe('AgentDocumentView accessibility', () => {
 				onUpdateSystemPrompt={() => {}}
 				onUpdateLlmProvider={() => {}}
 				onUpdateLlmConfig={() => {}}
-				onUpdateTools={() => {}}
 				onUpdateMemory={() => {}}
 				onRun={() => {}}
 				onPause={() => {}}
@@ -157,7 +152,6 @@ describe('AgentDocumentView accessibility', () => {
 				onUpdateSystemPrompt={() => {}}
 				onUpdateLlmProvider={() => {}}
 				onUpdateLlmConfig={() => {}}
-				onUpdateTools={() => {}}
 				onUpdateMemory={() => {}}
 				onRun={() => {}}
 				onPause={() => {}}

@@ -106,6 +106,46 @@ describe('stdio trace fan-out', () => {
 		})
 	})
 
+	// Same three properties as the HTTP path. Stdio reaches us through our own
+	// sink, so the request's User-Agent says nothing about the end client and
+	// `client` is other; the caller is key-authenticated and its type comes from
+	// the auth context.
+	it('stamps api_key, the actor type and client other on a stdio trace', async () => {
+		await post(baseBody({ transport: 'stdio', seq: 1 }))
+
+		expect(lastTrace()).toMatchObject({
+			authMethod: 'api_key',
+			actorType: 'human',
+			client: 'other',
+			agentActorId: 'test-actor-id',
+		})
+	})
+
+	it('carries the actor type of an agent key', async () => {
+		const { app, mockResults } = createTestApp(
+			telemetryRoutes,
+			'/api/telemetry',
+			'agent-actor-id',
+			'agent',
+		)
+		mockResults.select = [{ actorId: 'agent-actor-id' }]
+		mockResults.insert = [{}]
+		await app.request(
+			jsonRequest('POST', '/api/telemetry/mcp', baseBody({ transport: 'stdio', seq: 1 }), {
+				'x-workspace-id': wsId,
+				'user-agent': 'Cursor/0.45.1',
+			}),
+		)
+		await new Promise((r) => setImmediate(r))
+
+		expect(lastTrace()).toMatchObject({
+			actorType: 'agent',
+			authMethod: 'api_key',
+			client: 'other',
+		})
+		expect(JSON.stringify(lastTrace())).not.toContain('Cursor/0.45.1')
+	})
+
 	// The guard this file exists for. routes/mcp.ts already emitted this call.
 	it('does not emit for an http client, which routes/mcp.ts already traced', async () => {
 		const res = await post(baseBody({ transport: 'http', seq: 1 }))

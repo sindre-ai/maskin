@@ -32,25 +32,29 @@ enum ThreadNav {
 		return shown.count > 3 ? "\(names) +\(shown.count - 3)" : names
 	}
 
+	/// The chat's own title when it is a one-to-one with a custom topic (not the person's name or
+	/// the default made from names); nil otherwise, so the nav bar falls back to `title`.
+	static func topic(
+		chatTitle: String, participants: [ChatParticipant], currentActorID: String, flow: ChatFlowContext?
+	) -> String? {
+		guard flow == nil else { return nil }
+		let others = participants.filter { $0.id != currentActorID }
+		guard others.count == 1 else { return nil }
+		let names = others.map(\.name)
+		let title = chatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !title.isEmpty, title != ThreadLayout.defaultTitle(for: names), !names.contains(title) else { return nil }
+		return ChatPreviewText.plain(title)
+	}
+
 	/// `typing…` / `replying…` / `working` while anyone is live; otherwise `{flow} flow` for a flow
 	/// chat and nothing for a direct one. A flow channel with several live agents says `n working`
 	/// and a single typer `{name} is typing…`.
 	static func status(
 		presences: [(agent: ChatParticipant, presence: ChatAgentPresence)], flow: ChatFlowContext?
 	) -> ThreadNavStatus? {
-		if let flow {
-			let typing = presences.filter { $0.presence == .typing }
-			if presences.count == 1, let only = typing.first { return .live("\(only.agent.name) is typing…") }
-			let working = presences.count
-			if working > 0 { return .live("▮ \(working) working") }
-			return .quiet("\(flow.name) flow")
-		}
-		// Typing wins over working: it is what the reader is waiting for.
-		if let p = presences.first(where: { $0.presence == .typing }) ?? presences.first(where: { $0.presence == .replying })
-			?? presences.first
-		{
-			return .live(p.presence.label)
-		}
+		if presences.count > 1, flow != nil { return .live("\(presences.count) working") }
+		if !presences.isEmpty { return .live("working") }
+		if let flow { return .quiet("\(flow.name) flow") }
 		return nil
 	}
 

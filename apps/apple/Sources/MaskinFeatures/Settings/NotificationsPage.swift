@@ -16,6 +16,10 @@ struct NotificationsPage: View {
 	var flows: [LoopSummary] = []
 	/// Nil where Live Activities don't exist (not iOS, or not started): the group is hidden.
 	var cycles: CycleActivityController? = CycleActivityController.shared
+	/// Names for the per-workspace mute list.
+	var workspaces: [WorkspaceSummary] = []
+	/// Present in the app; absent in previews and snapshots, where the preferences are left out.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var status: Status = .unknown
 	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
@@ -30,6 +34,9 @@ struct NotificationsPage: View {
 					subtitle: "So decisions reach you when they matter",
 					accessory: .state(stateText))
 			])
+			if let store = runtime?.notificationPreferences {
+				NotificationPreferencesSection(store: store, workspaces: workspaces)
+			}
 			if let cycles, !followable.isEmpty {
 				PageGroupLabel(text: "Flows")
 				PageCard(
@@ -50,6 +57,7 @@ struct NotificationsPage: View {
 			}
 		}
 		.task(id: scenePhase) { await refresh() }
+		.task { await runtime?.notificationPreferences?.load() }
 	}
 
 	private var followable: [LoopSummary] { flows.filter { $0.status.isLive } }
@@ -79,10 +87,8 @@ struct NotificationsPage: View {
 		#if canImport(UserNotifications)
 		if status == .notAsked {
 			Task {
-				let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])) ?? false
-				#if canImport(UIKit) && !os(watchOS)
-				if granted { UIApplication.shared.registerForRemoteNotifications() }
-				#endif
+				// The registrar asks, then registers for remote notifications once granted.
+				await runtime?.requestPushPermission()
 				await refresh()
 			}
 			return

@@ -13,9 +13,9 @@ interface HandedOffStripProps {
 /**
  * Chat thread `HANDED OFF` sub-agent delegation strip
  * (bet/444b-handed-off-strip). Renders one row per sub-session spawned from
- * an assistant message. Callers must gate on the `handed-off-strip` feature
- * flag AND on the message being an agent message — this component itself
- * only decides whether the strip has anything to say.
+ * an assistant message. Callers must gate on the message being an agent
+ * message — this component itself only decides whether the strip has
+ * anything to say.
  *
  * The strip returns null when no row would be renderable (empty embed, or
  * every session in a v1-out-of-scope status like BLOCKED/STOPPED). Otherwise

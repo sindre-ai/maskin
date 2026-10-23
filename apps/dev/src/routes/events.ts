@@ -1,21 +1,31 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects } from '@maskin/db/schema'
+import { events, actors, files, objects, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
+import { recordObjectApproval } from '../lib/object-delivery'
 import {
 	createCommentResponseSchema,
 	errorSchema,
 	eventResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import {
+	type CommentRoutingPlan,
+	deliverRoutedComment,
+	planCommentRouting,
+} from '../services/chat-origin-routing'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
@@ -24,12 +34,14 @@ import {
 	isAgentMentionFreeComment,
 	isCommentFallbackDriverEligible,
 } from '../services/trigger-runner'
-import { loadSenderLine } from '../services/workspace-briefing'
+import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
@@ -215,7 +227,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(desc(events.createdAt))
+		.orderBy(desc(events.createdAt), desc(events.id))
 
 	return c.json(serializeArray(results) as z.infer<typeof eventResponseSchema>[])
 }) as RouteHandler<typeof eventHistoryRoute, Env>)
@@ -224,6 +236,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 const createCommentRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['events'],
 	summary: 'Create a comment on an object',
 	request: {
@@ -253,11 +266,12 @@ app.openapi(createCommentRoute, (async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Validate the target object exists and belongs to this workspace
 	const [object] = await db
-		.select({ workspaceId: objects.workspaceId })
+		.select({ workspaceId: objects.workspaceId, title: objects.title, type: objects.type })
 		.from(objects)
 		.where(eq(objects.id, body.entity_id))
 		.limit(1)
@@ -326,19 +340,93 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, unresolvedMentions } = await postComment(db, {
-		workspaceId,
-		actorId,
-		entityId: body.entity_id,
-		content: body.content,
-		mentions: body.mentions,
-		parentEventId,
-		attachmentFileIds: body.attachment_file_ids,
-		metadata: body.metadata,
-		decision: body.decision,
-		attention: body.attention,
-		authorSessionId: c.get('maskinSessionId'),
-	})
+	// Work a person started in a 1-1 chat answers in that chat: a routed human's
+	// mention is dropped from the stored comment and the text goes to their chat.
+	// If planning fails the comment posts untouched, so the human is still reached.
+	let routing: CommentRoutingPlan | null = null
+	try {
+		routing = await planCommentRouting(db, {
+			workspaceId,
+			commenterId: actorId,
+			commenterType: c.get('actorType'),
+			sessionId: c.get('maskinSessionId'),
+			mentions: body.mentions,
+			hasDecision: !!body.decision,
+			attention: body.attention,
+		})
+	} catch (err) {
+		logger.warn('Comment routing failed, posting without it', {
+			actorId,
+			entityId: body.entity_id,
+			error: String(err),
+		})
+	}
+	const storedMentions = routing ? routing.storedMentions : body.mentions
+
+	// A person choosing the send option on a decision card approves the draft behind it. It is
+	// written in the same transaction as the reply, so the agent that the reply wakes always
+	// finds the approval. Only a person's own client counts: an agent, or anything posting
+	// through MCP (where a model holds the person's key), never approves by replying.
+	const mayApprove = c.get('actorType') !== 'agent' && c.req.header(CLIENT_SOURCE_HEADER) !== 'mcp'
+	const replyApprovals = mayApprove
+		? await resolveReplyApprovals(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: []
+
+	// A person's answer to an email approval card pins the text they were looking at.
+	const approvedSendHash =
+		c.get('actorType') === 'human' && parentEventId !== undefined
+			? await approvedSendHashFor(db, workspaceId, parentEventId, body.content)
+			: undefined
+
+	const post = (writer: typeof db) =>
+		postComment(writer, {
+			workspaceId,
+			actorId,
+			entityId: body.entity_id,
+			content: body.content,
+			mentions: storedMentions,
+			parentEventId,
+			attachmentFileIds: body.attachment_file_ids,
+			metadata: body.metadata,
+			decision: body.decision,
+			attention: body.attention,
+			authorSessionId: c.get('maskinSessionId'),
+			approvedSendHash,
+		})
+	const delivery = routing?.delivery
+	const { comment, unresolvedMentions } =
+		replyApprovals.length === 0 && !delivery
+			? await post(db)
+			: await db.transaction(async (tx) => {
+					for (const approval of replyApprovals) {
+						await recordObjectApproval(tx, {
+							workspaceId,
+							actorId,
+							objectId: approval.objectId,
+							objectType: approval.objectType,
+							preview: approval.preview,
+							via: 'reply',
+							replyToEventId: approval.cardEventId,
+						})
+					}
+					const posted = await post(tx as unknown as typeof db)
+					if (delivery) {
+						await deliverRoutedComment(tx, {
+							delivery,
+							workspaceId,
+							commenterId: actorId,
+							object: { id: body.entity_id, title: object.title ?? '', type: object.type },
+							commentEventId: posted.comment.id,
+							body: body.content,
+						})
+					}
+					return posted
+				})
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the
@@ -359,8 +447,8 @@ app.openapi(createCommentRoute, (async (c) => {
 	}
 
 	const unresolvedSet = new Set(unresolvedMentions)
-	const uniqueMentionedCount = body.mentions?.length
-		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
+	const uniqueMentionedCount = storedMentions?.length
+		? Array.from(new Set(storedMentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
 				.length
 		: 0
 	if (uniqueMentionedCount > 0) {
@@ -394,10 +482,10 @@ app.openapi(createCommentRoute, (async (c) => {
 		parentEventId !== undefined &&
 		!isAgentMentionFreeComment({
 			actorType: c.get('actorType'),
-			mentionCount: body.mentions?.length ?? 0,
+			mentionCount: storedMentions?.length ?? 0,
 		})
 	) {
-		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
+		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
 		// them here as well — otherwise one reply queues two sessions for the same
@@ -405,7 +493,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		// 8515a7d8 insight measured as 9 comments → 18 sessions.
 		const fallbackDriverId = await resolveFallbackDriverId(db, {
 			commenterId: actorId,
-			mentionCount: body.mentions?.length ?? 0,
+			mentionCount: storedMentions?.length ?? 0,
 			parentAuthorId: opActorId,
 			objectId: body.entity_id,
 		})
@@ -444,6 +532,14 @@ app.openapi(createCommentRoute, (async (c) => {
 			entityType: 'object',
 			content: body.content,
 			hasTaskList: tasks.length > 0,
+			...(routing
+				? {
+						sessionOrigin: routing.sessionOrigin,
+						hasDecisionBlock: routing.hasDecisionBlock,
+						routedTo: routing.routedTo,
+						routeReason: routing.routeReason,
+					}
+				: {}),
 		}).catch((err) =>
 			logger.warn('trackAgentCommentPosted failed', {
 				actorId,
@@ -660,9 +756,18 @@ async function spawnThreadReplySessions(ctx: {
 	// (commenters were filtered by type at the join, mentions weren't).
 	const toResolve = Array.from(mentionedCandidateIds).filter((id) => !agentParticipantIds.has(id))
 	if (toResolve.length > 0) {
+		// Members of this workspace only: an actor named from another workspace
+		// never joins the fan-out.
 		const resolved = await ctx.db
 			.select({ id: actors.id, type: actors.type })
 			.from(actors)
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
 			.where(inArray(actors.id, toResolve))
 		for (const a of resolved) {
 			if (a.type === 'agent') agentParticipantIds.add(a.id)
@@ -687,21 +792,21 @@ async function spawnThreadReplySessions(ctx: {
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 
-	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
-
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
 			actionPrompt: buildThreadReplyPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
 				content: ctx.newCommentContent,
 				threadRootEventId: ctx.threadRootEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.actorId,
 				thread_reply: {
 					object_id: ctx.objectId,
 					comment_event_id: ctx.newCommentEventId,
@@ -724,7 +829,7 @@ async function spawnThreadReplySessions(ctx: {
 }
 
 function buildThreadReplyPrompt(ctx: {
-	senderLine: string
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -732,6 +837,8 @@ function buildThreadReplyPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('New reply in a comment thread', ctx.content),
+		'',
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',

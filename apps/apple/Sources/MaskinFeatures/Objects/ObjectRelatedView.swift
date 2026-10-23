@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Related page: links grouped by what they mean ("Blocks", "Part of"…) with the object's
+/// The Related page: links grouped by what they mean ("Waiting on", "Belongs to"…) with the object's
 /// flow first, one card per group, and "Link an object" at the end. A row carries the other
 /// object's type glyph, its real title on up to two lines, its status and a chevron.
 struct ObjectRelatedView: View {
@@ -23,33 +23,13 @@ struct ObjectRelatedView: View {
 				if store.hasFetched {
 					EmptyState(
 						symbol: "link", title: "Nothing related yet",
-						message: "Objects this one blocks, informs or depends on show up here.")
+						message: "Nothing is linked to this yet. Use Link an object below to connect one.")
 				} else {
 					LoadingSkeleton(rows: 2)
 				}
 			}
 			ForEach(groups) { group in
-				HStack(spacing: MaskinSpace.s2) {
-					Text(group.label)
-					Text("\(group.links.count)").monospacedDigit()
-				}
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.ink5)
-				.padding(.horizontal, MaskinSpace.s4)
-				.padding(.top, MaskinSpace.s8)
-				.padding(.bottom, MaskinSpace.s4)
-				.accessibilityElement(children: .combine)
-				.accessibilityAddTraits(.isHeader)
-				VStack(spacing: 0) {
-					ForEach(Array(group.links.enumerated()), id: \.element.id) { index, link in
-						RelatedRow(
-							glyph: Self.glyph(for: link.otherType), title: store.title(for: link),
-							status: link.otherStatus, showsSeparator: index > 0,
-							pending: link.id.hasPrefix("local-"),
-							open: onOpenObject.map { open in { open(link.otherId) } })
-					}
-				}
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+				RelatedGroupSection(group: group, store: store, onOpenObject: onOpenObject)
 			}
 			Button {
 				linking = true
@@ -76,6 +56,52 @@ struct ObjectRelatedView: View {
 				Task { await store.linkObject(ref) }
 			}
 		}
+	}
+}
+
+/// One group of links: its heading with a count, then a card of rows. A long group shows its
+/// first few, with "Show all N" to open the rest.
+struct RelatedGroupSection: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	let group: RelatedGroup
+	let store: ObjectDetailStore
+	var onOpenObject: ((String) -> Void)?
+	@State private var showAll = false
+
+	private static var preview: Int { 5 }
+
+	var body: some View {
+		let links = showAll ? group.links : Array(group.links.prefix(Self.preview))
+		HStack(spacing: MaskinSpace.s2) {
+			Text(group.label)
+			Text("\(group.links.count)").monospacedDigit()
+		}
+		.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+		.foregroundStyle(MaskinColor.ink5)
+		.padding(.horizontal, MaskinSpace.s4)
+		.padding(.top, MaskinSpace.s8)
+		.padding(.bottom, MaskinSpace.s4)
+		.accessibilityElement(children: .combine)
+		.accessibilityAddTraits(.isHeader)
+		VStack(spacing: 0) {
+			ForEach(Array(links.enumerated()), id: \.element.id) { index, link in
+				RelatedRow(
+					glyph: ObjectRelatedView.glyph(for: link.otherType), title: store.title(for: link),
+					status: link.otherStatus, showsSeparator: index > 0,
+					pending: link.id.hasPrefix("local-"),
+					open: onOpenObject.map { open in { open(link.otherId) } })
+			}
+			if group.links.count > Self.preview {
+				Button(showAll ? "Show fewer" : "Show all \(group.links.count)") {
+					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { showAll.toggle() }
+				}
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink4)
+				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.padding(.horizontal, MaskinSpace.s8)
+			}
+		}
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 	}
 }
 

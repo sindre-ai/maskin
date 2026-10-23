@@ -32,25 +32,25 @@ struct RecordingBars: View {
 	}
 }
 
-/// The composer row while dictating: discard on the left, the bars, the live transcript, and
-/// done on the right. Discard gives back the text from before the mic opened.
-struct ComposerDictationControls<Field: View>: View {
-	let field: Field
+/// The left of the composer row while dictating: discard, then the bars. Discard gives back the
+/// text from before the mic opened. The field sits between this and `ComposerDictationDone`, in
+/// the same slot as when typing, so it keeps focus and the keyboard does not move.
+struct ComposerDictationLeading: View {
 	let onDiscard: () -> Void
-	let onDone: () -> Void
-
-	init(onDiscard: @escaping () -> Void, onDone: @escaping () -> Void, @ViewBuilder field: () -> Field) {
-		self.onDiscard = onDiscard
-		self.onDone = onDone
-		self.field = field()
-	}
 
 	var body: some View {
 		DictationDiscardButton(size: MaskinComposer.control, action: onDiscard)
 			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 		RecordingBars()
-		field
-		DictationDoneButton(size: MaskinComposer.control, action: onDone)
+	}
+}
+
+/// The right of the composer row while dictating.
+struct ComposerDictationDone: View {
+	let action: () -> Void
+
+	var body: some View {
+		DictationDoneButton(size: MaskinComposer.control, action: action)
 			.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 	}
 }

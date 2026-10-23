@@ -1,7 +1,10 @@
+import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
+import { InstallGithubOrgSection } from '@/components/integrations/provider-dialogs'
 import {
 	ResendConnectDialog,
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
+import { ToolsSection } from '@/components/integrations/tools-section'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -13,51 +16,30 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { useActors } from '@/hooks/use-actors'
-import { useAuth } from '@/hooks/use-auth'
-import { useBillingUsage } from '@/hooks/use-billing'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
-	useCompleteIntegration,
-	useConnectIntegration,
-	useDisconnectIntegration,
 	useGithubPendingSelection,
 	useIntegrations,
-	useLinkGithubInstallation,
-	useLinkableGithubInstallations,
 	useProviders,
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
-import type { IntegrationResponse, ProviderInfo, ResendDnsRecord } from '@/lib/api'
+import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
+import { safeReturnPath } from '@/lib/return-path'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Check, Copy, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
-
-// Providers whose installs are a list, not a single row. GitHub installs once
-// per org; LinkedIn once per workspace member (see the actor-scoped uniques in
-// packages/db/src/schema.ts). Anything not listed here renders as one row and
-// silently drops extra installs, so adding a provider to this set is what makes
-// its second install visible at all.
-const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile', 'skjald'])
-
-const SLACK_HISTORY_SCOPES: readonly string[] = [
-	'channels:history',
-	'groups:history',
-	'mpim:history',
-]
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
 	component: IntegrationsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	// Both params are set by the GitHub connect callback redirecting back here:
-	// `select_github` carries the pending row whose installation choices are
-	// awaiting a pick, `error` reports a failed handshake.
+	// Set by the GitHub connect callback redirecting back here: `select_github`
+	// carries the pending row whose installation choices are awaiting a pick,
+	// `error` reports a failed handshake, and `return_to` is the chat the connect
+	// started from, so the page can send the user back once they have picked.
 	validateSearch: (search: Record<string, unknown>) => ({
 		select_github: typeof search.select_github === 'string' ? search.select_github : undefined,
 		error: typeof search.error === 'string' ? search.error : undefined,
+		return_to: typeof search.return_to === 'string' ? search.return_to : undefined,
 	}),
 })
 
@@ -65,44 +47,31 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
-	// Gate the google-meet provider card behind `google-meet-integration-ui` —
-	// the backend registers the provider unconditionally so its OAuth callback
-	// and MCP routes stay reachable for anyone the tester rollout allows in,
-	// but the connect entry point stays hidden from everyone else until the flag
-	// flips on. Per-actor behaviour gate, never a shared-state change.
-	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
-	// Slice 2 of bet cf2bcc85 — off by default, tester-actor-only until the
-	// second workspace has connected cleanly. Same shape as `googleMeetVisible`:
-	// backend registers the provider unconditionally so its endpoints stay
-	// reachable for Slice 1 operators (curl the connect handshake by hand), but
-	// the connect entry point + resume affordance stay hidden from everyone
-	// else until the flag flips on.
-	const resendVisible = useFeatureFlag('resend-integration-ui')
-	const visibleProviders = (providers ?? []).filter((p) => {
-		if (p.name === 'google-meet' && !googleMeetVisible) return false
-		if (p.name === 'resend' && !resendVisible) return false
-		return true
-	})
-
-	// GitHub only installs its App once per org, so a workspace that wants an org
-	// someone already connected elsewhere can't go through the install flow — it
-	// binds to the existing installation instead.
-	const { data: linkable } = useLinkableGithubInstallations(workspaceId)
-	const linkableCount = (linkable ?? []).filter((i) => !i.alreadyLinked).length
+	const visibleProviders = sortBy(
+		providers ?? [],
+		(p) => p.displayName,
+		(p) => p.name,
+	)
 
 	// A GitHub connect where the user could reach several orgs' installations
 	// comes back here with the pending row id, for them to pick one.
-	const { select_github: selectGithubId } = Route.useSearch()
+	const { select_github: selectGithubId, return_to: rawReturnTo } = Route.useSearch()
+	const returnTo = safeReturnPath(rawReturnTo, workspaceId)
 	const navigate = useNavigate({ from: Route.fullPath })
 	const closeGithubSelect = () =>
-		navigate({ search: (prev) => ({ ...prev, select_github: undefined }), replace: true })
+		navigate({
+			search: (prev) => ({ ...prev, select_github: undefined, return_to: undefined }),
+			replace: true,
+		})
+	// The org is bound once picked; send the user on to the chat they started in.
+	const finishGithubSelect = () => {
+		if (returnTo) window.location.assign(returnTo)
+		else closeGithubSelect()
+	}
 
 	const isLoading = integrationsLoading || providersLoading
-	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
-	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
-	const [apiKey, setApiKey] = useState('')
-	const [skjaldDialogOpen, setSkjaldDialogOpen] = useState(false)
-	// Slice 2 resend dialog state. `open` alone opens fresh at Step 1; `prefill`
+	// Slice 2 resend dialog state — only the "Resume connect" affordance below
+	// needs it at page level; a fresh Resend connect is owned by its provider row. `open` alone opens fresh at Step 1; `prefill`
 	// (populated by the Resume affordance) opens straight into Step 3 with the
 	// row's config.resend rehydrated.
 	const [resendDialog, setResendDialog] = useState<{
@@ -116,8 +85,7 @@ function IntegrationsPage() {
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
 	// Rows that finished /connect but haven't posted the webhook signing secret
 	// yet. Skjald reaches this state on Cancel-at-secret today; Slice 2 adds a
-	// Resume affordance for the resend rows in this bucket. Only rendered when
-	// the flag is on — see `resendVisible` above.
+	// Resume affordance for the resend rows in this bucket.
 	const awaitingSecretByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
 		if (integration.status === 'active') {
@@ -134,7 +102,7 @@ function IntegrationsPage() {
 			awaitingSecretByProvider.set(integration.provider, existing)
 		}
 	}
-	const resendAwaitingSecret = resendVisible ? (awaitingSecretByProvider.get('resend') ?? []) : []
+	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
 		<div>
@@ -147,46 +115,14 @@ function IntegrationsPage() {
 				/>
 			) : (
 				<div className="space-y-2">
-					{visibleProviders.map((provider) => {
-						const installations = activeByProvider.get(provider.name) ?? []
-						if (MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0) {
-							return (
-								<GroupedProviderRow
-									key={provider.name}
-									provider={provider}
-									installations={installations}
-									workspaceId={workspaceId}
-									linkableCount={provider.name === 'github' ? linkableCount : 0}
-									onRequestLink={() => setLinkGithubOpen(true)}
-									onRequestSkjaldConnect={
-										provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
-									}
-								/>
-							)
-						}
-						return (
-							<ProviderRow
-								key={provider.name}
-								provider={provider}
-								integration={installations[0]}
-								workspaceId={workspaceId}
-								onRequestApiKey={() => {
-									setApiKeyProvider(provider)
-									setApiKey('')
-								}}
-								onRequestSkjaldConnect={
-									provider.name === 'skjald' ? () => setSkjaldDialogOpen(true) : undefined
-								}
-								onRequestResendConnect={
-									provider.name === 'resend'
-										? () => setResendDialog({ open: true, prefill: null })
-										: undefined
-								}
-								linkableCount={provider.name === 'github' ? linkableCount : 0}
-								onRequestLink={() => setLinkGithubOpen(true)}
-							/>
-						)
-					})}
+					{visibleProviders.map((provider) => (
+						<ProviderConnectRow
+							key={provider.name}
+							provider={provider}
+							installations={activeByProvider.get(provider.name) ?? []}
+							workspaceId={workspaceId}
+						/>
+					))}
 					{resendAwaitingSecret.length > 0 && (
 						<ResendResumeSection
 							rows={resendAwaitingSecret}
@@ -195,39 +131,20 @@ function IntegrationsPage() {
 					)}
 				</div>
 			)}
-			<ApiKeyDialog
-				workspaceId={workspaceId}
-				provider={apiKeyProvider}
-				apiKey={apiKey}
-				onApiKeyChange={setApiKey}
-				onClose={() => {
-					setApiKeyProvider(null)
-					setApiKey('')
-				}}
-			/>
-			<SkjaldConnectDialog
-				workspaceId={workspaceId}
-				open={skjaldDialogOpen}
-				onClose={() => setSkjaldDialogOpen(false)}
-			/>
-			<LinkGithubDialog
-				workspaceId={workspaceId}
-				open={linkGithubOpen}
-				onClose={() => setLinkGithubOpen(false)}
-			/>
+			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog
 				workspaceId={workspaceId}
 				integrationId={selectGithubId ?? null}
 				onClose={closeGithubSelect}
+				onSelected={finishGithubSelect}
+				returnTo={returnTo}
 			/>
-			{resendVisible && (
-				<ResendConnectDialog
-					workspaceId={workspaceId}
-					open={resendDialog.open}
-					prefill={resendDialog.prefill}
-					onClose={() => setResendDialog({ open: false, prefill: null })}
-				/>
-			)}
+			<ResendConnectDialog
+				workspaceId={workspaceId}
+				open={resendDialog.open}
+				prefill={resendDialog.prefill}
+				onClose={() => setResendDialog({ open: false, prefill: null })}
+			/>
 		</div>
 	)
 }
@@ -309,540 +226,6 @@ function extractResendPrefill(row: IntegrationResponse): ResendConnectPrefill | 
 	}
 }
 
-function ProviderRow({
-	provider,
-	integration,
-	workspaceId,
-	onRequestApiKey,
-	onRequestSkjaldConnect,
-	onRequestResendConnect,
-	linkableCount,
-	onRequestLink,
-}: {
-	provider: ProviderInfo
-	integration?: IntegrationResponse
-	workspaceId: string
-	onRequestApiKey: () => void
-	/** Skjald connects from the Skjald app, so Connect opens a dialog that says where to
-	 *  tap rather than calling /connect. Undefined for every other provider. */
-	onRequestSkjaldConnect?: () => void
-	/** Resend needs its own multi-step dialog — bypass the manual-branch /connect
-	 *  round-trip and hand off to the caller's ResendConnectDialog state.
-	 *  Undefined for every other provider. */
-	onRequestResendConnect?: () => void
-	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
-	linkableCount: number
-	onRequestLink: () => void
-}) {
-	const connect = useConnectIntegration(workspaceId)
-	const disconnect = useDisconnectIntegration(workspaceId)
-	const isConnected = !!integration
-	const handleConnect = () => {
-		if (provider.authType === 'api_key') {
-			onRequestApiKey()
-			return
-		}
-		if (provider.name === 'resend' && onRequestResendConnect) {
-			onRequestResendConnect()
-			return
-		}
-		if (provider.name === 'skjald' && onRequestSkjaldConnect) {
-			onRequestSkjaldConnect()
-			return
-		}
-		connect.mutate({ provider: provider.name })
-	}
-
-	// An install whose token predates a scope the provider now requires still
-	// works for everything it was granted, so it stays "connected" — but say
-	// plainly that some features are dark and that reconnecting is the fix.
-	// Reconnecting runs the normal OAuth flow, which updates this row in place.
-	const missingCount = integration?.missingScopes?.length ?? 0
-	const needsReconnect = Boolean(integration?.needsReconnect) && missingCount > 0
-
-	// Slack agents need channel history to dedupe threads and load context. When
-	// that specific slice of scopes is missing the generic "grant N permissions"
-	// copy is too abstract to prompt action — name what the reconnect unlocks.
-	const missingSlackHistoryScopes =
-		provider.name === 'slack' &&
-		integration?.missingScopes?.some((scope) => SLACK_HISTORY_SCOPES.includes(scope))
-
-	// LinkedIn is the one provider that costs money to connect — $49 per
-	// connected identity per month, added to the workspace subscription. A
-	// price has to be stated before the click that incurs it, not only on the
-	// billing page afterwards, so it is rendered on the card in both states:
-	// as a price before connecting, as a statement of what is being billed
-	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
-	// apps/dev/src/lib/linkedin-addon.ts.
-	// Enterprise workspaces get connected identities free, so the price must not
-	// be stated to them. `plan` reads `enterprise` for exactly the workspaces
-	// the backend exempts from the charge — see `isEnterprise()` in
-	// apps/dev/src/lib/enterprise.ts and the exemption in routes/billing.ts.
-	//
-	// Neither line renders until the plan is known: `billingUsage` is undefined
-	// on first render, and defaulting to the paid copy would flash
-	// "$49/month" at an enterprise workspace — the one thing this is here to
-	// avoid — for as long as the query takes.
-	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const isLinkedInIdentityAddon = provider.name === 'linkedin-unipile' && billingUsage !== undefined
-	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
-	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
-
-	const connectedLabel = isConnected
-		? needsReconnect
-			? missingSlackHistoryScopes
-				? 'Reconnect required — Slack agents need history access to read channel backlog.'
-				: `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
-			: provider.externalIdDisplay === 'email' && integration.externalId
-				? `Connected as ${integration.externalId}`
-				: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-		: provider.events.length > 0
-			? `${provider.events.length} event types available`
-			: 'Available to connect'
-
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${
-					needsReconnect ? 'bg-warning' : isConnected ? 'bg-success' : 'bg-zinc-600'
-				}`}
-			/>
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
-				<p
-					className={`text-xs truncate ${needsReconnect ? 'text-warning' : 'text-muted-foreground'}`}
-					title={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
-				>
-					{connectedLabel}
-				</p>
-				{isFreeIdentityAddon && (
-					<p className="text-xs text-muted-foreground">
-						Included in your enterprise plan — no per-identity charge.
-					</p>
-				)}
-				{isPaidIdentityAddon && (
-					<p className="text-xs text-muted-foreground">
-						{isConnected
-							? '$49/month per connected identity, billed on your Maskin subscription. Disconnecting stops the charge at the end of the current period.'
-							: '$49/month per connected identity, added to your Maskin subscription.'}
-					</p>
-				)}
-			</div>
-			{isConnected ? (
-				<div className="flex shrink-0 items-center gap-2">
-					{needsReconnect && (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={handleConnect}
-							disabled={connect.isPending}
-						>
-							Reconnect
-						</Button>
-					)}
-					<Button
-						variant="ghost"
-						size="sm"
-						className="text-muted-foreground hover:text-error"
-						onClick={() => disconnect.mutate(integration.id)}
-						disabled={disconnect.isPending}
-					>
-						Disconnect
-					</Button>
-				</div>
-			) : (
-				<div className="flex shrink-0 items-center gap-2">
-					{linkableCount > 0 && (
-						<Button variant="outline" size="sm" onClick={onRequestLink}>
-							<Link2 className="mr-1 h-3.5 w-3.5" />
-							Add existing
-						</Button>
-					)}
-					<Button size="sm" onClick={handleConnect} disabled={connect.isPending}>
-						Connect
-					</Button>
-				</div>
-			)}
-		</div>
-	)
-}
-
-function GroupedProviderRow({
-	provider,
-	installations,
-	workspaceId,
-	linkableCount,
-	onRequestLink,
-	onRequestSkjaldConnect,
-}: {
-	provider: ProviderInfo
-	installations: IntegrationResponse[]
-	workspaceId: string
-	linkableCount: number
-	onRequestLink: () => void
-	/** Skjald connects from its own app, so "Add another" opens the how-to dialog instead of /connect. */
-	onRequestSkjaldConnect?: () => void
-}) {
-	const connect = useConnectIntegration(workspaceId)
-	const disconnect = useDisconnectIntegration(workspaceId)
-	const [expanded, setExpanded] = useState(installations.length > 1)
-	const count = installations.length
-
-	// LinkedIn installs are per-member: the row carries `actorId`, and the only
-	// human-readable identity we hold for a connected LinkedIn account is who
-	// connected it — the callback stores the opaque LinkedIn account_id and
-	// writes nothing to `config` (routes/integrations-linkedin-unipile.ts), so
-	// there is no `owner_login` equivalent to label rows with.
-	const isActorScoped = provider.name === 'linkedin-unipile'
-	const { actor } = useAuth()
-	const currentActorId = actor?.id
-	const { data: actors } = useActors(workspaceId, { enabled: isActorScoped })
-	const actorNames = new Map((actors ?? []).map((a) => [a.id, a.name]))
-
-	// One LinkedIn account per member, so the add affordance is offered only to
-	// someone who has not connected yet. For a member who already has a row it
-	// would reuse and overwrite that row rather than add a sibling.
-	const hasOwnInstall =
-		isActorScoped && installations.some((i) => i.actorId && i.actorId === currentActorId)
-	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
-	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
-
-	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
-
-	// Same $49/identity disclosure ProviderRow makes, which a workspace on its
-	// second LinkedIn account would otherwise never see again — the price has to
-	// be stated before the click that incurs it. See the long note in
-	// ProviderRow for why neither line renders until `plan` is known.
-	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const isLinkedInIdentityAddon = isActorScoped && billingUsage !== undefined
-	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
-	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
-
-	return (
-		<div className="overflow-hidden rounded-lg border border-border bg-card">
-			<button
-				type="button"
-				onClick={() => setExpanded((v) => !v)}
-				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-bg-hover"
-			>
-				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
-				<div className="flex-1 min-w-0">
-					<p className="text-sm font-medium text-foreground truncate">
-						{provider.displayName} · {count}
-					</p>
-					<p className="text-xs text-muted-foreground truncate">
-						{count} {unitLabel}
-						{count === 1 ? '' : 's'}
-					</p>
-					{isFreeIdentityAddon && (
-						<p className="text-xs text-muted-foreground">
-							Included in your enterprise plan — no per-identity charge.
-						</p>
-					)}
-					{isPaidIdentityAddon && (
-						<p className="text-xs text-muted-foreground">
-							$49/month per connected identity, billed on your Maskin subscription. Disconnecting
-							stops the charge at the end of the current period.
-						</p>
-					)}
-				</div>
-			</button>
-			{expanded && (
-				<div className="space-y-2 border-t border-border p-2">
-					{installations.map((installation) => (
-						<NestedInstallationRow
-							key={installation.id}
-							integration={installation}
-							actorScoped={isActorScoped}
-							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
-							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
-							onDisconnect={() => disconnect.mutate(installation.id)}
-							disconnecting={disconnect.isPending}
-						/>
-					))}
-					<div className="flex flex-col gap-2 md:flex-row">
-						{canAdd && (
-							<Button
-								variant="outline"
-								size="sm"
-								className="w-full md:flex-1"
-								onClick={() =>
-									onRequestSkjaldConnect
-										? onRequestSkjaldConnect()
-										: connect.mutate({ provider: provider.name })
-								}
-								disabled={connect.isPending}
-							>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								{addLabel}
-							</Button>
-						)}
-						{linkableCount > 0 && (
-							<Button
-								variant="outline"
-								size="sm"
-								className="w-full md:flex-1"
-								onClick={onRequestLink}
-							>
-								<Link2 className="h-3.5 w-3.5 mr-1" />
-								Add existing
-							</Button>
-						)}
-						{provider.name === 'github' && <InstallGithubOrgButton workspaceId={workspaceId} />}
-					</div>
-				</div>
-			)}
-		</div>
-	)
-}
-
-function ApiKeyDialog({
-	workspaceId,
-	provider,
-	apiKey,
-	onApiKeyChange,
-	onClose,
-}: {
-	workspaceId: string
-	provider: ProviderInfo | null
-	apiKey: string
-	onApiKeyChange: (value: string) => void
-	onClose: () => void
-}) {
-	const connect = useConnectIntegration(workspaceId)
-
-	const open = !!provider
-	const handleConnect = () => {
-		if (!provider) return
-		connect.mutate(
-			{ provider: provider.name, apiKey },
-			{
-				onSuccess: () => {
-					onClose()
-				},
-			},
-		)
-	}
-
-	return (
-		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>Connect {provider?.displayName}</DialogTitle>
-					<DialogDescription>
-						Enter your PostHog personal API key to store it for this workspace only.
-					</DialogDescription>
-				</DialogHeader>
-				<div className="space-y-2">
-					<Label htmlFor="posthog-api-key">API key</Label>
-					<Input
-						id="posthog-api-key"
-						type="password"
-						value={apiKey}
-						onChange={(e) => onApiKeyChange(e.target.value)}
-						placeholder="phx_..."
-					/>
-				</div>
-				<div className="flex justify-end gap-2">
-					<Button variant="ghost" onClick={onClose}>
-						Cancel
-					</Button>
-					<Button onClick={handleConnect} disabled={!apiKey.trim() || connect.isPending}>
-						Connect
-					</Button>
-				</div>
-			</DialogContent>
-		</Dialog>
-	)
-}
-
-// Skjald connects from the Skjald app: its "Connect with Maskin" opens the page that picks a
-// workspace (routes/connect.skjald.tsx) and hands the app its webhook URL and secret. Maskin cannot
-// start that flow itself (the app holds the PKCE verifier), so the dialog says where to tap. The
-// URL-and-secret steps stay behind "Set up manually" for anything that is not the app.
-const SKJALD_APP_STEPS = [
-	'Open Skjald and go to Settings → Send to.',
-	'Tap Connect with Maskin.',
-	'Sign in if asked, pick this workspace and press Connect. There is nothing to copy or paste.',
-]
-
-const SKJALD_SETUP_STEPS = [
-	'In Skjald, go to Settings → Webhooks → Add Webhook and paste the URL below.',
-	'Subscribe to the transcription.completed event.',
-	'Set payload mode to "Full content" so the transcript is included.',
-	'Copy the secret Skjald generates and paste it below to finish connecting.',
-]
-
-function SkjaldConnectDialog({
-	workspaceId,
-	open,
-	onClose,
-}: {
-	workspaceId: string
-	open: boolean
-	onClose: () => void
-}) {
-	const connect = useConnectIntegration(workspaceId)
-	const complete = useCompleteIntegration(workspaceId)
-	const [step, setStep] = useState<'app' | 1 | 2>('app')
-	const [manual, setManual] = useState<{ webhookUrl: string; integrationId: string } | null>(null)
-	const [secret, setSecret] = useState('')
-	const [copied, setCopied] = useState(false)
-
-	const handleClose = () => {
-		onClose()
-		setStep('app')
-		setManual(null)
-		setSecret('')
-		setCopied(false)
-	}
-
-	// The manual path is the only one that creates a row up front, so it is only started on request.
-	const handleManual = () => {
-		connect.mutate(
-			{ provider: 'skjald' },
-			{
-				onSuccess: (data) => {
-					if (data.webhook_url && data.integration_id) {
-						setManual({ webhookUrl: data.webhook_url, integrationId: data.integration_id })
-						setStep(1)
-					}
-				},
-			},
-		)
-	}
-
-	const handleCopy = () => {
-		if (!manual) return
-		navigator.clipboard.writeText(manual.webhookUrl)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}
-
-	const handleComplete = () => {
-		if (!manual) return
-		complete.mutate(
-			{ id: manual.integrationId, secret },
-			{
-				onSuccess: handleClose,
-			},
-		)
-	}
-
-	return (
-		<Dialog open={open} onOpenChange={(next) => !next && handleClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>Connect Skjald</DialogTitle>
-					<DialogDescription>
-						{step === 'app'
-							? 'Skjald connects from its own app.'
-							: step === 1
-								? 'Set up a webhook in Skjald pointing at this URL.'
-								: 'Paste the secret Skjald generated to finish connecting.'}
-					</DialogDescription>
-				</DialogHeader>
-				{step === 'app' ? (
-					<div className="space-y-3">
-						<ol className="list-decimal list-inside space-y-1.5 text-sm text-muted-foreground">
-							{SKJALD_APP_STEPS.map((instruction) => (
-								<li key={instruction}>{instruction}</li>
-							))}
-						</ol>
-						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={handleManual} disabled={connect.isPending}>
-								Set up manually
-							</Button>
-							<Button onClick={handleClose}>Done</Button>
-						</div>
-					</div>
-				) : step === 1 ? (
-					<div className="space-y-3">
-						<div className="space-y-2">
-							<Label>Webhook URL</Label>
-							<div className="flex gap-2">
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
-									{manual?.webhookUrl}
-								</div>
-								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
-									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-								</Button>
-							</div>
-						</div>
-						<ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground">
-							{SKJALD_SETUP_STEPS.map((instruction) => (
-								<li key={instruction}>{instruction}</li>
-							))}
-						</ol>
-						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={handleClose}>
-								Cancel
-							</Button>
-							<Button onClick={() => setStep(2)}>Next</Button>
-						</div>
-					</div>
-				) : (
-					<div className="space-y-3">
-						<div className="space-y-2">
-							<Label htmlFor="skjald-secret">Webhook secret</Label>
-							<Input
-								id="skjald-secret"
-								type="password"
-								value={secret}
-								onChange={(e) => setSecret(e.target.value)}
-								placeholder="Paste the secret from Skjald"
-							/>
-						</div>
-						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={() => setStep(1)}>
-								Back
-							</Button>
-							<Button onClick={handleComplete} disabled={!secret.trim() || complete.isPending}>
-								Connect
-							</Button>
-						</div>
-					</div>
-				)}
-			</DialogContent>
-		</Dialog>
-	)
-}
-
-/** GitHub only lists orgs that already have the Maskin App, so an org without it
- *  can never show up in either picker. This sends the user to the App's install
- *  page; the callback then binds the new installation to this workspace. */
-function InstallGithubOrgButton({ workspaceId }: { workspaceId: string }) {
-	const connect = useConnectIntegration(workspaceId)
-	return (
-		<Button
-			variant="outline"
-			size="sm"
-			className="w-full md:flex-1"
-			onClick={() => connect.mutate({ provider: 'github', installNewOrg: true })}
-			disabled={connect.isPending}
-		>
-			<Plus className="h-3.5 w-3.5 mr-1" />
-			Install on another organization
-		</Button>
-	)
-}
-
-function InstallGithubOrgSection({ workspaceId }: { workspaceId: string }) {
-	return (
-		<div className="space-y-2 border-t border-border pt-3">
-			<p className="text-xs text-muted-foreground">
-				Don&apos;t see your organization? Install the Maskin GitHub App on it first. You&apos;ll
-				come back here with it connected.
-			</p>
-			<InstallGithubOrgButton workspaceId={workspaceId} />
-		</div>
-	)
-}
-
-/** Bind a GitHub App installation the actor already reaches from one of their
- *  other workspaces. GitHub refuses to re-run its install flow for an org that
- *  already has the App, so this is the only path to a second workspace. */
 /** Finalizes a GitHub connect where the authorizing user could reach more than
  *  one installation. The candidates come from GitHub's own answer to "which
  *  installations can this user access", so anything listed here is already
@@ -851,10 +234,15 @@ function SelectGithubInstallationDialog({
 	workspaceId,
 	integrationId,
 	onClose,
+	onSelected,
+	returnTo,
 }: {
 	workspaceId: string
 	integrationId: string | null
 	onClose: () => void
+	/** Runs after an org is picked — navigates on to `returnTo` when there is one. */
+	onSelected: () => void
+	returnTo?: string
 }) {
 	const { data, isLoading } = useGithubPendingSelection(workspaceId, integrationId)
 	const select = useSelectGithubInstallation(workspaceId)
@@ -899,7 +287,7 @@ function SelectGithubInstallationDialog({
 										integrationId &&
 										select.mutate(
 											{ integrationId, installationId: installation.installationId },
-											{ onSuccess: onClose },
+											{ onSuccess: onSelected },
 										)
 									}
 									disabled={select.isPending}
@@ -910,7 +298,7 @@ function SelectGithubInstallationDialog({
 						))}
 					</div>
 				)}
-				<InstallGithubOrgSection workspaceId={workspaceId} />
+				<InstallGithubOrgSection workspaceId={workspaceId} returnTo={returnTo} />
 				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Cancel
@@ -918,136 +306,5 @@ function SelectGithubInstallationDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
-	)
-}
-
-function LinkGithubDialog({
-	workspaceId,
-	open,
-	onClose,
-}: {
-	workspaceId: string
-	open: boolean
-	onClose: () => void
-}) {
-	const { data, isLoading } = useLinkableGithubInstallations(workspaceId)
-	const link = useLinkGithubInstallation(workspaceId)
-	const options = (data ?? []).filter((installation) => !installation.alreadyLinked)
-
-	return (
-		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>Add an existing GitHub organization</DialogTitle>
-					<DialogDescription>
-						These organizations already have the Maskin GitHub App installed from another of your
-						workspaces. Adding one here reuses that installation — nothing changes on GitHub.
-					</DialogDescription>
-				</DialogHeader>
-				{isLoading ? (
-					<ListSkeleton />
-				) : options.length === 0 ? (
-					<EmptyState
-						title="Nothing to add"
-						description="Every organization you've connected is already in this workspace"
-					/>
-				) : (
-					<div className="space-y-2">
-						{options.map((installation) => (
-							<div
-								key={installation.installationId}
-								className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3"
-							>
-								<div className="min-w-0 flex-1">
-									<p className="truncate text-sm font-medium text-foreground">
-										{installation.ownerLogin ?? `Installation ${installation.installationId}`}
-									</p>
-									<p className="truncate text-xs text-muted-foreground">
-										Installation {installation.installationId}
-									</p>
-								</div>
-								<Button
-									size="sm"
-									className="shrink-0"
-									onClick={() =>
-										link.mutate(installation.installationId, {
-											onSuccess: () => {
-												if (options.length === 1) onClose()
-											},
-										})
-									}
-									disabled={link.isPending}
-								>
-									Add
-								</Button>
-							</div>
-						))}
-					</div>
-				)}
-				<InstallGithubOrgSection workspaceId={workspaceId} />
-				<div className="flex justify-end">
-					<Button variant="ghost" onClick={onClose}>
-						Done
-					</Button>
-				</div>
-			</DialogContent>
-		</Dialog>
-	)
-}
-
-function NestedInstallationRow({
-	integration,
-	actorScoped = false,
-	actorName,
-	isOwn = false,
-	onDisconnect,
-	disconnecting,
-}: {
-	integration: IntegrationResponse
-	/** True for providers whose installs belong to a member, not the workspace. */
-	actorScoped?: boolean
-	/** Display name of the member who connected an actor-scoped install. */
-	actorName?: string
-	isOwn?: boolean
-	onDisconnect: () => void
-	disconnecting: boolean
-}) {
-	const ownerLogin =
-		typeof integration.config.owner_login === 'string' ? integration.config.owner_login : undefined
-	// An actor-scoped install is identified by the member who connected it —
-	// the provider gives us only an opaque account id, which is meaningless to
-	// read but is still the stable id worth showing underneath.
-	const noun = actorScoped ? 'Account' : 'Installation'
-	const label = actorScoped
-		? (actorName ?? (isOwn ? 'You' : 'Workspace member'))
-		: (ownerLogin ??
-			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
-
-	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
-			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">
-					{label}
-					{actorScoped && isOwn && (
-						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
-					)}
-				</p>
-				{integration.externalId && (
-					<p className="text-xs text-muted-foreground truncate">
-						{noun} {integration.externalId}
-					</p>
-				)}
-			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="shrink-0 text-muted-foreground hover:text-error"
-				onClick={onDisconnect}
-				disabled={disconnecting}
-			>
-				Disconnect
-			</Button>
-		</div>
 	)
 }

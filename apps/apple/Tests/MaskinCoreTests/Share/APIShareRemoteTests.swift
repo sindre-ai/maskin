@@ -51,7 +51,7 @@ private final class WireTransport: ClientTransport, @unchecked Sendable {
 	static let relationship =
 		"{\"id\":\"r\",\"sourceType\":\"insight\",\"sourceId\":\"s\",\"targetType\":\"file\",\"targetId\":\"t\",\"type\":\"attached\",\"metadata\":{},\"createdBy\":\"a\",\(stamp)}"
 	static let workspaces =
-		"[{\"id\":\"ws-1\",\"name\":\"Mesh Firm\",\"settings\":{\"statuses\":{\"insight\":[\"new\"],\"meeting\":[\"planned\"]},\"display_names\":{\"meeting\":\"Meeting\"}},\"onboardingEnabled\":false,\"enterprise\":false,\"billingOwnerId\":null,\"createdBy\":\"a\",\(stamp),\"updatedAt\":\"2026-10-02T10:00:00.000Z\",\"role\":\"owner\",\"memberCount\":2,\"isDefault\":false}]"
+		"[{\"id\":\"ws-1\",\"name\":\"Mesh Firm\",\"settings\":{\"statuses\":{\"insight\":[\"new\"],\"meeting\":[\"planned\"]},\"display_names\":{\"meeting\":\"Meeting\"}},\"llm_configured\":{\"anthropic\":false,\"openai\":false,\"custom_llm\":false},\"onboardingEnabled\":false,\"enterprise\":false,\"billingOwnerId\":null,\"createdBy\":\"a\",\(stamp),\"updatedAt\":\"2026-10-02T10:00:00.000Z\",\"role\":\"owner\",\"memberCount\":2,\"isDefault\":false}]"
 }
 
 private func make(_ transport: WireTransport) -> APIShareRemote {

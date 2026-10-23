@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { messageQuestionAnswerSchema } from './conversations'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
@@ -11,6 +12,7 @@ export const sessionStatusSchema = z.enum([
 	'completed',
 	'failed',
 	'timeout',
+	'user_stopped',
 ])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
@@ -36,18 +38,6 @@ export const mcpServerHttpSchema = z.object({
 	url: z.string(),
 	headers: z.record(z.string()).default({}),
 })
-
-// The placeholder session-manager.ts replaces with the browser sidecar's
-// Chrome DevTools Protocol address. A CDP endpoint speaks CDP, NOT the MCP
-// protocol — pointing an `http` MCP server at it is a silent, total failure:
-// the MCP client opens the connection, never completes a handshake, and the
-// server sits at status "pending" forever. The agent gets no browser tools and
-// no error, so it reports that browser automation "isn't wired in this run"
-// while its sidecar is running perfectly. The browser is reached by running
-// @playwright/mcp as a stdio server and handing it the address via
-// --cdp-endpoint; that is what BROWSER_MCP_PRESET (apps/web's "Add Browser")
-// and expandBrowserCapability (marketplace installs) both write.
-const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
 
 /**
  * Infer a missing `type` from the shape of the entry.
@@ -86,17 +76,10 @@ const inferMcpServerType = (value: unknown): unknown => {
 	return server
 }
 
-export const mcpServerSchema = z
-	.preprocess(inferMcpServerType, z.union([mcpServerStdioSchema, mcpServerHttpSchema]))
-	.superRefine((server, ctx) => {
-		if (!('url' in server) || !server.url.includes(BROWSER_CDP_PLACEHOLDER)) return
-		ctx.addIssue({
-			code: z.ZodIssueCode.custom,
-			path: ['url'],
-			message:
-				'A browser CDP endpoint is not an MCP server — an http server pointed at ${BROWSER_CDP_URL} never connects and exposes no browser tools. Use a stdio server instead: { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest", "--cdp-endpoint", "${BROWSER_CDP_URL}"] }',
-		})
-	})
+export const mcpServerSchema = z.preprocess(
+	inferMcpServerType,
+	z.union([mcpServerStdioSchema, mcpServerHttpSchema]),
+)
 
 export const runtimeConfigSchema = z.object({
 	max_turns: z.number().int().positive().optional(),
@@ -138,10 +121,6 @@ export const sessionConversationContextSchema = z.object({
 })
 export type SessionConversationContext = z.infer<typeof sessionConversationContextSchema>
 
-// Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
-// session only ever needs to forward a handful of local dev servers.
-const MAX_PREVIEW_GUEST_PORTS = 8
-
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -155,19 +134,6 @@ export const sessionConfigSchema = z.object({
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
 	conversation: sessionConversationContextSchema.optional(),
-	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
-	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
-	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
-	browserRequired: z.boolean().default(false),
-	// Guest port(s) inside the session to publish on the msb bridge gateway
-	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
-	// reach them. Only takes effect when browserRequired is also true —
-	// session-manager.ts's buildLaunchSpec() forces browserRequired on whenever
-	// this is non-empty, so passing one without the other is still safe.
-	previewGuestPorts: z
-		.array(z.number().int().positive().max(65535))
-		.max(MAX_PREVIEW_GUEST_PORTS)
-		.optional(),
 })
 
 export const createSessionSchema = z.object({
@@ -197,6 +163,10 @@ export const createSessionSchema = z.object({
 	// Both optional — a spawn without them reads as "no strip".
 	spawned_by_message_id: z.number().int().positive().optional(),
 	depends_on_session_ids: z.array(z.string().uuid()).optional(),
+	// A session started from inside a chat is interactive by default: it can ask
+	// the person a question and ends when it returns its result. Pass `false` to
+	// run it as a plain one-shot job instead.
+	interactive: z.boolean().optional(),
 	// Ask for the helper's final message to be sent back to the session that
 	// started it when this one ends. Stored in config only when the spawn link
 	// is accepted; unset keeps the return exactly as it is without the flag.
@@ -281,6 +251,84 @@ export const sessionLogQuerySchema = z.object({
 	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
+// ── Activity trace (GET /api/sessions/:id/activity) ──────────────────────
+
+/** Rows of `session_logs` the activity endpoint will scan in one request. */
+export const SESSION_ACTIVITY_SCAN_ROWS = 2000
+
+export const sessionActivityQuerySchema = z.object({
+	/** Newest N turns to return (a turn = one conversation message the agent answered). */
+	limit_turns: z.coerce.number().int().min(1).max(20).default(5),
+	/**
+	 * Return only the turn triggered by this conversation message id. If the turn
+	 * is outside the newest-rows window, the server anchors a scan at that turn's
+	 * tagged user envelope instead, so any tagged turn can be looked up directly.
+	 */
+	message_id: z.coerce.number().int().positive().optional(),
+	/**
+	 * Exclusive upper bound on `session_logs.id`; pass a previous response's
+	 * `oldest_log_id` to page toward older turns.
+	 */
+	before_log_id: z.coerce.number().int().positive().optional(),
+})
+
+/**
+ * Turns are delimited by user envelopes tagged with `maskin_message_id`.
+ * Log rows written before that tagging existed (and any rows ahead of the
+ * first tagged envelope) belong to no turn and are intentionally dropped,
+ * mirroring the web transcript's `unassigned` bucket which the chat never shows.
+ */
+export const sessionActivityStepSchema = z.object({
+	/** Stable across polls: `<logId>-<blockIndex>` (`<logId>-stderr` for stderr). */
+	id: z.string(),
+	kind: z.enum(['tool_use', 'thinking', 'text', 'error']),
+	/** Short human label, at most 120 chars, e.g. `Using Read`. */
+	label: z.string().max(120),
+	/** Optional one-line input summary, at most 300 chars. */
+	detail: z.string().max(300).optional(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	status: z.enum(['running', 'completed', 'failed']),
+})
+
+export const sessionActivityTurnSchema = z.object({
+	/** The conversation `messages.id` that triggered this turn. */
+	message_id: z.number().int(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	/** `running` until a `result` envelope closes the turn. */
+	status: z.enum(['running', 'completed', 'failed']),
+	/** True once the turn called the conversation-reply tool. */
+	contains_reply: z.boolean(),
+	result: z
+		.object({ text: z.string().max(8000), is_error: z.boolean(), log_id: z.number().int() })
+		.nullable(),
+	steps: z.array(sessionActivityStepSchema).max(100),
+	/** True when more than 100 steps happened and the oldest were dropped. */
+	steps_truncated: z.boolean(),
+	/**
+	 * True when the scan window began in the middle of this turn: the turn's
+	 * tagged user envelope was recovered with one extra lookup, but the log
+	 * rows between that envelope and the window were not loaded, so its earliest
+	 * steps are missing. Only ever set on the oldest returned turn.
+	 */
+	partial: z.boolean(),
+})
+
+export const sessionActivityResponseSchema = z.object({
+	session_id: z.string().uuid(),
+	/** Oldest to newest. */
+	turns: z.array(sessionActivityTurnSchema),
+	/** Pass as `before_log_id` to fetch older turns. Null when nothing was scanned. */
+	oldest_log_id: z.number().int().nullable(),
+	/** The scan window was full, so older turns probably exist. */
+	has_older: z.boolean(),
+})
+
+export type SessionActivityStep = z.infer<typeof sessionActivityStepSchema>
+export type SessionActivityTurn = z.infer<typeof sessionActivityTurnSchema>
+export type SessionActivityResponse = z.infer<typeof sessionActivityResponseSchema>
+
 /**
  * Query params for the deep-read log endpoint that mirrors the `get_session_logs`
  * MCP tool. Distinct from `sessionLogQuerySchema` above (which serves today's
@@ -352,6 +400,8 @@ export const sessionInputAttachmentSchema = z.object({
 export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
+	/** Set when this input answers a question the session asked in a chat. */
+	question_answer: messageQuestionAnswerSchema.optional(),
 })
 
 export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])

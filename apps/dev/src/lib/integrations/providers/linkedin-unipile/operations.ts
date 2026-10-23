@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { KmsConfigError, KmsDecryptError } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
@@ -10,11 +11,18 @@ import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
-import { decrypt } from '../../../crypto'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
-import { getIntegrationCredential } from '../../lookup'
+import {
+	CredentialNotFoundError,
+	CredentialPendingError,
+	CredentialUnavailableError,
+	CredentialUndoneError,
+	ScopeDeniedError,
+} from '../../errors'
+import { findIntegrationRow, getCredential } from '../../lookup'
+import { readContextFor } from '../../read-context'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -115,6 +123,33 @@ export function __setLinkedInClientForTests(builder: ClientOverride['build'] | n
  * actor-scoped fallback so a Sales Rep loop that never received a fan-out MCP
  * row still resolves the workspace's connected identity.
  */
+/**
+ * Failures of the Keychain read that must reach the caller as themselves: a
+ * denied scope, an undone or pending credential, a KMS problem. Anything else
+ * thrown by the read is the stored blob failing to decrypt (a key rotation) and
+ * keeps its CREDENTIAL_REVOKED shape.
+ */
+function isKeychainReadError(err: unknown): boolean {
+	return (
+		err instanceof ScopeDeniedError ||
+		err instanceof CredentialNotFoundError ||
+		err instanceof CredentialUndoneError ||
+		err instanceof CredentialPendingError ||
+		err instanceof CredentialUnavailableError ||
+		err instanceof KmsDecryptError ||
+		err instanceof KmsConfigError
+	)
+}
+
+/** Host the Unipile client calls, for the audit row. Undefined when unconfigured. */
+function unipileHost(): string | undefined {
+	try {
+		return new URL(process.env.UNIPILE_BASE_URL ?? '').host
+	} catch {
+		return undefined
+	}
+}
+
 type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
@@ -134,7 +169,7 @@ async function preamble(
 			),
 		}
 	}
-	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
+	let row: Awaited<ReturnType<typeof findIntegrationRow>> = null
 	if (options.identity) {
 		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
 		// (P3-G filtered on active), so a row present-but-revoked lands here and
@@ -160,7 +195,7 @@ async function preamble(
 		// actor-scoped read makes the credential unreachable from the MCP tools
 		// that exist to use it. A human connects; every agent in the workspace can
 		// send, exactly as they can with Gmail or Slack.
-		row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
+		row = await findIntegrationRow(db, workspaceId, PROVIDER, actorId, {
 			fallbackToAnyActor: true,
 		})
 	}
@@ -199,8 +234,19 @@ async function preamble(
 	}
 	let parsed: StoredLinkedInCredentials
 	try {
-		parsed = JSON.parse(decrypt(row.credentials as string)) as StoredLinkedInCredentials
+		// The only place the value is read. Scope-checked and written to
+		// credential_access_log by getCredential; the caller is the real,
+		// membership-checked actor. These routes carry no session header, so the
+		// session is null.
+		const credential = await getCredential(
+			db,
+			workspaceId,
+			row.id,
+			readContextFor(actorId, unipileHost()),
+		)
+		parsed = JSON.parse(credential.value) as StoredLinkedInCredentials
 	} catch (err) {
+		if (isKeychainReadError(err)) throw err
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
@@ -419,8 +465,8 @@ export async function withPageAdminRevokeSafetyNet<T>(
 		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
 		// Only delete when EVERY applied row (a) succeeded on the diff (no
 		// `error`), AND (b) reports zero surviving identities (registered +
-		// unchanged both empty). An enumeration failure or an unreadable
-		// credential means we can't confirm the account is orphaned — leaving
+		// unchanged both empty). An enumeration failure or a skipped row
+		// (no unipile_acc_slug) means we can't confirm the account is orphaned — leaving
 		// it in place is the safe direction. This is the "conditional" reading
 		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
 		// PR body's "R11-C interpretation" risk note).
@@ -1017,7 +1063,15 @@ type SendPayload = {
 	 */
 	attachments?: unknown[]
 }
-type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
+type ReplyPayload = {
+	thread_id: string
+	body: string
+	idempotency_key: string
+	/** True when the key was derived from in_reply_to_message_id, false on the legacy path. */
+	derived_key: boolean
+}
+
+const IDEMPOTENCY_KEY_MAX = 128
 
 function validateSendPayload(input: {
 	recipient_urn?: unknown
@@ -1060,6 +1114,7 @@ function validateReplyPayload(input: {
 	thread_id?: unknown
 	body?: unknown
 	idempotency_key?: unknown
+	in_reply_to_message_id?: unknown
 }): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
 	if (typeof input.thread_id !== 'string' || input.thread_id.length === 0) {
 		return { ok: false, error: 'thread_id is required' }
@@ -1067,12 +1122,46 @@ function validateReplyPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	// The key is built here, from the chat and the inbound message being
+	// answered, so the webhook path and the sweep path claim the same slot no
+	// matter what a prompt tells the agent. A supplied idempotency_key is
+	// ignored when in_reply_to_message_id is present.
+	if (input.in_reply_to_message_id !== undefined) {
+		if (
+			typeof input.in_reply_to_message_id !== 'string' ||
+			input.in_reply_to_message_id.length === 0
+		) {
+			return { ok: false, error: 'in_reply_to_message_id must be a non-empty string' }
+		}
+		const derivedKey = `inbound:${input.thread_id}:${input.in_reply_to_message_id}`
+		if (derivedKey.length >= IDEMPOTENCY_KEY_MAX) {
+			return {
+				ok: false,
+				error: 'thread_id and in_reply_to_message_id are too long to build an idempotency key',
+			}
+		}
+		return {
+			ok: true,
+			payload: {
+				thread_id: input.thread_id,
+				body: input.body,
+				idempotency_key: derivedKey,
+				derived_key: true,
+			},
+		}
+	}
+	// Transitional: callers that predate in_reply_to_message_id keep supplying
+	// their own key, so prompt edits and the deploy can land in either order.
 	if (
 		typeof input.idempotency_key !== 'string' ||
 		input.idempotency_key.length === 0 ||
-		input.idempotency_key.length > 128
+		input.idempotency_key.length > IDEMPOTENCY_KEY_MAX
 	) {
-		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
+		return {
+			ok: false,
+			error:
+				'in_reply_to_message_id is required (legacy callers: idempotency_key, a non-empty string, max 128 chars)',
+		}
 	}
 	return {
 		ok: true,
@@ -1080,6 +1169,7 @@ function validateReplyPayload(input: {
 			thread_id: input.thread_id,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
+			derived_key: false,
 		},
 	}
 }
@@ -1166,11 +1256,22 @@ export async function sendLinkedInMessage(
 
 export async function replyToLinkedInThread(
 	ctx: LinkedInOperationContext,
-	input: { thread_id?: unknown; body?: unknown; idempotency_key?: unknown },
+	input: {
+		thread_id?: unknown
+		body?: unknown
+		idempotency_key?: unknown
+		in_reply_to_message_id?: unknown
+	},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateReplyPayload(input)
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
+	}
+	if (!validation.payload.derived_key) {
+		logger.warn('LinkedIn reply called without in_reply_to_message_id; using the supplied key', {
+			actorId: ctx.actorId,
+			threadId: validation.payload.thread_id,
+		})
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error

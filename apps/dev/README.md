@@ -12,6 +12,29 @@ file end-to-end when standing up a new stack. This section documents variables
 that are specific to `apps/dev` and land here first before we consider
 promoting them.
 
+### Keychain — credential encryption and audit
+
+Stored credentials use envelope encryption. Each credential gets its own random
+32-byte data key (DEK); the credential is AES-256-GCM encrypted under it and the
+DEK is wrapped by one master key (`KEYCHAIN_MASTER_KEY`) that is held in the environment, not in the database.
+Rows written before Keychain have no wrapped DEK and keep decrypting under
+`INTEGRATION_ENCRYPTION_KEY`. Every read goes through `getCredential`, which
+enforces the credential's agent grants (see `docs/reference/agent-access.md`) and writes a hash-chained row to
+`credential_access_log`.
+
+| Variable | Meaning |
+|----------|---------|
+| `KEYCHAIN_MASTER_KEY` | 32 bytes as 64 hex characters. Wraps every credential's data key (AES-256-GCM, with the workspace id as additional data). Required in production: unset warns at start and fails on the first envelope write. Outside production an unset key is derived from `INTEGRATION_ENCRYPTION_KEY`. A malformed value stops the server at start. Lose it and every envelope credential is unrecoverable, so keep a copy in the secret store. The key never goes in the database. |
+| `KEYCHAIN_MASTER_KEY_PREVIOUS` | Optional. The key being replaced during a rotation. Unwrapping tries `KEYCHAIN_MASTER_KEY` first, then this one; wrapping always uses the current key. |
+
+Generate a key with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+**Rotating the master key.** Set the new key as `KEYCHAIN_MASTER_KEY` and the old one as `KEYCHAIN_MASTER_KEY_PREVIOUS`, then restart. The nightly DEK job re-wraps each credential under the new key after it is read. Drop the previous key only when no credential is left under it, and not while an old database backup you still need holds DEKs wrapped under it.
+
+**Audit log role.** Migration 0087 creates the NOLOGIN role `maskin_keychain_app`
+with INSERT and SELECT on `credential_access_log`, and `getCredential` writes the
+audit row as that role. Running the migration needs CREATEROLE or superuser.
+
 ### LinkedIn — LinkedIn Hosted Auth v2
 
 See the technical spec in the parent bet

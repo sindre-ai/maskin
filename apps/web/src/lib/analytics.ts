@@ -355,6 +355,31 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
+// Mobile switcher bug (taps register, menu doesn't open): the two events below
+// split "the tap never reached the trigger" (no `open_attempted`) from "the
+// menu opened and closed again before the user could see it" (`open_attempted`
+// then `dismissed_immediately`), which have different fixes. `pointerType`
+// ('touch' | 'mouse' | 'pen') lets mobile and desktop be compared directly.
+export function trackSidebarWorkspaceSwitcherOpenAttempted(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.open_attempted', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
+}
+
+export function trackSidebarWorkspaceSwitcherDismissedImmediately(p: {
+	workspaceId: string
+	openMs: number
+}): void {
+	trackEvent('sidebar.workspace_switcher.dismissed_immediately', {
+		workspaceId: p.workspaceId,
+		openMs: p.openMs,
+	})
+}
+
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
@@ -739,26 +764,6 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 		trigger_id: p.trigger_id,
 		channel_id: p.channel_id,
 		time_since_pause_ms: p.time_since_pause_ms,
-	})
-}
-
-// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
-// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
-// container into view — exactly once per depth per mount. Wired to the parent
-// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
-// event as load-bearing). `depth` is the four-value union rather than a raw
-// number so a typo can't invent a fifth bucket, and `loopId` is the
-// `objects.id` for taxonomy joins on the standard `entity_id` field.
-export function trackLoopsDetailFlowScrollDepth(p: {
-	depth: 25 | 50 | 75 | 100
-	loopId: string
-}): void {
-	trackEvent('loops.detail.flow_scroll_depth', {
-		depth: p.depth,
-		loopId: p.loopId,
-		entity_id: p.loopId,
-		entity_type: 'loop',
-		source: 'web',
 	})
 }
 

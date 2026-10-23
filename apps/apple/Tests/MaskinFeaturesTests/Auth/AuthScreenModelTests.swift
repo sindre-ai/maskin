@@ -10,9 +10,10 @@ private struct Scripted: Authenticating {
 	var signUpResult: Result<SignUpResult, SignUpError>
 	var loginResult: Result<LoginResult, AuthError> = .failure(.invalidCredentials)
 	func login(email: String, password: String) async throws -> LoginResult { try loginResult.get() }
-	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
-		-> SignUpResult
-	{ try signUpResult.get() }
+	func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult { try signUpResult.get() }
 }
 
 private let ok = SignUpResult(
@@ -27,16 +28,23 @@ private func session(_ result: Result<SignUpResult, SignUpError>) -> AuthSession
 
 @Suite("SignUpForm")
 struct SignUpFormTests {
-	@Test("needs a name, a plausible email and 8+ characters")
+	@Test("needs a name, organization, role, a plausible email and a repeated 8+ character password")
 	func rules() {
 		var f = SignUpForm()
 		#expect(!f.canSubmit)
 		f.name = "Sam"
+		f.organization = "Acme"
+		f.role = "Founder"
 		f.email = "sam@example.com"
 		f.password = "1234567"
+		f.confirmPassword = "1234567"
 		#expect(f.passwordProblem != nil && !f.canSubmit)
 		f.password = "12345678"
+		#expect(f.confirmPasswordProblem != nil && !f.canSubmit)
+		f.confirmPassword = "12345678"
 		#expect(f.canSubmit)
+		f.role = "  "
+		#expect(f.roleProblem != nil && !f.canSubmit)
 	}
 
 	@Test("email shape matches what the server accepts", arguments: [
@@ -49,7 +57,7 @@ struct SignUpFormTests {
 
 	@Test("a whitespace-only name is empty")
 	func blankName() {
-		#expect(SignUpForm(name: "   ", email: "a@b.co", password: "12345678").nameProblem != nil)
+		#expect(SignUpForm(name: "   ", organization: "Acme", role: "Founder", email: "a@b.co", password: "12345678", confirmPassword: "12345678").nameProblem != nil)
 	}
 
 	@Test("every sign-up error has plain copy that hides internals")
@@ -95,9 +103,9 @@ struct AuthScreenModelTests {
 		#expect(m.mode == .signIn && m.fields == [.email, .password])
 		m.email = "sam@example.com"
 		m.switchTo(.createAccount)
-		#expect(m.mode == .createAccount && m.fields == [.name, .email, .password])
+		#expect(m.mode == .createAccount && m.fields == [.name, .organization, .role, .email, .password, .confirmPassword])
 		#expect(m.email == "sam@example.com")
-		#expect(m.next(after: .name) == .email && m.next(after: .password) == nil)
+		#expect(m.next(after: .name) == .organization && m.next(after: .confirmPassword) == nil)
 	}
 
 	@Test("with sign-up disabled the screen can never leave sign-in")
@@ -134,8 +142,11 @@ struct AuthScreenModelTests {
 		let auth = session(.success(ok))
 		let m = AuthScreenModel(mode: .createAccount, config: AuthConfig())
 		m.name = " Sam "
+		m.organization = " Acme "
+		m.role = "Founder"
 		m.email = "sam@example.com"
 		m.password = pw
+		m.confirmPassword = pw
 		#expect(await m.submit(auth: auth))
 		#expect(auth.session?.apiKey == "ank_new")
 		#expect(m.banner(for: auth) == nil)
@@ -145,7 +156,7 @@ struct AuthScreenModelTests {
 	func emailTaken() async {
 		let auth = session(.failure(.emailTaken))
 		let m = AuthScreenModel(mode: .createAccount, config: AuthConfig())
-		m.name = "Sam"; m.email = "sam@example.com"; m.password = pw
+		m.name = "Sam"; m.organization = "Acme"; m.role = "Founder"; m.email = "sam@example.com"; m.password = pw; m.confirmPassword = pw
 		await m.submit(auth: auth)
 		#expect(m.message(for: .email) == "Email already exists.")
 		#expect(m.banner(for: auth) == nil)
@@ -157,14 +168,14 @@ struct AuthScreenModelTests {
 	func perField() async {
 		let auth = session(.failure(.invalid(fields: ["password": "Too short"])))
 		let m = AuthScreenModel(mode: .createAccount, config: AuthConfig())
-		m.name = "Sam"; m.email = "sam@example.com"; m.password = pw
+		m.name = "Sam"; m.organization = "Acme"; m.role = "Founder"; m.email = "sam@example.com"; m.password = pw; m.confirmPassword = pw
 		await m.submit(auth: auth)
 		#expect(m.message(for: .password) == "Too short")
 		#expect(m.banner(for: auth) == nil)
 
 		let other = session(.failure(.invalid(fields: ["tools": "Bad"])))
 		let m2 = AuthScreenModel(mode: .createAccount, config: AuthConfig())
-		m2.name = "Sam"; m2.email = "sam@example.com"; m2.password = pw
+		m2.name = "Sam"; m2.organization = "Acme"; m2.role = "Founder"; m2.email = "sam@example.com"; m2.password = pw; m2.confirmPassword = pw
 		await m2.submit(auth: other)
 		#expect(m2.banner(for: other) == .error("Bad"))
 	}
@@ -174,7 +185,7 @@ struct AuthScreenModelTests {
 		for (error, text) in [(SignUpError.network("x"), "Can't reach"), (.rateLimited, "Too many")] {
 			let auth = session(.failure(error))
 			let m = AuthScreenModel(mode: .createAccount, config: AuthConfig())
-			m.name = "Sam"; m.email = "sam@example.com"; m.password = pw
+			m.name = "Sam"; m.organization = "Acme"; m.role = "Founder"; m.email = "sam@example.com"; m.password = pw; m.confirmPassword = pw
 			await m.submit(auth: auth)
 			guard case .error(let shown)? = m.banner(for: auth) else {
 				Issue.record("no banner"); continue

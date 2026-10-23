@@ -5,6 +5,7 @@ import { files } from '@maskin/db/schema'
 import {
 	createFileSchema,
 	fileDetailSchema,
+	fileKindSchema,
 	fileListItemSchema,
 	isTextMimeType,
 	updateFileSchema,
@@ -19,12 +20,18 @@ import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		storageProvider: StorageProvider
 		/** Set by app-factory when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
@@ -57,6 +64,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
 	ids: z.string().optional(),
+	kind: fileKindSchema.optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 	order: z.enum(['asc', 'desc']).optional(),
@@ -71,6 +79,7 @@ const listQuerySchema = z.object({
 const createFileRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Create a file',
 	request: {
@@ -98,6 +107,7 @@ app.openapi(createFileRoute, (async (c) => {
 	const storage = c.get('storageProvider')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	// Resolve the frontend URL up front. If FRONTEND_URL is missing in prod we
@@ -128,6 +138,7 @@ app.openapi(createFileRoute, (async (c) => {
 			workspaceId,
 			name: body.name,
 			description: body.description ?? null,
+			kind: body.kind ?? null,
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
@@ -239,6 +250,7 @@ app.openapi(listFilesRoute, (async (c) => {
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
+	if (query.kind) conditions.push(eq(files.kind, query.kind))
 	conditions.push(
 		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
 	)
@@ -260,6 +272,7 @@ app.openapi(listFilesRoute, (async (c) => {
 			workspaceId: files.workspaceId,
 			name: files.name,
 			description: files.description,
+			kind: files.kind,
 			mimeType: files.mimeType,
 			sizeBytes: files.sizeBytes,
 			storageKey: files.storageKey,
@@ -335,6 +348,7 @@ app.openapi(getFileRoute, (async (c) => {
 const updateFileRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Update file metadata or content',
 	request: {
@@ -373,7 +387,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	const [existing] = await db.select().from(files).where(eq(files.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
@@ -400,6 +414,7 @@ app.openapi(updateFileRoute, (async (c) => {
 			.set({
 				name: body.name ?? locked.name,
 				description: body.description !== undefined ? body.description : locked.description,
+				kind: body.kind !== undefined ? body.kind : locked.kind,
 				mimeType: body.mime_type ?? locked.mimeType,
 				annotations: body.annotations ?? locked.annotations,
 				sizeBytes: newSize,
@@ -484,6 +499,7 @@ app.openapi(updateFileRoute, (async (c) => {
 const deleteFileRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Delete a file',
 	request: { params: idParamSchema },
@@ -506,7 +522,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(files).where(eq(files.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 

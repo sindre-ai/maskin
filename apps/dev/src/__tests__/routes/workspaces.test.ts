@@ -126,7 +126,7 @@ describe('Workspaces Routes', () => {
 		// Each queue entry is one db.select() in route order: isWorkspaceMember,
 		// the workspace row, then (only when name / llm_keys / custom_llm actually
 		// change) isWorkspaceHumanAdminOrOwner.
-		const MEMBER = [{ actorId: 'caller' }]
+		const MEMBER = [{ actorId: 'caller', role: 'member' }]
 		const HUMAN_OWNER = [{ role: 'owner', type: 'human' }]
 		const HUMAN_ADMIN = [{ role: 'admin', type: 'human' }]
 		const PLAIN_MEMBER = [{ role: 'member', type: 'human' }]
@@ -998,6 +998,32 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('CONFLICT')
 			// The guard trips before the delete, so no audit event is written.
 			expect(calls.inserts).toHaveLength(0)
+		})
+	})
+
+	describe('workspace deletion', () => {
+		const wsId = randomUUID()
+
+		it('POST /{id}/delete rejects a body without confirm_name with 400', async () => {
+			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const res = await app.request(jsonRequest('POST', `/api/workspaces/${wsId}/delete`, {}))
+			expect(res.status).toBe(400)
+		})
+
+		it('POST /{id}/delete returns 404 to a caller who is not a member', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]] // membership check
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/delete`, { confirm_name: 'Acme' }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('GET /{id}/deletion-preview returns 404 to a caller who is not a member', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]]
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/deletion-preview`))
+			expect(res.status).toBe(404)
 		})
 	})
 })

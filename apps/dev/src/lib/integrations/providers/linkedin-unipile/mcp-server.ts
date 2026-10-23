@@ -9,7 +9,8 @@ import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
-import { isLinkedInIntegrationError } from './errors'
+import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
+import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
 import {
 	commentOnLinkedInPost,
 	deleteLinkedInPost,
@@ -27,6 +28,7 @@ import {
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
 } from './operations'
+import { replyWithApprovedObject } from './send-object'
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
@@ -99,6 +101,47 @@ function toolError(operation: string, err: unknown) {
 
 function jsonResult(payload: unknown) {
 	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
+}
+
+const sendObjectIdSchema = z
+	.string()
+	.uuid()
+	.optional()
+	.describe(
+		'The task or draft this send carries out. Once LinkedIn accepts the message, the server records the send on it and moves a task to done, so do not update it yourself. Refused, with nothing sent, if that object was already sent.',
+	)
+
+/**
+ * Runs a send and, when the caller named the object it carries out, ends that object with
+ * the send: the object is checked before anything goes out (it exists, it was not sent
+ * before) and the send is recorded on it afterwards. Without `object_id` the send behaves
+ * exactly as before.
+ */
+async function sendForObject<T extends object>(
+	ctx: LinkedInMcpContext,
+	objectId: string | undefined,
+	send: () => Promise<T>,
+	eventData: (sent: T) => Record<string, unknown>,
+) {
+	if (!objectId) return jsonResult(await send())
+	let target: Awaited<ReturnType<typeof assertSendable>>
+	try {
+		target = await assertSendable(ctx.db, { workspaceId: ctx.workspaceId, objectId })
+	} catch (err) {
+		if (err instanceof SendTargetError) {
+			throw new LinkedInIntegrationError('INVALID_INPUT', err.message)
+		}
+		throw err
+	}
+	const sent = await send()
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target,
+		provider: 'linkedin',
+		data: eventData(sent),
+	})
+	return jsonResult({ ...sent, object: { id: target.id, ...outcome } })
 }
 
 /**
@@ -305,11 +348,21 @@ export function registerLinkedInMcpInstance(
 							'Optional messaging attachments. Each entry carries `send_mode` (native vs file) — LinkedIn inlines "native" attachments in the DM and delivers "file" attachments as a hosted file link. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
 						),
 					idempotency_key: z.string().min(1).max(128),
+					object_id: sendObjectIdSchema,
 				},
 			},
 			async (args) => {
 				try {
-					return jsonResult(await sendLinkedInMessage(opCtx, args))
+					return await sendForObject(
+						ctx,
+						args.object_id,
+						() => sendLinkedInMessage(opCtx, args),
+						(sent) => ({
+							message_id: sent.message_id,
+							chat_id: sent.chat_id,
+							sent_at: sent.sent_at,
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_message'), err)
 				}
@@ -321,15 +374,47 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'reply'),
 			{
-				description: scopedDescription('Reply in an existing LinkedIn conversation thread', cfg),
+				description: scopedDescription(
+					'Reply in an existing LinkedIn conversation thread. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. Then thread_id is optional when the object has metadata.thread_id, and body and idempotency_key are not used. Without object_id, pass thread_id, body and idempotency_key',
+					cfg,
+				),
 				inputSchema: {
-					thread_id: z.string().min(1),
-					body: z.string().min(1).max(8000),
-					idempotency_key: z.string().min(1).max(128),
+					object_id: sendObjectIdSchema,
+					thread_id: z.string().min(1).optional(),
+					body: z.string().min(1).max(8000).optional(),
+					in_reply_to_message_id: z
+						.string()
+						.min(1)
+						.optional()
+						.describe(
+							'Id of the inbound message you are answering. The server builds the idempotency key from the thread and this id, so a webhook reply and a sweep reply to the same message send once. On the webhook path this is message_id from the event data; on the sweep path it is the last inbound message id from list_messages. Any idempotency_key you also pass is ignored. Not used with object_id.',
+						),
+					idempotency_key: z
+						.string()
+						.min(1)
+						.max(128)
+						.optional()
+						.describe(
+							'Legacy. Only used when in_reply_to_message_id is absent, and logs a warning. Prefer in_reply_to_message_id.',
+						),
 				},
 			},
 			async (args) => {
 				try {
+					if (args.object_id) {
+						if (args.body !== undefined) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								'Do not pass body with object_id: the text sent is the approved text on the object.',
+							)
+						}
+						return jsonResult(
+							await replyWithApprovedObject(opCtx, {
+								object_id: args.object_id,
+								thread_id: args.thread_id,
+							}),
+						)
+					}
 					return jsonResult(await replyToLinkedInThread(opCtx, args))
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply'), err)
@@ -429,11 +514,17 @@ export function registerLinkedInMcpInstance(
 				inputSchema: {
 					user_id: z.string().min(1),
 					message: z.string().optional(),
+					object_id: sendObjectIdSchema,
 				},
 			},
 			async (args) => {
 				try {
-					return jsonResult(await sendLinkedInConnectionRequest(opCtx, args))
+					return await sendForObject(
+						ctx,
+						args.object_id,
+						() => sendLinkedInConnectionRequest(opCtx, args),
+						(sent) => ({ invitation_id: sent.invitation_id, sent_at: sent.sent_at }),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_connection_request'), err)
 				}
@@ -476,8 +567,11 @@ export function registerLinkedInMcpInstance(
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,
 	instances: LinkedInMcpInstanceConfig[],
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
 ): McpServer {
 	const server = new McpServer({ name: 'maskin-linkedin', version: '0.2.0' })
+	onServer?.(server)
 	for (const cfg of instances) {
 		registerLinkedInMcpInstance(server, cfg, ctx)
 	}

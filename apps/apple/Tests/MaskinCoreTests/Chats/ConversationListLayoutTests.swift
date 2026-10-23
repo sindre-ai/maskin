@@ -16,6 +16,13 @@ import Testing
 	}
 	private let us = Locale(identifier: "en_US")
 
+	@Test func recentTimesAreRelative() {
+		let justNow = now.addingTimeInterval(-20)
+		let minutes = now.addingTimeInterval(-12 * 60)
+		#expect(ChatListTime.label(for: justNow, now: now, calendar: calendar, locale: us) == "Just now")
+		#expect(ChatListTime.label(for: minutes, now: now, calendar: calendar, locale: us) == "12m")
+	}
+
 	@Test func timeIsAClockToday() {
 		let text = ChatListTime.label(for: ago(days: 0, hours: 2), now: now, calendar: calendar, locale: us)
 		#expect(text.contains("1:00"))

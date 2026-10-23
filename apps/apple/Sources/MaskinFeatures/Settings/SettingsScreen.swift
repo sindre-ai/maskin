@@ -20,6 +20,8 @@ public struct SettingsScreen: View {
 	@State private var services: SettingsServices
 	@State private var confirmSignOut = false
 	@State private var path: [SettingsRoute]
+	/// Present inside the signed-in app; nil in previews, which hides the Security section.
+	@Environment(AppLockController.self) private var appLock: AppLockController?
 
 	/// `initialRoute` opens straight onto one page (More's Members, Billing…), with Settings
 	/// behind it.
@@ -44,6 +46,10 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
 					}
+					NavigationLink(value: SettingsRoute.deleteAccount) {
+						SettingsRow(
+							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
+					}
 				}
 				if services.workspaceId != nil {
 					Section {
@@ -62,16 +68,45 @@ public struct SettingsScreen: View {
 						} label: {
 							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
 						}
+						NavigationLink(value: SettingsRoute.deleteWorkspace) {
+							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
+						}
 					} header: {
 						Text("Setup")
 					} footer: {
 						Text("Members, integrations, billing and keys are under your profile.")
 					}
 				}
+				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
+					Section {
+						Toggle(isOn: appLockBinding(appLock)) {
+							SettingsRow(symbol: "lock", title: "App lock")
+						}
+						.disabled(appLock.isAuthenticating)
+					} header: {
+						Text("Security")
+					} footer: {
+						Text(Self.appLockFooter(appLock.availability))
+					}
+				}
 				Section("About") {
+					// Signed in, privacy choices are the workspace's own settings on the web app.
+					if let url = services.webSettingsURL {
+						Button("Privacy & data") { openURL(url) }
+					}
+					// The public pages; a link only appears when its Info.plist key is set.
+					if let url = AuthConfig.current.privacyURL {
+						Button("Privacy policy") { openURL(url) }
+					}
+					if let url = AuthConfig.current.termsURL {
+						Button("Terms of Service") { openURL(url) }
+					}
 					LabeledContent("Version", value: Self.versionString)
+				}
+				// Its own centred red card, as the mockup draws it.
+				Section {
 					Button("Log out", role: .destructive) { confirmSignOut = true }
-						.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 				}
 			}
 			.settingsListStyle()
@@ -93,6 +128,14 @@ public struct SettingsScreen: View {
 						currentName: services.workspace?.name ?? "", role: services.role)
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .deleteAccount:
+					DeleteAccountView(
+						store: services.accountDeletionStore { [environment, runtime] in
+							if let runtime { await runtime.signOut() } else { environment.signOut() }
+						})
+				case .deleteWorkspace:
+					DeleteWorkspaceView(
+						store: services.workspaceDeletionStore(workspaceId: services.workspaceId ?? ""))
 				}
 			}
 			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
@@ -104,6 +147,21 @@ public struct SettingsScreen: View {
 				Text("You will need your email and password to sign back in.")
 			}
 		}
+	}
+
+	private func appLockBinding(_ lock: AppLockController) -> Binding<Bool> {
+		Binding(
+			get: { lock.isEnabled },
+			set: { on in Task { await lock.setEnabled(on) } })
+	}
+
+	static func appLockFooter(_ availability: AppLockAvailability) -> String {
+		let how: String
+		switch availability {
+		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
+		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
+		}
+		return "\(how) Maskin locks when you open it, and after \(Int(AppLockController.gracePeriod)) seconds in the background."
 	}
 
 	static var versionString: String {

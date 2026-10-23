@@ -1,3 +1,4 @@
+import type { McpClient } from './mcp-client'
 import type { PosthogEventProps } from './posthog'
 import { capturePosthogEvent } from './posthog'
 
@@ -45,6 +46,17 @@ export interface McpToolCallTrace {
 	transport: 'http' | 'stdio'
 	agentActorId: string | null
 	/**
+	 * How the caller authenticated. `api_key` only when a key actually resolved
+	 * to an actor; null when the caller is unknown or the credential is invalid.
+	 * Never inferred from the shape of the header: an unresolved caller must not
+	 * read as an authenticated one.
+	 */
+	authMethod: 'api_key' | null
+	/** MCP client family. A hint from the User-Agent, never the raw header. */
+	client: McpClient
+	/** Whether the resolved caller is a person or an agent; null when unresolved. */
+	actorType: 'human' | 'agent' | null
+	/**
 	 * When the call was observed, as a coarse tiebreak for the multi-replica
 	 * caveat in `lib/mcp-trace-seq.ts`. Supplied by the caller rather than
 	 * stamped here, because this function runs after the request path's async
@@ -77,6 +89,11 @@ export function argKeys(args: unknown): string[] {
 		.slice(0, MAX_ARG_KEYS)
 }
 
+/** Narrow the actors.type column to the two values the event carries. */
+export function normalizeActorType(type: string | null | undefined): 'human' | 'agent' | null {
+	return type === 'human' || type === 'agent' ? type : null
+}
+
 /**
  * Best-effort capture. Never throws and is not awaited by the MCP request
  * path — a PostHog outage must not slow down or fail a tool call.
@@ -88,6 +105,9 @@ export async function captureMcpToolCall(
 	const props: PosthogEventProps = {
 		workspace_id: workspaceId,
 		agent_actor_id: trace.agentActorId,
+		auth_method: trace.authMethod,
+		client: trace.client,
+		actor_type: trace.actorType,
 		session_id: trace.sessionId,
 		session_source: trace.sessionSource,
 		seq: trace.seq,

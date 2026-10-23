@@ -19,12 +19,18 @@ import {
 	findEndpointIdsInWorkspace,
 } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 	}
 }
@@ -35,6 +41,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const createRelationshipRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Create relationship',
 	request: {
@@ -71,6 +78,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
 
@@ -366,6 +374,7 @@ function bucket(
 const deleteRelationshipRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Delete relationship',
 	request: {
@@ -410,7 +419,7 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 			.limit(1),
 	])
 	const sourceWorkspaceId = sourceObjectRows[0]?.workspaceId ?? sourceFileRows[0]?.workspaceId
-	if (!sourceWorkspaceId || !(await isWorkspaceMember(db, actorId, sourceWorkspaceId))) {
+	if (!sourceWorkspaceId || !(await isWorkspaceWriter(db, actorId, sourceWorkspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 	}
 

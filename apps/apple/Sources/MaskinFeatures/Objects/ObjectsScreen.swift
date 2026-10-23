@@ -53,12 +53,13 @@ public struct ObjectsScreen: View {
 	}
 
 	/// The title lives in the content (tap it for Go to); the pill holds Display and the avatar.
-	/// Search is the list's own `.searchable`.
+	/// The Objects page has no search field in its top bar.
 	private var shellActions: ShellActions {
 		ShellActions(
 			display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking, intents: intents) },
 			displaySymbol: ShellActions.slidersSymbol,
-			displayActive: store.display.isCustomised || store.statusFilter != nil)
+			displayActive: store.display.isCustomised || store.statusFilter != nil,
+			hidesAvatar: true)
 	}
 
 	// MARK: Asks

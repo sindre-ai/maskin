@@ -39,6 +39,7 @@ describe('Auth Routes', () => {
 			// Ensure passwordHash is not leaked
 			expect(body.passwordHash).toBeUndefined()
 			expect(body.password_hash).toBeUndefined()
+			expect(body.apiKey).toBeUndefined()
 		})
 
 		it('returns 401 when actor not found', async () => {

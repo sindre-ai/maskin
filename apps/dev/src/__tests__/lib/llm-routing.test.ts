@@ -45,11 +45,17 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
 	'MASKIN_FALLBACK_ZDR',
+	'MASKIN_FALLBACK_PROVIDER_IGNORE',
+	'MASKIN_FALLBACK_PROVIDER_ONLY',
+	'MASKIN_FALLBACK_TTFT_TIMEOUT_MS',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
+	// Most tests are not about the provider allow list (it defaults on); the
+	// 'provider allow list' blocks below pin the default and the override.
+	process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'none'
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
 	// These tests are about route priority, not refresh behaviour: keep the
 	// platform refresh off so a fixture token never triggers a real refresh call.
@@ -164,13 +170,13 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
-	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+	it('defaults ANTHROPIC_MODEL to Sonnet when agent has no model preference', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
 			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
 		})
-		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
@@ -314,6 +320,18 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
 	})
 
+	it('4a. workspace api_key route defaults to Sonnet when the agent has no model', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+	})
+
 	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
@@ -388,8 +406,12 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
-				// The high-effort setting is for the Claude-subscription route only.
-				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBeUndefined()
+				// Thinking is off (MAX_THINKING_TOKENS=0) because DeepSeek maps low
+				// effort to high, so effort alone leaves the hidden reasoning in place.
+				// Web search is off because OpenRouter cannot run the CLI's server-side tool.
+				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('low')
+				expect(result?.envVars.MAX_THINKING_TOKENS).toBe('0')
+				expect(result?.envVars.MASKIN_DISABLE_WEB_SEARCH).toBe('1')
 				// modelName carries through to `sessions.model_name` — the local
 				// cost resolver keys OpenRouter's pricing table on it.
 				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
@@ -435,6 +457,85 @@ describe('resolveLlmRoute priority order', () => {
 				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
 				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
 				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
+
+		describe('provider block list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('hands the container the list through MASKIN_PROVIDER_PREFS', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ ignore: ['CoreWeave'] })
+			})
+
+			it('sets no MASKIN_PROVIDER_PREFS when the list is empty', async () => {
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_PROVIDER_PREFS')
+			})
+		})
+
+		describe('provider allow list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('restricts agent sessions to DigitalOcean and GMICloud by default', async () => {
+				Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean', 'gmicloud'],
+				})
+			})
+
+			it('asks the proxy to guard time to first token at 8s by default', async () => {
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
+			})
+
+			it('takes the first-token timeout from MASKIN_FALLBACK_TTFT_TIMEOUT_MS', async () => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '6000'
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('6000')
+			})
+
+			it.each(['0', 'none', 'abc', '-5'])('turns the guard off for %s', async (value) => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = value
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBeUndefined()
+			})
+
+			it('sends the allow list together with the block list', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean'],
+					ignore: ['CoreWeave'],
+				})
+			})
+
+			it('sends no zdr to agent sessions even when it is on', async () => {
+				process.env.MASKIN_FALLBACK_ZDR = '1'
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ only: ['digitalocean'] })
 			})
 		})
 
@@ -1267,6 +1368,67 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_IGNORE block list', () => {
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_IGNORE: ' CoreWeave, ,Foo ' }).ignoreProviders,
+		).toEqual(['CoreWeave', 'Foo'])
+	})
+
+	it('defaults to an empty list', () => {
+		expect(readFallbackConfig({}).ignoreProviders).toEqual([])
+	})
+
+	it('sends ignore alongside zdr on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ zdr: true, ignore: ['CoreWeave'] })
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_ONLY allow list', () => {
+	it('defaults to DigitalOcean and GMICloud when unset', () => {
+		expect(readFallbackConfig({}).onlyProviders).toEqual(['digitalocean', 'gmicloud'])
+	})
+
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: ' digitalocean, ,Foo ' }).onlyProviders,
+		).toEqual(['digitalocean', 'Foo'])
+	})
+
+	it.each(['', 'none', ' NONE '])('lifts the restriction when set to %j', (value) => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: value }).onlyProviders).toEqual([])
+	})
+
+	it('sends only on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ only: ['digitalocean', 'gmicloud'] })
+	})
+
+	it('does not send it to a customer endpoint or key', () => {
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { llm_keys: { anthropic: 'sk-ant-own' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds).not.toHaveProperty('providerPrefs')
 	})
 })
 

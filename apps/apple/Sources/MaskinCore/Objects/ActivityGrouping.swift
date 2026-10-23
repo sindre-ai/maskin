@@ -42,7 +42,8 @@ public struct ActivityDay: Identifiable, Equatable, Sendable {
 }
 
 /// Groups an object's activity by local day and decides what is a comment and what is an event.
-/// Replies nest under their parent instead of appearing where their own date would put them.
+/// Replies nest under their thread's top-level message (a reply to a reply joins the same thread)
+/// instead of appearing where their own date would put them.
 public enum ActivityGrouping {
 	/// Authored text past this many characters is a comment; at or under it, a quiet line.
 	public static let commentThreshold = 110
@@ -54,12 +55,21 @@ public enum ActivityGrouping {
 	public static func days(
 		_ items: [TimelineItem], now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
 	) -> [ActivityDay] {
-		let byEventId = Dictionary(items.compactMap { item in item.eventId.map { ($0, item.id) } }, uniquingKeysWith: { a, _ in a })
+		let byEventId = Dictionary(items.compactMap { item in item.eventId.map { ($0, item) } }, uniquingKeysWith: { a, _ in a })
+		/// A thread is one level deep: a reply to a reply joins the top-level message it hangs from.
+		func threadRoot(of item: TimelineItem) -> TimelineItem? {
+			var current = item
+			var seen: Set<String> = [item.id]
+			while let parent = current.parentEventId, let next = byEventId[parent], seen.insert(next.id).inserted {
+				current = next
+			}
+			return current.id == item.id ? nil : current
+		}
 		var replies: [String: [TimelineItem]] = [:]
 		var roots: [TimelineItem] = []
 		for item in items {
-			if let parent = item.parentEventId, let parentId = byEventId[parent], parentId != item.id {
-				replies[parentId, default: []].append(item)
+			if let root = threadRoot(of: item) {
+				replies[root.id, default: []].append(item)
 			} else {
 				roots.append(item)
 			}
@@ -98,12 +108,9 @@ public enum ActivityGrouping {
 		return out
 	}
 
-	/// A comment is authored text over `commentThreshold` characters. Short remarks and every
-	/// system event are one-line events.
+	/// Every authored comment is a message, however short. System events are one-line events.
 	public static func kind(of item: TimelineItem) -> ActivityKind {
-		if case .comment(let text) = item.kind, text.trimmingCharacters(in: .whitespacesAndNewlines).count > commentThreshold {
-			return .comment
-		}
+		if case .comment = item.kind { return .comment }
 		return .event
 	}
 

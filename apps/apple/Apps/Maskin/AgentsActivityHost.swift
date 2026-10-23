@@ -102,6 +102,18 @@
 				dismissalPolicy: .after(Date().addingTimeInterval(dismissAfter)))
 		}
 
+		func cards() -> [AgentsActivityCard] {
+			Activity<MaskinAgentsAttributes>.activities
+				.filter { $0.activityState == .active || $0.activityState == .stale }
+				.map { AgentsActivityCard(id: $0.id, workspaceId: $0.attributes.workspaceId) }
+		}
+
+		func endNow(cardID: String) async {
+			guard let activity = Activity<MaskinAgentsAttributes>.activities.first(where: { $0.id == cardID })
+			else { return }
+			await activity.end(nil, dismissalPolicy: .immediate)
+		}
+
 		func endAll() async {
 			for activity in Activity<MaskinAgentsAttributes>.activities {
 				await activity.end(nil, dismissalPolicy: .immediate)

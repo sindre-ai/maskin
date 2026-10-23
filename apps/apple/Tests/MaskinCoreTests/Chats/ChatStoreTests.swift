@@ -399,6 +399,34 @@ struct ChatStoreTests {
 		#expect(await h.api.stopped == ["s2"])
 	}
 
+	@Test("Stop takes effect at once even when the server still reports the session running")
+	func stopIsImmediate() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		// The server's stop only tears the sandbox down: the row stays `running` until a later settle.
+		await h.api.setSessions([
+			ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0, updatedAt: chatT0)
+		])
+		await h.store.start()
+		#expect(h.store.liveSessions().map(\.id) == ["s1"])
+		await h.store.stopSession("s1")
+		#expect(await h.api.stopped == ["s1"])
+		#expect(h.store.liveSessions().isEmpty)
+		#expect(h.store.workingAgents().isEmpty)
+	}
+
+	@Test("a failed Stop keeps the session live and says why")
+	func stopFailureKeepsSession() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([
+			ChatAgentSession(id: "s1", actorID: "relay", status: .running, startedAt: chatT0, updatedAt: chatT0)
+		])
+		await h.api.failStop(true)
+		await h.store.start()
+		await h.store.stopSession("s1")
+		#expect(h.store.liveSessions().map(\.id) == ["s1"])
+		#expect(h.store.notice != nil)
+	}
+
 	@Test("read cursor advances to the newest message, once, and never while inactive")
 	func markRead() async {
 		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)])
@@ -415,6 +443,44 @@ struct ChatStoreTests {
 		await h.store.sync()
 		#expect(await h.api.readCalls == [2, 3])
 		#expect(told == [2, 3])
+	}
+
+	@Test("above the bottom, read state follows what the reader has scrolled past")
+	func readFollowsSeen() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "relay", agent: true)],
+			detail: chatConvo("c1", lastRead: 0))
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		h.store.isAtBottom = false
+		await h.store.start()
+		// Rows on screen before the opening position is chosen are not the reader reading.
+		h.store.noteSeen(3)
+		#expect(h.store.seenThrough == 0)
+		h.store.countsSeen = true
+		h.store.noteSeen(2)
+		#expect(await eventually { await h.api.readCalls == [2] })
+		#expect(told.isEmpty)  // the list keeps its badge until the thread is read to the end
+		h.store.isAtBottom = true
+		await h.store.markReadIfNeeded()
+		#expect(await h.api.readCalls == [2, 3])
+		#expect(told == [3])
+	}
+
+	@Test("the opening position is known from the saved thread or the server")
+	func openPositionKnown() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 1))
+		#expect(!h.store.openPositionKnown)
+		await h.store.start()
+		#expect(h.store.openPositionKnown)
+		#expect(h.store.openedReadCursor == 1)
+	}
+
+	@Test("the thread is only server-confirmed once the newest page has been read")
+	func serverConfirmed() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 1))
+		#expect(!h.store.serverConfirmed)
+		await h.store.start()
+		#expect(h.store.serverConfirmed)
 	}
 
 	@Test("an already-read thread doesn't call the server again")
@@ -659,6 +725,116 @@ struct ChatSendMetadataTests {
 		#expect(message.attachments.map(\.fileID) == ["f1"])
 		#expect(message.attachments.first?.name == "a.png")
 		#expect(message.mentionIDs == ["m1", "m2"])
+	}
+}
+
+private actor IdleTraceSource: SessionActivitySource {
+	let turns: [ActivityTurn]
+	init(_ turns: [ActivityTurn]) { self.turns = turns }
+	func activity(sessionID: String, limitTurns: Int, background: Bool) async throws -> SessionActivity {
+		SessionActivity(sessionID: sessionID, turns: turns)
+	}
+}
+
+@Suite("ChatStore idle sessions")
+@MainActor
+struct ChatStoreIdleTests {
+	private let running = ChatAgentSession(
+		id: "s1", actorID: "relay", status: .running, startedAt: chatT0.addingTimeInterval(-900),
+		updatedAt: chatT0.addingTimeInterval(-60))
+
+	private func harness(turn: ActivityTurn, messages: [ChatMessage]) async -> ChatHarness {
+		let h = ChatHarness(server: messages, detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		let trace = ActivityStore(
+			source: IdleTraceSource([turn]), activeInterval: .seconds(60), idleInterval: .seconds(60))
+		await h.store.start()
+		h.store.trace = trace
+		if turn.isRunning {
+			await trace.update(sessions: [running])
+			_ = await eventually { trace.liveTurn(sessionID: "s1") != nil }
+		} else {
+			// History is read for sessions that aren't live; load the finished turn that way.
+			var loaded = running
+			loaded.status = .completed
+			await trace.update(sessions: [loaded])
+		}
+		trace.stop()
+		return h
+	}
+
+	private func turn(_ status: ActivityStep.Status) -> ActivityTurn {
+		ActivityTurn(sessionID: "s1", messageID: 1, status: status, containsReply: true)
+	}
+
+	@Test("a running interactive session whose turn finished is idle, not working")
+	func idleAfterReply() async {
+		let h = await harness(
+			turn: turn(.completed),
+			messages: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590)])
+		#expect(h.store.isIdle(running))
+		#expect(h.store.workingAgents().isEmpty)
+		#expect(h.store.liveSessions().isEmpty)
+		h.store.stop()
+	}
+
+	@Test("a turn still running keeps the session working")
+	func runningTurn() async {
+		let h = await harness(turn: turn(.running), messages: [chatMsg(1, at: -30)])
+		#expect(!h.store.isIdle(running))
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		h.store.stop()
+	}
+
+	@Test("a fresh message after the finished turn is not idle while the next turn spins up")
+	func freshMessage() async {
+		let h = await harness(
+			turn: turn(.completed),
+			messages: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590), chatMsg(3, at: -2)])
+		#expect(!h.store.isIdle(running))
+		h.store.stop()
+	}
+
+	@Test("without a trace nothing is known, so the session still counts as working")
+	func noTrace() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(!h.store.isIdle(running))
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		h.store.stop()
+	}
+}
+
+@Suite("ChatStore final_output idle rule")
+@MainActor
+struct ChatStoreFinalOutputTests {
+	private let running = ChatAgentSession(
+		id: "s1", actorID: "relay", status: .running, startedAt: chatT0.addingTimeInterval(-900))
+	private let finalMeta: JSONValue = .object(["source": .string("final_output")])
+
+	@Test("a final_output reply newer than the user's message means idle without a trace")
+	func idle() async {
+		let h = ChatHarness(
+			server: [chatMsg(1, at: -600), chatMsg(2, by: "relay", agent: true, "done", at: -590, metadata: finalMeta)],
+			detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(h.store.workingAgents().isEmpty)
+		#expect(h.store.idleSessions().map(\.id) == ["s1"])
+		h.store.stop()
+	}
+
+	@Test("a user message after the reply means the next turn is due")
+	func newerUserMessage() async {
+		let h = ChatHarness(
+			server: [chatMsg(2, by: "relay", agent: true, "done", at: -590, metadata: finalMeta), chatMsg(3, at: -5)],
+			detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([running])
+		await h.store.start()
+		#expect(h.store.workingAgents().map(\.id) == ["relay"])
+		#expect(h.store.idleSessions().isEmpty)
+		h.store.stop()
 	}
 }
 

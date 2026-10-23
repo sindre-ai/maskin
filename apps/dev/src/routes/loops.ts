@@ -3,10 +3,13 @@ import type { Database } from '@maskin/db'
 import { events, actors, objects, relationships, sessions, triggers } from '@maskin/db/schema'
 import {
 	type LoopTarget,
+	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
+	findChange,
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
 	loopTargetSchema,
+	readChanges,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
@@ -100,6 +103,45 @@ function readClosedStatuses(meta: Record<string, unknown>): Record<string, strin
 	return Object.keys(cleaned).length > 0 ? cleaned : null
 }
 
+/** One `closed_when` rule: a member counts as closed when `metadata[field] === value`. */
+type ClosedWhenRule = { field: string; value: string }
+
+/**
+ * Extract a loop's `metadata.closed_when` map: `{ <type>: ["<field>=<value>", ...] }`,
+ * e.g. `{ insight: ["loop_stage=live"] }`. A member of that type is closed when
+ * ANY of its rules matches (so two entries for one field read as "in [a, b]").
+ * The shape is the same string-array map as `closed_statuses` because that is the
+ * only nested metadata shape the write path accepts. Entries that are not
+ * `field=value` with a safe field name are dropped rather than erroring, same
+ * tolerance as `readClosedStatuses`.
+ */
+function readClosedWhen(meta: Record<string, unknown>): Record<string, ClosedWhenRule[]> | null {
+	const raw = meta.closed_when
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+	const cleaned: Record<string, ClosedWhenRule[]> = {}
+	for (const [type, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!Array.isArray(value)) continue
+		const rules: ClosedWhenRule[] = []
+		for (const entry of value) {
+			if (typeof entry !== 'string') continue
+			const sep = entry.indexOf('=')
+			if (sep <= 0) continue
+			const field = entry.slice(0, sep)
+			const ruleValue = entry.slice(sep + 1)
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(field) || ruleValue.length === 0) continue
+			rules.push({ field, value: ruleValue })
+		}
+		if (rules.length > 0) cleaned[type] = rules
+	}
+	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
+
+function matchesClosedWhen(rules: ClosedWhenRule[], metadata: unknown): boolean {
+	if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+	const meta = metadata as Record<string, unknown>
+	return rules.some((rule) => meta[rule.field] === rule.value)
+}
+
 /**
  * Extract a loop's `metadata.targets` (bet D5). Returns `null` when the field
  * is absent, not an array, or every row inside failed Zod validation — the
@@ -116,6 +158,33 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 		if (parsed.success) cleaned.push(parsed.data)
 	}
 	return cleaned.length > 0 ? cleaned : null
+}
+
+/** Longest tag we show, and the most per loop: tags are short labels, not sentences. */
+const LOOP_TAG_MAX_LENGTH = 40
+const LOOP_TAG_MAX_COUNT = 10
+
+/**
+ * Extract a loop's `metadata.tags`: the non-empty strings, trimmed, de-duplicated
+ * (case-insensitively, first spelling wins) and capped. Anything else in the
+ * array is dropped — same tolerance as the other metadata readers, a hand-edited
+ * blob must not 500 the page.
+ */
+function readLoopTags(meta: Record<string, unknown>): string[] {
+	const raw = meta.tags
+	if (!Array.isArray(raw)) return []
+	const seen = new Set<string>()
+	const tags: string[] = []
+	for (const entry of raw) {
+		if (typeof entry !== 'string') continue
+		const tag = entry.trim().slice(0, LOOP_TAG_MAX_LENGTH)
+		const key = tag.toLowerCase()
+		if (tag.length === 0 || seen.has(key)) continue
+		seen.add(key)
+		tags.push(tag)
+		if (tags.length >= LOOP_TAG_MAX_COUNT) break
+	}
+	return tags
 }
 
 const listLoopsQuerySchema = z.object({
@@ -203,13 +272,15 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// stays cheap.
 	const childRows = await db.execute<{
 		loop_id: string
+		id: string
 		type: string
 		status: string
+		metadata: unknown
 		created_at: string | Date
 		updated_at: string | Date
 	}>(
 		sql`
-			SELECT r.source_id AS loop_id, o.type, o.status, o.created_at, o.updated_at
+			SELECT r.source_id AS loop_id, o.id, o.type, o.status, o.metadata, o.created_at, o.updated_at
 			FROM ${relationships} r
 			JOIN ${objects} o ON o.id = r.target_id
 			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
@@ -219,16 +290,68 @@ app.openapi(listLoopsRoute, (async (c) => {
 	)
 
 	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
+	const closedWhenByLoop = new Map<string, Record<string, ClosedWhenRule[]>>()
 	for (const l of loopRows) {
 		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
 		const override = readClosedStatuses(meta)
 		if (override) closedStatusOverridesByLoop.set(l.id, override)
+		const closedWhen = readClosedWhen(meta)
+		if (closedWhen) closedWhenByLoop.set(l.id, closedWhen)
 	}
 
-	const isClosedForLoop = (loopId: string, type: string, status: string): boolean => {
+	const isClosedByStatus = (loopId: string, type: string, status: string): boolean => {
 		const override = closedStatusOverridesByLoop.get(loopId)?.[type]
 		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
 		return terminal.includes(status)
+	}
+	const closedWhenRules = (loopId: string, type: string): ClosedWhenRule[] =>
+		closedWhenByLoop.get(loopId)?.[type] ?? []
+	const isClosedByRule = (row: { loop_id: string; type: string; metadata: unknown }): boolean =>
+		matchesClosedWhen(closedWhenRules(row.loop_id, row.type), row.metadata)
+
+	// A member closed only by a `closed_when` rule (a metadata edit, so no status
+	// change) has no close time on its row: updated_at moves on every later edit.
+	// Its update events carry the old and new metadata, so the close time is the
+	// last event that moved it into a matching state.
+	const stageClosedIds = Array.from(
+		new Set(
+			childRows
+				.filter(
+					(row) => !isClosedByStatus(row.loop_id, row.type, row.status) && isClosedByRule(row),
+				)
+				.map((row) => row.id),
+		),
+	)
+	const stageEventsByObject = new Map<string, Array<{ createdAt: Date | null; data: unknown }>>()
+	if (stageClosedIds.length > 0) {
+		const stageEvents = await db
+			.select({ entityId: events.entityId, createdAt: events.createdAt, data: events.data })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					inArray(events.entityId, stageClosedIds),
+					inArray(events.action, ['updated', 'status_changed']),
+				),
+			)
+			.orderBy(events.id)
+		for (const ev of stageEvents) {
+			const list = stageEventsByObject.get(ev.entityId) ?? []
+			list.push({ createdAt: ev.createdAt, data: ev.data })
+			stageEventsByObject.set(ev.entityId, list)
+		}
+	}
+	const stageClosedAt = (row: { loop_id: string; id: string; type: string }): Date | null => {
+		const rules = closedWhenRules(row.loop_id, row.type)
+		let closedAt: Date | null = null
+		for (const ev of stageEventsByObject.get(row.id) ?? []) {
+			const change = findChange(readChanges(ev.data), 'metadata')
+			if (!change || !ev.createdAt) continue
+			if (!matchesClosedWhen(rules, change.old) && matchesClosedWhen(rules, change.new)) {
+				closedAt = ev.createdAt
+			}
+		}
+		return closedAt
 	}
 
 	const childStatsByLoop = new Map<
@@ -243,10 +366,14 @@ app.openapi(listLoopsRoute, (async (c) => {
 				closedCount: 0,
 				medianCloseMs: null,
 			}
-			if (isClosedForLoop(row.loop_id, row.type, row.status)) {
+			const closedByStatus = isClosedByStatus(row.loop_id, row.type, row.status)
+			if (closedByStatus || isClosedByRule(row)) {
 				stats.closedCount += 1
 				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
-				durations.push(new Date(row.updated_at).getTime() - new Date(row.created_at).getTime())
+				const closedAtMs = closedByStatus
+					? new Date(row.updated_at).getTime()
+					: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
+				durations.push(closedAtMs - new Date(row.created_at).getTime())
 				closeDurationsByLoop.set(row.loop_id, durations)
 			} else {
 				stats.inProgressCount += 1
@@ -348,6 +475,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 					? meta.close_condition
 					: null
 			const targets = readLoopTargets(meta)
+			const tags = readLoopTags(meta)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -389,6 +517,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				pill,
 				entryCondition,
 				closeCondition,
+				tags,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,
@@ -489,6 +618,7 @@ app.openapi(loopActivityRoute, (async (c) => {
 		'session_completed',
 		'session_failed',
 		'session_timeout',
+		'session_stopped',
 		'session_paused',
 	]
 

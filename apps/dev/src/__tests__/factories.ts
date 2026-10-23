@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
+	type AgentGrantAccess,
 	actors,
+	agentGrants,
 	conversations,
 	notifications,
 	objects,
@@ -566,6 +568,21 @@ export async function insertWorkspace(
 	return ws
 }
 
+/**
+ * Makes an actor a member of a workspace if it is not one already. Starting a
+ * session for an actor now requires membership (startSession fails closed), so
+ * the factories that name an agent for a workspace (trigger target, session
+ * actor, object driver) seed the membership a real workspace would have.
+ * Tests of the foreign-actor case insert the foreign actor without these
+ * factories, or into a different workspace.
+ */
+export async function ensureWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
+	await db
+		.insert(workspaceMembers)
+		.values({ workspaceId, actorId, role: 'member' })
+		.onConflictDoNothing()
+}
+
 export async function insertObject(
 	db: Database,
 	workspaceId: string,
@@ -574,6 +591,7 @@ export async function insertObject(
 ) {
 	const data = buildObject({ workspaceId, createdBy: actorId, ...overrides })
 	const rows = await db.insert(objects).values(data).returning()
+	if (typeof data.driver === 'string') await ensureWorkspaceMember(db, workspaceId, data.driver)
 	return rows[0]
 }
 
@@ -628,6 +646,7 @@ export async function insertSession(
 ) {
 	const data = buildSession({ workspaceId, actorId, createdBy, ...overrides })
 	const rows = await db.insert(sessions).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, actorId)
 	return rows[0]
 }
 
@@ -639,6 +658,37 @@ export async function insertSessionLog(
 	const { id: _id, ...data } = buildSessionLog({ sessionId, ...overrides })
 	const rows = await db.insert(sessionLogs).values(data).returning()
 	return rows[0]
+}
+
+/** Gives an agent access to an integration (a Keychain credential is read_write: on). */
+export async function insertAgentGrant(
+	db: Database,
+	grant: {
+		workspaceId: string
+		integrationId: string
+		actorId: string
+		access?: AgentGrantAccess
+		createdBy?: string
+	},
+) {
+	const rows = await db
+		.insert(agentGrants)
+		.values({ access: 'read_write', ...grant })
+		.onConflictDoUpdate({
+			target: [agentGrants.integrationId, agentGrants.actorId],
+			set: { access: grant.access ?? 'read_write' },
+		})
+		.returning()
+	return rows[0]
+}
+
+/** The actor ids holding a grant on an integration, sorted. */
+export async function grantedActorIds(db: Database, integrationId: string): Promise<string[]> {
+	const rows = await db
+		.select({ actorId: agentGrants.actorId })
+		.from(agentGrants)
+		.where(eq(agentGrants.integrationId, integrationId))
+	return rows.map((r) => r.actorId).sort()
 }
 
 export async function insertTrigger(
@@ -655,6 +705,7 @@ export async function insertTrigger(
 		...overrides,
 	})
 	const rows = await db.insert(triggers).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, targetActorId)
 	return rows[0]
 }
 

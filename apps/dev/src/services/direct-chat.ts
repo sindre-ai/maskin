@@ -1,16 +1,22 @@
 import type { Database, Transaction } from '@maskin/db'
-import type { MessageDelivery } from '@maskin/shared'
+import { conversationParticipants, conversations } from '@maskin/db/schema'
+import type { MessageDelivery, MessageMetadata } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	type InsertedConversationMessage,
 	insertConversationMessage,
 } from './conversation-messages'
 
 /**
- * TEMPORARY local port of the two functions the sibling bet (A new agent starts
- * silent) will ship in this same file. Names and signatures are the ones the
- * Architect ruled on, so the swap is a one-line import change and whichever PR
- * lands second rebases. Nothing here is specific to proactive messages.
+ * The 1-1 chat primitive shared by the agent-intro bet and the capability-scan
+ * bet. A 1-1 is derived, never stored: exactly two active participants, one
+ * human and one agent (the responder's isDirect rule). No direct column.
+ *
+ * findDirectChat and postToDirectChat are first built by the capability-scan
+ * bet (bet/3dae-capability-scan). They are copied here with the same names and
+ * signatures so the swap is a rebase of one file. Do not define a second
+ * lookup or a second post function.
  */
 
 export interface FindDirectChatArgs {
@@ -52,6 +58,8 @@ export interface PostToDirectChatArgs {
 	agentId: string
 	content: string
 	delivery: MessageDelivery
+	/** Backend-owned keys written in the same insert as the delivery marker. */
+	extraMetadata?: Pick<MessageMetadata, 'suggested_steps' | 'needed_tools' | 'plain_tail'>
 }
 
 /**
@@ -69,9 +77,78 @@ export async function postToDirectChat(
 		workspaceId: args.workspaceId,
 		actorId: args.agentId,
 		content: args.content,
-		metadata: { delivery: args.delivery },
+		metadata: { ...args.extraMetadata, delivery: args.delivery },
 		sessionId: null,
 	})
 	if (!created) throw new Error('postToDirectChat: insert was suppressed')
 	return created
+}
+
+export interface FindOrCreateDirectChatArgs extends FindDirectChatArgs {
+	/** Explicit title. The chat is created with title_auto_state 'none'. */
+	title: string
+	/** Becomes conversations.created_by and the actor of the conversation_created event. */
+	createdBy: string
+}
+
+/**
+ * The 1-1 between a human and an agent, created when it does not exist yet.
+ *
+ * Nothing in the schema is unique on the pair, so two concurrent callers would
+ * otherwise each create one. A transaction-scoped advisory lock keyed on the
+ * workspace, human and agent serializes them: the second caller waits, then
+ * finds the first caller's chat. The find half is findDirectChat, so there is
+ * one definition of "a 1-1" and no second participant query here.
+ *
+ * Given a Transaction this joins it (a savepoint), so the lock is held until
+ * the caller's own transaction ends. A caller that posts into the chat in the
+ * same transaction can then check and insert under the lock.
+ */
+export async function findOrCreateDirectChat(
+	db: Database | Transaction,
+	args: FindOrCreateDirectChatArgs,
+): Promise<{ id: string; created: boolean }> {
+	// A Transaction has the same transaction() (a savepoint), but calling it on the
+	// Database | Transaction union does not type-check, so narrow it here.
+	return (db as Database).transaction(async (tx) => {
+		await tx.execute(
+			sql`SELECT pg_advisory_xact_lock(hashtext(${args.workspaceId}::text || ${args.humanId}::text || ${args.agentId}::text))`,
+		)
+
+		const existing = await findDirectChat(tx, args)
+		if (existing) return { id: existing.id, created: false }
+
+		const [conversation] = await tx
+			.insert(conversations)
+			.values({
+				workspaceId: args.workspaceId,
+				title: args.title,
+				titleAutoState: 'none',
+				createdBy: args.createdBy,
+			})
+			.returning({ id: conversations.id })
+		if (!conversation) throw new Error('Failed to create conversation')
+
+		await tx.insert(conversationParticipants).values(
+			[args.humanId, args.agentId].map((actorId) => ({
+				conversationId: conversation.id,
+				actorId,
+				addedBy: args.humanId,
+				pinned: false,
+				archived: false,
+				lastReadMessageId: null,
+			})),
+		)
+
+		await recordEvent(tx, {
+			workspaceId: args.workspaceId,
+			actorId: args.createdBy,
+			action: 'conversation_created',
+			entityType: 'conversation',
+			entityId: conversation.id,
+			data: { participant_actor_ids: [args.humanId, args.agentId] },
+		})
+
+		return { id: conversation.id, created: true }
+	})
 }

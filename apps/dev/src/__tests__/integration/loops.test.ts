@@ -72,6 +72,37 @@ describe('Loops read API integration', () => {
 		expect(body.loops).toEqual([])
 	})
 
+	it('returns metadata.tags as clean labels, and [] when a loop has none', async () => {
+		const tagged = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Outbound',
+			// Padded, duplicated (case-insensitively), empty and non-string entries are
+			// all tolerated: a hand-edited metadata blob must not 500 the list.
+			metadata: { tags: [' Sales ', 'EMEA', 'sales', '', 42, null, 'x'.repeat(60)] },
+		})
+		const plain = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'No tags',
+		})
+		const malformed = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'Tags not an array',
+			metadata: { tags: 'sales' },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; tags: string[] }> }
+		const byId = new Map(body.loops.map((l) => [l.id, l.tags]))
+		expect(byId.get(tagged.id)).toEqual(['Sales', 'EMEA', 'x'.repeat(40)])
+		expect(byId.get(plain.id)).toEqual([])
+		expect(byId.get(malformed.id)).toEqual([])
+	})
+
 	it('returns loops filtered by workspace with the T3 render shape', async () => {
 		// Foreign workspace with its own loop — a workspace filter regression
 		// would leak this into the primary workspace's response. Guarded by
@@ -544,6 +575,218 @@ describe('Loops read API integration', () => {
 
 		const emptyRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
+	})
+
+	describe('metadata.closed_when', () => {
+		async function setup(loopMetadata: Record<string, unknown>) {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Candidate loop',
+				metadata: loopMetadata,
+			})
+			const link = (targetId: string) =>
+				insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId,
+					type: 'in_loop',
+				})
+			const readRow = async () => {
+				const app = makeApp(actorId)
+				const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+				const body = (await res.json()) as {
+					loops: Array<{
+						id: string
+						inProgressCount: number
+						closedCount: number
+						medianTimeToCloseMs: number | null
+					}>
+				}
+				return body.loops.find((l) => l.id === loop.id)
+			}
+			return { loop, link, readRow }
+		}
+
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+
+		it('counts a parked insight at the rule value as closed, a status-closed one too, and any other as open', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const discarded = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+			})
+			const building = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'building' },
+			})
+			const noStage = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+			})
+			for (const o of [live, discarded, building, noStage]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('counts an object closed by both its status and a rule once', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const both = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(both.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('drops malformed rules instead of failing, and closes nothing when none are left', async () => {
+			const { link, readRow } = await setup({
+				closed_when: {
+					insight: ['loop_stage', '=live', 'loop_stage=', 'bad field=live', 42, null],
+					task: 'loop_stage=live',
+				},
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+			await link(liveTask.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('treats two rules on one field as either value, and ignores a rule for another type', async () => {
+			const { link, readRow } = await setup({
+				closed_when: { insight: ['loop_stage=live', 'loop_stage=retired'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const retired = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'retired' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'in_progress',
+				metadata: { loop_stage: 'live' },
+			})
+			for (const o of [live, retired, liveTask]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('leaves a loop without closed_when unchanged: a live-stage insight stays open', async () => {
+			const { link, readRow } = await setup({})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('measures time to close for a rule-closed member to the update event that set the stage', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			// updated_at is far later than the stage change: a later edit must not
+			// stretch the time to close.
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live', note: 'edited later' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 999_000),
+			})
+			await link(insight.id)
+			await db.insert(events).values([
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{ field: 'metadata', old: { loop_stage: 'building' }, new: { loop_stage: 'live' } },
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 5000),
+				},
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{
+								field: 'metadata',
+								old: { loop_stage: 'live' },
+								new: { loop_stage: 'live', note: 'edited later' },
+							},
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 999_000),
+				},
+			])
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.medianTimeToCloseMs).toBe(5000)
+		})
+
+		it('falls back to updated_at for time to close when no event shows the stage change', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 7000),
+			})
+			await link(insight.id)
+
+			const row = await readRow()
+			expect(row?.medianTimeToCloseMs).toBe(7000)
+		})
 	})
 
 	it('ignores relationships of a different type when computing loop membership', async () => {

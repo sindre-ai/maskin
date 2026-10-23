@@ -156,23 +156,109 @@ struct AppRuntimeBadgeTests {
 
 // MARK: - Push permission
 
+private actor FakePreferences: NotificationPreferencesAPI {
+	var timezone: String?
+	var saves: [NotificationPreferencesPatch] = []
+	init(timezone: String?) { self.timezone = timezone }
+	func load() async throws -> NotificationPreferences { NotificationPreferences(timezone: timezone) }
+	func save(_ patch: NotificationPreferencesPatch, idempotencyKey: String) async throws
+		-> NotificationPreferences
+	{
+		saves.append(patch)
+		return patch.applied(to: NotificationPreferences(timezone: timezone))
+	}
+}
+
 @MainActor
 @Suite("AppRuntime push permission")
 struct AppRuntimePushPermissionTests {
-	@Test("signing in does not prompt; opening Chats does")
-	func promptDeferredToInbox() async {
+	/// Polls up to 5 s: these hop through unstructured tasks and the suite runs in parallel.
+	private func eventually(_ condition: () async -> Bool) async -> Bool {
+		for _ in 0..<500 {
+			if await condition() { return true }
+			try? await Task.sleep(for: .milliseconds(10))
+		}
+		return await condition()
+	}
+
+	private func make(
+		permission: PushPermission, serverTimezone: String? = nil
+	) async -> (AppRuntime, FakeSystem, FakePreferences) {
 		let system = FakeSystem()
-		system.permission = .notDetermined
+		system.permission = permission
 		let push = PushRegistrar(
 			system: system, devices: FakeDevices { true }, environment: .sandbox, platform: .ios,
 			pendingStore: InMemoryPendingUnregisterStore())
-		let (runtime, _) = await makeRuntime(push: push)
+		let environment = AppEnvironment.preview(signedIn: true)
+		await environment.workspaces.refresh()
+		let prefs = FakePreferences(timezone: serverTimezone)
+		let runtime = AppRuntime(
+			environment: environment, push: push, promptStorage: InMemoryNotificationPromptStorage(),
+			preferencesAPI: prefs)
+		return (runtime, system, prefs)
+	}
 
+	@Test("signing in and opening Chats never prompt")
+	func noColdPrompt() async {
+		let (runtime, system, _) = await make(permission: .notDetermined)
 		await runtime.actorChanged("actor-1")
-		#expect(system.promptCount == 0, "no prompt just because the user signed in")
+		runtime.selectedTab = .chats
+		try? await Task.sleep(for: .milliseconds(50))
+		#expect(system.promptCount == 0)
+		#expect(runtime.notificationPrompt?.isPresented == false)
+	}
 
-		await runtime.requestPushPermission()
+	@Test("a moment of value shows the pre-prompt, and the system prompt waits for 'Turn on'")
+	func prePromptThenSystem() async {
+		let (runtime, system, _) = await make(permission: .notDetermined)
+		await runtime.actorChanged("actor-1")
+		runtime.valueMomentSeen()
+		#expect(await eventually { runtime.notificationPrompt?.isPresented == true })
+		#expect(system.promptCount == 0)
+		await runtime.notificationPrompt?.accept()
 		#expect(system.promptCount == 1)
+	}
+
+	@Test("an already-authorized device sees no pre-prompt")
+	func alreadyAuthorized() async {
+		let (runtime, system, _) = await make(permission: .authorized)
+		await runtime.actorChanged("actor-1")
+		runtime.valueMomentSeen()
+		try? await Task.sleep(for: .milliseconds(50))
+		#expect(runtime.notificationPrompt?.isPresented == false)
+		#expect(system.promptCount == 0)
+	}
+
+	@Test("the pre-prompt waits while another sheet is open")
+	func sheetOpen() async {
+		let (runtime, _, _) = await make(permission: .notDetermined)
+		await runtime.actorChanged("actor-1")
+		runtime.presentation = .profile
+		runtime.valueMomentSeen()
+		try? await Task.sleep(for: .milliseconds(50))
+		#expect(runtime.notificationPrompt?.isPresented == false)
+	}
+
+	@Test("sign-in syncs the device timezone when the server differs, without being asked")
+	func timezoneOnSignIn() async {
+		let (runtime, _, prefs) = await make(permission: .authorized, serverTimezone: "Pacific/Auckland")
+		await runtime.actorChanged("actor-1")
+		if TimeZone.current.identifier == "Pacific/Auckland" {
+			try? await Task.sleep(for: .milliseconds(200))
+			#expect(await prefs.saves.isEmpty)
+		} else {
+			#expect(await eventually { await prefs.saves.count == 1 })
+			#expect(await prefs.saves.first?.timezone == .set(TimeZone.current.identifier))
+		}
+	}
+
+	@Test("signing out drops the preferences store")
+	func signedOutDrops() async {
+		let (runtime, _, _) = await make(permission: .authorized)
+		await runtime.actorChanged("actor-1")
+		#expect(runtime.notificationPreferences != nil)
+		await runtime.actorChanged(nil)
+		#expect(runtime.notificationPreferences == nil)
 	}
 }
 

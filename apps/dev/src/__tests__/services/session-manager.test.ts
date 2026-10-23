@@ -1,6 +1,13 @@
 ﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
+// startSession() checks that the agent is a member of the workspace. These tests script the mock DB's selects one by one, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),
@@ -27,9 +34,6 @@ const mockContainerManager = {
 	stop: vi.fn().mockResolvedValue(undefined),
 	remove: vi.fn().mockResolvedValue(undefined),
 	pullImage: vi.fn().mockResolvedValue(undefined),
-	createNetwork: vi.fn().mockResolvedValue('anko-net-test'),
-	removeNetwork: vi.fn().mockResolvedValue(undefined),
-	getIpOnNetwork: vi.fn().mockResolvedValue('172.20.0.2'),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 	copyTo: vi.fn().mockResolvedValue(undefined),
 	copyFrom: vi.fn().mockResolvedValue({}),
@@ -57,6 +61,14 @@ vi.mock('../../lib/claude-oauth', async (importOriginal) => {
 
 vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
+}))
+
+// The launch reads the agent's integration access with a query of its own. These tests queue
+// db.select() results by position, so the lookup is stubbed here and covered against real
+// Postgres in integration/agent-access-launch.test.ts.
+vi.mock('../../lib/integrations/agent-access', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/integrations/agent-access')>()),
+	listAgentAccess: vi.fn(async () => []),
 }))
 
 vi.mock('../../lib/integrations/registry', () => ({
@@ -89,6 +101,11 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Same call the real helper makes for an exit with no final result message,
+	// so the assertions below keep reading the tail + option the classifier got.
+	// The helper's own rule is covered in lib/credit-classifier.test.ts.
+	classifySessionExit: (tail: string, exitCode: number) =>
+		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
 }))
 
 import { execFile } from 'node:child_process'
@@ -96,7 +113,6 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { logger } from '../../lib/logger'
-import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapshot'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
@@ -1014,7 +1030,7 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
-		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
+		it('defaults ANTHROPIC_MODEL to Sonnet when the agent has no model preference', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -1058,7 +1074,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBeUndefined()
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the Claude OAuth route', async () => {
@@ -1118,202 +1134,7 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 	})
-
-	describe('startSession() — browser sidecar provisioning', () => {
-		function buildTestSession(overrides: Record<string, unknown> = {}) {
-			return buildSession({
-				status: 'pending',
-				interactive: false,
-				actionPrompt: 'Do the thing',
-				containerId: null,
-				...overrides,
-			})
-		}
-
-		function buildTestAgent(actorId: string, tools: Record<string, unknown> | null = null) {
-			return {
-				id: actorId,
-				type: 'agent' as const,
-				systemPrompt: 'You are a helpful AI agent.',
-				llmProvider: null,
-				llmConfig: null,
-				apiKey: 'ank_test_agent_key',
-				tools,
-			}
-		}
-
-		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, enterpriseGranted: true, settings: LAUNCHABLE_WS_SETTINGS }
-		}
-
-		beforeEach(() => {
-			vi.clearAllMocks()
-			manager.setBrowserSidecarBuildContext('/repo/docker/browser-sidecar')
-		})
-
-		it('provisions a browser sidecar when browserRequired is true (AC-T1 Docker leg)', async () => {
-			const session = buildTestSession({ config: { browserRequired: true } })
-			const agent = buildTestAgent(session.actorId)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
-				pulled: 0,
-				skipped: 0,
-				failures: [],
-			})
-
-			mockResults.selectQueue = [
-				[session], // startSession: load session
-				[workspace], // hasCapacity: workspace
-				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup
-				[workspace], // launchContainer: workspace llm keys
-				[], // launchContainer: integrations
-			]
-
-			await manager.startSession(session.id)
-
-			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
-				'browser-sidecar:latest',
-				'/repo/docker/browser-sidecar',
-			)
-			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
-			expect(mockContainerManager.createNetwork).toHaveBeenCalled()
-
-			const browserCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as Record<
-				string,
-				unknown
-			>
-			expect(browserCreateCall.image).toBe('browser-sidecar:latest')
-			expect(browserCreateCall.name).toMatch(/^anko-browser-/)
-			expect(browserCreateCall.networkMode).toMatch(/^anko-net-/)
-			expect(browserCreateCall.memoryMb).toBe(512)
-			expect(browserCreateCall.cpuShares).toBe(512)
-
-			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
-				env: Record<string, string>
-				networkMode?: string
-			}
-			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
-			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
-		})
-
-		it('does not provision a sidecar when browserRequired is absent (AC-T6 Docker leg)', async () => {
-			const session = buildTestSession({ config: {} })
-			const agent = buildTestAgent(session.actorId)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
-				pulled: 0,
-				skipped: 0,
-				failures: [],
-			})
-
-			mockResults.selectQueue = [
-				[session], // startSession: load session
-				[workspace], // hasCapacity: workspace
-				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup
-				[workspace], // launchContainer: workspace llm keys
-				[], // launchContainer: integrations
-			]
-
-			await manager.startSession(session.id)
-
-			expect(mockContainerManager.ensureImage).not.toHaveBeenCalled()
-			expect(mockContainerManager.pullImage).not.toHaveBeenCalled()
-			expect(mockContainerManager.createNetwork).not.toHaveBeenCalled()
-
-			const agentCreateCall = mockContainerManager.create.mock.calls[0]?.[0] as {
-				env: Record<string, string>
-				networkMode?: string
-			}
-			expect(agentCreateCall.env.BROWSER_CDP_URL).toBeUndefined()
-			expect(agentCreateCall.networkMode).toBeUndefined()
-		})
-
-		it('provisions a sidecar when MCP config references BROWSER_CDP_URL', async () => {
-			const session = buildTestSession({ config: {} })
-			const agent = buildTestAgent(session.actorId, {
-				mcpServers: {
-					playwright: {
-						command: 'npx',
-						args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-					},
-				},
-			})
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
-				pulled: 0,
-				skipped: 0,
-				failures: [],
-			})
-
-			mockResults.selectQueue = [
-				[session], // startSession: load session
-				[workspace], // hasCapacity: workspace
-				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup
-				[workspace], // launchContainer: workspace llm keys
-				[], // launchContainer: integrations
-			]
-
-			await manager.startSession(session.id)
-
-			expect(mockContainerManager.ensureImage).toHaveBeenCalledWith(
-				'browser-sidecar:latest',
-				'/repo/docker/browser-sidecar',
-			)
-			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
-				env: Record<string, string>
-				networkMode?: string
-			}
-			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
-			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
-		})
-
-		// Closes the seam between the marketplace install path and this one: the
-		// tools value here is not hand-written, it is exactly what
-		// buildActorInsert() persists for an installed agent that was published
-		// with a browser. Installed agents used to land here with tools:{} and
-		// silently ran without a sidecar.
-		it('provisions a sidecar for an agent installed from a marketplace loop', async () => {
-			const session = buildTestSession({ config: {} })
-			const installedTools = expandBrowserCapability({ browser: true }) as {
-				mcpServers: Record<string, unknown>
-			}
-			const agent = buildTestAgent(session.actorId, installedTools)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
-				pulled: 0,
-				skipped: 0,
-				failures: [],
-			})
-
-			mockResults.selectQueue = [
-				[session], // startSession: load session
-				[workspace], // hasCapacity: workspace
-				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup
-				[workspace], // launchContainer: workspace llm keys
-				[], // launchContainer: integrations
-			]
-
-			await manager.startSession(session.id)
-
-			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
-				env: Record<string, string>
-			}
-			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
-			// The agent's own MCP config reaches the container with the placeholder
-			// intact, so agent-run.sh keeps the @playwright/mcp entry.
-			expect(agentCreateCall.env.AGENT_MCP_JSON).toContain('@playwright/mcp')
-		})
-	})
-
-	describe('buildLaunchSpec() — previewGuestPorts (Critical #1 fix)', () => {
+	describe('buildLaunchSpec()', () => {
 		function buildTestAgent(actorId: string) {
 			return {
 				id: actorId,
@@ -1332,66 +1153,6 @@ describe('SessionManager', () => {
 
 		beforeEach(() => {
 			vi.clearAllMocks()
-		})
-
-		it('passes previewGuestPorts through and forces browserRequired to true', async () => {
-			const session = buildSession({
-				status: 'pending',
-				interactive: false,
-				config: { previewGuestPorts: [3000, 8080] },
-			})
-			const agent = buildTestAgent(session.actorId)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			mockResults.selectQueue = [
-				[agent], // buildLaunchSpec: agent lookup
-				[workspace], // buildLaunchSpec: workspace llm keys
-				[], // buildLaunchSpec: integrations
-			]
-
-			const spec = await manager.buildLaunchSpec(
-				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
-			)
-
-			expect(spec.previewGuestPorts).toEqual([3000, 8080])
-			expect(spec.browserRequired).toBe(true)
-		})
-
-		it('filters out non-integer, non-positive, and out-of-range port values', async () => {
-			const session = buildSession({
-				status: 'pending',
-				interactive: false,
-				config: { previewGuestPorts: [3000, -1, 70000, 'abc', 1.5, 8080] },
-			})
-			const agent = buildTestAgent(session.actorId)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			mockResults.selectQueue = [[agent], [workspace], []]
-
-			const spec = await manager.buildLaunchSpec(
-				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
-			)
-
-			expect(spec.previewGuestPorts).toEqual([3000, 8080])
-		})
-
-		it('leaves browserRequired false and previewGuestPorts empty when the field is absent', async () => {
-			const session = buildSession({
-				status: 'pending',
-				interactive: false,
-				config: {},
-			})
-			const agent = buildTestAgent(session.actorId)
-			const workspace = buildTestWorkspace(session.workspaceId)
-
-			mockResults.selectQueue = [[agent], [workspace], []]
-
-			const spec = await manager.buildLaunchSpec(
-				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
-			)
-
-			expect(spec.previewGuestPorts).toEqual([])
-			expect(spec.browserRequired).toBe(false)
 		})
 
 		it('injects MASKIN_TRIGGERING_EVENT_ID and stamps the triggering-event header when the session was dispatched from a comment', async () => {
@@ -1669,112 +1430,6 @@ describe('SessionManager', () => {
 					typeof (u as { config?: { llm_route?: unknown } }).config?.llm_route === 'string',
 			)
 			expect(routeUpdate?.config?.llm_route).toBe('workspace_api_key')
-		})
-	})
-
-	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
-		// Access the private map + method through a structural cast so the test
-		// can exercise the orchestration without standing up the whole
-		// startSession flow. JS has no real private and this is the established
-		// pattern in this repo for poking at session-manager internals.
-		type Internals = {
-			activeSessions: Map<
-				string,
-				{
-					tempDir: string
-					browserContainerId?: string
-					networkName?: string
-				}
-			>
-			cleanupBrowserSidecar(sessionId: string): Promise<void>
-		}
-
-		function notFound404(): Error {
-			const err = new Error('(HTTP code 404) no such container - No such container: anko-browser-x')
-			;(err as { statusCode?: number }).statusCode = 404
-			return err
-		}
-
-		beforeEach(() => {
-			vi.clearAllMocks()
-		})
-
-		it('stops + removes the sidecar and confirms the container is gone (delta 0)', async () => {
-			const internals = manager as unknown as Internals
-			const sessionId = 'sess-cleanup-fast'
-			internals.activeSessions.set(sessionId, {
-				tempDir: '/tmp/x',
-				browserContainerId: 'browser-fast',
-				networkName: 'anko-net-fast',
-			})
-			// First inspect after remove already 404s — the happy path.
-			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
-
-			const started = Date.now()
-			await internals.cleanupBrowserSidecar(sessionId)
-			const elapsed = Date.now() - started
-
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('browser-fast')
-			expect(mockContainerManager.remove).toHaveBeenCalledWith('browser-fast')
-			expect(mockContainerManager.inspect).toHaveBeenCalledWith('browser-fast')
-			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('anko-net-fast')
-			// Bookkeeping cleared so the next session-end signal is a no-op.
-			expect(internals.activeSessions.get(sessionId)?.browserContainerId).toBeUndefined()
-			expect(internals.activeSessions.get(sessionId)?.networkName).toBeUndefined()
-			// AC-T5: well inside the 60s budget.
-			expect(elapsed).toBeLessThan(60_000)
-		})
-
-		it('keeps polling until inspect returns 404 (slow Docker daemon)', async () => {
-			const internals = manager as unknown as Internals
-			const sessionId = 'sess-cleanup-slow'
-			internals.activeSessions.set(sessionId, {
-				tempDir: '/tmp/x',
-				browserContainerId: 'browser-slow',
-			})
-			// inspect reports the container alive twice, then 404 — wait loop must
-			// keep going across the early polls.
-			mockContainerManager.inspect
-				.mockResolvedValueOnce({ running: false, exitCode: 0 })
-				.mockResolvedValueOnce({ running: false, exitCode: 0 })
-				.mockRejectedValueOnce(notFound404())
-
-			await internals.cleanupBrowserSidecar(sessionId)
-
-			expect(mockContainerManager.inspect.mock.calls.length).toBeGreaterThanOrEqual(3)
-		})
-
-		it('no-ops when there is no sidecar to clean up (the common path)', async () => {
-			const internals = manager as unknown as Internals
-			const sessionId = 'sess-no-sidecar'
-			internals.activeSessions.set(sessionId, { tempDir: '/tmp/x' })
-
-			await internals.cleanupBrowserSidecar(sessionId)
-
-			expect(mockContainerManager.stop).not.toHaveBeenCalled()
-			expect(mockContainerManager.remove).not.toHaveBeenCalled()
-			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
-			expect(mockContainerManager.removeNetwork).not.toHaveBeenCalled()
-		})
-
-		it('is idempotent — a second call after teardown does nothing', async () => {
-			const internals = manager as unknown as Internals
-			const sessionId = 'sess-cleanup-idempotent'
-			internals.activeSessions.set(sessionId, {
-				tempDir: '/tmp/x',
-				browserContainerId: 'browser-idem',
-				networkName: 'anko-net-idem',
-			})
-			mockContainerManager.inspect.mockRejectedValueOnce(notFound404())
-
-			await internals.cleanupBrowserSidecar(sessionId)
-			const stopCallsAfterFirst = mockContainerManager.stop.mock.calls.length
-			const removeCallsAfterFirst = mockContainerManager.remove.mock.calls.length
-
-			await internals.cleanupBrowserSidecar(sessionId)
-
-			expect(mockContainerManager.stop.mock.calls.length).toBe(stopCallsAfterFirst)
-			expect(mockContainerManager.remove.mock.calls.length).toBe(removeCallsAfterFirst)
 		})
 	})
 
@@ -2080,6 +1735,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildKeychainEnv: no bring-your-own keys in this workspace
+				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
 				[scopedBet],
 				// resolveGithubRepoSlug: bet.metadata lookup by id
@@ -2199,7 +1856,10 @@ describe('SessionManager', () => {
 			}
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			// Only the Maskin MCP server, which every session gets: no GitHub entry.
+			expect(
+				Object.keys(JSON.parse(createArgs.env.MCP_SERVERS_JSON ?? '{}').mcpServers ?? {}),
+			).toEqual(['maskin'])
 			expect(createArgs.env.GITHUB_INTEGRATION_ID).toBeUndefined()
 		})
 
@@ -2222,7 +1882,7 @@ describe('SessionManager', () => {
 				},
 			}
 
-			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+			it('auto-injects the Slack MCP server but not SLACK_BOT_TOKEN when the agent config does not reference it', async () => {
 				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
 				const fixtures = buildLaunchFixtures([integration])
 
@@ -2236,7 +1896,9 @@ describe('SessionManager', () => {
 					env: Record<string, string>
 				}
 
-				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				// The server authenticates on MASKIN_API_KEY, so the container has no use for
+				// the bot token unless the agent's own tools config asks for it.
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
 				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
 				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
 					mcpServers: Record<string, { type: string; url: string }>
@@ -2436,7 +2098,7 @@ describe('SessionManager', () => {
 				['absent', {}],
 				['true', { expose_to_agent_sessions: true }],
 			])(
-				'still injects both when the switch is %s (existing behaviour)',
+				'still attaches Resend through the gateway, token withheld, when the switch is %s',
 				async (_label, config) => {
 					const integration = buildIntegration({ provider: 'resend', config })
 					const fixtures = buildLaunchFixtures([integration])
@@ -2450,10 +2112,254 @@ describe('SessionManager', () => {
 					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
 						env: Record<string, string>
 					}
-					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					// Resend goes through the gateway: the key stays on the server.
+					expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+					expect(JSON.stringify(createArgs.env)).not.toContain('re_live_key')
 					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+					expect(createArgs.env.MCP_SERVERS_JSON).toContain('/api/integrations/resend/gateway')
 				},
 			)
+		})
+
+		describe('integration tokens only reach agents that use them', () => {
+			// Google Meet: autoInject false. Slack: autoInject true, server signs in
+			// with MASKIN_API_KEY. PostHog: autoInject true, server signs in with the
+			// integration token itself.
+			const googleMeetProviderConfig = {
+				config: {
+					name: 'google-meet',
+					mcp: {
+						envKey: 'GOOGLE_MEET_TOKEN',
+						autoInject: false,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/google-meet/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
+						},
+					},
+				},
+			}
+			const posthogProviderConfig = {
+				config: {
+					name: 'posthog',
+					mcp: {
+						envKey: 'POSTHOG_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.posthog.com/mcp',
+							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			async function launchEnv(opts: {
+				provider: string
+				providerConfig: unknown
+				token: string
+				agentTools?: Record<string, unknown> | null
+				sessionMcps?: Array<Record<string, unknown>>
+			}) {
+				const integration = buildIntegration({ provider: opts.provider })
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.agent.tools = opts.agentTools ?? null
+				if (opts.sessionMcps) {
+					fixtures.session.config = {
+						...(fixtures.session.config as Record<string, unknown>),
+						mcps: opts.sessionMcps,
+					}
+				}
+				vi.mocked(getProvider).mockReturnValue(opts.providerConfig as never)
+				mockGetValidToken.mockResolvedValueOnce(opts.token)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				return (mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> })
+					.env
+			}
+
+			it('attaches a granted integration without the agent referencing it, but gives it no token it does not use', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							maskin: {
+								type: 'http',
+								url: '${MASKIN_API_URL}/mcp',
+								headers: { Authorization: '${MASKIN_API_KEY}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBeUndefined()
+				// Granted by default (read), so the server is attached for the agent.
+				expect(mcpKeysOf(env)).toContain('integration-google-meet')
+			})
+
+			it('gives an agent whose own tools config references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							'google-meet': {
+								type: 'http',
+								url: 'https://meet.example.test/mcp',
+								headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('reads a reference in a stdio server env block and ignores malformed entries', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					agentTools: {
+						mcpServers: {
+							broken: null,
+							bare: {},
+							stdio: {
+								command: 'npx',
+								env: { MEET_ACCESS_TOKEN: '${GOOGLE_MEET_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('gives a session whose own MCP list references the token that token', async () => {
+				const env = await launchEnv({
+					provider: 'google-meet',
+					providerConfig: googleMeetProviderConfig,
+					token: 'meet-token-value',
+					sessionMcps: [
+						{
+							type: 'http',
+							url: 'https://meet.example.test/mcp',
+							headers: { Authorization: 'Bearer ${GOOGLE_MEET_TOKEN}' },
+						},
+					],
+				})
+				expect(env.GOOGLE_MEET_TOKEN).toBe('meet-token-value')
+			})
+
+			it('keeps the auto-injected server for every agent but leaves the token out when the server signs in without it (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+				})
+				expect(env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('still gives the token to an agent that references it on an auto-inject provider (Slack)', async () => {
+				const env = await launchEnv({
+					provider: 'slack',
+					providerConfig: slackProviderConfig,
+					token: 'xoxb-real-bot-token',
+					agentTools: {
+						mcpServers: {
+							slack: {
+								type: 'stdio',
+								command: 'npx',
+								args: ['-y', '@modelcontextprotocol/server-slack'],
+								env: { SLACK_BOT_TOKEN: '${SLACK_BOT_TOKEN}' },
+							},
+						},
+					},
+				})
+				expect(env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(mcpKeysOf(env)).toContain('integration-slack')
+			})
+
+			it('serves an auto-injected hosted server through the gateway and keeps its token out of the container (PostHog)', async () => {
+				const env = await launchEnv({
+					provider: 'posthog',
+					providerConfig: posthogProviderConfig,
+					token: 'phx_token_value',
+				})
+				// The agent signs in to Maskin; the provider token stays on the server.
+				expect(env.POSTHOG_TOKEN).toBeUndefined()
+				expect(JSON.stringify(env)).not.toContain('phx_token_value')
+				expect(mcpKeysOf(env)).toContain('integration-posthog')
+				expect(env.MCP_SERVERS_JSON).toContain('/api/integrations/posthog/gateway')
+			})
+
+			it('does not put the token in the container for an unreferencing agent but still uses it for the preflight Slack alert', async () => {
+				const slackIntegration = buildIntegration({ provider: 'slack', externalId: 'T-alert' })
+				const fixtures = buildLaunchFixtures([slackIntegration])
+				fixtures.agent.tools = {
+					mcpServers: {
+						github: {
+							type: 'stdio',
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_broken' },
+						},
+					},
+				}
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-alert-bot-token')
+
+				const slackAuth: string[] = []
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(async (url: string | URL, init?: RequestInit) => {
+						const u = url.toString()
+						if (u === 'https://api.github.com/user') return new Response('bad', { status: 401 })
+						if (u === 'https://slack.com/api/chat.postMessage') {
+							slackAuth.push(String((init?.headers as Record<string, string>)?.Authorization))
+							return new Response(JSON.stringify({ ok: true }), {
+								status: 200,
+								headers: { 'content-type': 'application/json' },
+							})
+						}
+						throw new Error(`unexpected fetch: ${u}`)
+					}),
+				)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(slackAuth).toEqual(['Bearer xoxb-alert-bot-token'])
+			})
 		})
 
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
@@ -2888,7 +2794,7 @@ describe('SessionManager', () => {
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
 		})
 
-		it('routes to the agent-server and marks the session terminal when agentServerId is set', async () => {
+		it('routes to the agent-server and marks the session user_stopped when agentServerId is set', async () => {
 			const session = buildSession({
 				status: 'running',
 				agentServerId: 'agent-server-1',
@@ -2900,18 +2806,15 @@ describe('SessionManager', () => {
 				secret: 'x'.repeat(32),
 			}
 			// 1st select: stopSession's own session lookup. 2nd: the agent_servers
-			// row lookup. markRemoteSessionComplete no longer does its own SELECT —
-			// it does a single CAS UPDATE ... RETURNING instead (see updateQueue
-			// below); the subsequent hasOtherActiveSessions select falls through to
-			// the unset static `mockResults.select` default of [], i.e. "no other
-			// active sessions", which drives the actors-table update below.
-			mockResults.selectQueue = [[session], [server]]
-			// 1st update: markRemoteSessionComplete's CAS on `sessions` — its
-			// .returning() must yield the row so workspaceId/actorId are available
-			// for the events insert. 2nd update: the actors.agentState sync inside
-			// hasOtherActiveSessions' branch — its return value is unused by the
-			// code, so an empty array is fine.
-			mockResults.updateQueue = [[session], []]
+			// row lookup. 3rd: markRemoteSessionComplete's stdout read (empty).
+			// Every later select (its open-row check, settleSession's own SELECT, the
+			// re-read after settling) falls through to the static default below, the
+			// still-running row.
+			mockResults.selectQueue = [[session], [server], []]
+			mockResults.select = [session]
+			// 1st update: the CAS inside settleSession — its .returning() must yield
+			// a row for the flip to land and the event to be written.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 				new Response(JSON.stringify({ ok: true }), {
@@ -2937,10 +2840,14 @@ describe('SessionManager', () => {
 				// Local Docker must never be touched for a remotely-dispatched session.
 				expect(mockContainerManager.stop).not.toHaveBeenCalled()
 
+				// A user stop is stored as user_stopped, not failed.
 				const statusUpdate = calls.updates.find(
-					(u) => (u as Record<string, unknown>).status === 'failed',
+					(u) => (u as Record<string, unknown>).status === 'user_stopped',
 				) as Record<string, unknown> | undefined
 				expect(statusUpdate).toBeDefined()
+				expect(calls.updates.some((u) => (u as Record<string, unknown>).status === 'failed')).toBe(
+					false,
+				)
 			} finally {
 				fetchSpy.mockRestore()
 			}
@@ -3043,8 +2950,19 @@ describe('SessionManager', () => {
 	})
 
 	describe('markRemoteSessionComplete()', () => {
-		it('no-ops without writing an event when the CAS update matches no row (already terminal / lost the race)', async () => {
-			mockResults.update = [] // .returning() → no row: UPDATE matched nothing
+		// Mock-DB choreography for these tests. Select order inside the method:
+		// 1) the stdout read, 2) (only when usage parses) the route/model lookup,
+		// 3) the open-row check, then settleSession's own SELECT, the re-read after
+		// settling and hasOtherActiveSessions. Tests queue the first and leave the
+		// rest to the static `mockResults.select` default, a still-running row.
+		// Updates: (only when usage parses) the usage columns, then the CAS inside
+		// settleSession, whose .returning() must yield a row for the flip to land.
+		const settleFlips = (session: { id: string }) => [{ id: session.id }]
+
+		it('no-ops without writing an event when the session is already terminal', async () => {
+			// 1st select: the stdout read (empty). 2nd: the open-row check finds a
+			// terminal status. 3rd: the lookup that enriches the dropped-signal log.
+			mockResults.selectQueue = [[], [{ status: 'completed' }], [{ status: 'completed' }]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete('some-session-id', 1)
@@ -3053,18 +2971,13 @@ describe('SessionManager', () => {
 		})
 
 		// Regression coverage for docs/runbooks/agent-session-failures-2026-08-11.md,
-		// Issue 3's suggested fix: the CAS-miss no-op used to be completely
-		// silent (no log at any level), which is exactly why the null-vs-1 exit
-		// code mismatch for session 4d1f3c8b required host log spelunking to
-		// diagnose instead of being visible from app logs alone.
-		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
+		// Issue 3's suggested fix: the no-op used to be completely silent (no log at
+		// any level), which is exactly why the null-vs-1 exit code mismatch for
+		// session 4d1f3c8b required host log spelunking to diagnose instead of being
+		// visible from app logs alone.
+		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
-			// 1st select: the single stdout read from session_logs that serves both
-			// the usage parse and the credit classification — empty means "no usage
-			// found, nothing to classify". 2nd select: the best-effort lookup used
-			// only to enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [session]]
+			mockResults.selectQueue = [[], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3083,12 +2996,13 @@ describe('SessionManager', () => {
 
 		it('still reaches a terminal state when the stdout read for usage and classification throws', async () => {
 			// The stdout read (shared by usage parsing and credit classification) is
-			// best-effort: it runs before the CAS update, and stopSession() calls this
+			// best-effort: it runs before settling, and stopSession() calls this
 			// method after the remote sandbox is already dead. A throw escaping here
 			// would surface as a spurious "stop failed" 400 for a stop that actually
 			// succeeded.
 			const session = buildSession({ status: 'running' })
-			mockResults.updateQueue = [[session], []]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
 			// 1st select: the stdout read, which throws.
 			mockResults.selectErrorQueue = [new Error('connection reset')]
 
@@ -3100,33 +3014,36 @@ describe('SessionManager', () => {
 			expect(eventInsert).toBeDefined()
 		})
 
-		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
+		it('inserts exactly one session_failed event (nonzero exit code)', async () => {
 			const session = buildSession({ status: 'running' })
-			mockResults.updateQueue = [[session], []]
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
-			const eventInsert = calls.inserts.find(
+			const eventInserts = calls.inserts.filter(
 				(v) => (v as Record<string, unknown>).action === 'session_failed',
 			)
-			expect(eventInsert).toBeDefined()
+			expect(eventInserts).toHaveLength(1)
 		})
 
-		it('retries the CAS update on a thrown DB error and succeeds once a retry clears', async () => {
+		it('retries on a thrown DB error and succeeds once a retry clears', async () => {
 			const session = buildSession({ status: 'running' })
-			// hasOtherActiveSessions' SELECT — a non-empty result means "yes, other
-			// active sessions exist", so the actors-table update branch is skipped
-			// and doesn't consume an extra update() call, keeping the retry count
-			// below attributable only to the CAS update.
-			mockResults.select = [{ id: 'other-session' }]
-			// 1st and 2nd CAS attempts throw; 3rd (final, within CAS_UPDATE_RETRIES)
-			// succeeds and returns the row via .returning().
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
+			// A non-empty select result means "yes, other active sessions exist", so
+			// the actors-table update branch is skipped and doesn't consume an extra
+			// update() call.
+			mockResults.select = [session]
+			mockResults.selectQueue = [[]]
+			// 1st call (the stdout read) is fine; the open-row check throws on the
+			// 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
+			// goes through.
+			mockResults.selectErrorQueue = [
 				undefined,
+				new Error('connection reset'),
+				new Error('connection reset'),
 			]
-			mockResults.updateQueue = [[session]]
+			mockResults.updateQueue = [settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
@@ -3137,12 +3054,14 @@ describe('SessionManager', () => {
 		})
 
 		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
-			mockResults.updateErrorQueue = [
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [
+				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// The fallback lookup after CAS retries are exhausted finds nothing
+			// The fallback lookup after the retries are exhausted finds nothing
 			// (unconfigured select defaults to []) — nothing left to clean up.
 			// This is a legitimate terminal outcome (not a DB failure a caller
 			// could usefully retry), so it still resolves `true`.
@@ -3162,17 +3081,15 @@ describe('SessionManager', () => {
 		// every other early-return above (already terminal / not found /
 		// resolved by a concurrent call), which are legitimate no-ops and
 		// still resolve `true`.
-		it('gives up and returns false when the fallback lookup after CAS retries also throws', async () => {
-			mockResults.updateErrorQueue = [
+		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [
+				undefined,
+				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: the stdout read for usage and credit classification (empty
-			// = no-op). 2nd select: the fallback lookup itself throws — the DB is
-			// still unreachable.
-			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -3180,35 +3097,25 @@ describe('SessionManager', () => {
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
-		it('still runs terminal side effects via a fallback lookup when CAS retries are exhausted but the session is still running (Bug 2 regression)', async () => {
+		it('returns false, so the caller retries, when settling keeps failing and the session is still open', async () => {
 			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			// The CAS inside settleSession throws on every attempt.
 			mockResults.updateErrorQueue = [
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found", a no-op. 2nd select:
-			// the fallback lookup after CAS retries are exhausted, finds the
-			// session still 'running'. 3rd select: hasOtherActiveSessions' check —
-			// a non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[], [session], [{ id: 'other-session' }]]
+			const initialInsertCount = calls.inserts.length
 
-			await manager.markRemoteSessionComplete(session.id, 137)
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(false)
 
-			const eventInsert = calls.inserts.find(
-				(v) => (v as Record<string, unknown>).action === 'session_failed',
-			)
-			expect(eventInsert).toBeDefined()
+			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
-		it('persists non-null usage fields via the fallback direct update when CAS retries are exhausted', async () => {
+		it('writes the parsed usage onto the row before settling it', async () => {
 			const session = buildSession({ status: 'running' })
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
-				new Error('connection reset'),
-			]
 			const resultLogRow = {
 				content: JSON.stringify({
 					type: 'result',
@@ -3222,51 +3129,97 @@ describe('SessionManager', () => {
 					},
 				}),
 			}
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — finds the result event this time, unlike the sibling
-			// "still runs terminal side effects" test above. 2nd select: the
-			// fallback lookup after CAS retries are exhausted, finds the session
-			// still 'running'. 3rd select: hasOtherActiveSessions' check — a
-			// non-empty result skips the actors-table update branch.
-			mockResults.selectQueue = [[resultLogRow], [session], [{ id: 'other-session' }]]
+			mockResults.selectQueue = [[resultLogRow]]
+			mockResults.select = [session]
+			// 1st update: the usage columns. 2nd: the CAS inside settleSession.
+			mockResults.updateQueue = [[], settleFlips(session)]
 
 			await manager.markRemoteSessionComplete(session.id, 0)
 
 			// calls.updates captures every .update().set() in call order, across
-			// every table touched (sessions, then later actors/objects) — not just
-			// the sessions-table update we care about. clearActiveSession() runs
-			// after the fallback and would land last if we just took .at(-1), so
-			// filter for the sessions-shaped payload (identified by totalCostUsd)
-			// and take its last occurrence — the fallback direct update (~2830),
-			// distinct from the 3 preceding (and failing) primary CAS attempts.
-			const sessionUpdates = calls.updates.filter(
+			// every table touched — filter for the sessions-shaped usage payload
+			// (identified by totalCostUsd).
+			const usageUpdate = calls.updates.find(
 				(v): v is Record<string, unknown> =>
 					typeof v === 'object' && v !== null && 'totalCostUsd' in v,
-			)
-			const fallbackUpdate = sessionUpdates.at(-1) as Record<string, unknown>
-			expect(fallbackUpdate.totalCostUsd).toBe('0.1234')
-			expect(fallbackUpdate.inputTokens).toBe(100)
-			expect(fallbackUpdate.outputTokens).toBe(200)
-			expect(fallbackUpdate.cacheCreationInputTokens).toBe(10)
-			expect(fallbackUpdate.cacheReadInputTokens).toBe(20)
-			expect(fallbackUpdate.durationMs).toBe(5000)
+			) as Record<string, unknown>
+			// Usage is added onto the stored totals, so each field is a SQL
+			// expression carrying the segment's value rather than the bare value.
+			const addedValue = (field: unknown) => (field as { queryChunks: unknown[] }).queryChunks
+			expect(addedValue(usageUpdate.totalCostUsd)).toContain(0.1234)
+			expect(addedValue(usageUpdate.inputTokens)).toContain(100)
+			expect(addedValue(usageUpdate.outputTokens)).toContain(200)
+			expect(addedValue(usageUpdate.cacheCreationInputTokens)).toContain(10)
+			expect(addedValue(usageUpdate.cacheReadInputTokens)).toContain(20)
+			expect(addedValue(usageUpdate.durationMs)).toContain(5000)
 		})
 
-		it('no-ops via the fallback lookup when a concurrent call already resolved the session', async () => {
-			const session = buildSession({ status: 'failed' })
-			mockResults.updateErrorQueue = [
-				new Error('connection reset'),
-				new Error('connection reset'),
-				new Error('connection reset'),
-			]
-			// 1st select: the usage-extraction select (empty = no-op). 2nd select:
-			// the fallback lookup, which finds the session already resolved.
-			mockResults.selectQueue = [[], [session]]
+		it('no-ops when a concurrent call already resolved the session', async () => {
+			mockResults.selectQueue = [[]]
+			mockResults.select = [{ status: 'failed' }]
 			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete('some-session-id', 137)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		it('settles an explicit stop as user_stopped with one session_stopped event and no session_failed', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
+
+			await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
+
+			expect(
+				calls.updates.some((u) => (u as Record<string, unknown>).status === 'user_stopped'),
+			).toBe(true)
+			expect(calls.updates.some((u) => (u as Record<string, unknown>).status === 'failed')).toBe(
+				false,
+			)
+			const actions = calls.inserts.map((v) => (v as Record<string, unknown>).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('treats an agent-server report that lands while the stop is in flight as a stop', async () => {
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[]]
+			mockResults.select = [session]
+			mockResults.updateQueue = [settleFlips(session)]
+			// stopSession records the request before it calls the agent-server.
+			;(manager as unknown as { stopRequested: Set<string> }).stopRequested.add(session.id)
 
 			await manager.markRemoteSessionComplete(session.id, 137)
 
+			expect(
+				calls.updates.some((u) => (u as Record<string, unknown>).status === 'user_stopped'),
+			).toBe(true)
+			const actions = calls.inserts.map((v) => (v as Record<string, unknown>).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+		})
+
+		it('back-fills the exit code onto a stopped session without writing a second event', async () => {
+			const stopped = buildSession({ status: 'user_stopped', result: { exit_code: null } })
+			// 1st select: the stdout read (empty). Every later select returns the
+			// stopped row: the open-row check, then the lookup before the back-fill.
+			mockResults.selectQueue = [[]]
+			mockResults.select = [stopped]
+			const initialInsertCount = calls.inserts.length
+
+			await manager.markRemoteSessionComplete(stopped.id, 137)
+
 			expect(calls.inserts.length).toBe(initialInsertCount)
+			const backfill = calls.updates.find(
+				(u) =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					!('status' in (u as Record<string, unknown>)),
+			)
+			expect(backfill).toBeDefined()
 		})
 	})
 
@@ -3400,6 +3353,20 @@ describe('SessionManager', () => {
 					data: '{"type":"user","message":{"role":"user","content":"hello"}}',
 				},
 			])
+		})
+
+		it('emits a turn-started event once the user turn is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 7, sessionId: session.id, stream: 'stdout', content: '{}' }]
+			const turns: unknown[] = []
+			manager.on('turn', (e) => turns.push(e))
+
+			await manager.writeInput(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+
+			expect(turns).toEqual([{ sessionId: session.id, phase: 'started' }])
 		})
 
 		// AC-T2: the persisted `session_logs` envelope tacks a
@@ -4083,8 +4050,7 @@ describe('SessionManager', () => {
 			)
 		}
 
-		// The production failure: the browser sidecar attached fine, but the
-		// playwright MCP server never connected, so the agent had no browser
+		// The production failure: the playwright MCP server never connected, so the agent had no browser
 		// tools and nothing anywhere said so.
 		it('writes a system log naming a server that never connected', async () => {
 			const sessionId = randomUUID()
@@ -4539,6 +4505,8 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
 
 			await (
@@ -4565,6 +4533,8 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
 
 			await (
@@ -4592,6 +4562,8 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -4642,7 +4614,11 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4680,7 +4656,8 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4719,7 +4696,8 @@ describe('SessionManager', () => {
 				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
 			})
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4753,7 +4731,8 @@ describe('SessionManager', () => {
 				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
 			})
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4817,6 +4796,8 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -4840,13 +4821,15 @@ describe('SessionManager', () => {
 				], // recordRuntimeClaudeOAuthFailover locked workspace read
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // failover event
 				[], // retry notice system log
 				[retrySession], // createSession row insert
 				[], // createSession event
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -4927,11 +4910,14 @@ describe('SessionManager', () => {
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
 					[], // extractSessionUsage fallback
+					[], // sumAssistantUsage fallback
+					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
 					[], // existing runtime failover retry lookup
 					[workspaceWithTwoSlots(session.workspaceId)], // locked workspace read
 				]
 				mockResults.insertQueue = [[], [], [], [], [], []]
+				mockResults.updateQueue = [[{ id: session.id }]]
 				await (
 					manager as unknown as {
 						handleCompletion(
@@ -5073,17 +5059,21 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 				[], // existing retry-of-this-session lookup (none)
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
 				[exhaustedWorkspace], // recordRuntimeClaudeOAuthBackupExhausted locked read
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // backup exhausted event
 				[], // backup exhausted system log
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5161,12 +5151,16 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
 			]
 			mockResults.insertQueue = [
-				[], // completion event
+				[], // completion event (written by settleSession)
 				[], // terminal system log
 			]
+			// The CAS update inside settleSession must return the row for the flip to land.
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5211,7 +5205,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			mockResults.selectQueue = [[session], [], [], [session]]
 
 			await (
 				manager as unknown as {
@@ -5245,7 +5239,9 @@ describe('SessionManager', () => {
 				'usage exceeded the plan cap and no usage credits are available',
 			)
 
-			mockResults.selectQueue = [[session], []]
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
 			// carries no stdout signal for classifyCreditExhaustion to classify.
@@ -5303,7 +5299,9 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], []]
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
 				manager as unknown as {
@@ -5320,6 +5318,103 @@ describe('SessionManager', () => {
 			)
 			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
 			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+	})
+
+	describe('handleCompletion() — user stop', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		type Internals = {
+			activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+			stopRequested: Set<string>
+			budgetStopped: Map<string, string>
+			handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+		}
+
+		function arm(session: { id: string }) {
+			const internals = manager as unknown as Internals
+			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // sumAssistantUsage fallback
+				[session], // settleSession's own SELECT of the row
+			]
+			mockResults.updateQueue = [[{ id: session.id }]]
+			return internals
+		}
+
+		it('stores a stop the user asked for as user_stopped, with one session_stopped event', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			internals.stopRequested.add(session.id)
+
+			// 143 = SIGTERM, the exit code stopSession()'s container kill produces.
+			await internals.handleCompletion(session.id, 'container-abc', 143)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'user_stopped', result: { exit_code: 143 } })
+			const actions = calls.inserts.map((i) => (i as { action?: string }).action)
+			expect(actions.filter((a) => a === 'session_stopped')).toHaveLength(1)
+			expect(actions).not.toContain('session_failed')
+			// A stop is not a failure: the agent goes back to idle, not failed.
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+			expect(internals.stopRequested.has(session.id)).toBe(false)
+		})
+
+		it('keeps a budget stop as failed, with its plan_cap_exceeded reason', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			// A budget stop goes through stopSession too, so it is in stopRequested.
+			internals.stopRequested.add(session.id)
+			internals.budgetStopped.set(session.id, 'usage exceeded the plan cap')
+
+			await internals.handleCompletion(session.id, 'container-abc', 143)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { failure_reason: { reason_code: 'plan_cap_exceeded' } },
+			})
+			const actions = calls.inserts.map((i) => (i as { action?: string }).action)
+			expect(actions).toContain('session_failed')
+			expect(actions).not.toContain('session_stopped')
+		})
+
+		it('still stores a clean exit as completed when a stop was requested at the same moment', async () => {
+			const session = buildSession({ status: 'running' })
+			const internals = arm(session)
+			internals.stopRequested.add(session.id)
+
+			await internals.handleCompletion(session.id, 'container-abc', 0)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'completed' })
 		})
 	})
 

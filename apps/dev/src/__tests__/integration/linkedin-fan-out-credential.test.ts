@@ -71,6 +71,7 @@ async function insertLinkedInIntegration(
 			provider: 'linkedin-unipile',
 			status: INTEGRATION_STATUS_ACTIVE,
 			credentials: credentialsBlob,
+			// The grant migration 0088 writes to a connected row.
 			actorId,
 			createdBy: actorId,
 		})

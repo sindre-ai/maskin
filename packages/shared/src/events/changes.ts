@@ -41,6 +41,13 @@ export const OBJECT_DIFF_FIELDS = [
 export const WORKSPACE_ADMIN_DIFF_FIELDS = ['onboardingEnabled', 'enterpriseGranted'] as const
 
 /**
+ * Columns recorded with old and new value on a workspace PATCH. `settings` is
+ * deliberately absent: it holds credentials, so the event lists the changed
+ * settings keys instead of their values.
+ */
+export const WORKSPACE_UPDATE_DIFF_FIELDS = ['name'] as const
+
+/**
  * Compare two records and return one FieldChange per whitelisted field whose
  * value actually differs. Returns `[]` when nothing on the whitelist changed.
  */
