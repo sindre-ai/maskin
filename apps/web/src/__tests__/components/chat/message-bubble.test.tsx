@@ -14,13 +14,15 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
+const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
+
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({
 		data: {
 			id: 'obj-1',
 			workspaceId: 'ws-1',
 			type: 'bet',
-			title: 'Retry window',
+			title: objectState.title,
 			status: 'active',
 			content: 'The retry window text.',
 			metadata: { channel: 'linkedin_dm', priority: 'P1' },
@@ -129,6 +131,43 @@ describe('MessageBubble', () => {
 		const body = screen.getByText('Here is what I found.')
 		expect(body.parentElement?.className).toContain('bg-primary')
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
+	})
+
+	it('draws a link to an object in your own message inline, as a chip with its title', () => {
+		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+		const address = `https://maskin.io/ws-1/objects/${id}`
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `is this done? ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Retry window' })
+		// Inside the same plate and the same line of words, not a box under it.
+		const plate = container.querySelector('.bg-primary')
+		expect(plate).toContainElement(chip)
+		expect(plate?.textContent).toContain('is this done?')
+	})
+
+	it('cuts the title in a chip at 30 characters', () => {
+		objectState.title = 'A very long title for an object that goes on and on'
+		try {
+			const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+			renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `https://maskin.io/ws-1/objects/${id}`,
+				}),
+			)
+			expect(screen.getByText('A very long title for an objec…')).toBeInTheDocument()
+		} finally {
+			objectState.title = 'Retry window'
+		}
 	})
 
 	it('renders another actor as an avatar + name with no card wrapper', () => {

@@ -302,10 +302,12 @@ export const api = {
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
 		// hash is the preview's `content_hash`, so a draft that changed since is refused.
-		approve: (id: string, contentHash?: string) =>
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
 			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
 				method: 'POST',
-				body: contentHash ? { content_hash: contentHash } : {},
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
 			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
@@ -813,6 +815,18 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 		pause: (id: string, workspaceId: string) =>
@@ -1111,6 +1125,13 @@ export const api = {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
+	transcriptions: {
+		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
+		// so the workspace header is required (a read-only viewer is refused).
+		create: (workspaceId: string, body: { audio: string; language?: string }) =>
+			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
 	},
 
 	voiceSessions: {
@@ -1700,6 +1721,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -2346,6 +2375,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -2500,6 +2531,10 @@ export interface MessageMetadata {
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
@@ -2551,6 +2586,8 @@ export interface SpawnedSession {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**
@@ -2620,6 +2657,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {

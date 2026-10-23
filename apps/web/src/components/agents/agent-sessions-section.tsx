@@ -2,22 +2,21 @@ import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import type { ConversationThread } from '@/hooks/use-conversation-threads'
 import {
 	useActorSessions,
 	useCreateSession,
 	usePauseSession,
 	useResumeSession,
 } from '@/hooks/use-sessions'
+import { useTriggers } from '@/hooks/use-triggers'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatDurationBetween } from '@/lib/format-duration'
+import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useNavigate } from '@tanstack/react-router'
 import {
 	AlertCircle,
 	CheckCircle2,
-	ChevronDown,
-	ChevronUp,
 	Clock,
 	Pause,
 	PauseCircle,
@@ -27,7 +26,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { SessionDetailPanel } from './session-detail-panel'
+import { SessionPanel } from './session-panel'
 
 type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'stopped' | 'failed'
 
@@ -110,51 +109,10 @@ function isActive(state: SessionState): boolean {
 	return state === 'running' || state === 'waiting'
 }
 
-interface Phase {
-	label: string
-	text: string
-	dot: string
-}
-
-function derivePhases(session: SessionResponse, state: SessionState): Phase[] {
-	const phases: Phase[] = []
-	const meta = STATE_META[state]
-
-	if (session.startedAt) {
-		phases.push({
-			label: 'START',
-			text: session.actionPrompt || 'Session started',
-			dot: 'bg-muted-foreground',
-		})
-	} else if (session.createdAt) {
-		phases.push({
-			label: 'QUEUED',
-			text: session.actionPrompt || 'Waiting to start',
-			dot: 'bg-muted-foreground',
-		})
-	}
-
-	if (isActive(state)) {
-		const now = session.currentActivity?.trim() || meta.label
-		phases.push({ label: 'NOW', text: now, dot: meta.dot.replace('bg-', 'bg-') })
-	}
-
-	if (state === 'completed' || state === 'failed' || state === 'paused' || state === 'stopped') {
-		const end =
-			state === 'failed'
-				? 'Ended with an error'
-				: state === 'paused'
-					? 'Paused — will resume on the next tick'
-					: state === 'stopped'
-						? 'Stopped on request'
-						: 'Finished'
-		phases.push({ label: 'END', text: end, dot: meta.dot })
-	}
-
-	return phases
-}
-
-function sortSessions(a: SessionResponse, b: SessionResponse): number {
+function sortSessions(
+	a: Pick<SessionResponse, 'status' | 'createdAt'>,
+	b: Pick<SessionResponse, 'status' | 'createdAt'>,
+): number {
 	const aActive = isActive(deriveState(a.status))
 	const bActive = isActive(deriveState(b.status))
 	if (aActive !== bActive) return aActive ? -1 : 1
@@ -166,12 +124,36 @@ function sortSessions(a: SessionResponse, b: SessionResponse): number {
 export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data: sessions, isLoading } = useActorSessions(agent.id, workspaceId)
-	const [detailSession, setDetailSession] = useState<SessionResponse | null>(null)
+	const [openId, setOpenId] = useState<string | null>(null)
 	const [showAll, setShowAll] = useState(false)
 
+	const { data: triggers } = useTriggers(workspaceId)
+	const triggerNames = useMemo(
+		() => new Map((triggers ?? []).map((t) => [t.id, t.name])),
+		[triggers],
+	)
+
+	// A follow-up the person wrote after a run ended carries on in that run's thread, so
+	// the list has one row per thread, showing the newest session's state.
 	const agentSessions = useMemo(() => {
-		return [...(sessions ?? [])].sort(sortSessions)
-	}, [sessions])
+		const rows = buildBackgroundThreads(sessions ?? [], agent.name).map((thread) => ({
+			thread,
+			root: (sessions ?? []).find((s) => s.id === thread.id) as SessionResponse,
+		}))
+		return rows.sort((a, b) =>
+			sortSessions(
+				{ status: a.thread.status, createdAt: a.thread.createdAt },
+				{ status: b.thread.status, createdAt: b.thread.createdAt },
+			),
+		)
+	}, [sessions, agent.name])
+
+	const openThread = useMemo(() => {
+		const row = agentSessions.find((r) => r.thread.id === openId)
+		if (!row) return null
+		const triggerName = row.root.triggerId ? triggerNames.get(row.root.triggerId) : undefined
+		return { thread: row.thread, title: backgroundTitle(triggerName, row.root.actionPrompt) }
+	}, [agentSessions, openId, triggerNames])
 
 	// A long-lived agent accumulates hundreds of runs; the newest few answer
 	// "what is it doing" without burying every section below them (mockup 2427).
@@ -222,65 +204,87 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 				</p>
 			) : (
 				<ul className="flex flex-col gap-1.5">
-					{shownSessions.map((session) => (
-						<li key={session.id}>
+					{shownSessions.map(({ thread, root }) => (
+						<li key={thread.id}>
 							<SessionCard
-								session={session}
+								session={root}
+								thread={thread}
+								title={backgroundTitle(
+									root.triggerId ? triggerNames.get(root.triggerId) : undefined,
+									root.actionPrompt,
+								)}
 								agent={agent}
-								onOpenLog={() => setDetailSession(session)}
+								selected={thread.id === openId}
+								onOpen={() => setOpenId(thread.id)}
 							/>
 						</li>
 					))}
 				</ul>
 			)}
 
-			<SessionDetailPanel
-				session={detailSession}
-				workspaceId={workspaceId}
-				open={detailSession !== null}
-				onOpenChange={(open) => {
-					if (!open) setDetailSession(null)
-				}}
-			/>
+			{openThread ? (
+				<SessionPanel
+					workspaceId={workspaceId}
+					thread={openThread.thread}
+					title={openThread.title}
+					onClose={() => setOpenId(null)}
+				/>
+			) : null}
 		</section>
 	)
 }
 
 function SessionCard({
 	session,
+	thread,
+	title,
 	agent,
-	onOpenLog,
+	selected,
+	onOpen,
 }: {
+	/** The run the thread started with: its trigger, prompt and snapshot. */
 	session: SessionResponse
+	/** The run and every follow-up after it; its status is the newest session's. */
+	thread: ConversationThread
+	/** What the row is called: the trigger's name. */
+	title: string
 	agent: ActorResponse
-	onOpenLog: () => void
+	/** The run is open in the side panel. */
+	selected: boolean
+	onOpen: () => void
 }) {
-	const [open, setOpen] = useState(false)
-	const state = deriveState(session.status)
+	const state = deriveState(thread.status)
 	const meta = STATE_META[state]
 	const active = isActive(state)
-	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
 
 	const createSession = useCreateSession(workspaceId)
 	const pauseSession = usePauseSession(workspaceId)
 	const resumeSession = useResumeSession(workspaceId)
 
-	const name = session.actionPrompt?.trim() || 'Untitled session'
-	const duration = formatDurationBetween(session.startedAt, session.completedAt)
-	const phases = useMemo(() => derivePhases(session, state), [session, state])
+	const name = title
 	const StateIcon = meta.Icon
 
-	// Mockup 2444 offers Restart on running / paused / waiting rows. There is no
+	// Mockup 2444 offers Restart on running / paused / waiting rows; a failed or stopped run can be run again too. There is no
 	// restart endpoint — a restart is a fresh run of the same prompt, which is
-	// exactly what `useCreateSession` does.
+	// exactly what `useCreateSession` does. It carries the trigger too, so the new
+	// run keeps the trigger's name as its title.
 	const prompt = session.actionPrompt?.trim() ?? ''
 	const canRestart =
-		prompt.length > 0 && (state === 'running' || state === 'paused' || state === 'waiting')
+		prompt.length > 0 &&
+		(state === 'running' ||
+			state === 'paused' ||
+			state === 'waiting' ||
+			state === 'failed' ||
+			state === 'stopped')
 
 	const handleRestart = () =>
 		createSession.mutate(
-			{ actor_id: agent.id, action_prompt: prompt },
+			{
+				actor_id: agent.id,
+				action_prompt: prompt,
+				...(session.triggerId ? { trigger_id: session.triggerId } : {}),
+			},
 			{
 				onSuccess: () => toast.success('Session restarted'),
 				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
@@ -291,19 +295,19 @@ function SessionCard({
 	// session for pause, and a paused session needs a snapshot to restore from —
 	// so the button only appears where the write path can actually succeed
 	// (apps/dev/src/services/session-manager.ts:896 / :1049).
-	const canPause = session.status === 'running'
-	const canResume = state === 'paused' && !!session.snapshotPath
+	const canPause = thread.status === 'running'
+	const canResume = state === 'paused' && thread.latestId === session.id && !!session.snapshotPath
 	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
 
 	const handlePauseResume = () => {
 		if (canPause) {
-			pauseSession.mutate(session.id, {
+			pauseSession.mutate(thread.latestId, {
 				onSuccess: () => toast.success('Session paused'),
 				onError: () => toast.error("Couldn't pause this session"),
 			})
 			return
 		}
-		resumeSession.mutate(session.id, {
+		resumeSession.mutate(thread.latestId, {
 			onSuccess: () => toast.success('Session resumed'),
 			onError: () => toast.error("Couldn't resume this session"),
 		})
@@ -318,7 +322,7 @@ function SessionCard({
 			disabled={isPauseResumePending}
 		>
 			{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
-			{canPause ? 'Pause' : 'Resume'}
+			<span className="sr-only md:not-sr-only">{canPause ? 'Pause' : 'Resume'}</span>
 		</Button>
 	)
 
@@ -331,7 +335,9 @@ function SessionCard({
 			disabled={createSession.isPending}
 		>
 			<RotateCcw size={12} aria-hidden />
-			{createSession.isPending ? 'Restarting…' : 'Restart'}
+			<span className="sr-only md:not-sr-only">
+				{createSession.isPending ? 'Restarting…' : 'Restart'}
+			</span>
 		</Button>
 	)
 
@@ -339,7 +345,7 @@ function SessionCard({
 		<div
 			className={cn(
 				'rounded-xl border bg-card transition-colors',
-				active ? 'border-border' : 'border-border/70',
+				selected ? 'border-brand' : active ? 'border-border' : 'border-border/70',
 			)}
 		>
 			<div className="flex items-center gap-2.5 px-3 py-2">
@@ -370,82 +376,25 @@ function SessionCard({
 				>
 					{meta.label}
 				</span>
-				{(canPause || canResume) && (
-					<span className="hidden shrink-0 md:inline-flex">{pauseResumeButton}</span>
-				)}
-				{canRestart && <span className="hidden shrink-0 md:inline-flex">{restartButton}</span>}
-				<button
-					type="button"
-					onClick={() => setOpen((v) => !v)}
-					className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-					aria-expanded={open}
-					aria-controls={`session-details-${session.id}`}
-					aria-label={open ? `Hide details for ${name}` : `View details for ${name}`}
+				{(canPause || canResume) && <span className="shrink-0">{pauseResumeButton}</span>}
+				{canRestart && <span className="shrink-0">{restartButton}</span>}
+				<Button
+					size="sm"
+					variant="outline"
+					className="h-7 shrink-0 rounded-md px-2.5 text-xs"
+					onClick={onOpen}
+					aria-pressed={selected}
+					aria-label={`Open ${name}`}
 				>
-					{open ? 'Hide' : 'View'}
-					{open ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-				</button>
+					Open
+				</Button>
 			</div>
-			{open && (
-				<div
-					id={`session-details-${session.id}`}
-					className="flex flex-col gap-3 border-t border-border bg-muted/30 px-3 py-3"
-				>
-					<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-						<span className={cn('font-semibold', meta.iconFg)}>{meta.label}</span>
-						<span aria-hidden>·</span>
-						<span className="min-w-0 truncate">
-							{duration ? `${duration} elapsed` : 'not started yet'}
-						</span>
-					</div>
-					<ol className="flex flex-col gap-2">
-						{phases.map((phase, idx) => (
-							<li key={`${session.id}-${phase.label}-${idx}`} className="flex items-start gap-2.5">
-								<span className="eyebrow w-12 shrink-0 pt-[3px]">{phase.label}</span>
-								<span
-									aria-hidden
-									className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', phase.dot)}
-								/>
-								<span className="min-w-0 flex-1 text-xs leading-relaxed text-foreground">
-									{phase.text}
-								</span>
-							</li>
-						))}
-					</ol>
-					<div className="flex flex-wrap items-center gap-2">
-						<Button
-							size="sm"
-							className="h-7 rounded-md px-3 text-xs"
-							onClick={() =>
-								navigate({
-									to: '/$workspaceId/chats/new',
-									params: { workspaceId },
-									search: { agentId: agent.id, agentName: agent.name },
-								})
-							}
-						>
-							Continue in chat
-						</Button>
-						<Button
-							size="sm"
-							variant="outline"
-							className="h-7 rounded-md px-3 text-xs"
-							onClick={onOpenLog}
-						>
-							Full log
-						</Button>
-						{(canPause || canResume) && <span className="md:hidden">{pauseResumeButton}</span>}
-						{canRestart && <span className="md:hidden">{restartButton}</span>}
-					</div>
-				</div>
-			)}
 		</div>
 	)
 }
 
 export const __test = {
 	deriveState,
-	derivePhases,
 	sortSessions,
 	isActive,
 }

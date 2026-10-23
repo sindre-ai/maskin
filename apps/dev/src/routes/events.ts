@@ -34,7 +34,7 @@ import {
 	isAgentMentionFreeComment,
 	isCommentFallbackDriverEligible,
 } from '../services/trigger-runner'
-import { loadSenderLine } from '../services/workspace-briefing'
+import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
@@ -792,21 +792,21 @@ async function spawnThreadReplySessions(ctx: {
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 
-	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
-
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
 			actionPrompt: buildThreadReplyPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
 				content: ctx.newCommentContent,
 				threadRootEventId: ctx.threadRootEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.actorId,
 				thread_reply: {
 					object_id: ctx.objectId,
 					comment_event_id: ctx.newCommentEventId,
@@ -829,7 +829,7 @@ async function spawnThreadReplySessions(ctx: {
 }
 
 function buildThreadReplyPrompt(ctx: {
-	senderLine: string
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -837,6 +837,8 @@ function buildThreadReplyPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('New reply in a comment thread', ctx.content),
+		'',
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',

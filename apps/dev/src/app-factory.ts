@@ -60,6 +60,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -78,6 +79,7 @@ import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
+import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
@@ -445,6 +447,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
@@ -490,6 +493,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
+	app.route('/api/transcriptions', transcriptionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

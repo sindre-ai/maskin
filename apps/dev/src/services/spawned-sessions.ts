@@ -40,6 +40,8 @@ export interface SpawnedSessionEmbed {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: unknown } | null
+	/** The session this one carries on, when the person wrote to a helper that had ended. */
+	continues_session_id: string | null
 }
 
 export interface SessionStateChangedPayload {
@@ -108,6 +110,11 @@ function toEmbed(row: {
 		currentActivity: row.currentActivity,
 		depends_on_session_ids: row.depends_on_session_ids ?? [],
 		awaiting: readAwaiting(row.config),
+		continues_session_id:
+			typeof (row.config as { continues_session_id?: unknown } | null)?.continues_session_id ===
+			'string'
+				? (row.config as { continues_session_id: string }).continues_session_id
+				: null,
 	}
 }
 

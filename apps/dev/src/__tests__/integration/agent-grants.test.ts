@@ -318,6 +318,49 @@ describe('grants routes (Integration)', () => {
 		).toBe(200)
 	})
 
+	it('rejects Read & write as the default for a Keychain credential and leaves the stored default alone', async () => {
+		const s = await setup()
+		const key = await insertIntegration(s, {
+			provider: 'custom',
+			providerMode: 'byo_apikey',
+			displayName: 'K',
+			defaultAgentAccess: 'none',
+		})
+		const app = appFor(s.human)
+		const stored = async () =>
+			(await db.select().from(integrations).where(eq(integrations.id, key.id)))[0]
+				?.defaultAgentAccess
+
+		const res = await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, {
+			defaultAgentAccess: 'read_write',
+		})
+
+		expect(res.status).toBe(400)
+		expect(JSON.stringify(await res.json())).toContain('use read or none')
+		expect(await stored()).toBe('none')
+		expect(await resolveAgentAccess(db, s.ws.id, key.id, s.agentB.id)).toBe('none')
+		// On and off still save.
+		expect(
+			(await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'read' }))
+				.status,
+		).toBe(200)
+		expect(await stored()).toBe('read')
+		expect(
+			(await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'none' }))
+				.status,
+		).toBe(200)
+		expect(await stored()).toBe('none')
+		// The same level stays allowed as the default for an ordinary integration.
+		const slack = await insertIntegration(s)
+		expect(
+			(
+				await req(app, 'PUT', `/${slack.id}/default-access`, s.ws.id, {
+					defaultAgentAccess: 'read_write',
+				})
+			).status,
+		).toBe(200)
+	})
+
 	it('gives every agent a Keychain credential whose default is Full access, except one set to No access', async () => {
 		const s = await setup()
 		const key = await insertIntegration(s, {

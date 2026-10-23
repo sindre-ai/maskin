@@ -31,7 +31,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { assertInWorkspace } from '../lib/workspace-scope'
-import { returnToSender } from './helper-return'
+import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ export async function startSession(
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: input.config,
+		config: withBackgroundDefaults(input),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -297,6 +297,22 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/**
+ * Background work (a trigger, a cron, a plain API call) runs as an interactive session that
+ * ends on its result, like a helper: the person can read it as a chat and write into it, and
+ * once it has ended a message starts a follow-up. A session that belongs to a chat is left as given.
+ */
+function withBackgroundDefaults(input: StartSessionInput): SessionConfig | undefined {
+	const config = input.config
+	const hasChat =
+		!!input.conversationId || !!(config as { conversation?: unknown } | undefined)?.conversation
+	// A session that belongs to a chat sets its own mode (the chat responder makes it interactive,
+	// and at most one such session may be active per chat and agent), so it is left as given.
+	if (hasChat) return config
+	// Everything else is interactive, whatever the caller asked for, and ends on its result.
+	return { ...config, interactive: true, stop_on_result: true }
 }
 
 function readIdempotencyKey(config: SessionConfig | undefined): string | undefined {
@@ -1064,6 +1080,11 @@ export async function settleSession(
 	// A pause is not an ending.
 	if (flipped && outcome.kind !== 'pause') {
 		void returnToSender(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
+	// A sender that finished normally may have missed helpers that failed while it was
+	// busy: tell it now, so it is woken to deal with them.
+	if (flipped && outcome.kind === 'complete') {
+		void returnDeferredHelpers(deps.db, sessionId, { sessionManager: configuredSessionManager() })
 	}
 
 	// Step 4: (Post-commit) stopSandbox best-effort.

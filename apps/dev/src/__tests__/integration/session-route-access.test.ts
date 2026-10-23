@@ -356,6 +356,135 @@ describe('Session route access', () => {
 		})
 	})
 
+	describe('the session list', () => {
+		const SECRET = 'secret prompt of the starter'
+		type Row = { id: string; actionPrompt?: string; title?: string }
+
+		async function list(actorId: string, type: 'human' | 'agent', qs = '') {
+			const { app } = createSessionsApp(actorId, type)
+			const res = await app.request(jsonGet(`/api/sessions${qs}`, headers))
+			expect(res.status).toBe(200)
+			const rows = (await res.json()) as Row[]
+			return { rows, ids: rows.map((row) => row.id), raw: JSON.stringify(rows) }
+		}
+
+		it("hides another member's private session, lean and verbose", async () => {
+			const session = await personSession({ actionPrompt: SECRET })
+
+			for (const qs of ['', '?verbose=true']) {
+				const { ids, raw } = await list(otherMemberId, 'human', qs)
+				expect(ids, qs).not.toContain(session.id)
+				expect(raw, qs).not.toContain(SECRET)
+			}
+		})
+
+		it('hides it from another agent too', async () => {
+			const session = await personSession({ actionPrompt: SECRET })
+
+			const { ids, raw } = await list(otherAgentId, 'agent', '?verbose=true')
+			expect(ids).not.toContain(session.id)
+			expect(raw).not.toContain(SECRET)
+		})
+
+		it('shows it to the starter, an admin and the owner, lean and verbose', async () => {
+			const session = await personSession({ actionPrompt: SECRET })
+
+			for (const actorId of [starterId, adminId, ownerId]) {
+				for (const qs of ['', '?verbose=true']) {
+					const { ids } = await list(actorId, 'human', qs)
+					expect(ids, `${actorId} ${qs}`).toContain(session.id)
+				}
+			}
+		})
+
+		it('shows trigger-started and agent-started sessions to every member', async () => {
+			const trigger = await insertTrigger(db, workspaceId, starterId, agentId)
+			if (!trigger) throw new Error('failed to seed trigger')
+			const fromTrigger = await personSession({ triggerId: trigger.id })
+			const fromAgent = await insertSession(db, workspaceId, otherAgentId, agentId, {
+				status: 'running',
+			})
+			if (!fromAgent) throw new Error('failed to seed session')
+
+			for (const qs of ['', '?verbose=true']) {
+				const { ids } = await list(otherMemberId, 'human', qs)
+				expect(ids, qs).toEqual(expect.arrayContaining([fromTrigger.id, fromAgent.id]))
+			}
+		})
+
+		it("shows a chat's sessions only to people still in the chat", async () => {
+			const conversationId = await chat([starterId, otherMemberId])
+			const session = await personSession({ interactive: true, conversationId })
+			const helper = await personSession({ config: { ask_conversation_id: conversationId } })
+
+			const inChat = await list(otherMemberId, 'human', '?verbose=true')
+			expect(inChat.ids).toEqual(expect.arrayContaining([session.id, helper.id]))
+
+			await db
+				.update(conversationParticipants)
+				.set({ leftAt: new Date() })
+				.where(eq(conversationParticipants.actorId, otherMemberId))
+			const left = await list(otherMemberId, 'human', '?verbose=true')
+			expect(left.ids).not.toContain(session.id)
+			expect(left.ids).not.toContain(helper.id)
+		})
+
+		it('keeps the chat running indicator working for people in the chat', async () => {
+			const conversationId = await chat([starterId, otherMemberId])
+			const session = await personSession({ interactive: true, conversationId })
+
+			const filter = `?conversation_id=${conversationId}`
+			for (const qs of [filter, `${filter}&verbose=true`]) {
+				const { ids } = await list(otherMemberId, 'human', qs)
+				expect(ids, qs).toEqual([session.id])
+			}
+		})
+
+		it('keeps the object activity card filter from leaking a private mention session', async () => {
+			const objectId = '00000000-0000-0000-0000-0000000000aa'
+			const session = await personSession({
+				config: { mention: { object_id: objectId, comment_event_id: 7 } },
+			})
+
+			const other = await list(otherMemberId, 'human', `?mention_object_id=${objectId}`)
+			expect(other.ids).toEqual([])
+			const starter = await list(starterId, 'human', `?mention_object_id=${objectId}`)
+			expect(starter.ids).toEqual([session.id])
+		})
+
+		it('pages through only the visible sessions without skips or repeats', async () => {
+			const visible: string[] = []
+			const base = Date.now() - 60_000
+			for (let i = 0; i < 6; i++) {
+				const mine = i % 2 === 0
+				const createdBy = mine ? otherMemberId : starterId
+				const session = await insertSession(db, workspaceId, agentId, createdBy, {
+					status: 'completed',
+					updatedAt: new Date(base + i * 1000),
+				})
+				if (!session) throw new Error('failed to seed session')
+				if (mine) visible.unshift(session.id)
+			}
+
+			for (const verbose of ['', '&verbose=true']) {
+				const seen: string[] = []
+				let before = ''
+				for (let page = 0; page < 5; page++) {
+					const { rows } = await list(otherMemberId, 'human', `?limit=2${verbose}${before}`)
+					if (rows.length === 0) break
+					seen.push(...rows.map((row) => row.id))
+					const last = rows[rows.length - 1]
+					const [row] = await db
+						.select()
+						.from(sessions)
+						.where(eq(sessions.id, last?.id ?? ''))
+					before = `&before=${encodeURIComponent((row?.updatedAt as Date).toISOString())}`
+				}
+				expect(seen, verbose).toEqual(visible)
+			}
+		})
+	})
+
 	it('does not change the session when a stop is refused', async () => {
 		const session = await personSession()
 		const { app } = createSessionsApp(otherMemberId, 'human')

@@ -243,3 +243,52 @@ describe('formatKeychainRequestAsMarkdown', () => {
 		expect(formatKeychainRequestAsMarkdown('api_key')).toContain('an API key')
 	})
 })
+
+// Keys the schema comments mark "Backend-owned" (or "Never accepted from a client").
+// A new metadata key must be added to one of these two lists, or the test below fails.
+const BACKEND_OWNED_KEYS = [
+	'source',
+	'voice_session_id',
+	'final_output',
+	'question',
+	'integration_connect',
+	'keychain_request',
+	'keychain_access_request',
+	'computer_request',
+	'helper_return',
+	'delivery',
+	'suggested_steps',
+	'needed_tools',
+	'plain_tail',
+	'comment_event_id',
+]
+
+// Keys the schema comments mark "Client-supplied", or that a client sets by design.
+const CLIENT_SUPPLIED_KEYS = [
+	'attachments',
+	'mentions',
+	'context_objects',
+	'context_notifications',
+	'question_answer',
+	'card_answer',
+	'hidden_from_chat',
+	'from_suggested_step',
+]
+
+describe('stripServerOwnedMetadata covers every backend-owned key', () => {
+	it('has every message metadata key classified as backend-owned or client-supplied', () => {
+		const schemaKeys = Object.keys(messageMetadataSchema.shape).sort()
+
+		expect([...BACKEND_OWNED_KEYS, ...CLIENT_SUPPLIED_KEYS].sort()).toEqual(schemaKeys)
+	})
+
+	it('removes each backend-owned key and keeps each client-supplied key', () => {
+		const forged = Object.fromEntries(
+			[...BACKEND_OWNED_KEYS, ...CLIENT_SUPPLIED_KEYS].map((key) => [key, 'forged']),
+		)
+
+		const stripped = stripServerOwnedMetadata(forged)
+
+		expect(Object.keys(stripped).sort()).toEqual([...CLIENT_SUPPLIED_KEYS].sort())
+	})
+})

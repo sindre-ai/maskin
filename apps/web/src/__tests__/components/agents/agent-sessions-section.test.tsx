@@ -28,6 +28,26 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useResumeSession: () => ({ mutate: resumeSessionMutate, isPending: false }),
 }))
 
+const triggersData = vi.fn((): { id: string; name: string }[] => [])
+vi.mock('@/hooks/use-triggers', () => ({
+	useTriggers: () => ({ data: triggersData() }),
+}))
+
+vi.mock('@/components/agents/session-panel', () => ({
+	SessionPanel: ({
+		thread,
+		title,
+		onClose,
+	}: { thread: { id: string }; title: string; onClose: () => void }) => (
+		<div>
+			Panel for {thread.id} titled {title}
+			<button type="button" onClick={onClose}>
+				Close panel
+			</button>
+		</div>
+	),
+}))
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -43,6 +63,8 @@ describe('AgentSessionsSection', () => {
 	beforeEach(() => {
 		navigateMock.mockReset()
 		sessionsData.mockReset()
+		triggersData.mockReset()
+		triggersData.mockReturnValue([])
 		createSessionMutate.mockReset()
 		pauseSessionMutate.mockReset()
 		resumeSessionMutate.mockReset()
@@ -63,6 +85,26 @@ describe('AgentSessionsSection', () => {
 		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])
 		expect(createSessionMutate).toHaveBeenCalledWith(
 			{ actor_id: 'agent-a', action_prompt: 'Sweep the backlog' },
+			expect.anything(),
+		)
+	})
+
+	it('offers Restart on a failed session and reruns it with its trigger', async () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-failed',
+				actorId: 'agent-a',
+				status: 'failed',
+				triggerId: 'trg-9',
+				actionPrompt: 'Sweep the backlog',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('button', { name: /restart/i }))
+		expect(createSessionMutate).toHaveBeenCalledWith(
+			{ actor_id: 'agent-a', action_prompt: 'Sweep the backlog', trigger_id: 'trg-9' },
 			expect.anything(),
 		)
 	})
@@ -143,85 +185,79 @@ describe('AgentSessionsSection', () => {
 		expect(screen.getByText('Completed')).toBeInTheDocument()
 	})
 
-	it('expanding a running session reveals its phase rows and the two footer buttons', async () => {
+	it('has no dropdown: Open shows the run in the side panel and closing it removes the panel', async () => {
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
 		const agent = buildActorResponse({ id: 'agent-exp', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
 				id: 's-live',
 				actorId: 'agent-exp',
 				status: 'running',
+				triggerId: 'trg-1',
 				actionPrompt: 'Watch the merge queue',
-				startedAt: '2026-01-01T00:00:00Z',
-				currentActivity: 'Polling GitHub for the next PR',
 			}),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		const toggle = screen.getByRole('button', {
-			name: 'View details for Watch the merge queue',
-		})
-		expect(toggle).toHaveAttribute('aria-expanded', 'false')
+		expect(screen.queryByRole('button', { name: /view details|full log/i })).not.toBeInTheDocument()
+		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 
-		await userEvent.click(toggle)
-		expect(toggle).toHaveAttribute('aria-expanded', 'true')
+		await userEvent.click(screen.getByRole('button', { name: 'Open Loop hygiene' }))
+		expect(screen.getByText('Panel for s-live titled Loop hygiene')).toBeInTheDocument()
 
-		// Phase rows: START label + prompt, NOW label + currentActivity.
-		expect(screen.getByText('START')).toBeInTheDocument()
-		expect(screen.getByText('NOW')).toBeInTheDocument()
-		expect(screen.getByText('Polling GitHub for the next PR')).toBeInTheDocument()
-
-		// Footer buttons.
-		expect(screen.getByRole('button', { name: 'Continue in chat' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Full log' })).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Close panel' }))
+		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 	})
 
-	it('Continue in chat opens the chat sheet seeded with the agent context', async () => {
-		const agent = buildActorResponse({ id: 'agent-chat', type: 'agent', name: 'Cass' })
+	it('titles a triggered session with the trigger name and restarts it with the full prompt', async () => {
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
+		const agent = buildActorResponse({ id: 'agent-t', type: 'agent' })
+		const prompt = '**Loop hygiene — first step**\nEnsure this task is linked.'
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
-				id: 's-chat',
-				actorId: 'agent-chat',
+				id: 's-trg',
+				actorId: 'agent-t',
 				status: 'running',
-				actionPrompt: 'Refresh the landing hero copy',
-				startedAt: '2026-01-01T00:00:00Z',
+				triggerId: 'trg-1',
+				actionPrompt: prompt,
 			}),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		await userEvent.click(
-			screen.getByRole('button', { name: 'View details for Refresh the landing hero copy' }),
-		)
-		await userEvent.click(screen.getByRole('button', { name: 'Continue in chat' }))
+		expect(screen.getByText('Loop hygiene')).toBeInTheDocument()
+		expect(screen.queryByText(/first step/)).not.toBeInTheDocument()
 
-		expect(navigateMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				to: '/$workspaceId/chats/new',
-				search: { agentId: 'agent-chat', agentName: 'Cass' },
-			}),
+		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])
+		expect(createSessionMutate).toHaveBeenCalledWith(
+			{ actor_id: 'agent-t', action_prompt: prompt, trigger_id: 'trg-1' },
+			expect.anything(),
 		)
 	})
 
-	it('Full log opens the session detail sheet', async () => {
-		const agent = buildActorResponse({ id: 'agent-log', type: 'agent' })
+	it('folds a follow-up into the thread of the run it carries on', () => {
+		const agent = buildActorResponse({ id: 'agent-f', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
-				id: 's-log',
-				actorId: 'agent-log',
+				id: 's-first',
+				actorId: 'agent-f',
 				status: 'completed',
-				actionPrompt: 'Migrate the fixtures',
-				startedAt: '2026-01-01T00:00:00Z',
-				completedAt: '2026-01-01T00:01:00Z',
+				actionPrompt: 'First run',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+			buildSessionResponse({
+				id: 's-follow',
+				actorId: 'agent-f',
+				status: 'running',
+				actionPrompt: 'And one more thing',
+				createdAt: '2026-01-02T00:00:00Z',
+				config: { continues_session_id: 's-first' },
 			}),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		await userEvent.click(
-			screen.getByRole('button', { name: 'View details for Migrate the fixtures' }),
-		)
-		await userEvent.click(screen.getByRole('button', { name: 'Full log' }))
-
-		const dialog = await screen.findByRole('dialog')
-		expect(within(dialog).getByText('Migrate the fixtures')).toBeInTheDocument()
+		expect(screen.getAllByRole('listitem')).toHaveLength(1)
+		expect(screen.getByText('First run')).toBeInTheDocument()
+		expect(screen.getByText('Running')).toBeInTheDocument()
 	})
 
 	// Mockup 2443 — the `s.b1` control beside Restart.
@@ -310,7 +346,7 @@ describe('AgentSessionsSection', () => {
 })
 
 describe('AgentSessionsSection internals', () => {
-	const { deriveState, isActive, sortSessions, derivePhases } = sessionSectionInternals
+	const { deriveState, isActive, sortSessions } = sessionSectionInternals
 
 	it('derives session state buckets from raw status', () => {
 		expect(deriveState('running')).toBe('running')
@@ -353,35 +389,7 @@ describe('AgentSessionsSection internals', () => {
 		expect(sorted).toEqual(['new-active', 'old-active', 'new-done', 'old-done'])
 	})
 
-	it('produces phase rows that match the DoD-visible states', () => {
-		const running = buildSessionResponse({
-			status: 'running',
-			startedAt: '2026-01-01T00:00:00Z',
-			actionPrompt: 'Do the thing',
-			currentActivity: 'Reading files',
-		})
-		const runningPhases = derivePhases(running, deriveState(running.status))
-		expect(runningPhases.map((p) => p.label)).toEqual(['START', 'NOW'])
-		expect(runningPhases[1]?.text).toBe('Reading files')
-
-		const completed = buildSessionResponse({
-			status: 'completed',
-			startedAt: '2026-01-01T00:00:00Z',
-			completedAt: '2026-01-01T00:05:00Z',
-			actionPrompt: 'Wrap it up',
-		})
-		const completedPhases = derivePhases(completed, deriveState(completed.status))
-		expect(completedPhases.map((p) => p.label)).toEqual(['START', 'END'])
-
-		const failed = buildSessionResponse({
-			status: 'failed',
-			startedAt: '2026-01-01T00:00:00Z',
-			actionPrompt: 'Break something',
-		})
-		const failedPhases = derivePhases(failed, deriveState(failed.status))
-		expect(failedPhases.map((p) => p.label)).toEqual(['START', 'END'])
-		expect(failedPhases.at(-1)?.text).toContain('error')
-
+	it('treats running and waiting as active', () => {
 		expect(isActive('running')).toBe(true)
 		expect(isActive('completed')).toBe(false)
 	})
