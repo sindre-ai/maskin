@@ -77,6 +77,10 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(toolsForIdentity(personal)).toContain('list_sent_invitations')
 	})
 
+	it('personal registers the outreach verb withdraw_invitation', () => {
+		expect(toolsForIdentity(personal)).toContain('withdraw_invitation')
+	})
+
 	it('personal registers the outreach verbs list_user_posts, get_company and react_to_post', () => {
 		const verbs = toolsForIdentity(personal)
 		expect(verbs).toContain('list_user_posts')
@@ -103,6 +107,7 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('get_profile')).toBe(false)
 		expect(verbs.has('get_inmail_balance')).toBe(false)
 		expect(verbs.has('list_sent_invitations')).toBe(false)
+		expect(verbs.has('withdraw_invitation')).toBe(false)
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
 		expect(verbs.has('react_to_post')).toBe(false)
@@ -128,6 +133,7 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('get_profile')).toBe(false)
 		expect(verbs.has('get_inmail_balance')).toBe(false)
 		expect(verbs.has('list_sent_invitations')).toBe(false)
+		expect(verbs.has('withdraw_invitation')).toBe(false)
 		expect(verbs.has('list_user_posts')).toBe(false)
 		expect(verbs.has('get_company')).toBe(false)
 		expect(verbs.has('react_to_post')).toBe(false)

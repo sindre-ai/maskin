@@ -16,11 +16,18 @@ import {
 	type ActionFields,
 	type ActionLogContext,
 	type ActionRecorder,
+	LinkedInActionRefusal,
 	type LinkedInToolKind,
 	withActionLog,
 } from './action-log'
 import type { CapSpec } from './caps'
 import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
+import {
+	REINVITE_LOCK_DAYS,
+	WITHDRAW_DAILY_CAP,
+	addDays,
+	findRecentWithdrawalOfPerson,
+} from './invitation-withdrawal'
 import {
 	ATTACHMENTS_REFUSED_MESSAGE,
 	commentOnLinkedInPost,
@@ -40,6 +47,7 @@ import {
 	searchLinkedInPeople,
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
+	withdrawLinkedInInvitation,
 } from './operations'
 import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
 import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
@@ -624,9 +632,52 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInSentInvitations(opCtx, args))
+					return jsonResult(
+						await logged('list_sent_invitations', 'read', undefined, () =>
+							listLinkedInSentInvitations(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_sent_invitations'), err)
+				}
+			},
+		)
+	}
+
+	// The flag is read when the server is built, which is once per request, so with it off the
+	// tool is absent from tools/list and cannot be called.
+	if (
+		allowed.has('withdraw_invitation') &&
+		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
+			actorId: ctx.actorId,
+		})
+	) {
+		server.registerTool(
+			toolName(cfg, 'withdraw_invitation'),
+			{
+				description: scopedDescription(
+					"Withdraw one pending connection invitation this account sent. Pass the invitation_id from list_sent_invitations. Only an invitation that is in this account's sent list and at least 14 days old can be withdrawn; where LinkedIn gave no send date, the age counts from the first time list_sent_invitations showed it. Anything else is refused with INVALID_INPUT and nothing is withdrawn. At most 30 withdrawals per rolling 24 hours (RATE_LIMITED_LINKEDIN, with the time a slot frees up). Returns invitation_id, recipient_provider_id, withdrawn, already_withdrawn (true when it was withdrawn before or is already gone; that costs nothing against the limit) and can_reinvite_after: LinkedIn blocks a new invitation to the same person for up to 21 days after a withdrawal, and send_connection_request refuses until then.",
+					cfg,
+				),
+				inputSchema: { invitation_id: z.string().min(1) },
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'withdraw_invitation',
+							'write',
+							undefined,
+							(rec) =>
+								withdrawLinkedInInvitation(opCtx, args, {
+									integrationId: cfg.integrationId,
+									recorder: rec,
+								}),
+							WITHDRAW_DAILY_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'withdraw_invitation'), err)
 				}
 			},
 		)
@@ -671,8 +722,23 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return await logged('send_connection_request', 'send', args.user_id, (rec) => {
+					return await logged('send_connection_request', 'send', args.user_id, async (rec) => {
 						rec.set({ objectId: args.object_id })
+						// LinkedIn blocks a new invite to someone whose invite was withdrawn, and the
+						// sweep that withdraws is automated, so the rule is enforced here, not in prompts.
+						const withdrawnAt = await findRecentWithdrawalOfPerson(
+							ctx.db,
+							cfg.integrationId,
+							args.user_id.trim(),
+							new Date(),
+						)
+						if (withdrawnAt) {
+							throw new LinkedInActionRefusal(
+								'refused_rule',
+								'INVALID_INPUT',
+								`This account withdrew its invitation to this person on ${withdrawnAt.toISOString()}. LinkedIn blocks a new invitation to the same person for up to ${REINVITE_LOCK_DAYS} days after a withdrawal, so nothing was sent. Invite again after ${addDays(withdrawnAt, REINVITE_LOCK_DAYS).toISOString()}.`,
+							)
+						}
 						return sendForObject(
 							ctx,
 							args.object_id,
