@@ -34,14 +34,10 @@ describe('startSession background default', () => {
 		expect(configOfLastCreate()).toMatchObject({ runtime: 'codex', interactive: true })
 	})
 
-	it('keeps a chat session open between messages instead of ending it on its result', async () => {
-		await startSession({
-			...base,
-			config: { conversation: { conversation_id: 'c-1' } },
-			initiatedFromObjectId: null,
-		})
-		expect(configOfLastCreate()?.interactive).toBe(true)
-		expect(configOfLastCreate()?.stop_on_result).toBeUndefined()
+	it('leaves a session that belongs to a chat as given', async () => {
+		const config = { conversation: { conversation_id: 'c-1' } }
+		await startSession({ ...base, config, initiatedFromObjectId: null })
+		expect(configOfLastCreate()).toEqual(config)
 	})
 
 	it('makes a session interactive even when the caller asked for one-shot', async () => {

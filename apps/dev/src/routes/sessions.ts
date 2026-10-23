@@ -1007,7 +1007,10 @@ app.openapi(inputSessionRoute, (async (c) => {
 		const inAskChat = askConversationId
 			? await isConversationParticipant(db, askConversationId, actorId)
 			: false
-		if (!inAskChat && !(await isSharedBackgroundSession(db, session))) {
+		if (
+			!inAskChat &&
+			!(c.get('actorType') === 'human' && (await isSharedBackgroundSession(db, session)))
+		) {
 			return c.json(createApiError('FORBIDDEN', 'Session was started by a different actor'), 403)
 		}
 	}
@@ -1187,7 +1190,7 @@ app.openapi(continueSessionRoute, (async (c) => {
 				.limit(1)
 			if (anchor) chatIds.add(anchor.conversationId)
 		}
-		let entitled = await isSharedBackgroundSession(db, session)
+		let entitled = c.get('actorType') === 'human' && (await isSharedBackgroundSession(db, session))
 		for (const chatId of chatIds) {
 			if (await isConversationParticipant(db, chatId, actorId)) {
 				entitled = true

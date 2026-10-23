@@ -44,7 +44,8 @@ export async function startedByPerson(
 
 /**
  * Background work no chat owns: started by a trigger or an agent, with no chat of its own and
- * none it asks in. Like reading it, writing to it is open to every workspace writer, since
+ * none it asks in. Like reading it, writing to it is open to the workspace's people (the route
+ * keeps other agents out), since
  * there is no one person or chat to scope it to.
  */
 export async function isSharedBackgroundSession(
