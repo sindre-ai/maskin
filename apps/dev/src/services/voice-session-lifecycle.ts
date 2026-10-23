@@ -30,40 +30,29 @@ const STATUS_FOR_REASON: Record<VoiceEndedReason, 'ended' | 'timed_out' | 'error
 
 // ── Live counters ────────────────────────────────────────────────────
 
-interface LiveCounters {
-	inputAudioMs: number
-	outputAudioMs: number
-	turnCount: number
-	toolCallsCount: number
-}
-
-// In-process on purpose: the server socket, the hangup route and the sweeper
-// all run in this one server process, and voice_sessions has no columns for
-// turn / tool-call counts. After a restart a session ends with zeroes here and
-// falls back to whatever the client reported on hangup.
-const liveCounters = new Map<string, LiveCounters>()
-
-function countersFor(sessionId: string): LiveCounters {
-	let counters = liveCounters.get(sessionId)
-	if (!counters) {
-		counters = { inputAudioMs: 0, outputAudioMs: 0, turnCount: 0, toolCallsCount: 0 }
-		liveCounters.set(sessionId, counters)
-	}
-	return counters
-}
-
-export function recordVoiceTurn(
+// Written to the voice_sessions row as the call runs, not held in memory, so a
+// server restart mid-call does not zero them. Only rows still pending / active
+// are touched: a late event after the call ended is dropped.
+export async function recordVoiceTurn(
+	db: Database,
 	sessionId: string,
 	turn: { userAudioMs: number; agentAudioMs: number },
-): void {
-	const counters = countersFor(sessionId)
-	counters.turnCount += 1
-	counters.inputAudioMs += turn.userAudioMs
-	counters.outputAudioMs += turn.agentAudioMs
+): Promise<void> {
+	await db
+		.update(voiceSessions)
+		.set({
+			turnCount: sql`${voiceSessions.turnCount} + 1`,
+			inputAudioMs: sql`${voiceSessions.inputAudioMs} + ${Math.max(0, Math.round(turn.userAudioMs))}`,
+			outputAudioMs: sql`${voiceSessions.outputAudioMs} + ${Math.max(0, Math.round(turn.agentAudioMs))}`,
+		})
+		.where(and(eq(voiceSessions.id, sessionId), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 }
 
-export function recordVoiceToolCall(sessionId: string): void {
-	countersFor(sessionId).toolCallsCount += 1
+export async function recordVoiceToolCall(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(voiceSessions)
+		.set({ toolCallsCount: sql`${voiceSessions.toolCallsCount} + 1` })
+		.where(and(eq(voiceSessions.id, sessionId), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 }
 
 // ── Vendor teardown ──────────────────────────────────────────────────
@@ -96,7 +85,7 @@ export function setCloseVendorSessionFn(fn: CloseVendorSessionFn | null): void {
 export interface EndVoiceSessionInput {
 	id: string
 	reason: VoiceEndedReason
-	/** Audio seconds the client measured. Used when larger than what the event channel recorded. */
+	/** Audio seconds the client measured. Only a fallback, used when the event channel recorded no audio for that direction. */
 	reportedInputAudioSeconds?: number
 	reportedOutputAudioSeconds?: number
 	vendorErrorCode?: string
@@ -115,7 +104,11 @@ export async function endVoiceSession(
 	input: EndVoiceSessionInput,
 ): Promise<VoiceSessionEnded | null> {
 	const [live] = await db
-		.select({ startedAt: voiceSessions.startedAt })
+		.select({
+			startedAt: voiceSessions.startedAt,
+			inputAudioMs: voiceSessions.inputAudioMs,
+			outputAudioMs: voiceSessions.outputAudioMs,
+		})
 		.from(voiceSessions)
 		.where(and(eq(voiceSessions.id, input.id), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 		.limit(1)
@@ -123,23 +116,16 @@ export async function endVoiceSession(
 
 	const now = new Date()
 	const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - live.startedAt.getTime()) / 1000))
-	const counters = liveCounters.get(input.id)
-	// Neither side can have carried more audio than the call lasted, so a
-	// client-reported figure is clamped to the wall clock.
-	const inputAudioSeconds = Math.min(
-		elapsedSeconds,
-		Math.max(
-			Math.round((counters?.inputAudioMs ?? 0) / 1000),
-			input.reportedInputAudioSeconds ?? 0,
-		),
-	)
-	const outputAudioSeconds = Math.min(
-		elapsedSeconds,
-		Math.max(
-			Math.round((counters?.outputAudioMs ?? 0) / 1000),
-			input.reportedOutputAudioSeconds ?? 0,
-		),
-	)
+	// Neither side can have carried more audio than the call lasted, so the
+	// figure is clamped to the wall clock. What the server recorded wins; the
+	// client report is used only for a direction with nothing recorded.
+	const audioSeconds = (recordedMs: number, reported: number | undefined) =>
+		Math.min(
+			elapsedSeconds,
+			recordedMs > 0 ? Math.round(recordedMs / 1000) : Math.max(0, reported ?? 0),
+		)
+	const inputAudioSeconds = audioSeconds(live.inputAudioMs, input.reportedInputAudioSeconds)
+	const outputAudioSeconds = audioSeconds(live.outputAudioMs, input.reportedOutputAudioSeconds)
 	const totalCostUsd = computeVoiceCostUsd(inputAudioSeconds, outputAudioSeconds)
 
 	const [ended] = await db
@@ -155,8 +141,6 @@ export async function endVoiceSession(
 		.where(and(eq(voiceSessions.id, input.id), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 		.returning()
 	if (!ended) return null
-
-	liveCounters.delete(input.id)
 
 	await closeVendorSessionFn({
 		voiceSessionId: ended.id,
@@ -175,8 +159,8 @@ export async function endVoiceSession(
 		inputAudioSeconds,
 		outputAudioSeconds,
 		totalCostUsd,
-		toolCallsCount: counters?.toolCallsCount ?? 0,
-		turnCount: counters?.turnCount ?? 0,
+		toolCallsCount: ended.toolCallsCount,
+		turnCount: ended.turnCount,
 	})
 	return ended
 }

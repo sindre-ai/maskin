@@ -62,6 +62,7 @@ import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
+import { isNotifyOnComplete } from '../services/mention-guards'
 import { ensureChatForSession } from '../services/session-chat'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
@@ -1057,7 +1058,8 @@ app.openapi(inputSessionRoute, (async (c) => {
 	// reply in the chat so the question there reads as answered. Inserted
 	// directly rather than through POST /messages — that would wake the chat's
 	// own agents with an answer meant for someone else.
-	if (askConversationId && session.config && (session.config as { awaiting?: unknown }).awaiting) {
+	const awaiting = (session.config as { awaiting?: { message_id?: unknown } } | null)?.awaiting
+	if (askConversationId && awaiting) {
 		await db
 			.update(sessions)
 			.set({ config: sql`${sessions.config} - 'awaiting'` })
@@ -1072,6 +1074,22 @@ app.openapi(inputSessionRoute, (async (c) => {
 				sessionId: null,
 			}).catch((err) =>
 				logger.warn('Could not record the answer to a helper question in the chat', {
+					session_id: id,
+					error: String(err),
+				}),
+			)
+		} else if (body.card_answer && body.card_answer.message_id === awaiting.message_id) {
+			// A card's Not now or Done: recorded for the card, and hidden, like the nudge a
+			// chat session gets. Only for the card the session is waiting on.
+			await insertConversationMessage(db, {
+				conversationId: askConversationId,
+				workspaceId,
+				actorId,
+				content: body.content,
+				metadata: { hidden_from_chat: true, card_answer: body.card_answer },
+				sessionId: null,
+			}).catch((err) =>
+				logger.warn('Could not record the answer to a helper card in the chat', {
 					session_id: id,
 					error: String(err),
 				}),
@@ -1222,6 +1240,7 @@ app.openapi(continueSessionRoute, (async (c) => {
 	const actionPrompt = body.content.trim()
 
 	const origin = (session.config ?? {}) as { origin_conversation_id?: unknown; hop_depth?: unknown }
+	const relaunched = (session.config as { relaunching?: unknown } | null)?.relaunching === true
 	const config = {
 		interactive: true,
 		// Ends after its reply, like the helper it continues, so the thread reads Done between
@@ -1245,6 +1264,9 @@ app.openapi(continueSessionRoute, (async (c) => {
 			? { origin_conversation_id: origin.origin_conversation_id }
 			: {}),
 		...(typeof origin.hop_depth === 'number' ? { hop_depth: origin.hop_depth } : {}),
+		// Stopped to carry on with a credential or access a person just gave it: the follow-up
+		// reports to the sender in its place, so the sender hears one ending, not two.
+		...(relaunched && isNotifyOnComplete(session.config) ? { notify_on_complete: true } : {}),
 	}
 	const handle = await startSession({
 		workspaceId,
@@ -1258,9 +1280,10 @@ app.openapi(continueSessionRoute, (async (c) => {
 		// Another thread of the same chat: the anchor message when there is one, else the
 		// chat session that started the original.
 		spawnedByMessageId: session.spawnedByMessageId ?? undefined,
-		spawnedBySessionId: session.spawnedByMessageId
-			? undefined
-			: (session.spawnedBySessionId ?? undefined),
+		spawnedBySessionId:
+			session.spawnedByMessageId && !relaunched
+				? undefined
+				: (session.spawnedBySessionId ?? undefined),
 	})
 	return c.json({ session_id: handle.sessionId }, 201)
 }) as RouteHandler<typeof continueSessionRoute, Env>)
@@ -1455,6 +1478,53 @@ app.openapi(askSessionRoute, (async (c) => {
 	return c.json({ message_id: created.id, posted: true as const, delivered_to: deliveredTo })
 }) as RouteHandler<typeof askSessionRoute, Env>)
 
+/**
+ * Where a card for this session goes: the session's own chat, or for a helper another agent
+ * started, the chat it asks its questions in. Null when nobody can see a card (a trigger,
+ * loop or other run with no chat), which keeps the 409 and the tool's plain-text fallback.
+ */
+function cardTarget(
+	session: Pick<typeof sessions.$inferSelect, 'interactive' | 'conversationId' | 'config'>,
+): { conversationId: string; helper: boolean } | null {
+	if (!session.interactive) return null
+	if (session.conversationId) return { conversationId: session.conversationId, helper: false }
+	const asking = helperAskConversationId(session)
+	return asking ? { conversationId: asking, helper: true } : null
+}
+
+const CARD_CONFLICT_TEXT =
+	'Session is not an interactive chat session, so there is nobody to show a card to'
+
+/**
+ * A helper that put a card in the chat it was started from is now waiting on the person, as
+ * it is after a question: the flag keeps it alive through the turn that ends with the card
+ * (see InteractiveTurnFinalizer) and the Threads pane shows it as waiting on you. The
+ * question is only what that pane draws; the card itself is the message.
+ */
+async function markHelperAwaitingCard(
+	db: Database,
+	sessionId: string,
+	messageId: number,
+	what: string,
+) {
+	const questions = [
+		{
+			header: 'Card in the chat',
+			question: `I'm waiting on the card in the chat above: ${what}.`,
+			multi_select: false,
+			options: [{ label: 'Done, carry on' }, { label: 'Not now, carry on without it' }],
+		},
+	]
+	await db
+		.update(sessions)
+		.set({
+			config: sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{awaiting}', ${JSON.stringify(
+				{ message_id: messageId, question: { session_id: sessionId, questions } },
+			)}::jsonb)`,
+		})
+		.where(eq(sessions.id, sessionId))
+}
+
 // POST /:id/connect-card - Surface a "connect this integration" card in the chat
 //
 // Called by the `connect_integration` MCP tool when it runs inside a chat
@@ -1526,7 +1596,8 @@ app.openapi(connectCardRoute, (async (c) => {
 
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
 
-	if (!session.interactive || !session.conversationId) {
+	const target = cardTarget(session)
+	if (!target) {
 		return c.json(
 			createApiError(
 				'CONFLICT',
@@ -1567,11 +1638,17 @@ app.openapi(connectCardRoute, (async (c) => {
 	}
 
 	const created = await insertConversationMessage(db, {
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
 		content: formatIntegrationConnectAsMarkdown(provider.config.displayName),
-		metadata: { integration_connect: { session_id: session.id, provider: providerName } },
+		metadata: {
+			integration_connect: {
+				session_id: session.id,
+				provider: providerName,
+				...(target.helper ? { reply_to_session: true } : {}),
+			},
+		},
 		sessionId: session.id,
 	})
 
@@ -1580,15 +1657,24 @@ app.openapi(connectCardRoute, (async (c) => {
 	if (!created) {
 		logger.error('Integration connect card insert returned no row', {
 			sessionId: session.id,
-			conversationId: session.conversationId,
+			conversationId: target.conversationId,
 			provider: providerName,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Connect card could not be posted'), 500)
 	}
 
+	if (target.helper) {
+		await markHelperAwaitingCard(
+			db,
+			session.id,
+			created.id,
+			`connect ${provider.config.displayName}`,
+		)
+	}
+
 	logger.info('Posted integration connect card into conversation', {
 		sessionId: session.id,
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		messageId: created.id,
 		provider: providerName,
 	})
@@ -1659,18 +1745,11 @@ app.openapi(keychainCardRoute, (async (c) => {
 
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
 
-	if (!session.interactive || !session.conversationId) {
-		return c.json(
-			createApiError(
-				'CONFLICT',
-				'Session is not an interactive chat session, so there is nobody to show a card to',
-			),
-			409,
-		)
-	}
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
 	const created = await insertConversationMessage(db, {
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
 		content: formatKeychainRequestAsMarkdown(kind, suggestedName, hint),
@@ -1680,6 +1759,7 @@ app.openapi(keychainCardRoute, (async (c) => {
 				kind,
 				...(suggestedName ? { suggested_name: suggestedName } : {}),
 				...(hint ? { hint } : {}),
+				...(target.helper ? { reply_to_session: true } : {}),
 			},
 		},
 		sessionId: session.id,
@@ -1690,17 +1770,26 @@ app.openapi(keychainCardRoute, (async (c) => {
 	if (!created) {
 		logger.error('Keychain card insert returned no row', {
 			sessionId: session.id,
-			conversationId: session.conversationId,
+			conversationId: target.conversationId,
 			kind,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Keychain card could not be posted'), 500)
+	}
+
+	if (target.helper) {
+		await markHelperAwaitingCard(
+			db,
+			session.id,
+			created.id,
+			kind === 'login' ? 'a login for the Keychain' : 'an API key for the Keychain',
+		)
 	}
 
 	// The kind only: the suggested name and hint are the agent's words, not secrets,
 	// but there is no reason for them to be in a log line either.
 	logger.info('Posted keychain card into conversation', {
 		sessionId: session.id,
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		messageId: created.id,
 		kind,
 	})
@@ -1771,22 +1860,21 @@ app.openapi(computerCardRoute, (async (c) => {
 
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
 
-	if (!session.interactive || !session.conversationId) {
-		return c.json(
-			createApiError(
-				'CONFLICT',
-				'Session is not an interactive chat session, so there is nobody to show a card to',
-			),
-			409,
-		)
-	}
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
 	const created = await insertConversationMessage(db, {
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
 		content: formatComputerRequestAsMarkdown(task),
-		metadata: { computer_request: { session_id: session.id, task } },
+		metadata: {
+			computer_request: {
+				session_id: session.id,
+				task,
+				...(target.helper ? { reply_to_session: true } : {}),
+			},
+		},
 		sessionId: session.id,
 	})
 
@@ -1795,15 +1883,19 @@ app.openapi(computerCardRoute, (async (c) => {
 	if (!created) {
 		logger.error('Computer card insert returned no row', {
 			sessionId: session.id,
-			conversationId: session.conversationId,
+			conversationId: target.conversationId,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Computer card could not be posted'), 500)
+	}
+
+	if (target.helper) {
+		await markHelperAwaitingCard(db, session.id, created.id, 'a task on my computer')
 	}
 
 	// Never the task text: it is the agent's words and may name a site or an account.
 	logger.info('Posted computer card into conversation', {
 		sessionId: session.id,
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		messageId: created.id,
 	})
 
@@ -1942,15 +2034,8 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 	}
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
 
-	if (!session.interactive || !session.conversationId) {
-		return c.json(
-			createApiError(
-				'CONFLICT',
-				'Session is not an interactive chat session, so there is nobody to show a card to',
-			),
-			409,
-		)
-	}
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
 	// By name, the way a person and the list tool know it. Active saved keys and logins only.
 	const [credential] = await db
@@ -1993,7 +2078,7 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 		return c.json({ posted: false, already_granted: true, message_id: null }, 200)
 
 	const created = await insertConversationMessage(db, {
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
 		content: formatKeychainAccessRequestAsMarkdown(credential.name, hint),
@@ -2004,6 +2089,7 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 				credential_name: credential.name,
 				kind: credential.mode === 'byo_login' ? 'login' : 'api_key',
 				...(hint ? { hint } : {}),
+				...(target.helper ? { reply_to_session: true } : {}),
 			},
 		},
 		sessionId: session.id,
@@ -2011,13 +2097,16 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 	if (!created) {
 		logger.error('Keychain access card insert returned no row', {
 			sessionId: session.id,
-			conversationId: session.conversationId,
+			conversationId: target.conversationId,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Keychain access card could not be posted'), 500)
 	}
+	if (target.helper) {
+		await markHelperAwaitingCard(db, session.id, created.id, `use ${credential.name}`)
+	}
 	logger.info('Posted keychain access card into conversation', {
 		sessionId: session.id,
-		conversationId: session.conversationId,
+		conversationId: target.conversationId,
 		messageId: created.id,
 		integrationId: credential.id,
 	})
