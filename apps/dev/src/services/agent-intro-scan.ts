@@ -7,7 +7,7 @@ import type { IntroStep } from './agent-intro-template'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
-/** There is no cap on the scan. After this long the agent is asked to answer with what it has. */
+/** There is no cap on the scan. This long after the agent starts working it is asked to answer with what it has. */
 export const INTRO_SCAN_NUDGE_AFTER_MS = 20_000
 export const INTRO_SCAN_NUDGE =
 	'Time is short. Stop looking now and reply with the JSON object, using what you have found so far.'
@@ -121,8 +121,8 @@ export function createIntroScanRunner(deps: {
 				initiatedFromObjectId: null,
 				await: 'terminal',
 			})
-			// No cap on the scan itself. Past the nudge time the agent is told to wrap up, once.
-			// If its session cannot take input then, it is left to finish on its own.
+			// No cap on the scan itself. The nudge clock starts when the session is running,
+			// not when it was created, so queueing and boot time never eat into it.
 			const nudge = async () => {
 				if (finished) return
 				try {
@@ -137,7 +137,27 @@ export function createIntroScanRunner(deps: {
 					})
 				}
 			}
-			nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_AFTER_MS)
+			const startNudgeClockWhenRunning = async () => {
+				while (!finished) {
+					const [row] = await deps.db
+						.select({ state: sessions.sessionState })
+						.from(sessions)
+						.where(eq(sessions.id, handle.sessionId))
+						.limit(1)
+					if (!row || row.state === 'done') return
+					if (row.state === 'running') {
+						if (!finished) nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_AFTER_MS)
+						return
+					}
+					await new Promise((resolve) => setTimeout(resolve, 500))
+				}
+			}
+			void startNudgeClockWhenRunning().catch((err: unknown) =>
+				logger.warn('Agent intro scan: could not watch the session start', {
+					sessionId: handle.sessionId,
+					err,
+				}),
+			)
 			let outcome: Awaited<typeof handle.awaitResult>
 			try {
 				outcome = await handle.awaitResult
