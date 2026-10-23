@@ -55,7 +55,7 @@ export async function relaunchChatSession(
 	const key = lockKey(origin)
 	const running = inFlight.get(key)
 	if (running) return running
-	return track(key, () => stopHoldingSession(deps, origin))
+	return track(key, () => stopHoldingSession(deps, origin, true))
 }
 
 /**
@@ -72,7 +72,7 @@ export async function endSessionHoldingKey(
 	const key = lockKey(origin)
 	const running = inFlight.get(key)
 	if (running) await running.catch(() => undefined)
-	return (await track(key, () => stopHoldingSession(deps, origin))) === 'stopped'
+	return (await track(key, () => stopHoldingSession(deps, origin, false))) === 'stopped'
 }
 
 interface Origin {
@@ -110,7 +110,11 @@ function track(key: string, run: () => Promise<RelaunchOutcome>): Promise<Relaun
 	return promise
 }
 
-async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<RelaunchOutcome> {
+async function stopHoldingSession(
+	deps: RelaunchDeps,
+	origin: Origin,
+	followUpWillStart: boolean,
+): Promise<RelaunchOutcome> {
 	const holder = await findHolder(deps, origin)
 	// Nothing running, or still queued: a queued session reads the key when it is
 	// dispatched, and the vault already committed.
@@ -118,14 +122,9 @@ async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<R
 
 	// A helper has no chat to respawn it: the card's answer carries on in a follow-up (the
 	// continue route). Mark the stop so the sender is not told a person stopped the helper.
-	if (!origin.conversationId) {
-		await deps.db
-			.update(sessions)
-			.set({
-				config: sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{relaunching}', 'true')`,
-			})
-			.where(eq(sessions.id, holder.id))
-	}
+	// Only when a follow-up will start: an undo or removal starts none, so the sender is told.
+	const marked = followUpWillStart && !origin.conversationId
+	if (marked) await setRelaunching(deps, holder.id, true)
 
 	try {
 		await deps.sessionManager.stopSession(holder.id)
@@ -136,9 +135,24 @@ async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<R
 			sessionId: holder.id,
 			error: err instanceof Error ? err.message : 'unknown',
 		})
+		// No follow-up follows a failed stop, and the helper's own ending must still reach its sender.
+		if (marked) await setRelaunching(deps, holder.id, false)
 		return 'failed'
 	}
-	return (await waitForTerminal(deps, holder.id)) ? 'stopped' : 'failed'
+	if (await waitForTerminal(deps, holder.id)) return 'stopped'
+	if (marked) await setRelaunching(deps, holder.id, false)
+	return 'failed'
+}
+
+async function setRelaunching(deps: RelaunchDeps, sessionId: string, on: boolean) {
+	await deps.db
+		.update(sessions)
+		.set({
+			config: on
+				? sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{relaunching}', 'true')`
+				: sql`coalesce(${sessions.config}, '{}'::jsonb) - 'relaunching'`,
+		})
+		.where(eq(sessions.id, sessionId))
 }
 
 async function findHolder(
