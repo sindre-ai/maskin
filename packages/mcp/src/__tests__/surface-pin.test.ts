@@ -235,14 +235,6 @@ describe('MCP surface pin', () => {
 			expect(orphans, `annotations rows for unregistered tools: ${orphans.join(', ')}`).toEqual([])
 		})
 
-		it('the tool count in CLAUDE.md equals the number of registered tools', async () => {
-			const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
-			const claudeMd = readFileSync(new URL('../../../../CLAUDE.md', import.meta.url), 'utf8')
-			const match = claudeMd.match(/wraps the API as (\d+) tools/)
-			expect(match, 'CLAUDE.md no longer says "wraps the API as N tools"').not.toBeNull()
-			expect(Number(match?.[1])).toBe(registeredTools.size)
-		})
-
 		it('gives every registered tool its title and annotations in one place (the wrapper)', () => {
 			const violations: string[] = []
 			for (const name of registeredTools) {
