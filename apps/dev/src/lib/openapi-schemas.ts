@@ -57,6 +57,8 @@ export const objectResponseSchema = z.object({
 	// the ring on states where the agent isn't actively working. Null when
 	// there is no active session, or when the session row has been deleted.
 	active_session_state: z.string().nullable().optional(),
+	// Actor running the session pointed at by activeSessionId. Detail/graph only.
+	active_session_actor_id: z.string().uuid().nullable().optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

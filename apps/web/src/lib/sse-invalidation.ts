@@ -128,6 +128,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 
 	// A draft approved or sent changes its card (Approved, sending, then Sent). The draft can
 	// be any object type, including ones the entity-type switch below does not list.
+	// An agent starting or stopping work on an object flips its working badge, filter
+	// and banner, and adds a row to its Activity.
+	if (event.action === 'agent_started_working' || event.action === 'agent_finished_working') {
+		invalidate(queryClient, { queryKey: queryKeys.objects.all(workspaceId) })
+		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+		invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
+	}
+
 	if (event.action === 'approved' || event.action === 'delivered') {
 		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
 	}
