@@ -84,7 +84,7 @@ function row(
 }
 
 // destructive: delete_*, stop_session, disconnect_integration, desktop_run (runs any command).
-// idempotent: update_*, delete_*, pause_session, resume_session, mark_read.
+// idempotent: update_*, delete_*, pause_session, mark_read.
 // openWorld: create_session (starts an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
@@ -152,7 +152,8 @@ const ROWS: Record<string, Row> = {
 	get_session_logs: row('Get session logs'),
 	stop_session: row('Stop session', { destructive: true }),
 	pause_session: row('Pause session', { idempotent: true }),
-	resume_session: row('Resume session', { idempotent: true }),
+	resume_session: row('Resume session'),
+	send_session_message: row('Send session message'),
 	ask_user_question: row('Ask user question'),
 	// Integrations
 	list_integrations: row('List integrations', { openWorld: true }),

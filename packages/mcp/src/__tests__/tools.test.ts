@@ -77,6 +77,7 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'send_session_message',
 	'ask_user_question',
 	'gmail_send_email',
 	'approve_object_draft',
