@@ -32865,6 +32865,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/defaultAgentAccess`.
@@ -32877,7 +32878,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/agentGrantsPayload/access`.
@@ -33935,6 +33935,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/defaultAgentAccess`.
@@ -33947,7 +33948,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/agentGrantsPayload/access`.
@@ -35220,6 +35220,7 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/defaultAgentAccess`.
                         @frozen public enum defaultAgentAccessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case read = "read"
+                            case read_write = "read_write"
                             case none = "none"
                         }
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/defaultAgentAccess`.
@@ -35232,7 +35233,6 @@ public enum Operations {
                             @frozen public enum accessPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case none = "none"
                                 case read = "read"
-                                case ask_first = "ask_first"
                                 case read_write = "read_write"
                             }
                             /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/agentGrantsPayload/access`.
@@ -41734,8 +41734,40 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request`.
                         public var computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer`.
+                        public struct card_answerPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer/message_id`.
+                            public var message_id: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer/outcome`.
+                            @frozen public enum outcomePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case declined = "declined"
+                                case done = "done"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer/outcome`.
+                            public var outcome: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload.outcomePayload
+                            /// Creates a new `card_answerPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - message_id:
+                            ///   - outcome:
+                            public init(
+                                message_id: Swift.Int,
+                                outcome: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload.outcomePayload
+                            ) {
+                                self.message_id = message_id
+                                self.outcome = outcome
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case message_id
+                                case outcome
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer`.
+                        public var card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
                         public var helper_return: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/hidden_from_chat`.
+                        public var hidden_from_chat: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery`.
                         public struct deliveryPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/delivery/kind`.
@@ -41887,7 +41919,9 @@ public enum Operations {
                         ///   - keychain_request:
                         ///   - keychain_access_request:
                         ///   - computer_request:
+                        ///   - card_answer:
                         ///   - helper_return:
+                        ///   - hidden_from_chat:
                         ///   - delivery:
                         ///   - suggested_steps:
                         ///   - needed_tools:
@@ -41908,7 +41942,9 @@ public enum Operations {
                             keychain_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_access_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload? = nil,
+                            card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
+                            hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.deliveryPayload? = nil,
                             suggested_steps: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.suggested_stepsPayload? = nil,
                             needed_tools: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.needed_toolsPayload? = nil,
@@ -41929,7 +41965,9 @@ public enum Operations {
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
                             self.computer_request = computer_request
+                            self.card_answer = card_answer
                             self.helper_return = helper_return
+                            self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
                             self.suggested_steps = suggested_steps
                             self.needed_tools = needed_tools
@@ -41951,7 +41989,9 @@ public enum Operations {
                             case keychain_request
                             case keychain_access_request
                             case computer_request
+                            case card_answer
                             case helper_return
+                            case hidden_from_chat
                             case delivery
                             case suggested_steps
                             case needed_tools
@@ -46398,8 +46438,40 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request`.
                         public var computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer`.
+                        public struct card_answerPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer/message_id`.
+                            public var message_id: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer/outcome`.
+                            @frozen public enum outcomePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case declined = "declined"
+                                case done = "done"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer/outcome`.
+                            public var outcome: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload.outcomePayload
+                            /// Creates a new `card_answerPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - message_id:
+                            ///   - outcome:
+                            public init(
+                                message_id: Swift.Int,
+                                outcome: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload.outcomePayload
+                            ) {
+                                self.message_id = message_id
+                                self.outcome = outcome
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case message_id
+                                case outcome
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer`.
+                        public var card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
                         public var helper_return: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/hidden_from_chat`.
+                        public var hidden_from_chat: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery`.
                         public struct deliveryPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/delivery/kind`.
@@ -46551,7 +46623,9 @@ public enum Operations {
                         ///   - keychain_request:
                         ///   - keychain_access_request:
                         ///   - computer_request:
+                        ///   - card_answer:
                         ///   - helper_return:
+                        ///   - hidden_from_chat:
                         ///   - delivery:
                         ///   - suggested_steps:
                         ///   - needed_tools:
@@ -46572,7 +46646,9 @@ public enum Operations {
                             keychain_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_access_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload? = nil,
+                            card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
+                            hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.deliveryPayload? = nil,
                             suggested_steps: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.suggested_stepsPayload? = nil,
                             needed_tools: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.needed_toolsPayload? = nil,
@@ -46593,7 +46669,9 @@ public enum Operations {
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
                             self.computer_request = computer_request
+                            self.card_answer = card_answer
                             self.helper_return = helper_return
+                            self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
                             self.suggested_steps = suggested_steps
                             self.needed_tools = needed_tools
@@ -46615,7 +46693,9 @@ public enum Operations {
                             case keychain_request
                             case keychain_access_request
                             case computer_request
+                            case card_answer
                             case helper_return
+                            case hidden_from_chat
                             case delivery
                             case suggested_steps
                             case needed_tools
@@ -58170,7 +58250,7 @@ public enum Operations {
             }
         }
     }
-    /// The Chief of Staff's ranked list of what needs the current actor
+    /// What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
@@ -58213,9 +58293,18 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload`.
                         public struct itemsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/notification_id`.
-                            public var notification_id: Swift.String
+                            public var notification_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/source`.
+                            @frozen public enum sourcePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case curated = "curated"
+                                case decision = "decision"
+                            }
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/source`.
+                            public var source: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.sourcePayload
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/rank`.
                             public var rank: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_event_id`.
+                            public var latest_event_id: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/headline`.
                             public var headline: Swift.String
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/rationale`.
@@ -59301,7 +59390,9 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - notification_id:
+                            ///   - source:
                             ///   - rank:
+                            ///   - latest_event_id:
                             ///   - headline:
                             ///   - rationale:
                             ///   - created_at:
@@ -59311,8 +59402,10 @@ public enum Operations {
                             ///   - object:
                             ///   - latest_mention:
                             public init(
-                                notification_id: Swift.String,
+                                notification_id: Swift.String? = nil,
+                                source: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.sourcePayload,
                                 rank: Swift.Double,
+                                latest_event_id: Swift.Double? = nil,
                                 headline: Swift.String,
                                 rationale: Swift.String? = nil,
                                 created_at: Swift.String? = nil,
@@ -59323,7 +59416,9 @@ public enum Operations {
                                 latest_mention: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload? = nil
                             ) {
                                 self.notification_id = notification_id
+                                self.source = source
                                 self.rank = rank
+                                self.latest_event_id = latest_event_id
                                 self.headline = headline
                                 self.rationale = rationale
                                 self.created_at = created_at
@@ -59335,7 +59430,9 @@ public enum Operations {
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case notification_id
+                                case source
                                 case rank
+                                case latest_event_id
                                 case headline
                                 case rationale
                                 case created_at

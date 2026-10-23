@@ -16,6 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { READ_ONLY_TOOLS } from './annotations.js'
 import type { InvokeTool } from './invoke.js'
 import { type McpConfig, createMcpServer } from './server.js'
 
@@ -39,6 +40,12 @@ export interface VoiceToolkit {
 	tools: VoiceRealtimeTool[]
 	/** Runs a tool through the MCP SDK (input validation included). */
 	invokeTool: InvokeTool
+	/**
+	 * Tools that only read, by Realtime function name: the platform tools in
+	 * READ_ONLY_TOOLS (the table chat uses) plus tools of the extra servers that
+	 * declare readOnlyHint. Every other tool is a write.
+	 */
+	readOnlyTools: ReadonlySet<string>
 	/** Names of extra servers that could not be reached, so their tools are missing. */
 	unreachableServers: string[]
 	/** Closes the connections to the extra servers. */
@@ -140,6 +147,7 @@ async function buildToolkit(
 
 	// realtime function name -> where to send the call and what the server calls it
 	const external = new Map<string, { client: Client; tool: string }>()
+	const readOnlyTools = new Set<string>(READ_ONLY_TOOLS)
 	const unreachableServers: string[] = []
 	await Promise.all(
 		Object.entries(externalServers).map(async ([serverName, spec]) => {
@@ -173,6 +181,7 @@ async function buildToolkit(
 				for (const tool of listed.tools) {
 					const name = realtimeName(serverName, tool.name, taken)
 					external.set(name, { client: listed.client, tool: tool.name })
+					if (tool.annotations?.readOnlyHint === true) readOnlyTools.add(name)
 					tools.push({
 						type: 'function',
 						name,
@@ -194,6 +203,7 @@ async function buildToolkit(
 
 	return {
 		tools,
+		readOnlyTools,
 		unreachableServers,
 		invokeTool: (name, args) => {
 			const target = external.get(name)

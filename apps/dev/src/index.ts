@@ -30,7 +30,6 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
-import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
@@ -41,7 +40,6 @@ import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
-import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
@@ -64,11 +62,6 @@ import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
-
-// Voice v1: fail fast when the flag is enabled for testers but the operator
-// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
-// deploy is caught at boot rather than 500-ing the first tester click.
-assertVoiceOperatorEnv()
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -327,23 +320,18 @@ const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
-// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
-// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
-// unsetting the sub-flag from the env + restarting is the rollback path.
-const loopEscalationReconciler = new LoopEscalationReconciler(db)
-loopEscalationReconciler.start()
-logger.info('Loop escalation reconciler started')
-
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
 // Voice v1: ends calls whose timeout_at has passed (tab closed with no
-// hangup). A no-op until a voice_sessions row exists, so it is safe for every
-// deployment whether or not voice-mode-v1 is enabled.
+// hangup). A no-op until a voice_sessions row exists.
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
 voiceSessionTimeoutSweeper.start()
 logger.info('Voice session timeout sweeper started')
+if (!process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()) {
+	logger.warn('MASKIN_VOICE_OPENAI_API_KEY is unset: voice calls will fail at call start')
+}
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher

@@ -6,7 +6,6 @@ const MAX_STEPS = 4
 const MAX_CREATOR_STEPS = 3
 const MAX_NEEDED_TOOLS = 3
 
-const PROMISE_LINE = "I'll reply here. Only things that need your decision go to For You."
 const STEPS_LINE = 'How can I help? Start with one of these, or tell me what you need.'
 const NO_STEPS_LINE = "How can I help? Tell me what you need and I'll get started."
 const NO_KEY_LINE =
@@ -128,7 +127,7 @@ export function renderMinimalAgentIntro(input: AgentIntroInput): string {
 /**
  * The static intro a new agent posts into the 1-1 with the person it was made
  * for. Pure: no model call, no database. Plain voice, no em dashes, no backticks.
- * Paragraphs, in order: opening, promise line, the steps line (or the connect-a-
+ * Paragraphs, in order: opening, the steps line (or the connect-a-
  * key line), a numbered list of the step labels, one neutral tools sentence, and
  * a closing line only when the body would otherwise end in a question mark. The
  * body reads complete with no buttons drawn.
@@ -139,7 +138,7 @@ export function renderAgentIntro(input: AgentIntroInput): RenderedIntro {
 		? (input.neededToolNames ?? []).slice(0, MAX_NEEDED_TOOLS)
 		: []
 
-	const head = [openingLine(input), PROMISE_LINE]
+	const head = [openingLine(input)]
 	if (!input.canRun) {
 		head.push(NO_KEY_LINE)
 	} else {

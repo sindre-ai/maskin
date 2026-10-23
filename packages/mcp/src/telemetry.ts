@@ -1,6 +1,16 @@
 import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
 import { measureResponseShape } from './response-shape'
 
+/**
+ * Symbol-keyed (so it never serializes) hook a tool handler attaches to its
+ * response to tell the size event which shape of answer it gave. Same pattern
+ * as RESUME_CURSOR in response-cap.ts: the `registerAppTool` wrapper reads it
+ * after the handler returns, on the success path only.
+ */
+export const TELEMETRY_VIEW = Symbol('telemetryView')
+/** Fixed values only, never free text: `slim` is the default directory row, `full` is a call that asked for connected triggers or loops. */
+export type ListActorsView = 'slim' | 'full'
+
 // MCP telemetry — fire-and-forget POSTs to /api/telemetry/mcp.
 //
 // Powers the bet's two success metrics (50% rich-render rate, 20% session-with-
@@ -174,6 +184,8 @@ export interface ToolCallResponseSizeEvent {
 	mcp_era?: McpEra
 	/** Allowlisted protocol version label, never a raw header value. */
 	mcp_protocol_version?: McpProtocolVersionLabel
+	/** Which shape of answer the tool gave. Only list_actors sets it today. */
+	view?: ListActorsView
 }
 
 // MCP misfire event for the agent-reach-signal bet. The server-side
@@ -329,6 +341,8 @@ export function recordToolCallResponseSize(
 		args?: unknown
 		/** Which transport the emitting server is exposed over. */
 		transport?: 'stdio' | 'http'
+		/** Set by a tool through TELEMETRY_VIEW; absent for every other tool. */
+		view?: ListActorsView
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
@@ -371,6 +385,7 @@ export function recordToolCallResponseSize(
 			shape_error: shape.shapeError ? true : undefined,
 			mcp_era: target.mcpEra,
 			mcp_protocol_version: target.mcpProtocolVersion,
+			view: event.view,
 		},
 		cfg,
 	)

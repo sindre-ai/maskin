@@ -209,6 +209,10 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	shape_error: z.boolean().optional(),
 	mcp_era: mcpEraSchema,
 	mcp_protocol_version: mcpProtocolVersionSchema,
+	// Which shape of answer the tool gave (list_actors: `slim` default row, `full`
+	// when connected triggers/loops were requested). Fixed values only: a bad
+	// value costs the property, not the event.
+	view: degradeTo(z.enum(['slim', 'full']).optional(), undefined),
 })
 
 /**

@@ -137,7 +137,8 @@ export function KeychainRequestCard({
 			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've saved ${displayName} to the Keychain${where}. Please carry on.`,
+				content: `I've saved ${displayName} to the Keychain${where}. Reply with one short line to say you have it, then carry on.`,
+				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {
 			setError(
@@ -176,7 +177,7 @@ export function KeychainRequestCard({
 
 	return (
 		<form
-			className="mt-2 flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
+			className="mt-2 flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
 			aria-label={isLogin ? 'Add a login to the Keychain' : 'Add an API key to the Keychain'}
 			onSubmit={(e) => {
 				e.preventDefault()

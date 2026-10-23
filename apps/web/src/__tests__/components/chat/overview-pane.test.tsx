@@ -6,6 +6,9 @@ vi.mock('@/components/chat/threads-pane', () => ({ ThreadsPane: () => <div>threa
 vi.mock('@/components/objects/produced-pane', () => ({
 	ProducedPane: () => <div>produced body</div>,
 }))
+vi.mock('@/components/chat/computers-pane', () => ({
+	ComputersPane: () => <div>computers body</div>,
+}))
 vi.mock('@/components/chat/linked-pane', () => ({ LinkedPane: () => <div>linked body</div> }))
 
 const props = {
@@ -13,6 +16,7 @@ const props = {
 	conversationId: 'c1',
 	onTabChange: vi.fn(),
 	threadsCount: 1,
+	computersCount: 2,
 	producedCount: 2,
 	openSessionId: null,
 	onOpenSession: vi.fn(),
@@ -56,33 +60,25 @@ const props = {
 }
 
 describe('OverviewPane tabs', () => {
-	it('always offers Linked, with its count, and hides Produced without the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="linked"
-				producedEnabled={false}
-			/>,
-		)
+	it('offers Linked with its count and renders its body', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="linked" />)
 		expect(screen.getByRole('tab', { name: /Linked/ })).toHaveTextContent('3')
-		expect(screen.queryByRole('tab', { name: /Produced/ })).toBeNull()
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Threads, Produced and Linked with the flag', () => {
-		render(
-			<OverviewPane
-				{...props}
-				linkedItems={[...props.linkedItems]}
-				tab="threads"
-				producedEnabled
-			/>,
-		)
+	it('offers Threads, Produced, Computers and Linked', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="threads" />)
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
 			'Threads',
 			'Produced',
+			'Computers',
 			'Linked',
 		])
+	})
+
+	it('offers a Computers tab with one entry per agent and shows its pane', () => {
+		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="computers" />)
+		expect(screen.getByRole('tab', { name: /Computers/ })).toHaveTextContent('2')
+		expect(screen.getByText('computers body')).toBeInTheDocument()
 	})
 })

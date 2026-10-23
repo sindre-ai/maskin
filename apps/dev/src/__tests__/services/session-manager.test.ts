@@ -1,6 +1,13 @@
 ﻿import { type MockInstance, vi } from 'vitest'
 
 // Mock external dependencies
+// startSession() checks that the agent is a member of the workspace. These tests script the mock DB's selects one by one, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),
@@ -1023,7 +1030,7 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
-		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
+		it('defaults ANTHROPIC_MODEL to Sonnet when the agent has no model preference', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -1067,7 +1074,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBeUndefined()
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the Claude OAuth route', async () => {

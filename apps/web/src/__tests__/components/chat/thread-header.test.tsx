@@ -166,23 +166,10 @@ function TestWrapper({ children }: { children: ReactNode }) {
 	)
 }
 
-// Every test below asserts v4-only chrome, so the flag boundary defaults on;
-// the rollback test at the end opts back out with `false`.
-function renderHeader(
-	v4Polish = true,
-	producedProps: Partial<React.ComponentProps<typeof ThreadHeader>> = {},
-) {
-	return render(
-		<ThreadHeader
-			workspaceId="ws-1"
-			conversationId="conv-1"
-			v4Polish={v4Polish}
-			{...producedProps}
-		/>,
-		{
-			wrapper: TestWrapper,
-		},
-	)
+function renderHeader(producedProps: Partial<React.ComponentProps<typeof ThreadHeader>> = {}) {
+	return render(<ThreadHeader workspaceId="ws-1" conversationId="conv-1" {...producedProps} />, {
+		wrapper: TestWrapper,
+	})
 }
 
 describe('ThreadHeader — v4 actions', () => {
@@ -300,31 +287,6 @@ describe('ThreadHeader — v4 actions', () => {
 		})
 	})
 
-	describe('rollback (v4Polish off)', () => {
-		it('drops the loop chip, Copy, Mark-unread and the mobile overflow menu', async () => {
-			// The pre-v4 header kept the loop link inside the title meta only — no
-			// chip, no Copy-whole-conversation, no Mark-as-unread, and Pin/Archive
-			// inline at every width rather than collapsed into a ⋯ menu.
-			mockUseConversation.mockReturnValue({
-				data: buildConversation({ loop_id: 'loop-1' }),
-			})
-			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: 'Growth loop' }) })
-			renderHeader(false)
-
-			expect(screen.queryByRole('button', { name: /^Loop:/ })).not.toBeInTheDocument()
-			expect(
-				screen.queryByRole('button', { name: 'Copy whole conversation' }),
-			).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: 'Mark as unread' })).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument()
-			// Pin and Archive stay inline, regardless of viewport width.
-			expect(screen.getByRole('button', { name: 'Pin conversation' })).toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Archive conversation' })).toBeInTheDocument()
-			// The loop lookup is skipped entirely rather than fetched and wasted.
-			expect(mockUseLoop).toHaveBeenLastCalledWith('', 'ws-1')
-		})
-	})
-
 	// The Overview toggle is the single entry point to the right rail's Threads
 	// and Produced tabs. It mounts only when the route passes a handler (either
 	// tab's flag is on), carries aria-pressed for open/closed, and pulses a dot
@@ -338,7 +300,7 @@ describe('ThreadHeader — v4 actions', () => {
 
 		it('renders the toggle when the route passes a handler', () => {
 			setup()
-			renderHeader(true, { overviewOpen: false, onToggleOverview: vi.fn() })
+			renderHeader({ overviewOpen: false, onToggleOverview: vi.fn() })
 			const toggle = screen.getByRole('button', { name: /Open Overview/i })
 			expect(toggle).toHaveAttribute('aria-pressed', 'false')
 			expect(screen.queryByRole('status', { name: 'New activity' })).not.toBeInTheDocument()
@@ -346,13 +308,13 @@ describe('ThreadHeader — v4 actions', () => {
 
 		it('does not render the toggle without a handler', () => {
 			setup()
-			renderHeader(true, {})
+			renderHeader({})
 			expect(screen.queryByRole('button', { name: /Overview/i })).not.toBeInTheDocument()
 		})
 
 		it('shows the new-activity dot when overviewHasNew', () => {
 			setup()
-			renderHeader(true, { onToggleOverview: vi.fn(), overviewHasNew: true })
+			renderHeader({ onToggleOverview: vi.fn(), overviewHasNew: true })
 			expect(screen.getByRole('status', { name: 'New activity' })).toBeInTheDocument()
 		})
 
@@ -360,14 +322,13 @@ describe('ThreadHeader — v4 actions', () => {
 			const user = userEvent.setup()
 			const onToggle = vi.fn()
 			setup()
-			const { rerender } = renderHeader(true, { overviewOpen: false, onToggleOverview: onToggle })
+			const { rerender } = renderHeader({ overviewOpen: false, onToggleOverview: onToggle })
 			await user.click(screen.getByRole('button', { name: /Open Overview/i }))
 			expect(onToggle).toHaveBeenCalledOnce()
 			rerender(
 				<ThreadHeader
 					workspaceId="ws-1"
 					conversationId="conv-1"
-					v4Polish={true}
 					overviewOpen={true}
 					onToggleOverview={onToggle}
 				/>,

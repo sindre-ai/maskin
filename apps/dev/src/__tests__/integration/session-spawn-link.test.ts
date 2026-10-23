@@ -8,7 +8,13 @@ import { recordEvent } from '../../lib/events/record-event'
 import { MENTION_GUARD_LIMITS } from '../../services/mention-guards'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
-import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
+import {
+	ensureWorkspaceMember,
+	insertActor,
+	insertObject,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -63,6 +69,10 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
 			})
 		;[caller, stranger, target] = await Promise.all([mk('Caller'), mk('Stranger'), mk('Target')])
+		// Starting a session needs the agent to belong to the workspace.
+		for (const agent of [caller, stranger, target]) {
+			await ensureWorkspaceMember(db, workspaceId, agent.id)
+		}
 	})
 
 	beforeAll(() => {
@@ -107,6 +117,22 @@ describe('POST /api/sessions: authenticated spawn link (integration)', () => {
 
 	const liveSessionOf = (actorId: string, over?: Record<string, unknown>) =>
 		insertSession(db, workspaceId, actorId, actorId, { status: 'running', ...over })
+
+	it('continue: refuses a stranger, and refuses a session that has not ended', async () => {
+		const done = await liveSessionOf(caller.id, { status: 'completed' })
+		const running = await liveSessionOf(caller.id)
+		const post = (id: string, actor: string) =>
+			app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${id}/continue`,
+					{ content: 'one more thing' },
+					{ 'X-Workspace-Id': workspaceId, 'X-Test-Actor-Id': actor },
+				),
+			)
+		expect((await post(done.id, stranger.id)).status).toBe(403)
+		expect((await post(running.id, caller.id)).status).toBe(409)
+	})
 
 	it('links the helper to the caller’s own live session and records depth 1', async () => {
 		const mine = await liveSessionOf(caller.id)

@@ -556,8 +556,7 @@ function AgentRowItem({
 			</Link>
 			{/* Row-level Call. A sibling of the row link, not a child: a button
 			    inside an anchor is invalid nesting and would navigate on click. The
-			    button itself is hover-revealed on md+ and always inline below that.
-			    Renders nothing when the voice-mode-v1 flag is off. */}
+			    button itself is hover-revealed on md+ and always inline below that. */}
 			<AgentCallButton agent={agent} variant="row" shortcut={false} />
 		</li>
 	)

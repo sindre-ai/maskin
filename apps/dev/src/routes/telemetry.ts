@@ -212,6 +212,9 @@ app.openapi(recordRoute, (async (c) => {
 			// Always emitted (never omitted) so a dashboard can filter on it
 			// without having to treat "absent" as a third state.
 			shape_error: body.shape_error ?? false,
+			// Named here because this object is built key by key: a property not
+			// listed is dropped silently. null when the tool sets no view.
+			view: body.view ?? null,
 			// Derived here rather than in a dashboard query so the "is each row
 			// too fat?" question is answerable by grouping alone. Guarded against
 			// a zero row count, which is a real and frequent response.
