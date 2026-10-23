@@ -12,7 +12,11 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -261,8 +265,8 @@ app.openapi(listFilesRoute, (async (c) => {
 	const cursorOn = Boolean(query.snapshot_at)
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(files.createdAt), asc(files.id)]
-			: [desc(files.createdAt), asc(files.id)]
+			? [asc(msCreatedAt(files.createdAt)), asc(files.id)]
+			: [desc(msCreatedAt(files.createdAt)), asc(files.id)]
 		: [desc(files.createdAt)]
 
 	const skipOffset = useKeysetSeek(query)

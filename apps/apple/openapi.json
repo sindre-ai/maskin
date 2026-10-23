@@ -59769,6 +59769,32 @@
 													"process",
 													"unknown"
 												]
+											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
 											}
 										},
 										"required": [
@@ -59917,6 +59943,32 @@
 											"shape_error": {
 												"type": "boolean"
 											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
+											},
 											"view": {
 												"type": [
 													"string",
@@ -59977,6 +60029,32 @@
 													"type": "string"
 												},
 												"default": {}
+											},
+											"mcp_era": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"legacy",
+													"modern"
+												]
+											},
+											"mcp_protocol_version": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"2025-11-25",
+													"2025-06-18",
+													"2025-03-26",
+													"2024-11-05",
+													"2024-10-07",
+													"2026-07-28",
+													"other",
+													"none"
+												]
 											}
 										},
 										"required": [
