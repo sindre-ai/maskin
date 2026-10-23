@@ -6,6 +6,7 @@ import {
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
 	findChange,
+	getChangesFromEventData,
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
 	loopTargetSchema,
@@ -354,6 +355,53 @@ app.openapi(listLoopsRoute, (async (c) => {
 		return closedAt
 	}
 
+	// A closed member keeps its in_loop edge, so its close time comes from the
+	// first status-change event that moved it into the loop's closed set, not
+	// from updated_at (any later edit moves that). One batched query for every
+	// closed member across all loops in the request, never one per member; no
+	// closed members, no query.
+	const closedObjectIds = Array.from(
+		new Set(
+			childRows
+				.filter((row) => isClosedByStatus(row.loop_id, row.type, row.status))
+				.map((row) => row.id),
+		),
+	)
+	const statusEventsByObject = new Map<string, Array<{ status: unknown; at: Date }>>()
+	if (closedObjectIds.length > 0) {
+		const statusEventRows = await db
+			.select({ entityId: events.entityId, data: events.data, createdAt: events.createdAt })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.action, 'status_changed'),
+					inArray(events.entityId, closedObjectIds),
+				),
+			)
+			.orderBy(events.id)
+		for (const ev of statusEventRows) {
+			if (!ev.createdAt) continue
+			const status = findChange(getChangesFromEventData(ev.data, ['status']), 'status')?.new
+			if (status === undefined) continue
+			const list = statusEventsByObject.get(ev.entityId) ?? []
+			list.push({ status, at: ev.createdAt })
+			statusEventsByObject.set(ev.entityId, list)
+		}
+	}
+
+	// Close time for a member closed by status: the first event that moved it
+	// into the closed set, falling back to updated_at when it has none (closed
+	// before events carried a diff, or the status was set directly).
+	const statusClosedAtMs = (row: (typeof childRows)[number]): number => {
+		const override = closedStatusOverridesByLoop.get(row.loop_id)?.[row.type]
+		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[row.type] ?? []
+		const moved = statusEventsByObject
+			.get(row.id)
+			?.find((ev) => typeof ev.status === 'string' && terminal.includes(ev.status))
+		return (moved?.at ?? new Date(row.updated_at)).getTime()
+	}
+
 	const childStatsByLoop = new Map<
 		string,
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
@@ -371,7 +419,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				stats.closedCount += 1
 				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
 				const closedAtMs = closedByStatus
-					? new Date(row.updated_at).getTime()
+					? statusClosedAtMs(row)
 					: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
 				durations.push(closedAtMs - new Date(row.created_at).getTime())
 				closeDurationsByLoop.set(row.loop_id, durations)
