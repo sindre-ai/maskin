@@ -35,7 +35,6 @@ import { api } from '@/lib/api'
 
 const BODY = [
 	"Hey Sam, I'm Scout.",
-	"I'll reply here. Only things that need your decision go to For You.",
 	'Start with one of these, or tell me what you need.',
 	'1. Read my inbox\n2. Draft a reply',
 	"For this job I use Gmail. Add any that aren't connected yet under Settings, Integrations.",

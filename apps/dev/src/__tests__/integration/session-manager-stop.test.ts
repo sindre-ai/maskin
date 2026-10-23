@@ -975,6 +975,93 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect(error).not.toMatch(/Container disappeared/)
 	})
 
+	// (d6) The remote dispatch path: startSession hands the row to the dispatch
+	// queue (status 'starting', session_state 'waiting_for_machine') and returns
+	// while every agent-server slot is busy. The driver must not stamp 'running'
+	// on that return, or idle-pause fails the containerless row after 10 min.
+	it('a row handed to the dispatch queue keeps session_state=waiting_for_machine and survives the reaper', async () => {
+		const elevenMinAgo = new Date(Date.now() - 11 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'pending',
+			sessionState: 'queued',
+			stateEnteredAt: elevenMinAgo,
+			startedAt: null,
+			timeoutAt: null,
+			containerId: null,
+			interactive: false,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		// What the real startSession does when it enqueues for remote dispatch.
+		vi.spyOn(manager, 'startSession').mockImplementation(async (id) => {
+			await db
+				.update(sessions)
+				.set({ status: 'starting', sessionState: 'waiting_for_machine' })
+				.where(eq(sessions.id, id))
+		})
+
+		try {
+			await _driveToRunning(session.id)
+			await insertSessionLog(db, session.id, {
+				stream: 'system',
+				content: 'Session queued — waiting for capacity',
+				createdAt: elevenMinAgo,
+			})
+
+			const [afterDrive] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(afterDrive?.status).toBe('starting')
+			expect(afterDrive?.sessionState).toBe('waiting_for_machine')
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('starting')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (d7) Rows already stamped session_state='running' by the old driver write
+	// (status still queued or starting, no container) are left alone by idle-pause
+	// however old their last log line is.
+	it.each(['queued', 'starting'] as const)(
+		'a containerless row with status %s is not failed by idle-pause even with a stale log',
+		async (status) => {
+			const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status,
+				sessionState: 'running',
+				stateEnteredAt: twentyMinAgo,
+				startedAt: null,
+				timeoutAt: null,
+				containerId: null,
+				interactive: false,
+			})
+			await insertSessionLog(db, session.id, {
+				stream: 'system',
+				content: 'Session queued — waiting for capacity',
+				createdAt: twentyMinAgo,
+			})
+
+			const manager = await tickReaper()
+			await manager.stop()
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe(status)
+			expect(row?.completedAt).toBeNull()
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+		},
+	)
+
 	// (d2) A failed row still stamped session_state='queued' with a stale
 	// heartbeat must not be re-fired by the queued rescue. The finished-rows
 	// heal moves it to 'done' first, and the rescue query filters on status.

@@ -7,6 +7,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Hono } from 'hono'
 import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import {
+	LEGACY_HANDSHAKE_METHOD,
+	MODERN_HANDSHAKE_METHOD,
+	type McpEraClassification,
+	classifyMcpEra,
+	eraMethodOf,
+} from '../lib/analytics/mcp-era'
+import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
 	classifyMcpError,
@@ -16,6 +23,7 @@ import {
 import {
 	type McpSessionSource,
 	argKeys,
+	captureMcpHandshake,
 	captureMcpToolCall,
 	normalizeActorType,
 } from '../lib/analytics/mcp-tool-calls'
@@ -81,6 +89,22 @@ app.post('/', async (c) => {
 	// at all, so we see nothing here and the create_comment default reverts to
 	// "post as a new top-level comment", matching pre-existing behaviour.
 	const triggeringEventId = resolveTriggeringEventId(c.req.header.bind(c.req))
+
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
+	}
+	// Era is decided once per POST, here, so the MCP server config, the trace and
+	// the misfire path all report the same answer. A fault leaves it undefined
+	// (the property is then absent from the events) and never fails the request.
+	let era: McpEraClassification | undefined
+	try {
+		era = classifyMcpEra(c.req.raw.headers, eraMethodOf(body))
+	} catch (err) {
+		logger.warn('mcp era classification failed', { error: String(err) })
+	}
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
@@ -96,6 +120,8 @@ app.post('/', async (c) => {
 				? session.source
 				: ('process' as const),
 		triggeringEventId,
+		telemetryEra: era?.era,
+		telemetryProtocolVersion: era?.version,
 		// Forward the caller's session id so create_session can link
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
@@ -110,12 +136,6 @@ app.post('/', async (c) => {
 	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
 	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
 
-	let body: unknown
-	try {
-		body = await c.req.json()
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
-	}
 	// Via `listRequests` so a junk element (`[null]` is valid JSON and reaches
 	// us straight off `c.req.json()`) cannot throw here. This is a debug LOG
 	// line on the request path: an unguarded `b.method` 500s a request the
@@ -189,6 +209,7 @@ app.post('/', async (c) => {
 			session,
 			elapsedMs,
 			plannedCalls,
+			era,
 		}).catch((err) => logger.warn('mcp trace emission failed', { error: String(err) }))
 	}
 
@@ -494,6 +515,8 @@ interface EmitMcpTraceArgs {
 	 */
 	elapsedMs: number
 	plannedCalls: PlannedTracedCall[]
+	/** Undefined when the classifier faulted; the events then omit the era fields. */
+	era: McpEraClassification | undefined
 }
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
@@ -501,7 +524,13 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	let actor: ResolvedActor | null = null
 	try {
 		responses = parseJsonRpcResponses(args.responseBytes)
-		if (args.plannedCalls.length === 0 && responses.length === 0) return
+		if (
+			args.plannedCalls.length === 0 &&
+			responses.length === 0 &&
+			handshakeRequests(args.requestBody).length === 0
+		) {
+			return
+		}
 		actor = args.apiKey && args.db ? await resolveAgentActor(args.db, args.apiKey) : null
 	} catch (err) {
 		logger.warn('mcp trace response parse failed', { error: String(err) })
@@ -569,11 +598,33 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					authMethod: actor ? 'api_key' : null,
 					client,
 					actorType: actor?.actorType ?? null,
+					mcpEra: args.era?.era,
+					mcpProtocolVersion: args.era?.version,
 				})
 			}),
 		)
 	} catch (err) {
 		logger.warn('mcp trace capture failed', { error: String(err) })
+	}
+
+	// ── Handshake: one event per initialize / server/discover, own try block ──
+	// Kept apart from the misfire phase below, which returns early when no
+	// response carries an error — a successful handshake would never reach it.
+	try {
+		for (const request of handshakeRequests(args.requestBody)) {
+			await captureMcpHandshake(args.workspaceId, {
+				handshakeMethod: request.method === 'initialize' ? 'initialize' : 'server_discover',
+				outcome: handshakeOutcome(request, responses, responsesById),
+				mcpEra: args.era?.era,
+				mcpProtocolVersion: args.era?.version,
+				client,
+				transport: 'http',
+				authMethod: actor ? 'api_key' : null,
+				agentActorId,
+			})
+		}
+	} catch (err) {
+		logger.warn('mcp handshake capture failed', { error: String(err) })
 	}
 
 	// ── Misfires: unchanged behaviour, one row + event per classified error ──
@@ -596,8 +647,11 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
+				errorMessage: error.message ?? '',
 				sessionId: misfireSessionId,
 				agentActorId,
+				mcpEra: args.era?.era,
+				mcpProtocolVersion: args.era?.version,
 			}
 			await recordMcpMisfire(args.db, args.workspaceId, misfire)
 		}
@@ -621,6 +675,34 @@ function listRequests(body: unknown): JsonRpcMessage[] {
 	if (Array.isArray(body)) return body.filter(isJsonRpcMessage)
 	if (isJsonRpcMessage(body)) return [body]
 	return []
+}
+
+// The requests that open a connection: legacy `initialize` and modern
+// `server/discover`. One `mcp_handshake` event is emitted per element.
+function handshakeRequests(body: unknown): JsonRpcMessage[] {
+	return listRequests(body).filter(
+		(r) => r.method === LEGACY_HANDSHAKE_METHOD || r.method === MODERN_HANDSHAKE_METHOD,
+	)
+}
+
+// How the server answered a handshake. A version the transport refuses comes
+// back as an id-less 400 body ("Unsupported protocol version"), and a modern
+// `server/discover` reaching the legacy server is "method not found" (-32601);
+// both are a bounced client, not a fault, so they get their own outcome.
+function handshakeOutcome(
+	request: JsonRpcMessage,
+	responses: JsonRpcMessage[],
+	responsesById: Map<string, JsonRpcMessage>,
+): 'ok' | 'rejected_version' | 'error' {
+	const refusedVersion = responses.some((r) =>
+		/unsupported protocol version/i.test(extractError(r)?.message ?? ''),
+	)
+	if (refusedVersion) return 'rejected_version'
+	const response = request.id != null ? responsesById.get(String(request.id)) : undefined
+	if (!response) return 'error'
+	const error = extractError(response)
+	if (!error) return 'ok'
+	return error.code === -32601 ? 'rejected_version' : 'error'
 }
 
 // Normalize both shapes the MCP SDK uses for error responses into a

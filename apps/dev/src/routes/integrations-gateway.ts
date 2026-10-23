@@ -19,7 +19,7 @@ import {
 } from '../lib/integrations/mcp-gateway'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
-import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
+import { type ToolAnnotationsLike, isCommandGated } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
@@ -213,12 +213,18 @@ export async function proxyMcp(
 
 	const rpc = message?.ok ? message.message : undefined
 	const toolName = rpc ? toolsCallName(rpc) : null
+	// A repeated key is read one way here (the last wins) and could be read the other way
+	// upstream. PostHog exec is judged by its command, so what goes upstream is the
+	// re-serialized message that was judged. Everything else is forwarded byte for byte.
+	const forwardBody =
+		rpc && toolName && isCommandGated(provider, toolName) ? JSON.stringify(rpc) : bodyText
 
 	if (toolName) {
 		const decision = decideToolCall({
 			provider,
 			providerLabel: label,
 			toolName,
+			args: rpc?.params?.arguments,
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
 		})
@@ -230,7 +236,14 @@ export async function proxyMcp(
 					action: 'agent_access_denied',
 					entityType: 'integration',
 					entityId: integration.id,
-					data: { provider, tool: toolName, kind: decision.kind, access },
+					data: {
+						provider,
+						tool: toolName,
+						kind: decision.kind,
+						access,
+						// The inner tool only, never the json input: it can hold personal data.
+						...(decision.innerTool ? { command_tool: decision.innerTool } : {}),
+					},
 				})
 			} catch (err) {
 				logger.warn('Could not record a denied gateway tool call', {
@@ -272,7 +285,7 @@ export async function proxyMcp(
 		upstream = await fetch(server.url, {
 			method,
 			headers,
-			body: bodyText,
+			body: forwardBody,
 			redirect: 'manual',
 			// A long-lived GET stream ends with the agent; a POST is bounded.
 			signal: method === 'GET' ? c.req.raw.signal : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),

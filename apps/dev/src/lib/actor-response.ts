@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi'
 import type { actors } from '@maskin/db/schema'
+import { maskLlmConfigSecrets } from './actor-llm-config-redaction'
 import { actorWithKeySchema } from './openapi-schemas'
 import { serialize } from './serialize'
 
@@ -33,7 +34,7 @@ export function toActorWithKeyResponse(
 		...serialize(rest),
 		system_prompt: systemPrompt,
 		llm_provider: llmProvider,
-		llm_config: llmConfig,
+		llm_config: maskLlmConfigSecrets(llmConfig),
 		api_key: apiKey,
 		...extra,
 	}) as z.infer<typeof actorWithKeySchema>

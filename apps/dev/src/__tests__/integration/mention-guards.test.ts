@@ -7,7 +7,13 @@ import { MENTION_GUARD_LIMITS, normalizeMentionText } from '../../services/menti
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { CommentDispatcher } from '../../services/trigger-runner'
-import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
+import {
+	ensureWorkspaceMember,
+	insertActor,
+	insertObject,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // Loop guards on agent-authored @mentions, against real Postgres: the cap counts
@@ -121,6 +127,7 @@ describe('Agent-mention loop guards (integration)', () => {
 				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
 			})
 		const [a, b, c] = await Promise.all([mk('Alpha'), mk('Bravo'), mk('Charlie')])
+		for (const agent of [a, b, c]) await ensureWorkspaceMember(db, ws.id, agent.id)
 		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'ring' })
 		return { human, ws, a, b, c, object }
 	}
@@ -344,6 +351,9 @@ describe('Reused helper_return marker (integration)', () => {
 			mk('Sender'),
 			mk('Stranger'),
 		])
+		for (const agent of [helper, sender, stranger]) {
+			await ensureWorkspaceMember(db, ws.id, agent.id)
+		}
 		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'return' })
 		const elsewhere = await insertObject(db, ws.id, human, { type: 'task', title: 'elsewhere' })
 		const senderSession = await insertSession(db, ws.id, sender.id, sender.id, {
@@ -460,6 +470,7 @@ describe('Mention spawn link (integration)', () => {
 				apiKey: `ank_${name}_${Math.random().toString(36).slice(2)}`,
 			})
 		const [author, helper, other] = await Promise.all([mk('Author'), mk('Helper'), mk('Other')])
+		for (const agent of [author, helper, other]) await ensureWorkspaceMember(db, ws.id, agent.id)
 		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'link' })
 		return { ws, author, helper, other, object }
 	}

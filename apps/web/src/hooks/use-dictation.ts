@@ -1,129 +1,140 @@
+import { api } from '@/lib/api'
+import { blobToBase64, blobToWav16k } from '@/lib/wav'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
-// Minimal shape of the Web Speech API surface we use. It is not in lib.dom.d.ts
-// (the spec is still a draft and Chrome ships it prefixed), so the fields the
-// hook touches are declared here rather than pulling in a dependency.
-interface SpeechRecognitionAlternativeLike {
-	transcript: string
-}
-interface SpeechRecognitionResultLike {
-	readonly isFinal: boolean
-	readonly length: number
-	[index: number]: SpeechRecognitionAlternativeLike
-}
-interface SpeechRecognitionEventLike {
-	resultIndex: number
-	results: {
-		readonly length: number
-		[index: number]: SpeechRecognitionResultLike
-	}
-}
-interface SpeechRecognitionLike {
-	continuous: boolean
-	interimResults: boolean
-	lang: string
-	start(): void
-	stop(): void
-	abort(): void
-	onresult: ((event: SpeechRecognitionEventLike) => void) | null
-	onerror: (() => void) | null
-	onend: (() => void) | null
-}
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike
-
-function getRecognitionCtor(): SpeechRecognitionCtor | null {
-	if (typeof window === 'undefined') return null
-	const w = window as unknown as {
-		SpeechRecognition?: SpeechRecognitionCtor
-		webkitSpeechRecognition?: SpeechRecognitionCtor
-	}
-	return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
-}
+/** Matches the server's audio size cap (3 min of 16 kHz mono 16-bit WAV). */
+const MAX_RECORDING_MS = 3 * 60 * 1000
 
 export interface Dictation {
-	/** False when the browser has no SpeechRecognition — render no control at all. */
+	/** False when the browser cannot record audio — render no control at all. */
 	supported: boolean
 	recording: boolean
+	/** The recording has stopped and its transcript is on the way. */
+	transcribing: boolean
 	toggle: () => void
 }
 
 /**
- * Wraps the browser's SpeechRecognition in a start/stop toggle, calling
- * `onPhrase` once per finalised phrase. Interim results are dropped so the
- * caller only ever appends settled text.
+ * Records the microphone and transcribes the whole recording on stop through
+ * the server (`POST /transcriptions`, a Voxtral model on OpenRouter), calling
+ * `onPhrase` once with the transcript. Tap to start, tap to stop.
  *
  * `supported` is resolved once on mount rather than at module scope: reading
- * `window` during import breaks SSR and the jsdom test environment, where the
- * API is absent and the mic must render as nothing rather than a dead control.
+ * `navigator` during import breaks SSR and the jsdom test environment, where
+ * the API is absent and the mic must render as nothing rather than a dead
+ * control.
  */
-export function useDictation(onPhrase: (text: string) => void): Dictation {
+export function useDictation(onPhrase: (text: string) => void, workspaceId: string): Dictation {
 	const [supported, setSupported] = useState(false)
 	const [recording, setRecording] = useState(false)
-	const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+	const [transcribing, setTranscribing] = useState(false)
+	const recorderRef = useRef<MediaRecorder | null>(null)
+	const streamRef = useRef<MediaStream | null>(null)
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	// Set on unmount so an in-flight transcript is not delivered to a composer
+	// that has gone away.
+	const cancelledRef = useRef(false)
 
-	// Keep the latest callback without re-creating the recognition instance,
-	// which would drop an in-flight session on every parent render.
+	// Keep the latest callback without re-creating the recorder, which would
+	// drop an in-flight recording on every parent render.
 	const onPhraseRef = useRef(onPhrase)
 	useEffect(() => {
 		onPhraseRef.current = onPhrase
 	}, [onPhrase])
 
 	useEffect(() => {
-		setSupported(getRecognitionCtor() !== null)
+		setSupported(
+			typeof navigator !== 'undefined' &&
+				typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+				typeof MediaRecorder !== 'undefined',
+		)
 	}, [])
 
-	// Stop any live session when the composer unmounts, otherwise the mic stays
-	// hot after navigating away.
-	useEffect(() => {
-		return () => {
-			recognitionRef.current?.abort()
-			recognitionRef.current = null
-		}
+	const releaseMic = useCallback(() => {
+		if (timeoutRef.current) clearTimeout(timeoutRef.current)
+		timeoutRef.current = null
+		for (const track of streamRef.current?.getTracks() ?? []) track.stop()
+		streamRef.current = null
 	}, [])
+
+	// Stop any live recording when the composer unmounts, otherwise the mic
+	// stays hot after navigating away.
+	useEffect(() => {
+		cancelledRef.current = false
+		return () => {
+			cancelledRef.current = true
+			const recorder = recorderRef.current
+			recorderRef.current = null
+			if (recorder && recorder.state !== 'inactive') recorder.stop()
+			releaseMic()
+		}
+	}, [releaseMic])
+
+	const transcribe = useCallback(
+		async (blob: Blob) => {
+			setTranscribing(true)
+			try {
+				const wav = await blobToWav16k(blob)
+				const { text } = await api.transcriptions.create(workspaceId, {
+					audio: await blobToBase64(wav),
+				})
+				if (cancelledRef.current) return
+				const transcript = text.trim()
+				if (transcript) onPhraseRef.current(transcript)
+				else toast.info('No speech detected')
+			} catch (err) {
+				if (cancelledRef.current) return
+				toast.error(err instanceof Error ? err.message : 'Transcription failed')
+			} finally {
+				if (!cancelledRef.current) setTranscribing(false)
+			}
+		},
+		[workspaceId],
+	)
 
 	const toggle = useCallback(() => {
-		if (recognitionRef.current) {
-			recognitionRef.current.stop()
+		if (transcribing) return
+		const active = recorderRef.current
+		if (active) {
+			if (active.state !== 'inactive') active.stop()
 			return
 		}
 
-		const Ctor = getRecognitionCtor()
-		if (!Ctor) return
-
-		const recognition = new Ctor()
-		recognition.continuous = true
-		recognition.interimResults = false
-		recognition.lang = navigator.language || 'en-US'
-
-		recognition.onresult = (event) => {
-			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const result = event.results[i]
-				if (!result?.isFinal) continue
-				const transcript = result[0]?.transcript?.trim()
-				if (transcript) onPhraseRef.current(transcript)
+		void (async () => {
+			let stream: MediaStream
+			try {
+				stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+			} catch {
+				toast.error('Microphone access was blocked')
+				return
 			}
-		}
-		// A recognition error (no mic permission, no network for the remote
-		// recogniser) ends the session. `onend` fires either way and is where the
-		// UI state is reset, so both handlers converge there.
-		recognition.onerror = () => {
-			recognition.stop()
-		}
-		recognition.onend = () => {
-			recognitionRef.current = null
-			setRecording(false)
-		}
+			if (cancelledRef.current) {
+				for (const track of stream.getTracks()) track.stop()
+				return
+			}
 
-		try {
-			recognition.start()
-		} catch {
-			// start() throws if a session is already running for this page. Nothing
-			// to recover — leave the control idle rather than showing a live mic.
-			return
-		}
-		recognitionRef.current = recognition
-		setRecording(true)
-	}, [])
+			const recorder = new MediaRecorder(stream)
+			const chunks: Blob[] = []
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) chunks.push(event.data)
+			}
+			recorder.onstop = () => {
+				recorderRef.current = null
+				releaseMic()
+				setRecording(false)
+				if (chunks.length > 0) void transcribe(new Blob(chunks, { type: recorder.mimeType }))
+			}
 
-	return { supported, recording, toggle }
+			streamRef.current = stream
+			recorderRef.current = recorder
+			recorder.start()
+			timeoutRef.current = setTimeout(() => {
+				if (recorder.state !== 'inactive') recorder.stop()
+			}, MAX_RECORDING_MS)
+			setRecording(true)
+		})()
+	}, [transcribing, releaseMic, transcribe])
+
+	return { supported, recording, transcribing, toggle }
 }

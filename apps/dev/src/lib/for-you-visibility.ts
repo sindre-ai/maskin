@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND, parseForYouMetadata } from '@maskin/shared'
-import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, lte, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
 /**
@@ -9,7 +9,7 @@ import { TERMINAL_STATUSES } from '../services/session-lifecycle'
  * Workspace statuses are configurable, so this is the union of the closed
  * states the built-in object types use.
  */
-const CLOSED_OBJECT_STATUSES = [
+export const CLOSED_OBJECT_STATUSES = [
 	'done',
 	'completed',
 	'succeeded',
@@ -20,6 +20,10 @@ const CLOSED_OBJECT_STATUSES = [
 	'archived',
 	'shipped',
 	'dismissed',
+	// The workspace task status for work that was dropped. An agent that discards the task a
+	// card was about must not leave the card behind.
+	'discarded',
+	'rejected',
 ]
 
 export type ForYouCard = {
@@ -32,6 +36,8 @@ export type VisibleForYou = {
 	cards: ForYouCard[]
 	objectById: Map<string, typeof objects.$inferSelect>
 	sourceById: Map<number, typeof events.$inferSelect>
+	/** Newest event on each object a source-less card names; what reading it moves the position to. */
+	newestEventByEntity: Map<string, number>
 }
 
 /**
@@ -63,7 +69,12 @@ export async function loadVisibleForYou(
 		return meta ? [{ row, meta }] : []
 	})
 	if (candidates.length === 0) {
-		return { cards: [], objectById: new Map(), sourceById: new Map() }
+		return {
+			cards: [],
+			objectById: new Map(),
+			sourceById: new Map(),
+			newestEventByEntity: new Map(),
+		}
 	}
 
 	const objectIds = [
@@ -131,6 +142,46 @@ export async function loadVisibleForYou(
 				)
 		: []
 
+	// A curated item with no source comment cannot be retired by answering a comment. It
+	// counts as handled once the person has read its object past everything that existed
+	// when the Chief of Staff listed it; later activity does not bring it back.
+	const noSource = candidates.filter(
+		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
+	)
+	const baselineByNotification = new Map<string, number>()
+	await Promise.all(
+		noSource.map(async ({ row }) => {
+			const [found] = await db
+				.select({ id: max(events.id) })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityId, row.objectId as string),
+						row.createdAt ? lte(events.createdAt, row.createdAt) : undefined,
+					),
+				)
+			baselineByNotification.set(row.id, Number(found?.id ?? 0))
+		}),
+	)
+	const newestEventByEntity = new Map<string, number>()
+	if (noSource.length > 0) {
+		const newest = await db
+			.select({ entityId: events.entityId, id: max(events.id) })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					inArray(
+						events.entityId,
+						noSource.map(({ row }) => row.objectId as string),
+					),
+				),
+			)
+			.groupBy(events.entityId)
+		for (const r of newest) newestEventByEntity.set(r.entityId, Number(r.id ?? 0))
+	}
+
 	const cards = candidates
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
@@ -151,6 +202,10 @@ export async function loadVisibleForYou(
 					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
 					if (lastRead >= sourceId) return false
 					if (replyRows.some((r) => r.entityId === row.objectId && r.id > sourceId)) return false
+				} else {
+					const baseline = baselineByNotification.get(row.id) ?? 0
+					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
+					if (baseline > 0 && lastRead >= baseline) return false
 				}
 			}
 			return true
@@ -161,5 +216,5 @@ export async function loadVisibleForYou(
 				(b.row.createdAt?.getTime() ?? 0) - (a.row.createdAt?.getTime() ?? 0),
 		)
 
-	return { cards, objectById, sourceById }
+	return { cards, objectById, sourceById, newestEventByEntity }
 }

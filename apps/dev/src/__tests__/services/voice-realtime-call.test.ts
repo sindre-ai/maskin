@@ -75,6 +75,7 @@ async function attach(
 		session,
 		agentName: 'Chief of Staff',
 		invokeTool,
+		readOnlyTools: new Set(['search_objects']),
 		callId: 'rtc_abc',
 		apiKey: 'sk-test',
 		callsUrl: 'https://api.openai.com/v1/realtime/calls',
@@ -162,6 +163,37 @@ describe('attachVoiceCall', () => {
 			},
 		})
 		expect(socket.sent[1]).toEqual({ type: 'response.create' })
+	})
+
+	it('holds a write until the person says yes over the socket, then runs it once', async () => {
+		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'done' }] })
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+		const call = (id: string, extra: Record<string, unknown> = {}) =>
+			socket.emit({
+				type: 'response.function_call_arguments.done',
+				call_id: id,
+				name: 'create_comment',
+				arguments: JSON.stringify({ entity_id: 'e1', content: 'hi', ...extra }),
+			})
+
+		call('call_1')
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(1))
+		expect(invokeTool).not.toHaveBeenCalled()
+		const held = (socket.sent[0] as { item: { output: string } }).item.output
+		const id = /confirmation_id \\"([^\\"]+)\\"/.exec(held)?.[1]
+		expect(id).toBeTruthy()
+
+		socket.emit({ type: 'input_audio_buffer.speech_started', item_id: 'item_yes' })
+		socket.emit({
+			type: 'conversation.item.input_audio_transcription.completed',
+			item_id: 'item_yes',
+			transcript: 'Yes, go ahead',
+		})
+		call('call_2', { confirmation_id: id })
+		await vi.waitFor(() => expect(invokeTool).toHaveBeenCalledTimes(1))
 	})
 
 	it('asks the model to speak only after the last of several parallel calls is answered', async () => {
