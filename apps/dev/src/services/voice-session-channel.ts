@@ -10,6 +10,7 @@ import {
 	isTranscriptPersistenceEnabled,
 	writeVoiceTranscriptLine,
 } from './voice-transcript'
+import { VOICE_CONFIRM_ARG, type WriteReview, createWriteGate } from './voice-write-gate'
 
 /**
  * Per-call logic for the server's socket to a Realtime call (see
@@ -22,14 +23,17 @@ import {
  *   browser → server
  *     tool_call       { call_id, name, arguments }   forwarded from the Realtime
  *                                                    response.function_call_arguments.done
- *     transcript      { role, text }                 one finished user / assistant turn
+ *     transcript      { role, text, item_id? }       one finished user / assistant turn
+ *     user_speech_started { item_id? }               the person began speaking
  *     turn_completed  { turn_index, user_audio_ms, agent_audio_ms, barge_in }
  *     vendor_error    { code, message }              an error event relayed from the Realtime
  *                                                    DataChannel; ends the call as errored
  *
  *   server → browser
  *     ready           { persist_transcripts, conversation_id }
- *     tool_result     { call_id, name, ok, error_code, event }   event is the
+ *     tool_result     { call_id, name, ok, error_code, event }   a write is not run
+ *                     here until the person has said yes (voice-write-gate.ts);
+ *                     the result then tells the model to ask. event is the
  *                     Realtime conversation.item.create (function_call_output) the
  *                     browser relays verbatim over its DataChannel, followed by a
  *                     response.create so the model speaks the result
@@ -55,6 +59,11 @@ const clientMessageSchema = z.discriminatedUnion('type', [
 		type: z.literal('transcript'),
 		role: z.enum(['user', 'assistant']),
 		text: z.string().max(50_000),
+		item_id: z.string().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal('user_speech_started'),
+		item_id: z.string().max(200).optional(),
 	}),
 	z.object({
 		type: z.literal('vendor_error'),
@@ -89,6 +98,8 @@ export interface VoiceChannelDeps {
 	session: VoiceSessionRow
 	agentName: string
 	invokeTool: InvokeTool
+	/** True for a tool that only reads. Every other tool is held until the person says yes. */
+	isReadOnlyTool: (name: string) => boolean
 	send: (message: VoiceServerMessage) => void
 	now?: () => number
 }
@@ -124,9 +135,25 @@ function cap(text: string): string {
 		: text
 }
 
+function heldMessage(tool: string, review: Exclude<WriteReview, { kind: 'run' }>): string {
+	if (review.kind === 'refuse') {
+		return review.reason === 'declined'
+			? `The person said no, so ${tool} was not run. Do not call it again unless they ask for it.`
+			: `${tool} was not run: no yes from the person was heard after you asked. Ask them again, wait for their answer, then repeat the same call.`
+	}
+	const target = review.risky
+		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
+		: ''
+	return `Not done yet. ${tool} changes things, so the person has to say yes first. Tell them in one plain sentence what you are about to do, ask for a yes, and wait for their answer.${target} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.`
+}
+
 export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const { db, session, agentName, invokeTool, send } = deps
 	const now = deps.now ?? Date.now
+	const writeGate = createWriteGate({
+		voiceSessionId: session.id,
+		isReadOnlyTool: deps.isReadOnlyTool,
+	})
 	let knownConversationId = session.conversationId
 	// Transcript lines are written one at a time, in arrival order: lines must
 	// land in message-id order, and the first one lazily creates the
@@ -151,20 +178,35 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
-			// Same call a chat agent makes. The voice model is told the workspace id
-			// in its instructions; this only fills it in when it leaves it out.
-			const args = { workspace_id: session.workspaceId, ...(rawArgs as object) }
-			const result = await invokeTool(msg.name, args, {
-				actorId: session.agentActorId,
-				workspaceId: session.workspaceId,
-			})
-			const { text, isError } = toolResultText(result)
-			if (isError) {
-				errorCode = 'voice_tool_failed'
-				output = JSON.stringify({ error: cap(text), error_code: errorCode })
+			// Same call a chat agent makes. The call's workspace is applied last, so a
+			// workspace_id the model passes can never point a tool at another workspace.
+			const { [VOICE_CONFIRM_ARG]: confirmation, ...toolArgs } = rawArgs as Record<string, unknown>
+			const args = { ...toolArgs, workspace_id: session.workspaceId }
+			const review = await writeGate.review(
+				msg.name,
+				args,
+				typeof confirmation === 'string' ? confirmation : null,
+			)
+			if (review.kind !== 'run') {
+				errorCode =
+					review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+				output = JSON.stringify({
+					error: heldMessage(msg.name, review),
+					error_code: errorCode,
+				})
 			} else {
-				ok = true
-				output = cap(text)
+				const result = await invokeTool(msg.name, args, {
+					actorId: session.agentActorId,
+					workspaceId: session.workspaceId,
+				})
+				const { text, isError } = toolResultText(result)
+				if (isError) {
+					errorCode = 'voice_tool_failed'
+					output = JSON.stringify({ error: cap(text), error_code: errorCode })
+				} else {
+					ok = true
+					output = cap(text)
+				}
 			}
 		} catch (err) {
 			errorCode = 'voice_tool_failed'
@@ -266,7 +308,11 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					await handleToolCall(msg)
 					return
 				case 'transcript':
+					if (msg.role === 'user') writeGate.noteUserLine(msg.text, msg.item_id)
 					enqueueTranscript(msg.role, msg.text)
+					return
+				case 'user_speech_started':
+					writeGate.noteSpeechStarted(msg.item_id)
 					return
 				case 'vendor_error': {
 					// The browser relays the Realtime `error` event; the vendor has

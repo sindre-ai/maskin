@@ -254,6 +254,7 @@ describe('hangup route against real Postgres', () => {
 			setVoiceInvokeToolFactory(async () => ({
 				tools: [],
 				invokeTool: async () => ({ content: [] }),
+				readOnlyTools: new Set<string>(),
 				unreachableServers: [],
 				close: async () => {},
 			}))

@@ -36,6 +36,7 @@ import {
 	setCloseVendorSessionFn,
 } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
+import { withConfirmationArg } from '../services/voice-write-gate'
 
 type Env = {
 	Variables: {
@@ -343,7 +344,7 @@ const postOfferRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
-		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.',
+		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.',
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: offerBody } }, required: true },
@@ -459,6 +460,8 @@ app.openapi(postOfferRoute, async (c) => {
 	const instructions = [
 		agent.systemPrompt ?? '',
 		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
+		// The server holds every write until the person says yes; this only makes the agent ask naturally.
+		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
 	]
 		.join('')
@@ -479,7 +482,7 @@ app.openapi(postOfferRoute, async (c) => {
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: toolkit.tools,
+			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
@@ -556,6 +559,7 @@ app.openapi(postOfferRoute, async (c) => {
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
+			readOnlyTools: toolkit.readOnlyTools,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
