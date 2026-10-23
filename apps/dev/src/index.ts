@@ -17,6 +17,7 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
@@ -35,6 +36,7 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
+import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -73,6 +75,8 @@ const db = createDb(databaseUrl)
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -326,6 +330,12 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
 // Voice v1: ends calls whose timeout_at has passed (tab closed with no
 // hangup). A no-op until a voice_sessions row exists.
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
