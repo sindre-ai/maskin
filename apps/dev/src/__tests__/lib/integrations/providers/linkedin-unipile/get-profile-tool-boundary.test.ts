@@ -18,7 +18,7 @@ vi.mock('../../../../../lib/crypto', () => ({
 // the fake one below does not have. This test pins the request path and the result shape, so the
 // call goes straight through; the log and the cap are tested against Postgres elsewhere.
 vi.mock('../../../../../lib/integrations/providers/linkedin-unipile/action-log', async (orig) => ({
-	...(await orig<typeof import('../../../../../lib/integrations/providers/linkedin-unipile/action-log')>()),
+	...(await orig<Record<string, unknown>>()),
 	withActionLog: async (
 		_ctx: unknown,
 		_spec: unknown,
