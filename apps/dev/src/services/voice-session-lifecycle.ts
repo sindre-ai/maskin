@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, voiceSessions } from '@maskin/db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { trackVoiceSessionEnded } from '../lib/analytics/voice-events'
 import type { VoiceEndedReason } from '../lib/analytics/voice-events'
 import { computeVoiceCostUsd } from '../lib/llm-routing'
