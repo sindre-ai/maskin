@@ -69,6 +69,14 @@ interface Session {
 	pollTimer: ReturnType<typeof setInterval> | null
 }
 
+/** Reads the microphone level into the session and the segmenter; the segmenter's verdict, if any. */
+function sampleLevel(session: Session) {
+	if (!session.meter || !session.segmenter) return null
+	const level = session.meter.read()
+	if (level > 0) session.meterAlive = true
+	return session.segmenter.push(level, Date.now())
+}
+
 /**
  * Records the microphone and streams the transcript into the composer: the
  * recording is cut at pauses in speech, each phrase is transcribed through the
@@ -240,6 +248,8 @@ export function useDictation(
 	const stopTake = useCallback((session: Session) => {
 		const take = session.take
 		if (!take || take.recorder.state === 'inactive') return
+		// A take stopped between two polls would otherwise be judged on a stale reading.
+		sampleLevel(session)
 		// Without a working level meter every take is sent: not hearing speech
 		// is then a fault of the meter, not evidence of silence.
 		take.voiced = !session.meterAlive || (session.segmenter?.hasVoice() ?? true)
@@ -356,12 +366,9 @@ export function useDictation(
 			startTake(session)
 			session.maxTimer = setTimeout(() => finish(session), MAX_RECORDING_MS)
 
-			if (meter && session.segmenter) {
-				const segmenter = session.segmenter
+			if (session.meter && session.segmenter) {
 				session.pollTimer = setInterval(() => {
-					const level = meter.read()
-					if (level > 0) session.meterAlive = true
-					const action = segmenter.push(level, Date.now())
+					const action = sampleLevel(session)
 					// `discard` closes a take that held no speech; stopTake leaves it
 					// unsent (unless the meter is flat, which proves nothing).
 					if (action) stopTake(session)
