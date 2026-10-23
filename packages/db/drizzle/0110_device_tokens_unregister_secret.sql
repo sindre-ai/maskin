@@ -6,6 +6,6 @@
 -- new route until the app registers again (it does so on every cold launch).
 -- Not a hot table: a plain ALTER is fine.
 -- Idempotent — safe to re-run.
--- Down: drizzle/down/0108_device_tokens_unregister_secret_down.sql.
+-- Down: drizzle/down/0110_device_tokens_unregister_secret_down.sql.
 
 ALTER TABLE "device_tokens" ADD COLUMN IF NOT EXISTS "unregister_secret_hash" text;

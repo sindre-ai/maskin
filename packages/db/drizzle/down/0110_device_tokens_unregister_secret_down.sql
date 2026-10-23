@@ -1,4 +1,4 @@
--- Rollback for 0108_device_tokens_unregister_secret.sql. Drops the hash column. Devices that
+-- Rollback for 0110_device_tokens_unregister_secret.sql. Drops the hash column. Devices that
 -- registered a secret lose the ability to unregister without an API key until the code is rolled
 -- forward and the app registers again.
 --

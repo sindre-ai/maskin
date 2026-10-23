@@ -18,8 +18,8 @@ async function runSqlFile(relativePath: string) {
 	})
 }
 
-const UP = '0108_device_tokens_unregister_secret.sql'
-const DOWN = 'down/0108_device_tokens_unregister_secret_down.sql'
+const UP = '0110_device_tokens_unregister_secret.sql'
+const DOWN = 'down/0110_device_tokens_unregister_secret_down.sql'
 
 const hasColumn = async () =>
 	(
@@ -28,7 +28,7 @@ const hasColumn = async () =>
 			WHERE table_name = 'device_tokens' AND column_name = 'unregister_secret_hash'`
 	)[0]?.n === 1
 
-describe('migration 0108_device_tokens_unregister_secret (Integration)', () => {
+describe('migration 0110_device_tokens_unregister_secret (Integration)', () => {
 	it('adds a nullable hash column, keeps existing rows, and is safe to run twice', async () => {
 		const actor = (await insertActor(db))?.id as string
 		const token = 'a'.repeat(64)
