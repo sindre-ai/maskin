@@ -275,6 +275,10 @@ describe('POST /integrations/:id/allow-access (Integration)', () => {
 		const s = await setup()
 		const slack = await s.integration()
 		stopSession.mockClear()
+		// A real stop ends the session row, which the restart waits for.
+		stopSession.mockImplementationOnce(async () => {
+			await db.update(sessions).set({ status: 'user_stopped' }).where(eq(sessions.id, s.session.id))
+		})
 		findActive.mockResolvedValueOnce({ id: s.session.id, status: 'running' } as never)
 
 		const res = await allow(s, slack.id)
