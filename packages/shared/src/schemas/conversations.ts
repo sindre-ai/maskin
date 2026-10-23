@@ -49,6 +49,11 @@ export const messageFinalOutputSchema = z.object({
 	 * it makes the over-eager cases findable without hunting through logs.
 	 */
 	recovered: z.boolean().optional(),
+	/**
+	 * Copied in from a background run when it was opened as a chat, not posted live. Its
+	 * thinking and tool calls are read back from that run's own log (`messages.session_id`).
+	 */
+	backfilled: z.boolean().optional(),
 	is_error: z.boolean().optional(),
 	/**
 	 * How a failed turn (`is_error`) was read: 'transient' means the model API
@@ -397,6 +402,13 @@ export const conversationListQuerySchema = z.object({
 	unread_only: booleanQueryParam.optional(),
 	subject_type: z.enum(['object', 'loop']).optional(),
 	subject_id: z.string().uuid().optional(),
+	// Only chats with a message after this time (ISO 8601).
+	updated_after: z.string().datetime({ offset: true }).optional(),
+	// Only chats that still have at least one human participant.
+	has_human: booleanQueryParam.optional(),
+	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
+	// 'activity' orders purely by last message, newest first.
+	sort: z.enum(['pinned', 'activity']).default('pinned'),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

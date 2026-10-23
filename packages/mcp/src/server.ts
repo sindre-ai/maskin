@@ -183,6 +183,14 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+const CHAT_SNIPPET_MAX_LENGTH = 200
+
+/** A chat message can run to thousands of characters; a list row only needs the opening. */
+function truncateSnippet(text: string | null): string | null {
+	if (text === null || text.length <= CHAT_SNIPPET_MAX_LENGTH) return text
+	return `${text.slice(0, CHAT_SNIPPET_MAX_LENGTH - 1)}…`
+}
+
 /**
  * One line telling the agent which listed integrations are not live and how to
  * get them reconnected, or null when every row is active. `pending` rows are an
@@ -892,15 +900,17 @@ async function assertLoopTypesValid(
 	config: McpConfig,
 	input: {
 		closedStatuses?: Record<string, string[]>
+		closedWhen?: Record<string, string[]>
 		steps?: LoopStepInput[]
 	},
 	workspaceId?: string,
 ): Promise<void> {
 	const closedEntries = Object.entries(input.closedStatuses ?? {})
+	const closedWhenTypes = Object.keys(input.closedWhen ?? {})
 	const stepTypes = (input.steps ?? [])
 		.map((s) => ('object_type' in s.when ? s.when.object_type : undefined))
 		.filter((t): t is string => typeof t === 'string')
-	if (closedEntries.length === 0 && stepTypes.length === 0) return
+	if (closedEntries.length === 0 && closedWhenTypes.length === 0 && stepTypes.length === 0) return
 
 	const wsId = workspaceId ?? config.defaultWorkspaceId
 	if (!wsId) return // downstream calls raise the standard no-workspace hint
@@ -919,6 +929,14 @@ async function assertLoopTypesValid(
 		if (bad.length > 0) {
 			throw new Error(
 				`closed_statuses for type '${type}' references unknown status(es): ${bad.join(', ')}. Valid statuses for '${type}': ${valid.join(', ')}.`,
+			)
+		}
+	}
+
+	for (const type of closedWhenTypes) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`closed_when references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types.`,
 			)
 		}
 	}
@@ -5217,6 +5235,80 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_chats',
+		{
+			description: tools.list_chats.description,
+			inputSchema: tools.list_chats.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
+			// The route pages by offset, so the position travels in the cursor as n.
+			const offset = pagination.cursor?.n ?? 0
+			const params = new URLSearchParams()
+			params.set('sort', 'activity')
+			params.set('limit', String(pagination.limit))
+			params.set('offset', String(offset))
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.has_human) params.set('has_human', 'true')
+			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as {
+				conversations: Array<{
+					id: string
+					title: string
+					lastMessageAt: string | null
+					unread_count: number
+					snippet: string | null
+					snippet_actor_id: string | null
+					snippet_actor_name: string | null
+					snippet_is_caller: boolean
+					participants: Array<{ actorName: string; actorType: string }>
+				}>
+				has_more: boolean
+			}
+			const chats = raw.conversations.map((c) => ({
+				id: c.id,
+				title: c.title,
+				participants: c.participants.map((p) => ({ name: p.actorName, type: p.actorType })),
+				last_message_at: c.lastMessageAt,
+				last_message: c.snippet_actor_id
+					? {
+							from: c.snippet_actor_name,
+							is_you: c.snippet_is_caller,
+							snippet: truncateSnippet(c.snippet),
+						}
+					: null,
+				unread_count: c.unread_count,
+			}))
+			const last = raw.conversations[raw.conversations.length - 1]
+			const nextOffset = offset + chats.length
+			const nextCursor =
+				raw.has_more && last?.lastMessageAt && nextOffset <= CURSOR_MAX_OFFSET
+					? encodeCursor({
+							s: pagination.snapshotAt,
+							o: pagination.order,
+							k: { sortValue: last.lastMessageAt, id: last.id },
+							n: nextOffset,
+						})
+					: null
+			return {
+				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				structuredContent: {
+					chats,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_conversation_messages',
 		{
 			description: tools.list_conversation_messages.description,
@@ -5522,7 +5614,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
@@ -5542,7 +5636,7 @@ export function createMcpServer(config: McpConfig) {
 				),
 				assertLoopTypesValid(
 					config,
-					{ closedStatuses: closed_statuses, steps: stepList },
+					{ closedStatuses: closed_statuses, closedWhen: closed_when, steps: stepList },
 					workspace_id,
 				),
 			])
@@ -5577,7 +5671,9 @@ export function createMcpServer(config: McpConfig) {
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+				if (closed_when !== undefined) metadata.closed_when = closed_when
 				if (tags !== undefined) metadata.tags = tags
+				if (targets !== undefined) metadata.targets = targets
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
@@ -5689,7 +5785,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 				add_steps,
 				add_trigger_ids,
 				remove_trigger_ids,
@@ -5731,7 +5829,11 @@ export function createMcpServer(config: McpConfig) {
 					),
 					assertLoopTypesValid(
 						config,
-						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
+						{
+							closedStatuses: closed_statuses,
+							closedWhen: closed_when,
+							steps: add_steps as LoopStepInput[] | undefined,
+						},
 						workspace_id,
 					),
 				])
@@ -5780,7 +5882,9 @@ export function createMcpServer(config: McpConfig) {
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+					if (closed_when !== undefined) metadataPatch.closed_when = closed_when
 					if (tags !== undefined) metadataPatch.tags = tags
+					if (targets !== undefined) metadataPatch.targets = targets
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name

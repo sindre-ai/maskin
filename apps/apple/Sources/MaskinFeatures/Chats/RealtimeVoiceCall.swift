@@ -51,6 +51,9 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	var agentWords: String? { machine.lastAgentWords }
 
 	@ObservationIgnored var onFallBack: (@MainActor () -> Void)?
+	/// Called with each finished line of the call, yours or the agent's, as it is transcribed, so
+	/// the thread can keep it (the call itself posts nothing to the chat).
+	@ObservationIgnored var onLine: (@MainActor (_ isYou: Bool, _ text: String) -> Void)?
 
 	@ObservationIgnored private let agentID: String
 	@ObservationIgnored private let agentName: String
@@ -180,7 +183,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 
 	private func received(_ data: Data) {
 		guard isActive, let event = RealtimeEvent.parse(data) else { return }
+		let seen = machine.lines.count
 		run(machine.handle(event, at: now()))
+		for line in machine.lines.dropFirst(seen) where line.kind != .tool {
+			onLine?(line.kind == .user, line.text)
+		}
 	}
 
 	private func run(_ commands: [RealtimeCallMachine.Command]) {

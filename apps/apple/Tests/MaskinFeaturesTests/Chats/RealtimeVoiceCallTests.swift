@@ -127,6 +127,20 @@ private actor FakeCalls: VoiceCalling {
 		#expect(LiveMeetingRequest.dailyBriefing.startedFromConversationID == nil)
 	}
 
+	@Test("each finished line of the call is handed on, yours and the agent's, but not tool calls")
+	func handsOnFinishedLines() async {
+		let (call, _, transport) = make()
+		var lines: [String] = []
+		call.onLine = { isYou, text in lines.append("\(isYou ? "you" : "agent"): \(text)") }
+		call.begin(existing: [])
+		await settle()
+		func send(_ json: String) { transport.onEvent?(Data(json.utf8)) }
+		send(#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"What is blocked?"}"#)
+		send(#"{"type":"response.function_call_arguments.done","call_id":"c1","name":"list_objects","arguments":"{}"}"#)
+		send(#"{"type":"response.output_audio_transcript.done","transcript":"Three bets."}"#)
+		#expect(lines == ["you: What is blocked?", "agent: Three bets."])
+	}
+
 	@Test("events from the call drive the phase")
 	func phases() async {
 		let (call, _, transport) = make()
