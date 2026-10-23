@@ -838,6 +838,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'hello workspace coach' },
 				},
 				undefined,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -883,6 +885,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'what about this?' },
 				},
 				attachments,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -896,7 +900,8 @@ describe('Sessions Routes', () => {
 				sessionsRoutes,
 				'/api/sessions',
 			)
-			mockResults.selectQueue = [[session]]
+			// The session, then who started it: a person, so it is theirs alone.
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -943,7 +948,7 @@ describe('Sessions Routes', () => {
 				createdBy: 'someone-else',
 			})
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
-			mockResults.selectQueue = [[session]]
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(

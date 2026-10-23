@@ -47,6 +47,22 @@ async function insertConversation(workspaceId: string, createdBy: string) {
 	return row
 }
 
+async function runWatchdogWithStubbedFetch() {
+	const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+		return new Response(JSON.stringify({ ok: true }), {
+			status: 200,
+			headers: { 'content-type': 'application/json' },
+		})
+	})
+	const manager = new SessionManager(db, stubStorage())
+	try {
+		await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+	} finally {
+		fetchSpy.mockRestore()
+		await manager.stop()
+	}
+}
+
 describe('SessionManager conversation-turn drain + idle chat close (Integration)', () => {
 	let workspaceId: string
 	let actorId: string
@@ -298,6 +314,114 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			expect(row?.status).toBe('running')
 		})
 
+		it('closes a conversation session idle for 20 minutes (default window is 15)', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-20m',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 20 * 60 * 1000),
+			})
+
+			await runWatchdogWithStubbedFetch()
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+		})
+
+		it('leaves a conversation session idle for 10 minutes running', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-10m',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 10 * 60 * 1000),
+			})
+
+			await runWatchdogWithStubbedFetch()
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+		})
+
+		it('honours CHAT_IDLE_CLOSE_MINUTES', async () => {
+			vi.stubEnv('CHAT_IDLE_CLOSE_MINUTES', '5')
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-env',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 10 * 60 * 1000),
+			})
+
+			try {
+				await runWatchdogWithStubbedFetch()
+			} finally {
+				vi.unstubAllEnvs()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+		})
+	})
+
+	describe('getQueuedForCapacity()', () => {
+		it('counts workspace-queued and machine-waiting sessions, not running or finished ones', async () => {
+			const waitingSince = new Date(Date.now() - 5 * 60 * 1000)
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'queued' })
+			await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'starting',
+				sessionState: 'waiting_for_machine',
+				stateEnteredAt: waitingSince,
+			})
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'running' })
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'completed' })
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				const queued = await manager.getQueuedForCapacity()
+				expect(queued.count).toBe(2)
+				expect(queued.oldestWaitMs).toBeGreaterThanOrEqual(5 * 60 * 1000)
+			} finally {
+				await manager.stop()
+			}
+		})
+
+		it('reports zero and no wait when nothing is queued', async () => {
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				expect(await manager.getQueuedForCapacity()).toEqual({ count: 0, oldestWaitMs: null })
+			} finally {
+				await manager.stop()
+			}
+		})
+	})
+
+	describe('watchdog idle chat close (edge cases)', () => {
 		it('leaves an idle-eligible session running when its newest message is unanswered', async () => {
 			const server = await insertAgentServer()
 			const conversation = await insertConversation(workspaceId, actorId)
