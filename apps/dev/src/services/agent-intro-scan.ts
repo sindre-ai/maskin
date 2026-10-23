@@ -9,7 +9,6 @@ import type { SessionManager } from './session-manager'
 
 /** There is no cap on the scan. After this long the agent is asked to answer with what it has. */
 export const INTRO_SCAN_NUDGE_AFTER_MS = 20_000
-const INTRO_SCAN_NUDGE_RETRY_MS = 5_000
 export const INTRO_SCAN_NUDGE =
 	'Time is short. Stop looking now and reply with the JSON object, using what you have found so far.'
 /** The scan offers at most this many steps; the template adds its own closing step. */
@@ -122,8 +121,8 @@ export function createIntroScanRunner(deps: {
 				initiatedFromObjectId: null,
 				await: 'terminal',
 			})
-			// No cap on the scan itself. Past the nudge time the agent is told to wrap up;
-			// if its session is not accepting input yet (still booting), try again shortly.
+			// No cap on the scan itself. Past the nudge time the agent is told to wrap up, once.
+			// If its session cannot take input then, it is left to finish on its own.
 			const nudge = async () => {
 				if (finished) return
 				try {
@@ -131,8 +130,11 @@ export function createIntroScanRunner(deps: {
 						type: 'user',
 						message: { role: 'user', content: INTRO_SCAN_NUDGE },
 					})
-				} catch {
-					if (!finished) nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_RETRY_MS)
+				} catch (err) {
+					logger.info('Agent intro scan: wrap-up nudge was not delivered', {
+						sessionId: handle.sessionId,
+						err,
+					})
 				}
 			}
 			nudgeTimer = setTimeout(nudge, INTRO_SCAN_NUDGE_AFTER_MS)
