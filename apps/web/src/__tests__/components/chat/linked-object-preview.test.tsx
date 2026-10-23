@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
-const sendMutate = vi.fn()
 const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -20,9 +19,6 @@ vi.mock('@/components/shared/file-preview', () => ({
 const useFiles = vi.fn()
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: (...args: unknown[]) => useFiles(...args),
-}))
-vi.mock('@/hooks/use-conversation', () => ({
-	useSendMessage: () => ({ mutate: sendMutate }),
 }))
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
@@ -74,6 +70,8 @@ const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
+// What the card sends along so the server tells the agent; nothing is posted in the chat.
+const CARD = { conversation_id: CHAT, agent_id: AGENT }
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -115,7 +113,6 @@ describe('LinkedObjectCard', () => {
 	beforeEach(() => {
 		useObject.mockReset()
 		updateMutate.mockReset()
-		sendMutate.mockReset()
 		approveMutate.mockReset()
 	})
 
@@ -137,21 +134,13 @@ describe('LinkedObjectCard', () => {
 		}
 	}
 
-	it('ends a draft in Approve and send, not the next phase, and tells the agent to send the text', async () => {
+	it('ends a draft in Approve and send, not the next phase, and names the chat so the server tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
-		approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
-		expect(approveMutate).toHaveBeenCalledWith(
-			{ id: ID, contentHash: 'hash-1' },
-			expect.any(Object),
-		)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain(`passing object_id ${ID}`)
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 	})
 
 	it('shows what the draft answers and who it goes to, above the text', async () => {
@@ -250,35 +239,16 @@ describe('LinkedObjectCard', () => {
 			'done',
 		])
 		await userEvent.selectOptions(menu, 'done')
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-	})
-
-	it('tells the agent, with the text as it stands, once the move has saved', async () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
-		renderCard({ conversationId: CHAT, agentId: AGENT })
-		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
-		expect(sendMutate).toHaveBeenCalledTimes(1)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain('to Done')
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		// The chat rides along with the move: the server tells the agent, no message is posted.
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('offers the next phase in the workspace order as a button that moves and tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-		expect(sendMutate).toHaveBeenCalledTimes(1)
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('has no next-phase button on the last status', async () => {
@@ -367,21 +337,12 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('Dokumenter efter demoen')).toBeInTheDocument()
 		})
 
-		it('approves the exact text on screen and tells the agent what was approved', async () => {
+		it('approves the exact text on screen and names the chat whose agent sends it', async () => {
 			useObject.mockReturnValue({ data: draft() })
-			approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
-			expect(approveMutate).toHaveBeenCalledWith(
-				{ id: ID, contentHash: 'hash-1' },
-				expect.any(Object),
-			)
-			expect(sendMutate).toHaveBeenCalledTimes(1)
-			const message = sendMutate.mock.calls[0][0]
-			expect(message.metadata).toEqual({ mentions: [AGENT] })
-			expect(message.content).toContain('Approved "Follow up with Torben"')
-			expect(message.content).toContain('> Hej Torben, her er dokumenterne.')
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 		})
 
 		it('cannot be approved from a card that has no agent to tell', async () => {
@@ -410,7 +371,7 @@ describe('LinkedObjectCard', () => {
 
 		it('shows that it is approved, and that it has been sent, instead of the button', async () => {
 			for (const [state, label] of [
-				['approved', 'Approved'],
+				['approved', 'Approved, sending'],
 				['sent', 'Sent'],
 			] as const) {
 				useObject.mockReturnValue({ data: draft({ delivery: { state, at: null } }) })
