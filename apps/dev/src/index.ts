@@ -34,6 +34,7 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
+import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -321,6 +322,12 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
 // Voice v1: ends calls whose timeout_at has passed (tab closed with no
 // hangup). A no-op until a voice_sessions row exists.
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
