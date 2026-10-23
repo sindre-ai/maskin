@@ -465,8 +465,12 @@ app.openapi(listLoopsRoute, (async (c) => {
 			const closedAtMs = isClosedByStatus(row.loop_id, row.type, row.status)
 				? statusClosedAtMs(row)
 				: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
+			// Closed before it joined the loop: it never went through this loop, so
+			// it has no time to close and stays out of the median.
+			const durationMs = closedAtMs - new Date(row.joined_at).getTime()
+			if (durationMs < 0) continue
 			const durations = closeDurationsByLoop.get(row.loop_id) ?? []
-			durations.push(closedAtMs - new Date(row.joined_at).getTime())
+			durations.push(durationMs)
 			closeDurationsByLoop.set(row.loop_id, durations)
 		}
 		// Median matches percentile_cont(0.5): linear interpolation — for an

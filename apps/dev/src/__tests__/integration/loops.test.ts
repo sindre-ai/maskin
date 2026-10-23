@@ -964,6 +964,45 @@ describe('Loops read API integration', () => {
 			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(9 * day)
 		})
 
+		it('leaves a member that was already closed when it joined out of the median, but still counts it as closed', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Closed before joining',
+			})
+			const day = 86_400_000
+			const joinedAt = new Date('2026-01-10T00:00:00.000Z')
+			const joinTask = async (title: string, closedAt: Date) => {
+				const task = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'done',
+					title,
+					createdAt: new Date('2026-01-01T00:00:00.000Z'),
+				})
+				await insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId: task.id,
+					type: 'in_loop',
+					createdAt: joinedAt,
+				})
+				await db.insert(events).values(statusChange(task.id, 'done', closedAt))
+			}
+			// Closed on day 1, nine days before it joined the loop, next to a normal member.
+			await joinTask('Closed before joining', new Date('2026-01-01T00:00:00.000Z'))
+			await joinTask('Closed two days after joining', new Date(joinedAt.getTime() + 2 * day))
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.medianTimeToCloseMs).toBe(2 * day)
+			expect(row?.closedCount).toBe(2)
+		})
+
 		it('counts each loop with its own closed statuses and ignores members of other loops', async () => {
 			const lenient = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
