@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import {
+	events,
 	actors,
 	agentGrants,
-	events,
 	integrations,
 	sessions,
 	workspaceMembers,
