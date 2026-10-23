@@ -1,6 +1,7 @@
 import { ExpandableDesktop } from '@/components/desktop/expandable-desktop'
 import { Button } from '@/components/ui/button'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
+import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageComputerRequest } from '@/lib/api'
 import { Monitor } from 'lucide-react'
 import { useState } from 'react'
@@ -40,12 +41,23 @@ export function ComputerRequestCard({
 	request,
 }: ComputerRequestCardProps) {
 	const sendMessage = useSendMessage(conversationId, workspaceId)
+	// A helper another agent started is not in this chat: Done goes to its own session.
+	const sendInput = useSendSessionInput(workspaceId)
 	const [localPhase, setPhase] = useState<Phase>('idle')
 	const answered = useCardAnswer(conversationId, workspaceId, messageId) === 'done'
 	const phase: Phase = answered ? 'done' : localPhase
 
 	const done = () => {
 		setPhase('done')
+		if (request.reply_to_session) {
+			sendInput.mutate({
+				id: request.session_id,
+				content: COMPUTER_DONE_MESSAGE,
+				card_answer: { message_id: messageId, outcome: 'done' },
+				conversationId,
+			})
+			return
+		}
 		sendMessage.mutate({
 			// Plain text: a person's own message is not rendered as markdown.
 			content: COMPUTER_DONE_MESSAGE,

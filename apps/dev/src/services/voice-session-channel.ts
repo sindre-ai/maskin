@@ -160,6 +160,18 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	// conversation, which two concurrent writes would race on.
 	let transcriptQueue: Promise<void> = Promise.resolve()
 
+	// A failed counter write is logged, never thrown: it must not drop the call.
+	async function recordCounter(voiceSessionId: string, write: () => Promise<void>) {
+		try {
+			await write()
+		} catch (err) {
+			logger.warn('Voice counter write failed', {
+				voice_session_id: voiceSessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
 	async function handleToolCall(
 		msg: Extract<z.infer<typeof clientMessageSchema>, { type: 'tool_call' }>,
 	) {
@@ -248,7 +260,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				tool_name: msg.name,
 			})
 		}
-		recordVoiceToolCall(session.id)
+		await recordCounter(session.id, () => recordVoiceToolCall(db, session.id))
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
 			tool_name: msg.name,
@@ -334,10 +346,12 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					return
 				}
 				case 'turn_completed':
-					recordVoiceTurn(session.id, {
-						userAudioMs: msg.user_audio_ms,
-						agentAudioMs: msg.agent_audio_ms,
-					})
+					await recordCounter(session.id, () =>
+						recordVoiceTurn(db, session.id, {
+							userAudioMs: msg.user_audio_ms,
+							agentAudioMs: msg.agent_audio_ms,
+						}),
+					)
 					void captureVoiceTurnCompleted(session.humanActorId, {
 						voice_session_id: session.id,
 						turn_index: msg.turn_index,
