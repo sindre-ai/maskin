@@ -3,7 +3,11 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import type { CalendarClient } from '../../lib/integrations/providers/google-calendar/calendar-client'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
-import { createToolRouter } from '../../lib/integrations/providers/telnyx/tools'
+import {
+	calendarForOwner,
+	createToolRouter,
+} from '../../lib/integrations/providers/telnyx/tools'
+import { logger } from '../../lib/logger'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -23,6 +27,9 @@ function calendarStub(overrides: Partial<CalendarClient> = {}) {
 	}
 	return { client, insertEvent }
 }
+
+const sebastian = (client: CalendarClient) => ({ client, ownerName: 'Sebastian' })
+const routerFor = (client: CalendarClient) => router({ calendarFor: async () => sebastian(client) })
 
 async function setup(metadata: Record<string, unknown> = {}) {
 	const ws = await insertWorkspace(db, getTestActorId())
@@ -249,7 +256,7 @@ describe('Telnyx tool router: booking', () => {
 		const t = await setup()
 		const { client } = calendarStub()
 		const out = (await t.call(
-			router({ calendarFor: async () => client }),
+			router({ calendarFor: async () => sebastian(client) }),
 			'book_meeting_slot',
 			who,
 		)) as {
@@ -264,7 +271,7 @@ describe('Telnyx tool router: booking', () => {
 	it('confirm_meeting_slot books, writes voice_meeting, and records the trace on success only', async () => {
 		const t = await setup({ followup_action: 'email_calendar_link' })
 		const { client, insertEvent } = calendarStub()
-		const r = router({ calendarFor: async () => client })
+		const r = router({ calendarFor: async () => sebastian(client) })
 		await t.call(r, 'book_meeting_slot', who)
 		const out = (await t.call(r, 'confirm_meeting_slot', { slot_index: 2, ...who })) as {
 			event_id: string
@@ -279,6 +286,7 @@ describe('Telnyx tool router: booking', () => {
 			call_id: CALL,
 			event_id: out.event_id,
 			meet_link: out.meet_link,
+			owner_name: 'Sebastian',
 		})
 		expect(m.followup_action).toBeUndefined()
 		expect(traceNames(m)).toEqual(['book_meeting_slot', 'confirm_meeting_slot'])
@@ -287,7 +295,7 @@ describe('Telnyx tool router: booking', () => {
 	it('a replayed confirm_meeting_slot returns the same booking and inserts no second event', async () => {
 		const t = await setup()
 		const { client, insertEvent } = calendarStub()
-		const r = router({ calendarFor: async () => client })
+		const r = router({ calendarFor: async () => sebastian(client) })
 		await t.call(r, 'book_meeting_slot', who)
 		const first = await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
 		const second = await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
@@ -299,7 +307,7 @@ describe('Telnyx tool router: booking', () => {
 	it('confirm_meeting_slot without offered slots answers unknown_slot and books nothing', async () => {
 		const t = await setup()
 		const { client, insertEvent } = calendarStub()
-		const out = await t.call(router({ calendarFor: async () => client }), 'confirm_meeting_slot', {
+		const out = await t.call(routerFor(client), 'confirm_meeting_slot', {
 			slot_index: 1,
 			...who,
 		})
@@ -315,7 +323,7 @@ describe('Telnyx tool router: booking', () => {
 			},
 		})
 		const { client } = calendarStub()
-		const out = await t.call(router({ calendarFor: async () => client }), 'confirm_meeting_slot', {
+		const out = await t.call(routerFor(client), 'confirm_meeting_slot', {
 			slot_index: 1,
 			...who,
 		})
@@ -331,7 +339,9 @@ describe('Telnyx tool router: booking', () => {
 			},
 		})
 		let useFailing = false
-		const r = router({ calendarFor: async () => (useFailing ? failing.client : ok.client) })
+		const r = router({
+			calendarFor: async () => sebastian(useFailing ? failing.client : ok.client),
+		})
 		await t.call(r, 'book_meeting_slot', who)
 		useFailing = true
 		const out = await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
@@ -349,7 +359,7 @@ describe('Telnyx tool router: booking', () => {
 				throw new Error('google down')
 			},
 		})
-		const out = await t.call(router({ calendarFor: async () => client }), 'book_meeting_slot', who)
+		const out = await t.call(routerFor(client), 'book_meeting_slot', who)
 		expect(out).toEqual({ error: 'calendar_unavailable' })
 		const m = await t.read()
 		expect(m.followup_action).toBe('email_calendar_link')
@@ -361,6 +371,120 @@ describe('Telnyx tool router: booking', () => {
 		const out = await t.call(router({ calendarFor: async () => null }), 'book_meeting_slot', who)
 		expect(out).toEqual({ error: 'calendar_unavailable' })
 		expect((await t.read()).followup_action).toBe('email_calendar_link')
+	})
+})
+
+describe('Telnyx tool router: booking follows the contact owner', () => {
+	const who = { prospect_email: 'anna@example.dk', prospect_name: 'Anna Hansen' }
+
+	// A calendarFor that records the owner slug it was asked for and hands back one calendar.
+	function recordingCalendar() {
+		const slugs: string[] = []
+		const { client, insertEvent } = calendarStub()
+		const freeBusy = vi.fn(client.freeBusy)
+		const resolved = { client: { ...client, freeBusy }, ownerName: 'Sebastian' }
+		return {
+			slugs,
+			insertEvent,
+			freeBusy,
+			calendarFor: async (_db: unknown, _ws: string, ownerSlug: string) => {
+				slugs.push(ownerSlug)
+				return resolved
+			},
+		}
+	}
+
+	it('asks for the owner slug trimmed and lowercased, for slots and event alike', async () => {
+		const t = await setup({ owner: '  Magnus ' })
+		const rec = recordingCalendar()
+		const r = router({ calendarFor: rec.calendarFor })
+		await t.call(r, 'book_meeting_slot', who)
+		await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(rec.slugs).toEqual(['magnus', 'magnus'])
+		// Slots offered and the event created came from the one resolved calendar.
+		expect(rec.freeBusy).toHaveBeenCalledTimes(1)
+		expect(rec.insertEvent).toHaveBeenCalledTimes(1)
+	})
+
+	it.each([
+		['sebk', 'sebk'],
+		['unassigned', 'unassigned'],
+		['someone with no calendar', 'rune'],
+	])('books for %s and names Sebastian on the event', async (_label, owner) => {
+		const t = await setup({ owner })
+		const rec = recordingCalendar()
+		const r = router({ calendarFor: rec.calendarFor })
+		await t.call(r, 'book_meeting_slot', who)
+		const out = await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(out).toMatchObject({ meet_link: 'https://meet.google.com/abc-defg-hij' })
+		expect(rec.insertEvent).toHaveBeenCalledWith(
+			expect.objectContaining({ summary: expect.stringContaining('Sebastian') }),
+		)
+		expect((await t.read()).voice_meeting).toMatchObject({ owner_name: 'Sebastian' })
+	})
+
+	it('logs one fallback line per booking for a non-sebk owner, none for sebk', async () => {
+		const info = vi.spyOn(logger, 'info')
+		const fallbackLines = () =>
+			info.mock.calls.filter(([m]) => m === 'voice calendar owner fallback')
+		const { client } = calendarStub()
+		const r = router({
+			calendarFor: async (_db, _ws, owner) => ({
+				...sebastian(client),
+				...(owner === 'sebk' ? {} : { fallbackReason: 'owner_has_no_calendar' }),
+			}),
+		})
+		const magnus = await setup({ owner: 'magnus' })
+		await magnus.call(r, 'book_meeting_slot', who)
+		const out = await magnus.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(out).toMatchObject({ meet_link: expect.any(String) })
+		expect(fallbackLines()).toHaveLength(1)
+		expect(fallbackLines()[0]?.[1]).toMatchObject({
+			contactId: magnus.contact.id,
+			ownerSlug: 'magnus',
+			reason: 'owner_has_no_calendar',
+			resolvedTo: 'sebk',
+		})
+
+		const sebk = await setup({ owner: 'sebk' })
+		await sebk.call(r, 'book_meeting_slot', who)
+		await sebk.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(fallbackLines()).toHaveLength(1)
+		info.mockRestore()
+	})
+
+	it('a contact with no owner at all asks for an empty slug and still books', async () => {
+		const t = await setup()
+		const rec = recordingCalendar()
+		const r = router({ calendarFor: rec.calendarFor })
+		await t.call(r, 'book_meeting_slot', who)
+		const out = await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(rec.slugs).toEqual(['', ''])
+		expect(out).toMatchObject({ meet_link: expect.any(String) })
+	})
+})
+
+describe('calendarForOwner', () => {
+	const token = async () => 'tok'
+
+	it('resolves sebk to Sebastian with no fallback reason', async () => {
+		const res = await calendarForOwner(db, 'ws-1', 'sebk', token)
+		expect(res?.ownerName).toBe('Sebastian')
+		expect(res?.fallbackReason).toBeUndefined()
+	})
+
+	it.each([
+		['magnus', 'owner_has_no_calendar'],
+		['unassigned', 'owner_unassigned'],
+		['', 'owner_missing'],
+	])('resolves owner %j to Sebastian with fallback reason %s', async (owner, reason) => {
+		const res = await calendarForOwner(db, 'ws-1', owner, token)
+		expect(res?.ownerName).toBe('Sebastian')
+		expect(res?.fallbackReason).toBe(reason)
+	})
+
+	it('returns null, not an error, when the workspace has no calendar connection', async () => {
+		expect(await calendarForOwner(db, 'ws-1', 'magnus', async () => null)).toBeNull()
 	})
 })
 

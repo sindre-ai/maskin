@@ -37,10 +37,62 @@ import {
 export const TRANSFER_TIMEOUT_SECS = 15
 export const DEFAULT_TRANSFER_HOURS = '10:00-15:00'
 
+/** The one calendar the workspace has and whose it is. Holds until calendars are per person. */
+export const FALLBACK_CALENDAR_OWNER = { slug: 'sebk', name: 'Sebastian' } as const
+
+/**
+ * The calendar a booking uses and the person it belongs to. Free/busy, the event title and the
+ * post-call email all read this one value, so they always name the same person.
+ */
+export interface ResolvedCalendar {
+	client: CalendarClient
+	ownerName: string
+	/** Why the contact's owner did not get their own calendar. Absent when sebk's own applies. */
+	fallbackReason?: string
+}
+
+/** The contact's owner slug, normalised the same way for the transfer target and the calendar. */
+function ownerSlugOf(contact: Pick<Contact, 'metadata'>): string {
+	const owner = contact.metadata.owner
+	return typeof owner === 'string' ? owner.trim().toLowerCase() : ''
+}
+
+/**
+ * Resolves the calendar for a contact's owner. The workspace has one Google Calendar connection
+ * (Sebastian's), so every owner resolves to it, and an owner other than sebk comes back with a
+ * fallbackReason for the caller to log once. The owner never fails a booking. Null when there is no
+ * usable connection.
+ */
+export async function calendarForOwner(
+	db: Database,
+	workspaceId: string,
+	ownerSlug: string,
+	getToken: typeof getCalendarAccessToken = getCalendarAccessToken,
+): Promise<ResolvedCalendar | null> {
+	const accessToken = await getToken(db, workspaceId)
+	if (!accessToken) return null
+	const resolved: ResolvedCalendar = {
+		client: createCalendarClient({ accessToken }),
+		ownerName: FALLBACK_CALENDAR_OWNER.name,
+	}
+	if (ownerSlug === FALLBACK_CALENDAR_OWNER.slug) return resolved
+	const fallbackReason =
+		ownerSlug === ''
+			? 'owner_missing'
+			: ownerSlug === 'unassigned'
+				? 'owner_unassigned'
+				: 'owner_has_no_calendar'
+	return { ...resolved, fallbackReason }
+}
+
 export interface ToolRouterDeps {
 	now: () => Date
 	/** Null when the workspace has no usable Google Calendar connection. */
-	calendarFor: (db: Database, workspaceId: string) => Promise<CalendarClient | null>
+	calendarFor: (
+		db: Database,
+		workspaceId: string,
+		ownerSlug: string,
+	) => Promise<ResolvedCalendar | null>
 	telnyx: () => TelnyxClient | null
 	/** Owner slug to human actor id: the same VOICE_FOUNDER_ACTORS map the dialer uses. */
 	founders: () => FounderActors
@@ -58,10 +110,7 @@ export interface ToolRouterDeps {
 export function defaultToolRouterDeps(): ToolRouterDeps {
 	return {
 		now: () => new Date(),
-		async calendarFor(db, workspaceId) {
-			const accessToken = await getCalendarAccessToken(db, workspaceId)
-			return accessToken ? createCalendarClient({ accessToken }) : null
-		},
+		calendarFor: (db, workspaceId, ownerSlug) => calendarForOwner(db, workspaceId, ownerSlug),
 		telnyx() {
 			const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
 			return apiKey ? createTelnyxClient({ apiKey, baseUrl: apiBaseUrl }) : null
@@ -158,11 +207,24 @@ async function bookMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 
 	let slots: ReturnType<typeof proposeSlots>
 	try {
-		const calendar = await deps.calendarFor(db, ctx.clientState.workspace_id)
+		const calendar = await deps.calendarFor(
+			db,
+			ctx.clientState.workspace_id,
+			ownerSlugOf(contact),
+		)
 		if (!calendar) return await calendarFailed('no_calendar_connection')
+		// Once per booking: confirm_meeting_slot always follows this call and resolves the same way.
+		if (calendar.fallbackReason) {
+			logger.info('voice calendar owner fallback', {
+				contactId: contact.id,
+				ownerSlug: ownerSlugOf(contact),
+				reason: calendar.fallbackReason,
+				resolvedTo: FALLBACK_CALENDAR_OWNER.slug,
+			})
+		}
 		const now = deps.now()
 		const range = slotSearchRange(now)
-		const busy = await calendar.freeBusy(range.from, range.to)
+		const busy = await calendar.client.freeBusy(range.from, range.to)
 		slots = proposeSlots(busy, now, input.data.preferred_window)
 	} catch (err) {
 		return calendarFailed(err instanceof Error ? err.message : String(err))
@@ -205,12 +267,14 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 	if (!slot) return { body: { error: 'unknown_slot' } satisfies ToolError }
 
 	let event: Awaited<ReturnType<CalendarClient['insertEvent']>>
+	let ownerName: string
 	try {
-		const calendar = await deps.calendarFor(db, workspaceId)
+		const calendar = await deps.calendarFor(db, workspaceId, ownerSlugOf(contact))
 		if (!calendar) throw new Error('no_calendar_connection')
-		event = await calendar.insertEvent({
+		ownerName = calendar.ownerName
+		event = await calendar.client.insertEvent({
 			eventId: calendarEventId(ctx.callId, slot.start_iso),
-			summary: `Maskin intro call with ${input.data.prospect_name}`,
+			summary: `Maskin intro call: ${ownerName} and ${input.data.prospect_name}`,
 			start: new Date(slot.start_iso),
 			end: new Date(slot.end_iso),
 			attendeeEmail: input.data.prospect_email,
@@ -241,7 +305,13 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 		callId: ctx.callId,
 		toolName: 'confirm_meeting_slot',
 		metadata: {
-			voice_meeting: { call_id: ctx.callId, event_id: event.eventId, meet_link: event.meetLink },
+			voice_meeting: {
+				call_id: ctx.callId,
+				event_id: event.eventId,
+				meet_link: event.meetLink,
+				// Read by the post-call email, so it names the person whose calendar was booked.
+				owner_name: ownerName,
+			},
 			// A failure earlier in this call is superseded by the booking that went through.
 			followup_action: null,
 		},
@@ -276,8 +346,7 @@ async function startTransfer(run: Run, reason: string): Promise<void> {
 
 	// The target is the contact's owner: metadata.owner is a slug, VOICE_FOUNDER_ACTORS maps it to the actor.
 	const founders = deps.founders()
-	const owner =
-		typeof contact.metadata.owner === 'string' ? contact.metadata.owner.trim().toLowerCase() : ''
+	const owner = ownerSlugOf(contact)
 	const targetId =
 		founders.ok && Object.hasOwn(founders.map, owner) ? founders.map[owner] : undefined
 	if (!targetId) return fallback('transfer_skipped_no_target_actor')

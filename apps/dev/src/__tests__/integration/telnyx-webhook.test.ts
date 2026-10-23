@@ -209,11 +209,14 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		registerToolHandler(
 			createToolRouter({
 				calendarFor: async () => ({
-					freeBusy: async () => [],
-					insertEvent: async (i) => ({
-						eventId: i.eventId,
-						meetLink: 'https://meet.google.com/abc-defg-hij',
-					}),
+					ownerName: 'Sebastian',
+					client: {
+						freeBusy: async () => [],
+						insertEvent: async (i) => ({
+							eventId: i.eventId,
+							meetLink: 'https://meet.google.com/abc-defg-hij',
+						}),
+					},
 				}),
 			}),
 		)

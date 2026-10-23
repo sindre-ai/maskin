@@ -156,6 +156,30 @@ describe('buildAssistantPayload against the live assistant snapshot', () => {
 	})
 })
 
+describe('call id dynamic variable', () => {
+	const payload = buildAssistantPayload(input) as {
+		tools: Array<{ webhook: { name: string; preset_body_fields: Record<string, string> } }>
+	}
+
+	it('every tool presets call_control_id from the system variable of the same name', () => {
+		expect(payload.tools).toHaveLength(5)
+		for (const tool of payload.tools) {
+			expect(tool.webhook.preset_body_fields.call_control_id, tool.webhook.name).toBe(
+				'{{call_control_id}}',
+			)
+		}
+	})
+
+	it('no dynamic variable in the payload starts with telnyx_ (Telnyx reserves that prefix)', () => {
+		const used = [...JSON.stringify(payload).matchAll(/\{\{\s*([^}\s]+)\s*\}\}/g)].map((m) => m[1])
+		expect(used).toContain('call_control_id')
+		expect(used.filter((name) => name?.startsWith('telnyx_'))).toEqual([])
+		const { dynamic_variables } = payload as { dynamic_variables?: object }
+		const declared = Object.keys(dynamic_variables ?? {})
+		expect(declared.filter((name) => name.startsWith('telnyx_'))).toEqual([])
+	})
+})
+
 describe('assistantContentHash', () => {
 	it('is stable across key order and changes with content', () => {
 		const a = buildAssistantPayload(input)
@@ -228,5 +252,15 @@ describe('ensureAssistant', () => {
 		expect(res.action).toBe('unchanged')
 		expect(current.updateAssistant).not.toHaveBeenCalled()
 		expect(current.createAssistant).not.toHaveBeenCalled()
+	})
+})
+
+describe('opener variables', () => {
+	it('declares no dynamic variable and names none in any opener, like the live assistant', () => {
+		const payload = buildAssistantPayload(input) as { dynamic_variables?: object }
+		expect(payload.dynamic_variables).toBeUndefined()
+		for (const text of Object.values(DISCLOSURE_TEMPLATES)) {
+			expect(text.match(/\{\{[^}]+\}\}/g)).toBeNull()
+		}
 	})
 })

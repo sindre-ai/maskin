@@ -21,6 +21,9 @@ export const DISCLOSURE_TEMPLATES: Record<DisclosureLocale, string> = {
 	da: `Hej, jeg hedder ${ASSISTANT_FIRST_NAME}, og jeg er en AI-agent, der arbejder for virksomheden Maskin. Jeg vil høre om I er interesseret i at høre mere om, hvordan I kan hyre AI-agenter til at lave det operationelle arbejde hos jer.`,
 }
 
+/** The greeting for a contact with no first name. Danish like the opener, see DISCLOSURE_LOCALE. */
+export const DEFAULT_PROSPECT_GREETING = 'Hej'
+
 /** What the call.hangup assertion looks for in the first thing the agent said (spec 7a, step 4). */
 export const DISCLOSURE_PATTERNS: readonly RegExp[] = [
 	/AI[- ]?assist/i,
@@ -139,7 +142,8 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 				timeout_ms: TOOL_TIMEOUT_MS,
 				async: false,
 				body_parameters: tool.parameters,
-				// Supplied by the assistant configuration, never by the model.
+				// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
+				// variable names that start with telnyx_; call_control_id is the system variable.
 				preset_body_fields: { call_control_id: '{{call_control_id}}' },
 			},
 		})),

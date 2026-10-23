@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { DEFAULT_PROSPECT_GREETING } from '../../integrations/providers/telnyx/assistant'
 import type { CallClientState, TelnyxClient } from '../../integrations/providers/telnyx/client'
 import { logger } from '../../logger'
 import {
@@ -45,6 +46,16 @@ export type DialerConfig = z.infer<typeof dialerConfigSchema>
 export interface QueuedContact extends GateContact {
 	/** metadata.next_dial_at exactly as read, the claim compares against it. */
 	nextDialAt: string | null
+}
+
+/**
+ * "Hej Anna" from metadata.first_name, plain "Hej" without one. The title is a full name and is
+ * never split: a wrong name on a cold call is worse than none.
+ */
+export function prospectGreeting(metadata: Record<string, unknown> | null): string {
+	const firstName = metadata?.first_name
+	const name = typeof firstName === 'string' ? firstName.trim() : ''
+	return name ? `${DEFAULT_PROSPECT_GREETING} ${name}` : DEFAULT_PROSPECT_GREETING
 }
 
 export interface DialerEvent {
@@ -302,6 +313,7 @@ export async function runDialerTick(
 				to,
 				from: fromNumber,
 				assistantId,
+				prospectGreeting: prospectGreeting(contact.metadata),
 				connectionId,
 				webhookUrl,
 				clientState,
