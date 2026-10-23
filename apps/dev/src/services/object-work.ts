@@ -19,6 +19,8 @@ import { logger } from '../lib/logger'
  * failure here must not fail the session start or teardown that called it.
  */
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export const AGENT_STARTED_WORKING = 'agent_started_working'
 export const AGENT_FINISHED_WORKING = 'agent_finished_working'
 
@@ -32,6 +34,9 @@ export async function startWorkingOnObject(
 	db: Database,
 	params: { workspaceId: string; objectId: string; sessionId: string; actorId: string },
 ): Promise<boolean> {
+	// A session id that is not a uuid cannot be a sessions row; skip the query
+	// instead of letting Postgres reject it.
+	if (!UUID_RE.test(params.sessionId)) return false
 	try {
 		const [row] = await db
 			.update(objects)
