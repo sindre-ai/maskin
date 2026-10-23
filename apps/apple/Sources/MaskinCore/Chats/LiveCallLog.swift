@@ -1,5 +1,19 @@
 import Foundation
 
+/// One spoken turn of a voice call, kept with the call on this device. A voice call has no chat
+/// messages of its own, so these are what its card shows.
+public struct LiveCallLine: Codable, Equatable, Sendable {
+	public var isYou: Bool
+	public var text: String
+	public var at: Date
+
+	public init(isYou: Bool, text: String, at: Date) {
+		self.isYou = isYou
+		self.text = text
+		self.at = at
+	}
+}
+
 /// One live call, remembered on this device so the thread can show it: where it was, who it was
 /// with, when it started and ended, and which of your lines were spoken rather than typed.
 ///
@@ -15,13 +29,17 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 	public var endedAt: Date?
 	/// The text of each line that was sent by voice, in order.
 	public var spoken: [String]
+	/// Both sides of a voice call, as they were transcribed. Empty for a dictated call, whose lines
+	/// are real chat messages.
+	public var lines: [LiveCallLine]
 	/// Whether the person left the call's card open or closed; nil takes the default (open while
 	/// the call runs, closed once it has ended).
 	public var expanded: Bool?
 
 	public init(
 		id: String = UUID().uuidString, conversationID: String, leadName: String, guests: [String] = [],
-		startedAt: Date, endedAt: Date? = nil, spoken: [String] = [], expanded: Bool? = nil
+		startedAt: Date, endedAt: Date? = nil, spoken: [String] = [], lines: [LiveCallLine] = [],
+		expanded: Bool? = nil
 	) {
 		self.id = id
 		self.conversationID = conversationID
@@ -30,8 +48,27 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		self.startedAt = startedAt
 		self.endedAt = endedAt
 		self.spoken = spoken
+		self.lines = lines
 		self.expanded = expanded
 	}
+
+	/// Calls saved before voice calls kept their lines have no `lines` key.
+	public init(from decoder: Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		id = try c.decode(String.self, forKey: .id)
+		conversationID = try c.decode(String.self, forKey: .conversationID)
+		leadName = try c.decode(String.self, forKey: .leadName)
+		guests = try c.decode([String].self, forKey: .guests)
+		startedAt = try c.decode(Date.self, forKey: .startedAt)
+		endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+		spoken = try c.decode([String].self, forKey: .spoken)
+		lines = try c.decodeIfPresent([LiveCallLine].self, forKey: .lines) ?? []
+		expanded = try c.decodeIfPresent(Bool.self, forKey: .expanded)
+	}
+
+	/// The thread shows a card for a call once it has ended or has something in it; a running call
+	/// with nothing said yet shows the call's empty state instead.
+	public var showsCard: Bool { endedAt != nil || !lines.isEmpty }
 }
 
 /// The device's list of recent live calls (newest kept, the oldest dropped past `limit`).
@@ -99,8 +136,27 @@ public struct LiveCallCard: Equatable, Sendable, Identifiable {
 
 	public init(record: LiveCallRecord, messages: [ChatMessage], currentActorID: String?) {
 		self.record = record
-		self.messages = messages
+		self.messages = Self.merged(messages, with: record, currentActorID: currentActorID)
 		self.currentActorID = currentActorID
+	}
+
+	/// The call's chat messages plus the lines a voice call kept, in the order they were said. The
+	/// lines become messages from you and from the lead agent so the card draws them like any other.
+	static func merged(_ messages: [ChatMessage], with record: LiveCallRecord, currentActorID: String?) -> [ChatMessage] {
+		guard !record.lines.isEmpty else { return messages }
+		let spoken = record.lines.enumerated().map { index, line in
+			ChatMessage(
+				id: "live-\(record.id)-\(index)", conversationID: record.conversationID,
+				actorID: line.isYou ? (currentActorID ?? "you") : "live-\(record.id)-agent",
+				actorName: line.isYou ? LiveMeetingNote.youName : record.leadName,
+				author: line.isYou ? .human : .agent, content: line.text, createdAt: line.at)
+		}
+		return (messages + spoken).enumerated()
+			.sorted { a, b in
+				let (x, y) = (a.element.createdAt ?? .distantFuture, b.element.createdAt ?? .distantFuture)
+				return x == y ? a.offset < b.offset : x < y
+			}
+			.map(\.element)
 	}
 
 	public func isYou(_ message: ChatMessage) -> Bool { message.actorID == currentActorID }
