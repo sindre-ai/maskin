@@ -1,5 +1,6 @@
-import { buildThreadChat } from '@/lib/session-thread'
+import { backgroundTitle, buildBackgroundThreads, buildThreadChat } from '@/lib/session-thread'
 import { describe, expect, it } from 'vitest'
+import { buildSessionResponse } from '../factories'
 
 const log = (id: number, envelope: unknown) => ({
 	id,
@@ -63,5 +64,47 @@ describe('buildThreadChat()', () => {
 	it('gives every message a negative id so it cannot be edited or retried', () => {
 		const chat = buildThreadChat([log(1, user('p')), log(2, result('Done'))], ctx)
 		expect(chat.items.every((i) => i.message.id < 0)).toBe(true)
+	})
+})
+
+describe('backgroundTitle', () => {
+	it('uses the trigger name when there is one', () => {
+		expect(backgroundTitle('Loop hygiene', '**Loop hygiene — first step**\nlong prompt')).toBe(
+			'Loop hygiene',
+		)
+	})
+
+	it('falls back to the first line of the prompt, shortened', () => {
+		expect(backgroundTitle(undefined, '\nSweep the backlog\nsecond line')).toBe('Sweep the backlog')
+		expect(backgroundTitle(undefined, 'x'.repeat(200))).toHaveLength(80)
+		expect(backgroundTitle('  ', '')).toBe('Untitled session')
+	})
+})
+
+describe('buildBackgroundThreads', () => {
+	it('folds a follow-up into the run it carries on and shows the newest state', () => {
+		const first = buildSessionResponse({
+			id: 'a',
+			status: 'completed',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		const follow = buildSessionResponse({
+			id: 'b',
+			status: 'running',
+			actionPrompt: 'one more thing',
+			createdAt: '2026-01-02T00:00:00Z',
+			config: { continues_session_id: 'a' },
+		})
+		const other = buildSessionResponse({ id: 'c', createdAt: '2026-01-03T00:00:00Z' })
+
+		const threads = buildBackgroundThreads([other, follow, first], 'Ledger')
+
+		expect(threads.map((t) => t.id)).toEqual(['a', 'c'])
+		expect(threads[0]).toMatchObject({
+			status: 'running',
+			sessionIds: ['a', 'b'],
+			latestId: 'b',
+			followUps: [{ id: 'b', actionPrompt: 'one more thing' }],
+		})
 	})
 })
