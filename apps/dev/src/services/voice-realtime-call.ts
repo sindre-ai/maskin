@@ -58,13 +58,23 @@ export interface CreateRealtimeCallInput {
 
 export type CreateRealtimeCallOutcome =
 	| { kind: 'ok'; callId: string; answerSdp: string }
-	| { kind: 'rate_limited'; retryAfterSeconds: number }
+	| { kind: 'rate_limited'; retryAfterSeconds: number; vendorBody?: string }
+	/** A 429 whose body says the account is out of quota or billing, not that it is going too fast. */
+	| { kind: 'quota_exhausted'; vendorBody: string }
 	| { kind: 'error'; status: number; body: string }
 
 /** Test seam: contract tests drive every branch without reaching OpenAI. */
 export type CreateRealtimeCallFn = (
 	input: CreateRealtimeCallInput,
 ) => Promise<CreateRealtimeCallOutcome>
+
+/**
+ * OpenAI sends insufficient_quota (or billing_hard_limit_reached) on a 429 that waiting will not fix.
+ * A bare "billing" match is too wide: plain free-tier rate limits link to the billing page.
+ */
+export function isQuotaBody(body: string): boolean {
+	return /insufficient_quota|exceeded your current quota|billing_hard_limit/i.test(body)
+}
 
 async function defaultCreateRealtimeCall(
 	input: CreateRealtimeCallInput,
@@ -112,10 +122,13 @@ async function defaultCreateRealtimeCall(
 		return { kind: 'error', status: 502, body: err instanceof Error ? err.message : String(err) }
 	}
 	if (res.status === 429) {
+		const vendorBody = await res.text().catch(() => '')
+		if (isQuotaBody(vendorBody)) return { kind: 'quota_exhausted', vendorBody }
 		const parsed = Number.parseInt(res.headers.get('retry-after') ?? '', 10)
 		return {
 			kind: 'rate_limited',
 			retryAfterSeconds: Number.isFinite(parsed) && parsed > 0 ? parsed : 30,
+			vendorBody,
 		}
 	}
 	if (!res.ok) {

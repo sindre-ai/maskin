@@ -449,7 +449,33 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 
 		const res = await post(app)
 		expect(res.status).toBe(429)
-		expect(((await res.json()) as { retry_after_seconds: number }).retry_after_seconds).toBe(42)
+		const body = (await res.json()) as {
+			error: { message: string }
+			retry_after_seconds: number
+		}
+		expect(body.retry_after_seconds).toBe(42)
+		expect(body.error.message).toBe('Voice is busy at OpenAI, try again in 42 seconds')
+		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
+	})
+
+	it('tells the caller voice is unavailable, not rate limited, when the vendor 429 is a quota error', async () => {
+		setCreateRealtimeCallFn(async () => ({
+			kind: 'quota_exhausted',
+			vendorBody: '{"error":{"code":"insufficient_quota"}}',
+		}))
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()], [offerAgent()], []]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(500)
+		const body = (await res.json()) as { error: { message: string }; retry_after_seconds?: number }
+		expect(body.error.message).toBe('Voice is unavailable, the team has been notified')
+		expect(body.retry_after_seconds).toBeUndefined()
 		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
 	})
 

@@ -426,7 +426,7 @@ const postOfferRoute = createRoute({
 		},
 		500: {
 			description:
-				'Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again',
+				'Voice is not configured (no operator key), the vendor connect failed, or the vendor refused it over quota or billing (message says the team has been notified) — the session row is released so the caller can start again',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -572,8 +572,35 @@ app.openapi(postOfferRoute, async (c) => {
 
 	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 
+	if (outcome.kind === 'quota_exhausted') {
+		await releasePendingSession(db, session.id)
+		logger.error('Voice vendor refused the call: quota or billing', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			vendor_body: outcome.vendorBody.slice(0, 500),
+		})
+		captureVoiceException(
+			session.id,
+			new Error('Voice vendor returned 429 for quota or billing (insufficient_quota)'),
+		)
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Voice is unavailable, the team has been notified'),
+			500,
+		)
+	}
+
 	if (outcome.kind === 'rate_limited') {
 		await releasePendingSession(db, session.id)
+		logger.warn('Voice vendor rate limited the call', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			retry_after_seconds: outcome.retryAfterSeconds,
+			vendor_body: (outcome.vendorBody ?? '').slice(0, 500),
+		})
 		await captureVoiceSessionDenied(humanActorId, {
 			agent_id: session.agentActorId,
 			workspace_id: session.workspaceId,
@@ -583,7 +610,7 @@ app.openapi(postOfferRoute, async (c) => {
 			{
 				error: {
 					code: 'RATE_LIMITED' as const,
-					message: 'Vendor rate limit; retry after retry_after_seconds',
+					message: `Voice is busy at OpenAI, try again in ${outcome.retryAfterSeconds} seconds`,
 				},
 				retry_after_seconds: outcome.retryAfterSeconds,
 			},

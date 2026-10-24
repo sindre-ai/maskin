@@ -65453,7 +65453,7 @@
 						}
 					},
 					"500": {
-						"description": "Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again",
+						"description": "Voice is not configured (no operator key), the vendor connect failed, or the vendor refused it over quota or billing (message says the team has been notified) — the session row is released so the caller can start again",
 						"content": {
 							"application/json": {
 								"schema": {
