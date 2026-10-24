@@ -5402,6 +5402,31 @@ public enum Operations {
                     public var metadata: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.metadataPayload?
                     /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/driver`.
                     public var driver: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/chat`.
+                    public struct chatPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/chat/conversation_id`.
+                        public var conversation_id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/chat/agent_id`.
+                        public var agent_id: Swift.String
+                        /// Creates a new `chatPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - conversation_id:
+                        ///   - agent_id:
+                        public init(
+                            conversation_id: Swift.String,
+                            agent_id: Swift.String
+                        ) {
+                            self.conversation_id = conversation_id
+                            self.agent_id = agent_id
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case conversation_id
+                            case agent_id
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/chat`.
+                    public var chat: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.chatPayload?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -5410,18 +5435,21 @@ public enum Operations {
                     ///   - status:
                     ///   - metadata:
                     ///   - driver:
+                    ///   - chat:
                     public init(
                         title: Swift.String? = nil,
                         content: Swift.String? = nil,
                         status: Swift.String? = nil,
                         metadata: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.metadataPayload? = nil,
-                        driver: Swift.String? = nil
+                        driver: Swift.String? = nil,
+                        chat: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.chatPayload? = nil
                     ) {
                         self.title = title
                         self.content = content
                         self.status = status
                         self.metadata = metadata
                         self.driver = driver
+                        self.chat = chat
                     }
                     public enum CodingKeys: String, CodingKey {
                         case title
@@ -5429,6 +5457,7 @@ public enum Operations {
                         case status
                         case metadata
                         case driver
+                        case chat
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/content/application\/json`.
@@ -40797,6 +40826,17 @@ public enum Operations {
                 public var subject_type: Operations.get_sol_api_sol_conversations.Input.Query.subject_typePayload?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/subject_id`.
                 public var subject_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/updated_after`.
+                public var updated_after: Foundation.Date?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/has_human`.
+                public var has_human: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/sort`.
+                @frozen public enum sortPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case pinned = "pinned"
+                    case activity = "activity"
+                }
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/sort`.
+                public var sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/offset`.
@@ -40809,6 +40849,9 @@ public enum Operations {
                 ///   - unread_only:
                 ///   - subject_type:
                 ///   - subject_id:
+                ///   - updated_after:
+                ///   - has_human:
+                ///   - sort:
                 ///   - limit:
                 ///   - offset:
                 public init(
@@ -40817,6 +40860,9 @@ public enum Operations {
                     unread_only: Swift.Bool? = nil,
                     subject_type: Operations.get_sol_api_sol_conversations.Input.Query.subject_typePayload? = nil,
                     subject_id: Swift.String? = nil,
+                    updated_after: Foundation.Date? = nil,
+                    has_human: Swift.Bool? = nil,
+                    sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil
                 ) {
@@ -40825,6 +40871,9 @@ public enum Operations {
                     self.unread_only = unread_only
                     self.subject_type = subject_type
                     self.subject_id = subject_id
+                    self.updated_after = updated_after
+                    self.has_human = has_human
+                    self.sort = sort
                     self.limit = limit
                     self.offset = offset
                 }
@@ -40905,6 +40954,8 @@ public enum Operations {
                             public var snippet_actor_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/snippet_actor_name`.
                             public var snippet_actor_name: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/snippet_is_caller`.
+                            public var snippet_is_caller: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/participantsPayload`.
                             public struct participantsPayloadPayload: Codable, Hashable, Sendable {
                                 /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/participantsPayload/actorId`.
@@ -40968,6 +41019,7 @@ public enum Operations {
                             ///   - snippet:
                             ///   - snippet_actor_id:
                             ///   - snippet_actor_name:
+                            ///   - snippet_is_caller:
                             ///   - participants:
                             public init(
                                 id: Swift.String,
@@ -40985,6 +41037,7 @@ public enum Operations {
                                 snippet: Swift.String? = nil,
                                 snippet_actor_id: Swift.String? = nil,
                                 snippet_actor_name: Swift.String? = nil,
+                                snippet_is_caller: Swift.Bool,
                                 participants: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.participantsPayload
                             ) {
                                 self.id = id
@@ -41002,6 +41055,7 @@ public enum Operations {
                                 self.snippet = snippet
                                 self.snippet_actor_id = snippet_actor_id
                                 self.snippet_actor_name = snippet_actor_name
+                                self.snippet_is_caller = snippet_is_caller
                                 self.participants = participants
                             }
                             public enum CodingKeys: String, CodingKey {
@@ -41020,6 +41074,7 @@ public enum Operations {
                                 case snippet
                                 case snippet_actor_id
                                 case snippet_actor_name
+                                case snippet_is_caller
                                 case participants
                             }
                         }
@@ -41311,6 +41366,8 @@ public enum Operations {
                             public var message_id: Swift.Int?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/recovered`.
                             public var recovered: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/backfilled`.
+                            public var backfilled: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/is_error`.
                             public var is_error: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/error_kind`.
@@ -41402,6 +41459,7 @@ public enum Operations {
                             ///   - dedupe_key:
                             ///   - message_id:
                             ///   - recovered:
+                            ///   - backfilled:
                             ///   - is_error:
                             ///   - error_kind:
                             ///   - retries:
@@ -41414,6 +41472,7 @@ public enum Operations {
                                 dedupe_key: Swift.String,
                                 message_id: Swift.Int? = nil,
                                 recovered: Swift.Bool? = nil,
+                                backfilled: Swift.Bool? = nil,
                                 is_error: Swift.Bool? = nil,
                                 error_kind: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload.error_kindPayload? = nil,
                                 retries: Swift.Int? = nil,
@@ -41426,6 +41485,7 @@ public enum Operations {
                                 self.dedupe_key = dedupe_key
                                 self.message_id = message_id
                                 self.recovered = recovered
+                                self.backfilled = backfilled
                                 self.is_error = is_error
                                 self.error_kind = error_kind
                                 self.retries = retries
@@ -41439,6 +41499,7 @@ public enum Operations {
                                 case dedupe_key
                                 case message_id
                                 case recovered
+                                case backfilled
                                 case is_error
                                 case error_kind
                                 case retries
@@ -41598,22 +41659,28 @@ public enum Operations {
                         public struct integration_connectPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_connect/provider`.
                             public var provider: Swift.String
                             /// Creates a new `integration_connectPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - provider:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 provider: Swift.String
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.provider = provider
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case provider
                             }
                         }
@@ -41623,6 +41690,8 @@ public enum Operations {
                         public struct keychain_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/kind`.
                             @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case api_key = "api_key"
@@ -41638,22 +41707,26 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
                                 hint: Swift.String? = nil
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case kind
                                 case suggested_name
                                 case hint
@@ -41665,6 +41738,8 @@ public enum Operations {
                         public struct keychain_access_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_access_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_access_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_access_request/integration_id`.
                             public var integration_id: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_access_request/credential_name`.
@@ -41682,18 +41757,21 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - integration_id:
                             ///   - credential_name:
                             ///   - kind:
                             ///   - hint:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 integration_id: Swift.String,
                                 credential_name: Swift.String,
                                 kind: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_access_requestPayload.kindPayload,
                                 hint: Swift.String? = nil
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.integration_id = integration_id
                                 self.credential_name = credential_name
                                 self.kind = kind
@@ -41701,6 +41779,7 @@ public enum Operations {
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case integration_id
                                 case credential_name
                                 case kind
@@ -41709,26 +41788,92 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_access_request`.
                         public var keychain_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_access_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request`.
+                        public struct integration_access_requestPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/integration_id`.
+                            public var integration_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/provider`.
+                            public var provider: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/display_name`.
+                            public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/level`.
+                            @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case read = "read"
+                                case read_write = "read_write"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/level`.
+                            public var level: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload.levelPayload
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/reason`.
+                            public var reason: Swift.String?
+                            /// Creates a new `integration_access_requestPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - reply_to_session:
+                            ///   - integration_id:
+                            ///   - provider:
+                            ///   - display_name:
+                            ///   - level:
+                            ///   - reason:
+                            public init(
+                                session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
+                                integration_id: Swift.String,
+                                provider: Swift.String,
+                                display_name: Swift.String,
+                                level: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload.levelPayload,
+                                reason: Swift.String? = nil
+                            ) {
+                                self.session_id = session_id
+                                self.reply_to_session = reply_to_session
+                                self.integration_id = integration_id
+                                self.provider = provider
+                                self.display_name = display_name
+                                self.level = level
+                                self.reason = reason
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case reply_to_session
+                                case integration_id
+                                case provider
+                                case display_name
+                                case level
+                                case reason
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request`.
+                        public var integration_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request`.
                         public struct computer_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request/task`.
                             public var task: Swift.String
                             /// Creates a new `computer_requestPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - task:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 task: Swift.String
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.task = task
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case task
                             }
                         }
@@ -41918,6 +42063,7 @@ public enum Operations {
                         ///   - integration_connect:
                         ///   - keychain_request:
                         ///   - keychain_access_request:
+                        ///   - integration_access_request:
                         ///   - computer_request:
                         ///   - card_answer:
                         ///   - helper_return:
@@ -41941,6 +42087,7 @@ public enum Operations {
                             integration_connect: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_connectPayload? = nil,
                             keychain_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_access_requestPayload? = nil,
+                            integration_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
@@ -41964,6 +42111,7 @@ public enum Operations {
                             self.integration_connect = integration_connect
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
+                            self.integration_access_request = integration_access_request
                             self.computer_request = computer_request
                             self.card_answer = card_answer
                             self.helper_return = helper_return
@@ -41988,6 +42136,7 @@ public enum Operations {
                             case integration_connect
                             case keychain_request
                             case keychain_access_request
+                            case integration_access_request
                             case computer_request
                             case card_answer
                             case helper_return
@@ -46015,6 +46164,8 @@ public enum Operations {
                             public var message_id: Swift.Int?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/recovered`.
                             public var recovered: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/backfilled`.
+                            public var backfilled: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/is_error`.
                             public var is_error: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/error_kind`.
@@ -46106,6 +46257,7 @@ public enum Operations {
                             ///   - dedupe_key:
                             ///   - message_id:
                             ///   - recovered:
+                            ///   - backfilled:
                             ///   - is_error:
                             ///   - error_kind:
                             ///   - retries:
@@ -46118,6 +46270,7 @@ public enum Operations {
                                 dedupe_key: Swift.String,
                                 message_id: Swift.Int? = nil,
                                 recovered: Swift.Bool? = nil,
+                                backfilled: Swift.Bool? = nil,
                                 is_error: Swift.Bool? = nil,
                                 error_kind: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload.error_kindPayload? = nil,
                                 retries: Swift.Int? = nil,
@@ -46130,6 +46283,7 @@ public enum Operations {
                                 self.dedupe_key = dedupe_key
                                 self.message_id = message_id
                                 self.recovered = recovered
+                                self.backfilled = backfilled
                                 self.is_error = is_error
                                 self.error_kind = error_kind
                                 self.retries = retries
@@ -46143,6 +46297,7 @@ public enum Operations {
                                 case dedupe_key
                                 case message_id
                                 case recovered
+                                case backfilled
                                 case is_error
                                 case error_kind
                                 case retries
@@ -46302,22 +46457,28 @@ public enum Operations {
                         public struct integration_connectPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_connect/provider`.
                             public var provider: Swift.String
                             /// Creates a new `integration_connectPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - provider:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 provider: Swift.String
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.provider = provider
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case provider
                             }
                         }
@@ -46327,6 +46488,8 @@ public enum Operations {
                         public struct keychain_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/kind`.
                             @frozen public enum kindPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case api_key = "api_key"
@@ -46342,22 +46505,26 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
                                 hint: Swift.String? = nil
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case kind
                                 case suggested_name
                                 case hint
@@ -46369,6 +46536,8 @@ public enum Operations {
                         public struct keychain_access_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_access_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_access_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_access_request/integration_id`.
                             public var integration_id: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_access_request/credential_name`.
@@ -46386,18 +46555,21 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - integration_id:
                             ///   - credential_name:
                             ///   - kind:
                             ///   - hint:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 integration_id: Swift.String,
                                 credential_name: Swift.String,
                                 kind: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_access_requestPayload.kindPayload,
                                 hint: Swift.String? = nil
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.integration_id = integration_id
                                 self.credential_name = credential_name
                                 self.kind = kind
@@ -46405,6 +46577,7 @@ public enum Operations {
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case integration_id
                                 case credential_name
                                 case kind
@@ -46413,26 +46586,92 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_access_request`.
                         public var keychain_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_access_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request`.
+                        public struct integration_access_requestPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/integration_id`.
+                            public var integration_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/provider`.
+                            public var provider: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/display_name`.
+                            public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/level`.
+                            @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case read = "read"
+                                case read_write = "read_write"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/level`.
+                            public var level: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload.levelPayload
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/reason`.
+                            public var reason: Swift.String?
+                            /// Creates a new `integration_access_requestPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - reply_to_session:
+                            ///   - integration_id:
+                            ///   - provider:
+                            ///   - display_name:
+                            ///   - level:
+                            ///   - reason:
+                            public init(
+                                session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
+                                integration_id: Swift.String,
+                                provider: Swift.String,
+                                display_name: Swift.String,
+                                level: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload.levelPayload,
+                                reason: Swift.String? = nil
+                            ) {
+                                self.session_id = session_id
+                                self.reply_to_session = reply_to_session
+                                self.integration_id = integration_id
+                                self.provider = provider
+                                self.display_name = display_name
+                                self.level = level
+                                self.reason = reason
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case reply_to_session
+                                case integration_id
+                                case provider
+                                case display_name
+                                case level
+                                case reason
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request`.
+                        public var integration_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request`.
                         public struct computer_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request/session_id`.
                             public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request/task`.
                             public var task: Swift.String
                             /// Creates a new `computer_requestPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
+                            ///   - reply_to_session:
                             ///   - task:
                             public init(
                                 session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
                                 task: Swift.String
                             ) {
                                 self.session_id = session_id
+                                self.reply_to_session = reply_to_session
                                 self.task = task
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
+                                case reply_to_session
                                 case task
                             }
                         }
@@ -46622,6 +46861,7 @@ public enum Operations {
                         ///   - integration_connect:
                         ///   - keychain_request:
                         ///   - keychain_access_request:
+                        ///   - integration_access_request:
                         ///   - computer_request:
                         ///   - card_answer:
                         ///   - helper_return:
@@ -46645,6 +46885,7 @@ public enum Operations {
                             integration_connect: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_connectPayload? = nil,
                             keychain_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_access_requestPayload? = nil,
+                            integration_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
@@ -46668,6 +46909,7 @@ public enum Operations {
                             self.integration_connect = integration_connect
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
+                            self.integration_access_request = integration_access_request
                             self.computer_request = computer_request
                             self.card_answer = card_answer
                             self.helper_return = helper_return
@@ -46692,6 +46934,7 @@ public enum Operations {
                             case integration_connect
                             case keychain_request
                             case keychain_access_request
+                            case integration_access_request
                             case computer_request
                             case card_answer
                             case helper_return

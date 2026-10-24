@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
-import { FOR_YOU_KIND, parseForYouMetadata } from '@maskin/shared'
+import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
 import { and, eq, gt, inArray, lte, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
@@ -25,6 +25,46 @@ export const CLOSED_OBJECT_STATUSES = [
 	'discarded',
 	'rejected',
 ]
+
+/**
+ * Ids of the decision comments among `comments` whose drafts have all been dealt with: every
+ * draft names an object, and every one of those objects is closed (sent and done, skipped or
+ * discarded). Sending or skipping a draft closes its task, never the card, so without this a
+ * card stays on For You after its last message has gone. A card with no drafts, a draft that is
+ * only text or a file, or one task still open is not finished.
+ */
+export async function findFinishedDraftCards(
+	db: Database,
+	workspaceId: string,
+	comments: Array<typeof events.$inferSelect>,
+): Promise<Set<number>> {
+	const draftIdsByComment = new Map<number, string[] | null>()
+	for (const comment of comments) {
+		const data = (comment.data ?? {}) as Record<string, unknown>
+		const decision = parseCommentDecision(data.decision)
+		const drafts = [...(decision?.draft ? [decision.draft] : []), ...(decision?.drafts ?? [])]
+		if (drafts.length === 0) continue
+		draftIdsByComment.set(
+			Number(comment.id),
+			drafts.every((d) => d.object_id) ? drafts.map((d) => d.object_id as string) : null,
+		)
+	}
+	const draftObjectIds = [...new Set([...draftIdsByComment.values()].flatMap((ids) => ids ?? []))]
+	if (draftObjectIds.length === 0) return new Set()
+
+	const rows = await db
+		.select({ id: objects.id, status: objects.status })
+		.from(objects)
+		.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, draftObjectIds)))
+	const closed = new Set(
+		rows.filter((o) => CLOSED_OBJECT_STATUSES.includes(o.status ?? '')).map((o) => o.id),
+	)
+	const finished = new Set<number>()
+	for (const [commentId, ids] of draftIdsByComment) {
+		if (ids?.every((id) => closed.has(id))) finished.add(commentId)
+	}
+	return finished
+}
 
 export type ForYouCard = {
 	row: typeof notifications.$inferSelect
@@ -126,6 +166,7 @@ export async function loadVisibleForYou(
 				.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, sourceIds)))
 		: []
 	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
+	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, sourceRows)
 
 	const replyRows = objectIds.length
 		? await db
@@ -186,6 +227,10 @@ export async function loadVisibleForYou(
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
+				return false
+			}
+			// Every message the card offered has been sent or skipped: nothing left to approve.
+			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {
 				return false
 			}
 			if (row.objectId) {

@@ -44,3 +44,16 @@ describe('classifyMcpClient', () => {
 		}
 	})
 })
+
+describe('classifyMcpClient maskin_probe', () => {
+	it('labels the production canary', () => {
+		expect(classifyMcpClient('maskin-probe/1')).toBe('maskin_probe')
+	})
+
+	it('is first in the list, so it beats every other family', () => {
+		expect(classifyMcpClient('maskin-probe/1 claude-cli/2.0.14')).toBe('maskin_probe')
+		expect(classifyMcpClient('claude-cli/2.0.14 maskin-probe/1')).toBe('maskin_probe')
+		expect(classifyMcpClient('Cursor/1.0 maskin-probe/1')).toBe('maskin_probe')
+		expect(MCP_CLIENTS[0]).toBe('maskin_probe')
+	})
+})

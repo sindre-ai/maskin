@@ -57,7 +57,9 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 /// The three calls a Realtime voice call makes, as a seam so the call logic tests without a server.
 public protocol VoiceCalling: Sendable {
 	/// Reserves the caller's live-call slot for this agent. Returns the voice session id.
-	func create(agentActorID: String) async throws -> String
+	/// `conversationID` is the chat the call was started from, so the agent knows what was said
+	/// there; nil for a call that isn't tied to a chat.
+	func create(agentActorID: String, conversationID: String?) async throws -> String
 	func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer
 	/// Ends the call. Idempotent on the server. Returns the id of the conversation the transcript
 	/// was saved to, if any.
@@ -86,8 +88,16 @@ public struct URLSessionVoiceCalls: VoiceCalling {
 		self.session = session
 	}
 
-	public func create(agentActorID: String) async throws -> String {
-		let data = try await post("voice-sessions", body: ["agent_actor_id": agentActorID])
+	/// The body of the create call. `conversation_id` is left out, not null, when there is no chat.
+	struct CreateBody: Encodable, Equatable {
+		var agent_actor_id: String
+		var conversation_id: String?
+	}
+
+	public func create(agentActorID: String, conversationID: String?) async throws -> String {
+		let data = try await post(
+			"voice-sessions",
+			body: CreateBody(agent_actor_id: agentActorID, conversation_id: conversationID))
 		struct Created: Decodable { let voice_session_id: String }
 		return try decode(Created.self, from: data).voice_session_id
 	}
