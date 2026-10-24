@@ -6805,6 +6805,209 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('list_actors directory: skill names and name filter', () => {
+		type DirectoryResult = {
+			isError?: boolean
+			content?: Array<{ text: string }>
+			structuredContent: {
+				heroCard: {
+					kind: string
+					objects?: Array<Record<string, unknown>>
+					object?: Record<string, unknown>
+					totalCount?: number
+				}
+			}
+		}
+
+		function mockActorsApi(rows: unknown[], total = rows.length) {
+			const calls: Array<{ url: string; init?: RequestInit }> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const urlStr = String(url)
+				if (urlStr.includes('/api/actors')) {
+					calls.push({ url: urlStr, init })
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(total) }),
+						json: () => Promise.resolve(rows),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			return calls
+		}
+
+		it('asks the workspace-scoped list for skill names and puts them on agent rows', async () => {
+			const calls = mockActorsApi([
+				{ id: 'a-1', type: 'agent', name: 'Architect', skills: ['alpha-skill', 'zebra-skill'] },
+				{ id: 'a-2', type: 'agent', name: 'Bare' },
+				{ id: 'a-3', type: 'human', name: 'Hannah' },
+			])
+			const result = (await getHandler('list_actors')({ workspace_id: 'ws-1' })) as DirectoryResult
+
+			const sent = new URL(calls[0].url, 'http://x').searchParams
+			expect(sent.get('include')).toBe('skills')
+			const rows = result.structuredContent.heroCard.objects ?? []
+			expect(rows[0]?.skills).toEqual(['alpha-skill', 'zebra-skill'])
+			expect(rows[1]).not.toHaveProperty('skills')
+			expect(rows[2]).not.toHaveProperty('skills')
+		})
+
+		it('sends no include or name filter on the cross-workspace listing', async () => {
+			const calls = mockActorsApi([
+				{ id: 'a-1', type: 'agent', name: 'Architect', skills: ['leaky-skill'] },
+			])
+			const result = (await getHandler('list_actors')({})) as DirectoryResult
+
+			const sent = new URL(calls[0].url, 'http://x').searchParams
+			expect(sent.has('include')).toBe(false)
+			expect(sent.has('name')).toBe(false)
+			expect(result.structuredContent.heroCard.object ?? {}).not.toHaveProperty('skills')
+		})
+
+		it('passes name and name_prefix through to the API', async () => {
+			const exact = mockActorsApi([{ id: 'a-1', type: 'agent', name: 'CPO' }])
+			await getHandler('list_actors')({ workspace_id: 'ws-1', name: 'CPO' })
+			const exactParams = new URL(exact[0].url, 'http://x').searchParams
+			expect(exactParams.get('name')).toBe('CPO')
+			expect(exactParams.has('name_prefix')).toBe(false)
+
+			vi.restoreAllMocks()
+			const prefix = mockActorsApi([{ id: 'a-1', type: 'agent', name: 'CPO' }])
+			await getHandler('list_actors')({ workspace_id: 'ws-1', name_prefix: 'CP' })
+			const prefixParams = new URL(prefix[0].url, 'http://x').searchParams
+			expect(prefixParams.get('name_prefix')).toBe('CP')
+			expect(prefixParams.has('name')).toBe(false)
+		})
+
+		it('scopes a name lookup without workspace_id to the default workspace', async () => {
+			const calls = mockActorsApi([{ id: 'a-1', type: 'agent', name: 'CPO' }])
+			await getHandler('list_actors')({ name: 'CPO' })
+
+			const headers = new Headers(calls[0].init?.headers)
+			expect(headers.get('X-Workspace-Id')).toBe(config.defaultWorkspaceId)
+			const sent = new URL(calls[0].url, 'http://x').searchParams
+			expect(sent.get('name')).toBe('CPO')
+			expect(sent.get('snapshot_at')).toBeTruthy()
+		})
+
+		it('returns a tool error when both name and name_prefix are passed', async () => {
+			const calls = mockActorsApi([])
+			const result = (await getHandler('list_actors')({
+				workspace_id: 'ws-1',
+				name: 'CPO',
+				name_prefix: 'CP',
+			})) as DirectoryResult
+
+			expect(result.isError).toBe(true)
+			expect(result.content?.[0]?.text).toBe('Pass name or name_prefix, not both')
+			expect(calls).toHaveLength(0)
+		})
+
+		it('returns a tool error when a name filter has no workspace to scope to', async () => {
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const calls = mockActorsApi([])
+			const result = (await getHandler('list_actors')({ name: 'CPO' })) as DirectoryResult
+
+			expect(result.isError).toBe(true)
+			expect(result.content?.[0]?.text).toBe('name and name_prefix need a workspace_id')
+			expect(calls).toHaveLength(0)
+		})
+
+		it('returns an empty heroCard, not an error, when nothing matches', async () => {
+			mockActorsApi([], 0)
+			const result = (await getHandler('list_actors')({
+				workspace_id: 'ws-1',
+				name: 'Nobody',
+			})) as DirectoryResult
+
+			expect(result.isError).toBeUndefined()
+			expect(result.structuredContent.heroCard.kind).toBe('empty')
+		})
+
+		it('returns a single heroCard for one exact match', async () => {
+			mockActorsApi([{ id: 'a-1', type: 'agent', name: 'CPO', skills: ['product-sense'] }], 1)
+			const result = (await getHandler('list_actors')({
+				workspace_id: 'ws-1',
+				name: 'CPO',
+			})) as DirectoryResult
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.skills).toEqual(['product-sense'])
+		})
+
+		it('returns every agent that shares an exact name, with the filtered total', async () => {
+			mockActorsApi(
+				[
+					{ id: 'a-1', type: 'agent', name: 'CPO' },
+					{ id: 'a-2', type: 'agent', name: 'cpo' },
+				],
+				2,
+			)
+			const result = (await getHandler('list_actors')({
+				workspace_id: 'ws-1',
+				name: 'cpo',
+			})) as DirectoryResult
+
+			expect(result.structuredContent.heroCard.objects).toHaveLength(2)
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
+		})
+
+		it('keeps every row key inside the allowed set', async () => {
+			mockActorsApi([
+				{
+					id: 'a-1',
+					type: 'agent',
+					name: 'Architect',
+					role: 'member',
+					description: 'Owns architecture.',
+					skills: ['alpha-skill'],
+					// Fields a full actor row carries that a directory row must not.
+					system_prompt: 'secret instructions',
+					tools: { mcpServers: { x: { url: 'https://example.invalid/?token=SECRET' } } },
+				},
+			])
+			const result = (await getHandler('list_actors')({ workspace_id: 'ws-1' })) as DirectoryResult
+			const allowed = new Set([
+				'id',
+				'type',
+				'title',
+				'status',
+				'role',
+				'description',
+				'url',
+				'skills',
+				'connectedTriggers',
+				'connectedLoops',
+			])
+			const row = result.structuredContent.heroCard.object ?? {}
+			for (const key of Object.keys(row)) expect(allowed.has(key)).toBe(true)
+			expect(JSON.stringify(result.structuredContent)).not.toContain('SECRET')
+			expect(JSON.stringify(result.structuredContent)).not.toContain('secret instructions')
+		})
+
+		it('keeps a default 25-row page with skill names at or under 15,000 characters', async () => {
+			// Shaped like the measured roster (mean description about 50 characters,
+			// a row url) and deliberately fat on skills: 8 names of 28 characters.
+			const agentId = '3d5d1d46-38a8-45ef-be58-6118dd8b944f'
+			const rows = Array.from({ length: 25 }, (_, i) => ({
+				id: agentId,
+				type: 'agent',
+				name: `Workspace Coach ${i}`,
+				role: 'member',
+				description: 'd'.repeat(50),
+				skills: Array.from({ length: 8 }, (_, k) => `skill-${k}-`.padEnd(28, 'x')),
+			}))
+			createMcpServer({ ...config, webAppBaseUrl: 'https://maskin.io' })
+			mockActorsApi(rows, 64)
+			const result = (await getHandler('list_actors')({
+				workspace_id: 'e2877e32-2c11-489e-96c8-a76200908ed4',
+			})) as DirectoryResult
+
+			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
+			expect(JSON.stringify(result.structuredContent).length).toBeLessThanOrEqual(15_000)
+		})
+	})
+
 	describe('setup block on create/update/get responses', () => {
 		const setupOkJson = (data: unknown) =>
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response

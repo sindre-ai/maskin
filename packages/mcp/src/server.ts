@@ -1826,7 +1826,8 @@ export interface HeroCardObject {
 	tools?: Record<string, unknown> | null
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor carries id + name pairs; a list_actors row carries names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
@@ -2113,7 +2114,8 @@ interface RawActor {
 	tools?: Record<string, unknown> | null
 	llm_provider?: string | null
 	llm_config?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor returns id + name pairs; the workspace list returns names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 }
 
 // create_actor/update_actor accept a single `llm_config: { provider, ... }`
@@ -4067,7 +4069,29 @@ export function createMcpServer(config: McpConfig) {
 			// would re-fetch the identical first page forever. Fall back to
 			// plain offset pagination — matching this tool's pre-cursor
 			// behavior — whenever `workspace_id` is omitted.
-			const workspaceScoped = Boolean(args.workspace_id)
+			//
+			// A name filter only exists on the workspace-scoped path, so a call that
+			// passes one without a workspace_id falls back to the default workspace
+			// instead of silently taking the unfiltered cross-workspace branch.
+			if (args.name !== undefined && args.name_prefix !== undefined) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'Pass name or name_prefix, not both' }],
+				}
+			}
+			const nameFilterRequested = args.name !== undefined || args.name_prefix !== undefined
+			const scopeWorkspaceId =
+				args.workspace_id ??
+				(nameFilterRequested ? config.defaultWorkspaceId || undefined : undefined)
+			if (nameFilterRequested && !scopeWorkspaceId) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'name and name_prefix need a workspace_id' }],
+				}
+			}
+			const workspaceScoped = Boolean(scopeWorkspaceId)
 			const pagination = resolveListPagination({
 				limit: args.limit,
 				cursor: workspaceScoped ? args.cursor : undefined,
@@ -4079,6 +4103,10 @@ export function createMcpServer(config: McpConfig) {
 			const fetchCap = workspaceScoped ? pagination.limit + 1 : pagination.limit
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
 			if (workspaceScoped) {
+				// Skill names ride on every workspace-scoped row.
+				params.set('include', 'skills')
+				if (args.name !== undefined) params.set('name', args.name)
+				if (args.name_prefix !== undefined) params.set('name_prefix', args.name_prefix)
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
 				if (pagination.cursor) {
@@ -4091,7 +4119,7 @@ export function createMcpServer(config: McpConfig) {
 				'GET',
 				`/api/actors?${params}`,
 				undefined,
-				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+				scopeWorkspaceId ? { workspaceId: scopeWorkspaceId } : { skipWorkspace: true },
 			)
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
@@ -4108,7 +4136,7 @@ export function createMcpServer(config: McpConfig) {
 			// from addUrl(), which needs a workspace id. Compute them here and
 			// fold them into each hero object so structuredContent is the sole
 			// carrier of the response (no separate `content` text channel).
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const wsId = scopeWorkspaceId ?? config.defaultWorkspaceId
 			const enriched =
 				wsId && Array.isArray(trimmedData)
 					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
@@ -4129,12 +4157,16 @@ export function createMcpServer(config: McpConfig) {
 			const wantLoops = workspaceScoped && include.includes('loops')
 			const actorLinks =
 				wantTriggers || wantLoops
-					? await resolveActorLinks(config, args.workspace_id as string)
+					? await resolveActorLinks(config, scopeWorkspaceId as string)
 					: null
 			const heroObjects = rows.map((a, idx) => {
 				let obj = buildActorHeroCardObject(a)
 				const url = pickUrl(enrichedRows[idx])
 				if (url) obj = { ...obj, url }
+				// Names only; the API leaves the key out for humans and for agents with none.
+				if (workspaceScoped && Array.isArray(a.skills) && a.skills.length > 0) {
+					obj = { ...obj, skills: a.skills as string[] }
+				}
 				if (actorLinks) {
 					const connectedTriggers = wantTriggers ? actorLinks.triggersByActor.get(a.id) : undefined
 					const connectedLoops = wantLoops ? actorLinks.loopsByActor.get(a.id) : undefined
@@ -4173,7 +4205,7 @@ export function createMcpServer(config: McpConfig) {
 				_meta: uiMeta(
 					'list_actors',
 					config,
-					args.workspace_id,
+					scopeWorkspaceId,
 					pickCollectionResourceUri(heroCard),
 				),
 				structuredContent: {
