@@ -332,7 +332,9 @@ jobs:
         run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright cannot install chromium on
+    # ("does not support chromium on ubuntu26.04-x64"). Unpin once Playwright supports it.
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
