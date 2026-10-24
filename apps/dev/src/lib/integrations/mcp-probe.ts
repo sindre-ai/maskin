@@ -27,8 +27,16 @@ function isPrivateAddress(address: string): boolean {
 			a.startsWith('fd')
 		)
 			return true
-		const mapped = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-		return mapped?.[1] ? isPrivateAddress(mapped[1]) : false
+		// IPv4 inside IPv6 (::ffff:a.b.c.d or ::a.b.c.d). new URL() rewrites the
+		// dotted tail to hex (::ffff:7f00:1), so accept both spellings.
+		const embedded = a.match(
+			/^::(?:ffff:)?(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/,
+		)
+		if (!embedded) return false
+		if (embedded[1]) return isPrivateAddress(embedded[1])
+		const hi = Number.parseInt(embedded[2] ?? '0', 16)
+		const lo = Number.parseInt(embedded[3] ?? '0', 16)
+		return isPrivateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
 	}
 	const [a = 0, b = 0] = address.split('.').map(Number)
 	return (
