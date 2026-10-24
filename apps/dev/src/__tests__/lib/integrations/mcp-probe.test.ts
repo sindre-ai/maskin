@@ -75,10 +75,19 @@ describe('probeMcpTools', () => {
 		'https://127.0.0.1/mcp',
 		'https://169.254.169.254/latest',
 		'https://[::1]/mcp',
+		'https://[::ffff:127.0.0.1]/mcp',
+		'https://[::ffff:169.254.169.254]/latest',
+		'https://[::ffff:10.0.0.1]/mcp',
 		'https://internal.example.com/mcp',
 	])('refuses %s without connecting', async (url) => {
 		const result = await probeMcpTools(url, 'sk-1')
 		expect(result).toMatchObject({ ok: false, reason: 'blocked' })
 		expect(connect).not.toHaveBeenCalled()
+	})
+
+	it('still allows a public IPv4-mapped IPv6 host', async () => {
+		listTools.mockResolvedValue({ tools: [] })
+		const result = await probeMcpTools('https://[::ffff:93.184.216.34]/mcp')
+		expect(result).toEqual({ ok: true, tools: [] })
 	})
 })
