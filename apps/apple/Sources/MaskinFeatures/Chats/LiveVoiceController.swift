@@ -60,6 +60,7 @@ final class LiveVoiceController {
 
 	@ObservationIgnored private let ports: Ports
 	@ObservationIgnored private let defaults: UserDefaults
+	@ObservationIgnored private let greeting: String?
 	@ObservationIgnored private var pacer = ReplyPacer()
 	/// A short acknowledgement heard after the reading stopped, waiting to prove it is the whole phrase.
 	@ObservationIgnored private var ack: (text: String, since: Date)?
@@ -76,15 +77,22 @@ final class LiveVoiceController {
 
 	init(
 		ports: Ports, tickInterval: Duration = .milliseconds(250),
-		defaults: UserDefaults = .standard, pace: LiveCallPace? = nil
+		defaults: UserDefaults = .standard, pace: LiveCallPace? = nil,
+		greeting: String? = LiveVoiceController.defaultGreeting
 	) {
 		self.ports = ports
 		self.tickInterval = tickInterval
 		self.defaults = defaults
+		self.greeting = greeting
 		let chosen = pace ?? LiveCallPace.stored(defaults)
 		self.pace = chosen
 		pacer.pace = chosen
 	}
+
+	/// Said once at the start so the call does not open in silence. Kept out of the chat on purpose: a posted
+	/// message would make the agent answer it.
+	static let defaultGreeting = "Hi, I am listening."
+	private static let greetingID = "live-greeting"
 
 	/// Begin listening. Messages already in the thread are not replies and are never read.
 	func begin(existing messages: [ChatMessage]) {
@@ -99,6 +107,10 @@ final class LiveVoiceController {
 		pacer.discard()
 		ports.setSpeechRate(pace.speechRate)
 		run(machine.begin())
+		if let greeting {
+			texts[Self.greetingID] = greeting
+			run(machine.greet(messageID: Self.greetingID, text: greeting))
+		}
 		ticker = Task { [weak self] in
 			while !Task.isCancelled {
 				let interval = self?.tickInterval ?? .milliseconds(250)
