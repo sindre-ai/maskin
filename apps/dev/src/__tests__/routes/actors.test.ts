@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { hashApiKey } from '@maskin/auth'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
 import { PlanCapExceededError } from '../../lib/llm-routing'
 import { heartbeatCronExpression } from '../../services/default-heartbeat'
@@ -24,6 +25,28 @@ describe('Actors Routes', () => {
 			expect(body.id).toBe(actor.id)
 			expect(body.api_key).toBeDefined()
 			expect(body.type).toBe('human')
+		})
+
+		it('stores only the hash of the primary key it returns', async () => {
+			const actor = buildActor()
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ auto_create_workspace: false })),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.api_key).toMatch(/^ank_/)
+			// inserts: [actor, api key]
+			expect(calls.inserts[0]).not.toHaveProperty('apiKey')
+			expect(calls.inserts[1]).toMatchObject({
+				actorId: actor.id,
+				kind: 'primary',
+				keyHash: hashApiKey(body.api_key),
+			})
+			expect(JSON.stringify(calls.inserts)).not.toContain(body.api_key)
 		})
 
 		it('never returns passwordHash (or any undeclared column) on signup', async () => {
@@ -88,9 +111,10 @@ describe('Actors Routes', () => {
 				const body = await res.json()
 				expect(body.type).toBe('agent')
 				expect(body.workspace_id).toBe(WORKSPACE_ID)
-				// inserts: [actor, workspace member, workspace_member event]
+				// inserts: [actor, api key, workspace member, workspace_member event]
 				expect(calls.inserts[0]).toMatchObject({ type: 'agent', createdBy: CALLER_ID })
-				expect(calls.inserts[1]).toMatchObject({
+				expect(calls.inserts[1]).toMatchObject({ actorId: actor.id, kind: 'primary' })
+				expect(calls.inserts[2]).toMatchObject({
 					workspaceId: WORKSPACE_ID,
 					actorId: actor.id,
 					role: 'member',
@@ -132,7 +156,7 @@ describe('Actors Routes', () => {
 
 				expect(res.status).toBe(201)
 				expect(calls.inserts[0]).toMatchObject({ createdBy: CALLER_ID })
-				expect(calls.inserts[1]).toMatchObject({ role: 'member' })
+				expect(calls.inserts[2]).toMatchObject({ role: 'member' })
 			})
 
 			it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
@@ -257,7 +281,7 @@ describe('Actors Routes', () => {
 			expect(calls.inserts).toHaveLength(0)
 		})
 
-		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Workspace Coach without a stored key when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
 			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
@@ -269,10 +293,11 @@ describe('Actors Routes', () => {
 			// satisfies a naive status assertion, so the queue length is what
 			// actually keeps this test honest.
 			mockResults.insertQueue = [
-				[actor], // human actor insert (already has apiKey via generateApiKey)
+				[actor], // human actor insert
+				[{}], // human primary api_keys insert
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[coach], // workspace_coach actor insert — must carry apiKey
+				[coach], // workspace_coach actor insert
 				[{}], // workspace_coach workspaceMembers insert
 				...DEFAULT_AGENT_IDS.slice(1).flatMap((agentId) => [
 					[buildActor({ type: 'agent', name: agentId, isSystem: false })],
@@ -293,15 +318,12 @@ describe('Actors Routes', () => {
 			}
 			expect(body.workspace_id).toBeDefined()
 			expect(body.workspace_provisioning_failed).toBeUndefined()
-			// inserts: [actor, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
+			// inserts: [actor, api key, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[4] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
-			expect(coachInsert.apiKey).toBeDefined()
-			expect(coachInsert.apiKey).toMatch(/^ank_/)
-
-			// And it must NOT be the same key as the creator's key
-			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			// Seeded agents get a key per session launch, never a stored one.
+			expect(coachInsert).not.toHaveProperty('apiKey')
+			expect(calls.inserts[1]).toMatchObject({ actorId: actor.id, kind: 'primary' })
 		})
 
 		it('does not default tools when creating a human actor', async () => {
@@ -961,14 +983,33 @@ describe('Actors Routes', () => {
 
 		it('returns 200 with a new API key when the caller rotates its own key', async () => {
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
-			mockResults.update = [{ id: selfId }]
+			// First update is the actor touch (returning its id), second is the key revoke.
+			mockResults.updateQueue = [[{ id: selfId }], []]
 
 			const res = await app.request(jsonRequest('POST', `/api/actors/${selfId}/api-keys`))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.api_key).toMatch(/^ank_/)
-			expect(calls.updates).toHaveLength(1)
+			expect(calls.updates).toHaveLength(2)
+			expect(calls.updates[0]).not.toHaveProperty('apiKey')
+			expect(calls.updates[1]).toHaveProperty('revokedAt')
+			expect(calls.inserts).toHaveLength(1)
+			expect(calls.inserts[0]).toMatchObject({
+				actorId: selfId,
+				kind: 'primary',
+				keyHash: hashApiKey(body.api_key),
+			})
+		})
+
+		it('returns 404 and mints no key when the actor row is gone', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = []
+
+			const res = await app.request(jsonRequest('POST', `/api/actors/${selfId}/api-keys`))
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('returns 403 with no key and writes nothing when the id is another actor', async () => {

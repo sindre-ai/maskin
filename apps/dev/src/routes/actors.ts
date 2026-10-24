@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, hashPassword, issueApiKey, revokeActorKeys } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
@@ -306,9 +306,6 @@ app.openapi(createActorRoute, async (c) => {
 		}
 	}
 
-	// Generate API key
-	const { key } = generateApiKey()
-
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
@@ -331,7 +328,6 @@ app.openapi(createActorRoute, async (c) => {
 				type: body.type,
 				name: body.name,
 				email: body.email,
-				apiKey: key,
 				passwordHash,
 				description: body.description,
 				systemPrompt: body.system_prompt,
@@ -343,6 +339,16 @@ app.openapi(createActorRoute, async (c) => {
 			.onConflictDoNothing({ target: actors.id })
 			.returning()
 
+	// The key is shown once, in this response; only its hash is stored. Minted in the same
+	// transaction as the actor so a signup never leaves an account that has no key.
+	let key = ''
+	const insertActorWithKey = async (tx: Transaction) => {
+		const [inserted] = await insertActor(tx)
+		if (!inserted) return undefined
+		key = (await issueApiKey(tx, { actorId: inserted.id, kind: 'primary' })).key
+		return inserted
+	}
+
 	let actor: typeof actors.$inferSelect | undefined
 	try {
 		if (memberWorkspaceId && creatorId) {
@@ -351,7 +357,7 @@ app.openapi(createActorRoute, async (c) => {
 			// Actor row, membership row and the audit event commit together or not
 			// at all, so a failure never leaves an agent outside the workspace.
 			actor = await db.transaction(async (tx) => {
-				const [inserted] = await insertActor(tx)
+				const inserted = await insertActorWithKey(tx)
 				if (!inserted) return undefined
 				await tx
 					.insert(workspaceMembers)
@@ -370,7 +376,7 @@ app.openapi(createActorRoute, async (c) => {
 				return inserted
 			})
 		} else {
-			;[actor] = await insertActor(db)
+			actor = await db.transaction((tx) => insertActorWithKey(tx))
 		}
 	} catch (err) {
 		if (isEmailUniqueViolation(err)) {
@@ -1279,15 +1285,21 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 
-	const { key } = generateApiKey()
+	// Every live key of the actor stops working, as when there was one shared key; the new
+	// primary key is returned once. Session keys are left alone: an agent rotating its own key
+	// should not be cut off from the container it is running in.
+	const key = await db.transaction(async (tx) => {
+		const [updated] = await tx
+			.update(actors)
+			.set({ updatedAt: new Date() })
+			.where(eq(actors.id, id))
+			.returning({ id: actors.id })
+		if (!updated) return null
+		await revokeActorKeys(tx, id, ['primary', 'login', 'login_ios'])
+		return (await issueApiKey(tx, { actorId: id, kind: 'primary' })).key
+	})
 
-	const [updated] = await db
-		.update(actors)
-		.set({ apiKey: key, updatedAt: new Date() })
-		.where(eq(actors.id, id))
-		.returning({ id: actors.id })
-
-	if (!updated) {
+	if (key === null) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 

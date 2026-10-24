@@ -24,6 +24,7 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -2587,16 +2588,19 @@ ${cont.continues_prompt}
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access. Refuse to launch without
-		// one — an empty Bearer token causes MCP writes to either fail outright
-		// or, when a fallback key is present in the env, get attributed to the
-		// wrong actor (the original "agent comments posted as a human" bug).
-		if (!agent.apiKey) {
-			throw new Error(
-				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
-			)
-		}
-		envVars.MASKIN_API_KEY = agent.apiKey
+		// Mint a key for this launch. Keys are stored hashed, so the agent's own key can't be
+		// read back; each launch, resume and relaunch gets a fresh one tied to the session, the
+		// previous one for the session is revoked, and settleSession revokes the last. An empty
+		// Bearer token would make MCP writes fail outright or, when a fallback key is present in
+		// the env, get attributed to the wrong actor (the original "agent comments posted as a
+		// human" bug), so a mint that throws aborts the launch.
+		const sessionKey = await issueApiKey(this.db, {
+			actorId: agent.id,
+			kind: 'session',
+			sessionId: session.id,
+		})
+		await revokeSessionKeys(this.db, session.id, sessionKey.keyHash)
+		envVars.MASKIN_API_KEY = sessionKey.key
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub

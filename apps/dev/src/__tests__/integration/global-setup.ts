@@ -182,7 +182,23 @@ beforeAll(async () => {
 		RETURNING id
 	`
 	testActorId = actor.id
+	await registerTestActorKey()
 })
+
+// Requests look keys up by hash in api_keys, so the shared test actor's key has to be registered
+// there; the actors.api_key column alone no longer authenticates anything.
+async function registerTestActorKey() {
+	await sql`
+		INSERT INTO api_keys (actor_id, key_hash, last4, kind)
+		VALUES (
+			${testActorId},
+			encode(sha256(convert_to('ank_testintegration', 'UTF8')), 'hex'),
+			'tion',
+			'primary'
+		)
+		ON CONFLICT (key_hash) DO NOTHING
+	`
+}
 
 beforeEach(async () => {
 	// Clean all data except the test actor. A previous test can leave fire-and-forget work running
@@ -207,6 +223,7 @@ beforeEach(async () => {
 		VALUES (${testActorId}, 'human', 'Integration Test Actor', 'integration@test.com', 'ank_testintegration')
 		ON CONFLICT (id) DO NOTHING
 	`
+	await registerTestActorKey()
 })
 
 afterAll(async () => {
