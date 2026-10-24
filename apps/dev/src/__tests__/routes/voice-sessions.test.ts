@@ -160,11 +160,7 @@ describe('POST /api/voice-sessions', () => {
 
 		it('stores no chat when none is sent', async () => {
 			const made = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-			made.mockResults.selectQueue = [
-				[membershipRow()],
-				[{ role: 'member' }],
-				[agentRow()],
-			]
+			made.mockResults.selectQueue = [[membershipRow()], [{ role: 'member' }], [agentRow()]]
 			made.mockResults.insert = [{ id: insertedId }]
 			const res = await made.app.request(
 				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
