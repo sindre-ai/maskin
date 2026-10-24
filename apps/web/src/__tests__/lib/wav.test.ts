@@ -1,4 +1,4 @@
-import { WAV_SAMPLE_RATE, encodeWav } from '@/lib/wav'
+import { WAV_SAMPLE_RATE, concatWav, encodeWav } from '@/lib/wav'
 import { describe, expect, it } from 'vitest'
 
 // jsdom's Blob has no arrayBuffer().
@@ -40,5 +40,19 @@ describe('encodeWav', () => {
 		expect(v.getInt16(48, true)).toBe(-32768)
 		expect(v.getInt16(50, true)).toBe(32767)
 		expect(v.getInt16(52, true)).toBe(-32768)
+	})
+})
+
+describe('concatWav', () => {
+	it('joins the samples of several files under one header', async () => {
+		const joined = await concatWav([
+			encodeWav(new Float32Array([0, 1])),
+			encodeWav(new Float32Array([-1])),
+		])
+		const v = await view(joined)
+		expect(v.getUint32(40, true)).toBe(6)
+		expect(v.getInt16(44, true)).toBe(0)
+		expect(v.getInt16(46, true)).toBe(32767)
+		expect(v.getInt16(48, true)).toBe(-32768)
 	})
 })

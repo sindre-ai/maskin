@@ -94,6 +94,15 @@ export const FLAGS = {
 	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
 	 */
 	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
+	/**
+	 * Gates the LinkedIn outreach writes: withdraw_invitation, react_to_post, send_inmail and
+	 * any send whose approved object carries a file (`attachment_file_id`). Read per call on
+	 * the workspace, with the calling actor as fallback. Off means a send with a file is
+	 * refused with INVALID_INPUT; plain text sends are unaffected. See parent bet [Sales Reps
+	 * close the LinkedIn outreach loop](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aff468ba-2519-4401-836e-2251c9560e5b).
+	 * Retire once the outreach tools are on for everyone.
+	 */
+	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

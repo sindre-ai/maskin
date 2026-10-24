@@ -107,6 +107,15 @@ services:
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      # Feature flags (apps/dev/src/lib/feature-flags.ts). Same rule as above:
+      # not listed here means never in the container. All three are read once
+      # at boot, so a change needs a restart. Empty means every flag is off for
+      # everyone. FF_TESTER_ACTOR_IDS is comma separated actor ids,
+      # FF_TESTER_FEATURES is comma separated flag ids, and
+      # FF_WORKSPACE_FEATURES is comma separated workspaceId:flagId pairs.
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
+      FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
       # MCP modern-protocol flag: off or on. Read once at boot, so a change
       # needs a restart. Empty or any other value is treated as off.
       MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}

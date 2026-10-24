@@ -190,7 +190,7 @@ beforeEach(async () => {
 	// deadlock against. Postgres aborts one side; retrying the cleanup is safe.
 	for (let attempt = 1; ; attempt++) {
 		try {
-			await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+			await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, linkedin_actions, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
 			break
 		} catch (err) {
 			if ((err as { code?: string }).code !== '40P01' || attempt >= 5) throw err
