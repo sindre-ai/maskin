@@ -133,4 +133,24 @@ check "$label"
 reject "$label" "--effort"
 reject "$label" "--disallowedTools"
 
-echo "agent-image-smoke: OK (8 sessions reached the agent launch)"
+# Stdio tool servers: a stand-in third-party server (env) must see none of the Maskin
+# or GitHub token variables, a server whose env block names one keeps exactly that
+# one, and the http entry is left alone. The stub prints variable NAMES only.
+MCP_CREDS=(-e MASKIN_API_KEY=canary-key -e MASKIN_API_URL=http://canary
+	-e MASKIN_WORKSPACE_ID=canary-ws -e GITHUB_TOKEN=canary-gh -e GITHUB_TOKEN_ACME=canary-acme)
+MCP_JSON='{"mcpServers":{"third-party":{"command":"env"},"named":{"command":"env","env":{"MASKIN_API_KEY":"${MASKIN_API_KEY}"}},"maskin-http":{"type":"http","url":"${MASKIN_API_URL}/mcp"}}}'
+
+label="tool servers see only the variables they name"
+check "$label" -e STUB_RUN_MCP_STDIO=1 "${MCP_CREDS[@]}" -e AGENT_MCP_JSON="$MCP_JSON"
+expect "$label" "STUB_MCP_STDIO third-party sees: <none>"
+expect "$label" "STUB_MCP_STDIO named sees: MASKIN_API_KEY "
+reject "$label" "STUB_MCP_STDIO maskin-http"
+
+# The rollback: with the scrub off the stand-in server inherits everything again.
+# The switch itself is a MASKIN_* name in the container, so the server lists it too.
+label="tool server scrub off"
+check "$label" -e STUB_RUN_MCP_STDIO=1 -e MASKIN_MCP_ENV_SCRUB=off "${MCP_CREDS[@]}" \
+	-e AGENT_MCP_JSON="$MCP_JSON"
+expect "$label" "STUB_MCP_STDIO third-party sees: GITHUB_TOKEN GITHUB_TOKEN_ACME MASKIN_API_KEY MASKIN_API_URL MASKIN_MCP_ENV_SCRUB MASKIN_WORKSPACE_ID "
+
+echo "agent-image-smoke: OK (10 sessions reached the agent launch)"
