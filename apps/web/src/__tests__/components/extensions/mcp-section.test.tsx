@@ -53,7 +53,10 @@ function wiredExtension(overrides: Partial<ExtensionResponse> = {}) {
 }
 
 const probeTools = (n: number) =>
-	Array.from({ length: n }, (_, i) => ({ name: `get_item_${String(i).padStart(2, '0')}`, kind: 'read' as const }))
+	Array.from({ length: n }, (_, i) => ({
+		name: `get_item_${String(i).padStart(2, '0')}`,
+		kind: 'read' as const,
+	}))
 
 describe('McpDialog', () => {
 	beforeEach(() => {
@@ -62,9 +65,7 @@ describe('McpDialog', () => {
 	})
 
 	const renderAdd = (onOpenChange = vi.fn()) =>
-		render(
-			<McpDialog ext={buildExtension()} workspaceId="ws-1" open onOpenChange={onOpenChange} />,
-		)
+		render(<McpDialog ext={buildExtension()} workspaceId="ws-1" open onOpenChange={onOpenChange} />)
 
 	function fillAndVerify(url = 'https://api.fireflies.ai/mcp', key = 'sk-123') {
 		fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: url } })
@@ -84,24 +85,36 @@ describe('McpDialog', () => {
 	it('keeps Verify & save disabled until a URL is typed, and asks for the key', () => {
 		renderAdd()
 		expect(screen.getByRole('button', { name: 'Verify & save' })).toBeDisabled()
-		fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://x.example/mcp' } })
+		fireEvent.change(screen.getByLabelText('Server URL'), {
+			target: { value: 'https://x.example/mcp' },
+		})
 		fireEvent.click(screen.getByRole('button', { name: 'Verify & save' }))
 		expect(screen.getByText('Paste the vendor API key.')).toBeInTheDocument()
 		expect(mocks.probe).not.toHaveBeenCalled()
 	})
 
 	it('shows the error band and saves nothing when the probe fails', async () => {
-		mocks.probe.mockResolvedValue({ ok: false, reason: 'rejected', message: 'The server rejected the API key.' })
+		mocks.probe.mockResolvedValue({
+			ok: false,
+			reason: 'rejected',
+			message: 'The server rejected the API key.',
+		})
 		renderAdd()
 		fillAndVerify()
 		expect(await screen.findByText("Couldn't verify Fireflies MCP")).toBeInTheDocument()
-		expect(screen.getByText(/The server rejected the API key. Nothing was saved./)).toBeInTheDocument()
+		expect(
+			screen.getByText(/The server rejected the API key. Nothing was saved./),
+		).toBeInTheDocument()
 		expect(mocks.update).not.toHaveBeenCalled()
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
 	})
 
 	it('lets the owner declare tools by hand after a failed probe, then saves them', async () => {
-		mocks.probe.mockResolvedValue({ ok: false, reason: 'unreachable', message: "Couldn't reach the server." })
+		mocks.probe.mockResolvedValue({
+			ok: false,
+			reason: 'unreachable',
+			message: "Couldn't reach the server.",
+		})
 		renderAdd()
 		fillAndVerify()
 		fireEvent.click(await screen.findByRole('button', { name: 'Declare tools by hand' }))
@@ -145,7 +158,9 @@ describe('McpDialog', () => {
 		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
 		fireEvent.click(screen.getByRole('checkbox', { name: 'get_item_20' }))
 		expect(screen.getByText('Selected: 21/20')).toBeInTheDocument()
-		expect(screen.getByRole('alert')).toHaveTextContent('This extension exposes 21 tools. Cap is 20')
+		expect(screen.getByRole('alert')).toHaveTextContent(
+			'This extension exposes 21 tools. Cap is 20',
+		)
 		expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 	})
 
@@ -208,7 +223,9 @@ describe('MCP in the progress card and list row', () => {
 		expect(screen.getByText('MCP')).toBeInTheDocument()
 		expect(screen.queryByText('Webhook')).not.toBeInTheDocument()
 		expect(screen.queryByText('Waiting for first delivery')).not.toBeInTheDocument()
-		expect(screen.getByText('Fireflies tools are ready. Grant agents access below.')).toBeInTheDocument()
+		expect(
+			screen.getByText('Fireflies tools are ready. Grant agents access below.'),
+		).toBeInTheDocument()
 	})
 
 	it('marks the MCP step not done until the key is stored', () => {

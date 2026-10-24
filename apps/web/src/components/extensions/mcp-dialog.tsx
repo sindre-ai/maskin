@@ -310,7 +310,9 @@ function McpFields({
 			</div>
 
 			<fieldset className="grid gap-1.5" disabled={disabled}>
-				<legend className="text-sm font-medium leading-none text-muted-foreground">Auth mode</legend>
+				<legend className="text-sm font-medium leading-none text-muted-foreground">
+					Auth mode
+				</legend>
 				<RadioGroup
 					value={form.auth}
 					onValueChange={(v) => set('auth', v === 'none' ? 'none' : 'api-key')}
@@ -370,7 +372,10 @@ function AuthOption({
 	return (
 		<div className="flex items-center gap-2">
 			<RadioGroupItem value={value} id={id} disabled={disabled} />
-			<Label htmlFor={id} className={cn('flex flex-1 items-baseline gap-2', disabled && 'opacity-60')}>
+			<Label
+				htmlFor={id}
+				className={cn('flex flex-1 items-baseline gap-2', disabled && 'opacity-60')}
+			>
 				<span>{label}</span>
 				<span className="text-xs font-normal text-muted-foreground">{hint}</span>
 			</Label>
@@ -409,14 +414,17 @@ function ToolPicker({
 							<Label htmlFor={id} className="min-w-0 flex-1 truncate font-mono text-xs">
 								{r.name}
 							</Label>
-							<label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+							<div className="flex shrink-0 items-center gap-1.5">
 								<Checkbox
+									id={`${id}-write`}
 									aria-label={`${r.name} is a write tool`}
 									checked={r.kind === 'write'}
 									onCheckedChange={(v) => patch(r.name, { kind: v === true ? 'write' : 'read' })}
 								/>
-								write
-							</label>
+								<Label htmlFor={`${id}-write`} className="text-[11px]">
+									write
+								</Label>
+							</div>
 						</li>
 					)
 				})}

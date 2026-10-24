@@ -26,7 +26,9 @@ export function mcpRemoteServer(url: string, withApiKey: boolean): McpRemoteServ
 }
 
 /** The server URL inside a stored mcp-remote server, or null for any other shape. */
-export function mcpRemoteUrl(server: { type: string; command?: string; args?: string[] }): string | null {
+export function mcpRemoteUrl(server: { type: string; command?: string; args?: string[] }):
+	| string
+	| null {
 	if (server.type !== 'stdio' || server.command !== 'npx') return null
 	const [pkg, url] = server.args ?? []
 	return pkg === 'mcp-remote' && url ? url : null

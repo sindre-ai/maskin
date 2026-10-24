@@ -75,9 +75,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByText('On · 2 tools')).toBeVisible()
 			await expect(page.getByLabel('API key (hidden)')).toBeVisible()
 			await expect(page.getByText('sk-test-key-123')).toHaveCount(0)
-			await expect(page.getByRole('region', { name: 'Setup progress' })).toContainText(
-				/MCP\s*done/,
-			)
+			await expect(page.getByRole('region', { name: 'Setup progress' })).toContainText(/MCP\s*done/)
 		})
 
 		test('pre-ticks 20 of 21 tools and blocks Save one above the cap', async ({

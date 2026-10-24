@@ -31,10 +31,7 @@ export function McpSection({
 	}
 
 	return (
-		<section
-			className="rounded-xl border border-border bg-card p-4"
-			aria-labelledby="mcp-heading"
-		>
+		<section className="rounded-xl border border-border bg-card p-4" aria-labelledby="mcp-heading">
 			<div className="flex items-start justify-between gap-3">
 				<div>
 					<div className="flex items-center gap-2">

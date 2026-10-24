@@ -39,7 +39,9 @@ describe('capMessage', () => {
 
 describe('rowsFromDeclared', () => {
 	it('splits by line or comma, dedupes, defaults the kind from the name, and flags bad names', () => {
-		const { rows, invalid } = rowsFromDeclared('get_transcript, bookmark_meeting\nget_transcript\nbad name!')
+		const { rows, invalid } = rowsFromDeclared(
+			'get_transcript, bookmark_meeting\nget_transcript\nbad name!',
+		)
 		expect(rows.map((r) => [r.name, r.kind])).toEqual([
 			['get_transcript', 'read'],
 			['bookmark_meeting', 'write'],
@@ -50,28 +52,36 @@ describe('rowsFromDeclared', () => {
 
 describe('selectedTools', () => {
 	it('keeps only ticked tools and drops the selected flag', () => {
-		const rows = rowsFromProbe([tool('a'), tool('b')]).map((r) => ({ ...r, selected: r.name === 'b' }))
+		const rows = rowsFromProbe([tool('a'), tool('b')]).map((r) => ({
+			...r,
+			selected: r.name === 'b',
+		}))
 		expect(selectedTools(rows)).toEqual([{ name: 'b', kind: 'read' }])
 	})
 })
 
 describe('validateMcpForm', () => {
 	it('needs an https URL and, for a new MCP with a key, the key', () => {
-		expect(validateMcpForm(emptyMcpForm('http://x.example/mcp'), { editing: false })).toMatchObject({
-			serverUrl: expect.any(String),
-			apiKey: expect.any(String),
-		})
+		expect(validateMcpForm(emptyMcpForm('http://x.example/mcp'), { editing: false })).toMatchObject(
+			{
+				serverUrl: expect.any(String),
+				apiKey: expect.any(String),
+			},
+		)
 		expect(
-			validateMcpForm({ ...emptyMcpForm('https://x.example/mcp'), apiKey: 'k' }, { editing: false }),
+			validateMcpForm(
+				{ ...emptyMcpForm('https://x.example/mcp'), apiKey: 'k' },
+				{ editing: false },
+			),
 		).toEqual({})
 	})
 
 	it('needs no key when auth is none, or when editing and keeping the stored key', () => {
 		const url = 'https://x.example/mcp'
 		expect(validateMcpForm({ ...emptyMcpForm(url), auth: 'none' }, { editing: false })).toEqual({})
-		expect(
-			validateMcpForm({ ...emptyMcpForm(url), replaceKey: false }, { editing: true }),
-		).toEqual({})
+		expect(validateMcpForm({ ...emptyMcpForm(url), replaceKey: false }, { editing: true })).toEqual(
+			{},
+		)
 	})
 })
 
@@ -86,7 +96,12 @@ describe('buildMcpConfig and formFromMcpConfig', () => {
 		expect(cfg.server).toEqual({
 			type: 'stdio',
 			command: 'npx',
-			args: ['mcp-remote', 'https://api.fireflies.ai/mcp', '--header', 'Authorization:${AUTHORIZATION}'],
+			args: [
+				'mcp-remote',
+				'https://api.fireflies.ai/mcp',
+				'--header',
+				'Authorization:${AUTHORIZATION}',
+			],
 			envFromCredential: 'AUTHORIZATION',
 		})
 		expect(cfg.credentialProvider).toBe('extension-mcp:fireflies')
@@ -94,8 +109,17 @@ describe('buildMcpConfig and formFromMcpConfig', () => {
 	})
 
 	it('leaves the key out entirely when auth is none', () => {
-		const cfg = buildMcpConfig({ slug: 'x', serverUrl: 'https://x.example/mcp', auth: 'none', tools: [] })
-		expect(cfg.server).toEqual({ type: 'stdio', command: 'npx', args: ['mcp-remote', 'https://x.example/mcp'] })
+		const cfg = buildMcpConfig({
+			slug: 'x',
+			serverUrl: 'https://x.example/mcp',
+			auth: 'none',
+			tools: [],
+		})
+		expect(cfg.server).toEqual({
+			type: 'stdio',
+			command: 'npx',
+			args: ['mcp-remote', 'https://x.example/mcp'],
+		})
 	})
 
 	it('reads the saved config back into a form that keeps the stored key', () => {
@@ -115,12 +139,19 @@ describe('buildMcpConfig and formFromMcpConfig', () => {
 })
 
 describe('mcpReady', () => {
-	const mcpConfig = buildMcpConfig({ slug: 'x', serverUrl: 'https://x.example/mcp', auth: 'api-key', tools: [] })
+	const mcpConfig = buildMcpConfig({
+		slug: 'x',
+		serverUrl: 'https://x.example/mcp',
+		auth: 'api-key',
+		tools: [],
+	})
 
 	it('needs a config, a stored key when auth uses one, and no runtime error', () => {
 		expect(mcpReady({ mcpConfig: null, hasMcpKey: false, mcpLastError: null })).toBe(false)
 		expect(mcpReady({ mcpConfig, hasMcpKey: false, mcpLastError: null })).toBe(false)
-		expect(mcpReady({ mcpConfig, hasMcpKey: true, mcpLastError: 'tool cap exceeded: 21/20' })).toBe(false)
+		expect(mcpReady({ mcpConfig, hasMcpKey: true, mcpLastError: 'tool cap exceeded: 21/20' })).toBe(
+			false,
+		)
 		expect(mcpReady({ mcpConfig, hasMcpKey: true, mcpLastError: null })).toBe(true)
 	})
 })

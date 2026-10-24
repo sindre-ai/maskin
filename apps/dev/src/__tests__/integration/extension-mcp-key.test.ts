@@ -62,7 +62,9 @@ describe('extension MCP key (integration)', () => {
 	})
 
 	it('stores the key encrypted on its own row and never returns it', async () => {
-		const res = await buildApp().request(jsonRequest('POST', '/api/extensions', mcpBody(), headers()))
+		const res = await buildApp().request(
+			jsonRequest('POST', '/api/extensions', mcpBody(), headers()),
+		)
 		expect(res.status).toBe(201)
 		const json = (await res.json()) as { hasMcpKey: boolean; hasSigningSecret: boolean }
 		expect(json.hasMcpKey).toBe(true)
@@ -129,9 +131,9 @@ describe('extension MCP key (integration)', () => {
 				tools: [],
 			},
 		})
-		expect((await app.request(jsonRequest('POST', '/api/extensions', http, headers()))).status).toBe(
-			400,
-		)
+		expect(
+			(await app.request(jsonRequest('POST', '/api/extensions', http, headers()))).status,
+		).toBe(400)
 
 		const tools = Array.from({ length: 21 }, (_, i) => ({ name: `get_${i}`, kind: 'read' }))
 		const tooMany = mcpBody({

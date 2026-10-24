@@ -80,7 +80,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		expect(found.map((e) => e.slug)).toEqual(['alpha', 'beta'])
 	})
 
-	it('does not pick up another workspace\'s extensions', async () => {
+	it("does not pick up another workspace's extensions", async () => {
 		await addExtension('mine')
 		const otherWs = (await insertWorkspace(db, getTestActorId())).id
 		expect(await resolveMcpFromExtension(db, otherWs)).toEqual([])

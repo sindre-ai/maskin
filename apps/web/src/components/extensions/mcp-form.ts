@@ -30,7 +30,9 @@ export function emptyMcpForm(serverUrl = ''): McpFormState {
 }
 
 /** The saved config as a form: URL read back out of the stored mcp-remote server. */
-export function formFromMcpConfig(ext: Pick<ExtensionResponse, 'mcpConfig' | 'hasMcpKey'>): McpFormState {
+export function formFromMcpConfig(
+	ext: Pick<ExtensionResponse, 'mcpConfig' | 'hasMcpKey'>,
+): McpFormState {
 	const cfg = ext.mcpConfig as ExtensionMcpConfig | null
 	const url = cfg?.server.type === 'stdio' ? mcpRemoteUrl(cfg.server) : null
 	return {

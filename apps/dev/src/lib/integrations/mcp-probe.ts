@@ -19,7 +19,13 @@ export type McpProbeResult =
 function isPrivateAddress(address: string): boolean {
 	if (isIP(address) === 6) {
 		const a = address.toLowerCase()
-		if (a === '::1' || a === '::' || a.startsWith('fe80') || a.startsWith('fc') || a.startsWith('fd'))
+		if (
+			a === '::1' ||
+			a === '::' ||
+			a.startsWith('fe80') ||
+			a.startsWith('fc') ||
+			a.startsWith('fd')
+		)
 			return true
 		const mapped = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
 		return mapped?.[1] ? isPrivateAddress(mapped[1]) : false
@@ -99,7 +105,10 @@ export async function probeMcpTools(serverUrl: string, apiKey?: string): Promise
 	const transport = new StreamableHTTPClientTransport(url, {
 		requestInit: apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined,
 	})
-	const client = new Client({ name: 'maskin-extension-probe', version: '1.0.0' }, { capabilities: {} })
+	const client = new Client(
+		{ name: 'maskin-extension-probe', version: '1.0.0' },
+		{ capabilities: {} },
+	)
 	try {
 		await client.connect(transport, { timeout: MCP_PROBE_TIMEOUT_MS })
 		const listed = await client.listTools(undefined, { timeout: MCP_PROBE_TIMEOUT_MS })
