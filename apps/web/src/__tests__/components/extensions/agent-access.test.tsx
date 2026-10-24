@@ -35,7 +35,10 @@ function buildExtension(overrides: Partial<ExtensionResponse> = {}): ExtensionRe
 		slug: 'fireflies',
 		name: 'Fireflies',
 		status: 'active',
-		mcpConfig: { tools: TOOLS },
+		mcpConfig: {
+			server: { type: 'stdio', command: 'npx', args: ['mcp-remote', 'https://api.fireflies.ai/mcp'] },
+			tools: TOOLS,
+		},
 		webhookConfig: null,
 		webhookToken: null,
 		webhookUrl: null,
