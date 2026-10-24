@@ -148,6 +148,75 @@ describe('POST /api/voice-sessions', () => {
 		expect(await res.json()).toEqual({ voice_session_id: insertedId })
 	})
 
+	describe('when started from a chat', () => {
+		const CHAT = '5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e'
+		const insertedId = '11111111-1111-4111-8111-111111111111'
+
+		function setup(chatRows: unknown[]) {
+			const made = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			made.mockResults.selectQueue = [
+				[membershipRow()],
+				[{ role: 'member' }], // writer-role check
+				[agentRow()],
+				chatRows, // is the caller in the chat?
+				[{ seconds: '0' }], // daily minutes used
+			]
+			made.mockResults.insert = [{ id: insertedId }]
+			return made
+		}
+
+		it('stores the chat on the session when the caller is a participant', async () => {
+			const { app, calls } = setup([{ id: CHAT }])
+			const res = await app.request(
+				jsonRequest('POST', '/api/voice-sessions', {
+					agent_actor_id: AGENT,
+					conversation_id: CHAT,
+				}),
+			)
+			expect(res.status).toBe(201)
+			expect(calls.inserts[0]).toMatchObject({ conversationId: CHAT })
+		})
+
+		it('ignores a chat the caller is not in, and still reserves the call', async () => {
+			const { app, calls } = setup([])
+			const res = await app.request(
+				jsonRequest('POST', '/api/voice-sessions', {
+					agent_actor_id: AGENT,
+					conversation_id: CHAT,
+				}),
+			)
+			expect(res.status).toBe(201)
+			expect(calls.inserts[0]).toMatchObject({ conversationId: null })
+		})
+
+		it('stores no chat when none is sent', async () => {
+			const made = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			made.mockResults.selectQueue = [
+				[membershipRow()],
+				[{ role: 'member' }],
+				[agentRow()],
+				[{ seconds: '0' }],
+			]
+			made.mockResults.insert = [{ id: insertedId }]
+			const res = await made.app.request(
+				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
+			)
+			expect(res.status).toBe(201)
+			expect(made.calls.inserts[0]).toMatchObject({ conversationId: null })
+		})
+
+		it('rejects a conversation_id that is not a uuid', async () => {
+			const { app } = setup([])
+			const res = await app.request(
+				jsonRequest('POST', '/api/voice-sessions', {
+					agent_actor_id: AGENT,
+					conversation_id: 'not-a-uuid',
+				}),
+			)
+			expect(res.status).toBe(400)
+		})
+	})
+
 	it('rejects a body missing agent_actor_id with 400 VALIDATION_ERROR', async () => {
 		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
 		const res = await app.request(jsonRequest('POST', '/api/voice-sessions', {}))
@@ -272,6 +341,68 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(sent.model).toBe('gpt-realtime-2.1')
 		expect(sent.tools).toEqual(VOICE_TOOLS)
 		expect(sent.tool_choice).toBe('auto')
+	})
+
+	describe('when the session was started from a chat', () => {
+		const CHAT = '5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e'
+
+		async function offerWithChat(opts: { callerStillInChat: boolean }) {
+			openSocketImmediately()
+			setVoiceInvokeToolFactory(async () => ({
+				tools: VOICE_TOOLS,
+				invokeTool: vi.fn(),
+				readOnlyTools: new Set<string>(),
+				unreachableServers: [],
+				close: async () => {},
+			}))
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response('v=0 vendor answer', {
+					status: 201,
+					headers: { location: '/v1/realtime/calls/rtc_abc' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [
+				[sessionRow({ conversationId: CHAT })],
+				[memberRow()],
+				[offerAgent()],
+				[], // agentSkills
+				opts.callerStillInChat ? [{ id: CHAT }] : [],
+				...(opts.callerStillInChat
+					? [
+							[
+								// newest first, as the query returns them
+								{ speaker: 'Chief of Staff', content: 'Sounds good, I will book it.' },
+								{ speaker: 'Sam', content: 'Lets move the launch review to Thursday 14:00.' },
+							],
+						]
+					: []),
+				[{ settings: null }], // transcript persistence
+			]
+			mockResults.update = [{ id: SESSION }]
+			const res = await post(app)
+			const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+			const sent = JSON.parse(form.get('session') as string) as { instructions: string }
+			return { res, instructions: sent.instructions }
+		}
+
+		it("adds the chat's recent messages, oldest first, to the call instructions", async () => {
+			const { res, instructions } = await offerWithChat({ callerStillInChat: true })
+			expect(res.status).toBe(200)
+			expect(instructions).toContain('You are the Chief of Staff.')
+			expect(instructions).toContain('## Earlier in this chat')
+			const sam = instructions.indexOf('Sam: Lets move the launch review to Thursday 14:00.')
+			const cos = instructions.indexOf('Chief of Staff: Sounds good, I will book it.')
+			expect(sam).toBeGreaterThan(-1)
+			expect(cos).toBeGreaterThan(sam)
+		})
+
+		it('leaves the history out when the caller has left the chat since the call was reserved', async () => {
+			const { res, instructions } = await offerWithChat({ callerStillInChat: false })
+			expect(res.status).toBe(200)
+			expect(instructions).not.toContain('Earlier in this chat')
+		})
 	})
 
 	it('reports tools_available false when the server socket cannot attach', async () => {

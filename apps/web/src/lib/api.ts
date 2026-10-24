@@ -644,6 +644,17 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
+		allowAccess: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			level: 'read' | 'read_write',
+		) =>
+			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-access`,
+				{ method: 'POST', body: { sessionId, level }, workspaceId },
+			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
 				method: 'DELETE',
@@ -2416,6 +2427,8 @@ export interface MessageQuestion {
 /** An agent's request to connect an integration, surfaced into chat as a Connect card. */
 export interface MessageIntegrationConnect {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	provider: string
 }
 
@@ -2438,6 +2451,8 @@ export interface CustomMcpServerResponse {
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
@@ -2479,16 +2494,38 @@ export interface AgentAccessView {
 
 export interface MessageKeychainAccessRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	integration_id: string
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
 }
 
+/** An agent asking for more access to an integration that is connected, surfaced as a card. */
+export interface MessageIntegrationAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	provider: string
+	display_name: string
+	level: 'read' | 'read_write'
+	reason?: string
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2528,11 +2565,13 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
+	integration_access_request?: MessageIntegrationAccessRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
-	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	card_answer?: MessageCardAnswer
 	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
 	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
@@ -2695,6 +2734,7 @@ export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
 	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

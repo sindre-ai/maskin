@@ -16,6 +16,7 @@ import {
 	imports,
 	installedLoops,
 	integrations,
+	linkedinActions,
 	notifications,
 	objects,
 	orphanThreadDetections,
@@ -51,7 +52,7 @@ import { logger } from './logger'
 // test (integration/workspace-deletion.test.ts) can fail when a new table that references
 // workspaces is added without a decision:
 //   - `explicit`: deleted below, in dependency order, because its FK is NO ACTION / RESTRICT or it
-//     has no FK at all (webhook_deliveries.workspace_id, relationships).
+//     has no FK at all (webhook_deliveries.workspace_id, linkedin_actions.workspace_id, relationships).
 //   - `cascade`:  has `ON DELETE CASCADE` towards a table that is deleted here, so the database
 //     removes it (e.g. messages via conversations, file_comments via files).
 //   - `set_null`: references a purged table with `ON DELETE SET NULL` and may belong to ANOTHER
@@ -75,6 +76,7 @@ import { logger } from './logger'
 export const WORKSPACE_PURGE_EXPLICIT = [
 	'relationships',
 	'webhook_deliveries',
+	'linkedin_actions',
 	'installed_loops',
 	'session_logs',
 	'notifications',
@@ -240,6 +242,7 @@ export async function purgeWorkspace(
 			),
 		)
 	await tx.delete(webhookDeliveries).where(eq(webhookDeliveries.workspaceId, workspaceId))
+	await tx.delete(linkedinActions).where(eq(linkedinActions.workspaceId, workspaceId))
 
 	// installed_loops points at objects (NO ACTION), so it goes before them.
 	await tx.delete(installedLoops).where(eq(installedLoops.workspaceId, workspaceId))

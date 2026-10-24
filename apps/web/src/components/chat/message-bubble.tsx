@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
+import { IntegrationAccessRequestCard } from './integration-access-request-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
@@ -398,6 +399,17 @@ export function MessageBubble({
 						messageId={message.id}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's request_integration_access call: Allow / Not now for an integration that is
+				    connected but not allowed for it. Allowing sets its access on the server. */}
+				{message.metadata?.integration_access_request ? (
+					<IntegrationAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageId={message.id}
+						askingAgentId={message.actorId}
+						request={message.metadata.integration_access_request}
 					/>
 				) : null}
 				{/* An agent's show_computer call: a card that opens the agent's own computer so

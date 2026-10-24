@@ -90,13 +90,15 @@ import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type GitHubInstallSkip,
 	type PreflightVerdict,
 	collectGitHubMcpIdentities,
+	formatGitHubInstallSkip,
 	postGitHubPreflightSlackAlert,
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
 	attachesServer,
@@ -135,7 +137,10 @@ import {
 } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
-import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+} from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -2302,7 +2307,14 @@ export class SessionManager extends EventEmitter {
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
-		const accessPreamble = buildAccessPreamble(accessRows)
+		// A person can answer a card in a chat, and for a helper started from one.
+		const personReachable =
+			Boolean(sessionConfig.conversation) ||
+			(sessionConfig.stop_on_result === true &&
+				(typeof sessionConfig.ask_conversation_id === 'string' ||
+					typeof sessionConfig.origin_conversation_id === 'string'))
+		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
+		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2311,7 +2323,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2654,6 +2666,23 @@ ${cont.continues_prompt}
 			installationId: string
 			tokenMetadata: TokenMetadata
 		}> = []
+		// Why each GitHub install was left out of this session. A `missing-token` preflight
+		// verdict only says no token arrived; these say which install and which skip point.
+		const githubInstallSkips: GitHubInstallSkip[] = []
+		const noteGithubSkip = (
+			integration: typeof integrations.$inferSelect,
+			reason: GitHubInstallSkip['reason'],
+			detail?: string,
+		) => {
+			if (integration.provider !== 'github') return
+			githubInstallSkips.push({
+				integrationId: integration.id,
+				reason,
+				installationId: integration.externalId ?? undefined,
+				ownerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+				detail,
+			})
+		}
 		for (const integration of activeIntegrations) {
 			let resolved: ReturnType<typeof getProvider>
 			try {
@@ -2671,6 +2700,7 @@ ${cont.continues_prompt}
 			// Per-integration switch: the credential stays usable server-side, but
 			// agent sessions get neither the token env var nor the MCP server.
 			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				noteGithubSkip(integration, 'not-exposed')
 				logger.info('Integration not exposed to agent sessions; skipping injection', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -2740,6 +2770,7 @@ ${cont.continues_prompt}
 				accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
+					noteGithubSkip(integration, 'revoked')
 					logger.warn(
 						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
 						{
@@ -2754,6 +2785,11 @@ ${cont.continues_prompt}
 				// var below), a missing/broken token blocks the whole integration
 				// — log and skip.
 				if (serverNeedsToken || integration.provider === 'github') {
+					noteGithubSkip(
+						integration,
+						'token-load-failed',
+						err instanceof Error ? err.message : String(err),
+					)
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
@@ -2774,16 +2810,22 @@ ${cont.continues_prompt}
 
 			if (integration.provider === 'github') {
 				// No access means no installation token and no MCP entry for this org.
-				if (access === 'none') continue
+				if (access === 'none') {
+					noteGithubSkip(integration, 'no-access')
+					continue
+				}
 				// Unreachable when accessToken is null: the catch above continues on
 				// getValidToken failure for github. Guard for the type checker.
 				if (accessToken === null) continue
 
-				const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+				const ownerLogin = await this.resolveGithubOwnerLogin(integration, (reason, detail) =>
+					noteGithubSkip(integration, reason, detail),
+				)
 				if (!ownerLogin) continue
 
 				const installationId = integration.externalId
 				if (!installationId) {
+					noteGithubSkip(integration, 'no-install-id')
 					logger.warn(
 						'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
 						{
@@ -2906,13 +2948,34 @@ ${cont.continues_prompt}
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		for (const { ownerLogin, token } of resolvedGithubInstalls) {
-			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
-				type: 'stdio',
-				command: GITHUB_MCP_SERVER_SPEC.command,
-				args: GITHUB_MCP_SERVER_SPEC.args,
-				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
-			}
+		// MASKIN_GITHUB_MCP_REFRESH is the host kill switch for the token-refresh
+		// supervisor. Unset (the default), "0" or "false" keeps today's entries. When on,
+		// each entry mints against its OWN install, and the Maskin vars stay envsubst
+		// placeholders so the key is never baked into the session row. The launch token
+		// stays in env because the startup preflight reads it from there.
+		const githubMcpRefresh = !['', '0', 'false'].includes(
+			(process.env.MASKIN_GITHUB_MCP_REFRESH ?? '').trim().toLowerCase(),
+		)
+		for (const { ownerLogin, token, integrationId } of resolvedGithubInstalls) {
+			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = githubMcpRefresh
+				? {
+						type: 'stdio',
+						command: GITHUB_MCP_SUPERVISED_SPEC.command,
+						args: GITHUB_MCP_SUPERVISED_SPEC.args,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: token,
+							GITHUB_MCP_INTEGRATION_ID: integrationId,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					}
+				: {
+						type: 'stdio',
+						command: GITHUB_MCP_SERVER_SPEC.command,
+						args: GITHUB_MCP_SERVER_SPEC.args,
+						env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+					}
 		}
 		// Register the session's github installs with the log classifier so
 		// tool_result envelopes coming back from the container carry a cause_tag
@@ -3116,7 +3179,26 @@ ${cont.continues_prompt}
 						installationId: v.installationId,
 						statusSnippet: v.statusSnippet,
 					})),
+					skippedInstalls: githubInstallSkips.map(formatGitHubInstallSkip),
 				})
+				// A `missing-token` verdict means an install was skipped above. Name the skips in the
+				// alert and keep them in the session log: the host log only holds about 2 minutes.
+				const skippedInstalls = failed.some((v) => v.failureClass === 'missing-token')
+					? githubInstallSkips
+					: []
+				if (skippedInstalls.length > 0) {
+					await this.insertSystemLog(
+						session.id,
+						`GitHub preflight: no token attached. Installs skipped at launch: ${skippedInstalls
+							.map(formatGitHubInstallSkip)
+							.join('; ')}`,
+					).catch((err) =>
+						logger.warn('Failed to store GitHub install skip reasons', {
+							sessionId: session.id,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					)
+				}
 				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
@@ -3126,6 +3208,7 @@ ${cont.continues_prompt}
 						context: {
 							sessionId: session.id,
 							workspaceId: session.workspaceId,
+							skippedInstalls,
 						},
 					})
 				} else {
@@ -3544,12 +3627,14 @@ ${cont.continues_prompt}
 	 */
 	private async resolveGithubOwnerLogin(
 		integration: typeof integrations.$inferSelect,
+		onSkip?: (reason: 'no-install-id' | 'owner-lookup-failed', detail?: string) => void,
 	): Promise<string | undefined> {
 		const config = (integration.config as IntegrationConfig | null) ?? {}
 		if (config.owner_login) return config.owner_login
 
 		const installationId = integration.externalId
 		if (!installationId) {
+			onSkip?.('no-install-id')
 			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
 				integrationId: integration.id,
 			})
@@ -3571,6 +3656,7 @@ ${cont.continues_prompt}
 			})
 			return ownerLogin
 		} catch (err) {
+			onSkip?.('owner-lookup-failed', err instanceof Error ? err.message : String(err))
 			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
 				integrationId: integration.id,
 				installationId,
@@ -5067,6 +5153,12 @@ ${cont.continues_prompt}
 				// idle; if it's still running, leave the reattach loop in
 				// streamContainerLogs to recover and try again next tick.
 				if (!session.containerId) {
+					// A row still waiting for a workspace or agent-server slot has no
+					// container yet, however long its last log line is. It is not
+					// dead; the dispatcher stamps it running once it starts. How long
+					// a row may wait is bounded by the waiting-bound step, not here.
+					if (session.status !== 'running') continue
+
 					// A `running` row with no containerId is unrecoverable — pauseSession
 					// would reject on the same guard and the watchdog would log-spam
 					// every minute forever. Route to terminal-failed instead.

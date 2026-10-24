@@ -2195,6 +2195,40 @@ describe('tool handlers', () => {
 				expect(patches[1]?.metadata).toEqual({ tags: [] })
 			})
 
+			it('sets metadata.targets from the targets argument and clears them with []', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: {},
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: body.metadata,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const rows = [{ label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }]
+				const handler = getHandler('update_loop')
+				await handler({ id: 'loop-1', targets: rows })
+				await handler({ id: 'loop-1', targets: [] })
+
+				expect(patches[0]?.metadata).toEqual({ targets: rows })
+				expect(patches[1]?.metadata).toEqual({ targets: [] })
+			})
+
 			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
 				const relationshipDeletes: string[] = []
 				let patchBody: Record<string, unknown> | undefined
@@ -2513,6 +2547,8 @@ describe('tool handlers', () => {
 		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
 			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
 
+		// There is no time limit on a wait, so a session that is still going is stood in for by one
+		// the wait stops on: parked on waiting_for_input.
 		const neverFinishes = (id: string) =>
 			vi
 				.spyOn(globalThis, 'fetch')
@@ -2522,10 +2558,10 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValue({
 					ok: true,
-					json: () => Promise.resolve({ id, status: 'running' }),
+					json: () => Promise.resolve({ id, status: 'waiting_for_input' }),
 				} as Response)
 
-		it('flag on and the wait times out: asks for the return with one PATCH, false on the create call', async () => {
+		it('flag on and the wait stops with the helper unfinished: asks for the return with one PATCH, false on the create call', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
@@ -2535,7 +2571,7 @@ describe('tool handlers', () => {
 				action_prompt: 'Long task',
 				notify_on_complete: true,
 			})
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -2550,7 +2586,7 @@ describe('tool handlers', () => {
 			expect(JSON.parse(patches[0][1].body as string)).toEqual({ notify_on_complete: true })
 		})
 
-		it('unset and the wait times out: still asks for the return', async () => {
+		it('unset and the wait stops with the helper unfinished: still asks for the return', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n0')
 
@@ -2559,7 +2595,7 @@ describe('tool handlers', () => {
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 			})
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 			await resultPromise
 
 			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
@@ -2594,25 +2630,36 @@ describe('tool handlers', () => {
 			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
 		})
 
-		it('the wait stops at the 660s limit, still registering the return', async () => {
+		it('keeps waiting past the old 11-minute limit and returns the result when the session ends', async () => {
 			vi.useFakeTimers()
-			const fetchSpy = neverFinishes('sess-n5')
+			const startedAt = Date.now()
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
+				const ended = Date.now() - startedAt > 1_200_000
+				if (String(url).includes('/logs')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return {
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-n5', status: ended ? 'completed' : 'running' }),
+				} as Response
+			}) as typeof fetch)
 
 			const resultPromise = getHandler('create_session')({
 				wait: true,
 				actor_id: 'actor-1',
-				action_prompt: 'Long task',
+				action_prompt: 'Very long task',
 				notify_on_complete: true,
 			})
-			await vi.advanceTimersByTimeAsync(659_000)
+			await vi.advanceTimersByTimeAsync(700_000)
+			// Still waiting: nothing was registered and nothing returned yet.
 			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
-			await vi.advanceTimersByTimeAsync(10_000)
+			await vi.advanceTimersByTimeAsync(600_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.settled).toBe(false)
-			expect(parsed.session_id).toBe('sess-n5')
-			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+			expect(parsed.settled).toBe(true)
+			expect(parsed.session.status).toBe('completed')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(0)
 		})
 
 		it('survives a failed status check and still returns the result', async () => {
@@ -2674,7 +2721,7 @@ describe('tool handlers', () => {
 			expect(parsed.logs_error).toEqual(expect.any(String))
 		})
 
-		it('passing false does not stop the return being registered when the wait times out', async () => {
+		it('passing false does not stop the return being registered when the wait stops unfinished', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
@@ -2684,7 +2731,7 @@ describe('tool handlers', () => {
 				action_prompt: 'Long task',
 				notify_on_complete: false,
 			})
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 			await resultPromise
 
 			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
@@ -2697,7 +2744,7 @@ describe('tool handlers', () => {
 					? ({ ok: false, status: 500, text: () => Promise.resolve('boom') } as Response)
 					: ({
 							ok: true,
-							json: () => Promise.resolve({ id: 'sess-n4', status: 'running' }),
+							json: () => Promise.resolve({ id: 'sess-n4', status: 'waiting_for_input' }),
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
@@ -2707,13 +2754,13 @@ describe('tool handlers', () => {
 				action_prompt: 'Long task',
 				notify_on_complete: true,
 			})
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.notify_on_complete).toBe('failed')
 			expect(parsed.notify_on_complete_reason).toEqual(expect.any(String))
-			expect(parsed.session.status).toBe('running')
+			expect(parsed.session.status).toBe('waiting_for_input')
 		})
 
 		it('passes on what the server did with an already-ended helper: skipped, with the reason', async () => {
@@ -2732,7 +2779,7 @@ describe('tool handlers', () => {
 						} as Response)
 					: ({
 							ok: true,
-							json: () => Promise.resolve({ id: 'sess-n5', status: 'running' }),
+							json: () => Promise.resolve({ id: 'sess-n5', status: 'waiting_for_input' }),
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
@@ -2742,12 +2789,256 @@ describe('tool handlers', () => {
 				action_prompt: 'Long task',
 				notify_on_complete: true,
 			})
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.notify_on_complete).toBe('skipped')
 			expect(parsed.notify_on_complete_reason).toBe('return_cap')
+		})
+	})
+
+	describe('talking to and carrying on with a session', () => {
+		type Reply = { status?: number; body?: unknown }
+		type Routes = Record<string, (init?: RequestInit) => Reply>
+
+		const keyOf = (url: string, init?: RequestInit) =>
+			`${init?.method ?? 'GET'} ${new URL(String(url)).pathname}`
+
+		// Answers by "METHOD /path", so a test states which routes the tool may touch.
+		function routeFetch(routes: Routes) {
+			return vi.spyOn(globalThis, 'fetch').mockImplementation((async (
+				url: string,
+				init?: RequestInit,
+			) => {
+				const route = routes[keyOf(url, init)]
+				if (!route) throw new Error(`unexpected request: ${keyOf(url, init)}`)
+				const { status = 200, body = {} } = route(init)
+				return status < 400
+					? ({ ok: true, status, json: () => Promise.resolve(body) } as Response)
+					: ({
+							ok: false,
+							status,
+							text: () => Promise.resolve(JSON.stringify(body)),
+						} as Response)
+			}) as typeof fetch)
+		}
+		const sent = (spy: { mock: { calls: unknown[][] } }, key: string) =>
+			(spy.mock.calls as Array<[string, RequestInit | undefined]>).filter(
+				([url, init]) => keyOf(url, init) === key,
+			)
+		const textOf = (result: unknown) =>
+			JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+		describe('resume_session', () => {
+			it('resumes a paused session from its snapshot and does not start a new one', async () => {
+				const spy = routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status: 'paused' } }),
+					'POST /api/sessions/s1/resume': () => ({
+						body: { id: 's1', actorId: 'a1', status: 'running' },
+					}),
+				})
+
+				const parsed = textOf(await getHandler('resume_session')({ id: 's1' }))
+
+				expect(parsed.id).toBe('s1')
+				expect(parsed.status).toBe('running')
+				expect(sent(spy, 'POST /api/sessions/s1/resume')).toHaveLength(1)
+				expect(sent(spy, 'POST /api/sessions/s1/continue')).toHaveLength(0)
+			})
+
+			it.each(['failed', 'timeout', 'completed', 'user_stopped'])(
+				'continues a session that is %s in the same thread, telling it to carry on when no message is given',
+				async (status) => {
+					const spy = routeFetch({
+						'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status } }),
+						'POST /api/sessions/s1/continue': () => ({ status: 201, body: { session_id: 's2' } }),
+						'GET /api/sessions/s2': () => ({
+							body: { id: 's2', actorId: 'a1', status: 'pending' },
+						}),
+					})
+
+					const parsed = textOf(await getHandler('resume_session')({ id: 's1' }))
+
+					expect(parsed.id).toBe('s2')
+					expect(parsed.continued_from_session_id).toBe('s1')
+					const [call] = sent(spy, 'POST /api/sessions/s1/continue')
+					expect(JSON.parse(call[1]?.body as string).content).toEqual(expect.any(String))
+					expect(sent(spy, 'POST /api/sessions/s1/resume')).toHaveLength(0)
+				},
+			)
+
+			it('starts the follow-up from the message it is given', async () => {
+				const spy = routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status: 'failed' } }),
+					'POST /api/sessions/s1/continue': () => ({ status: 201, body: { session_id: 's2' } }),
+					'GET /api/sessions/s2': () => ({ body: { id: 's2', actorId: 'a1', status: 'pending' } }),
+				})
+
+				await getHandler('resume_session')({ id: 's1', message: 'Push the branch you wrote' })
+
+				const [call] = sent(spy, 'POST /api/sessions/s1/continue')
+				expect(JSON.parse(call[1]?.body as string)).toEqual({
+					content: 'Push the branch you wrote',
+				})
+			})
+
+			it('refuses a running session and points to send_session_message', async () => {
+				const spy = routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status: 'running' } }),
+				})
+
+				await expect(getHandler('resume_session')({ id: 's1' })).rejects.toThrow(
+					/send_session_message/,
+				)
+				expect(sent(spy, 'POST /api/sessions/s1/resume')).toHaveLength(0)
+				expect(sent(spy, 'POST /api/sessions/s1/continue')).toHaveLength(0)
+			})
+
+			it('delivers a message to a paused session once it is running again', async () => {
+				let reads = 0
+				const spy = routeFetch({
+					// First read says paused; the poll after the resume says running.
+					'GET /api/sessions/s1': () => ({
+						body: { id: 's1', actorId: 'a1', status: reads++ === 0 ? 'paused' : 'running' },
+					}),
+					'POST /api/sessions/s1/resume': () => ({
+						body: { id: 's1', actorId: 'a1', status: 'running' },
+					}),
+					'POST /api/sessions/s1/input': () => ({ body: { ok: true } }),
+				})
+
+				await getHandler('resume_session')({ id: 's1', message: 'Use the new API' })
+
+				const [call] = sent(spy, 'POST /api/sessions/s1/input')
+				expect(JSON.parse(call[1]?.body as string)).toEqual({ content: 'Use the new API' })
+			})
+
+			it('with wait: follows the follow-up session until it finishes', async () => {
+				vi.useFakeTimers()
+				let reads = 0
+				routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status: 'timeout' } }),
+					'POST /api/sessions/s1/continue': () => ({ status: 201, body: { session_id: 's2' } }),
+					'GET /api/sessions/s2': () => ({
+						body: { id: 's2', actorId: 'a1', status: reads++ < 3 ? 'running' : 'completed' },
+					}),
+					'GET /api/sessions/s2/logs': () => ({ body: [] }),
+				})
+
+				const resultPromise = getHandler('resume_session')({ id: 's1', wait: true })
+				await vi.advanceTimersByTimeAsync(600_000)
+				const parsed = textOf(await resultPromise)
+
+				expect(parsed.session_id).toBe('s2')
+				expect(parsed.settled).toBe(true)
+				expect(parsed.session.status).toBe('completed')
+			})
+		})
+
+		describe('send_session_message', () => {
+			it('sends the message to the running session', async () => {
+				const spy = routeFetch({
+					'POST /api/sessions/s1/input': () => ({ body: { ok: true } }),
+				})
+
+				const parsed = textOf(
+					await getHandler('send_session_message')({ id: 's1', content: 'Go with option B' }),
+				)
+
+				expect(parsed).toEqual({ delivered: true, session_id: 's1' })
+				const [call] = sent(spy, 'POST /api/sessions/s1/input')
+				expect(JSON.parse(call[1]?.body as string)).toEqual({ content: 'Go with option B' })
+			})
+
+			it('tells the caller to use resume_session when the session is not running', async () => {
+				routeFetch({
+					'POST /api/sessions/s1/input': () => ({
+						status: 409,
+						body: {
+							error: { code: 'CONFLICT', message: 'Session is not running (status: completed)' },
+						},
+					}),
+				})
+
+				await expect(
+					getHandler('send_session_message')({ id: 's1', content: 'Hello again' }),
+				).rejects.toThrow(/resume_session/)
+			})
+
+			it('with wait: holds until a session that ends after replying has finished', async () => {
+				vi.useFakeTimers()
+				let reads = 0
+				routeFetch({
+					'GET /api/sessions/s1': () => ({
+						body: {
+							id: 's1',
+							status: reads++ < 2 ? 'running' : 'completed',
+							config: { stop_on_result: true },
+						},
+					}),
+					'POST /api/sessions/s1/input': () => ({ body: { ok: true } }),
+					'GET /api/sessions/s1/logs': () => ({ body: [] }),
+				})
+
+				const resultPromise = getHandler('send_session_message')({
+					id: 's1',
+					content: 'One more thing',
+					wait: true,
+				})
+				await vi.advanceTimersByTimeAsync(600_000)
+				const parsed = textOf(await resultPromise)
+
+				expect(parsed.settled).toBe(true)
+				expect(parsed.session.status).toBe('completed')
+			})
+
+			it('with wait: delivers but does not wait on a session that stays open', async () => {
+				const spy = routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', status: 'running', config: {} } }),
+					'POST /api/sessions/s1/input': () => ({ body: { ok: true } }),
+				})
+
+				const parsed = textOf(
+					await getHandler('send_session_message')({ id: 's1', content: 'Hi', wait: true }),
+				)
+
+				expect(parsed.delivered).toBe(true)
+				expect(parsed.waited).toBe(false)
+				expect(sent(spy, 'POST /api/sessions/s1/input')).toHaveLength(1)
+			})
+		})
+
+		describe('get_session with wait', () => {
+			it('returns at once, settled, for a session that has already ended', async () => {
+				routeFetch({
+					'GET /api/sessions/s1': () => ({ body: { id: 's1', actorId: 'a1', status: 'failed' } }),
+					'GET /api/sessions/s1/logs': () => ({ body: [] }),
+				})
+
+				const parsed = textOf(await getHandler('get_session')({ id: 's1', wait: true }))
+
+				expect(parsed.settled).toBe(true)
+				expect(parsed.session.status).toBe('failed')
+			})
+
+			it('keeps waiting while the session runs and returns when it ends', async () => {
+				vi.useFakeTimers()
+				let reads = 0
+				routeFetch({
+					'GET /api/sessions/s1': () => ({
+						body: { id: 's1', actorId: 'a1', status: reads++ < 5 ? 'running' : 'completed' },
+					}),
+					'GET /api/sessions/s1/logs': () => ({ body: [] }),
+				})
+
+				const resultPromise = getHandler('get_session')({ id: 's1', wait: true })
+				await vi.advanceTimersByTimeAsync(600_000)
+				const parsed = textOf(await resultPromise)
+
+				expect(parsed.settled).toBe(true)
+				expect(parsed.session.status).toBe('completed')
+			})
 		})
 	})
 
@@ -2804,42 +3095,35 @@ describe('tool handlers', () => {
 			)
 		})
 
-		it('stops polling when deadline is reached', async () => {
+		it('stops without finishing when the session is paused, and says how to carry on', async () => {
 			vi.useFakeTimers()
-			const fetchSpy = vi
-				.spyOn(globalThis, 'fetch')
-				// 1. POST /api/sessions — create session
+			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
 					json: () => Promise.resolve({ id: 'sess-2', status: 'pending' }),
 				} as Response)
-				// All subsequent polls return 'running' (never terminal)
 				.mockResolvedValue({
 					ok: true,
-					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
+					json: () => Promise.resolve({ id: 'sess-2', status: 'paused' }),
 				} as Response)
 
-			const handler = getHandler('create_session')
-			// Never reaches a terminal state, so the call gives up at the backstop limit
-			const resultPromise = handler({
+			const resultPromise = getHandler('create_session')({
 				wait: true,
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 			})
-
-			// Advance past the backstop limit
-			await vi.advanceTimersByTimeAsync(3_800_000)
+			await vi.advanceTimersByTimeAsync(10_000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-
-			// Session should still show 'running' since it never reached terminal
-			expect(parsed.session.status).toBe('running')
-			// Should have fetched logs even though it timed out
+			expect(parsed.session.status).toBe('paused')
+			expect(parsed.settled).toBe(false)
+			expect(parsed.stopped_because).toBe('paused')
+			expect(parsed.message).toContain('resume_session')
 			expect(parsed.logs).toBeDefined()
 		})
 
-		it('uses default poll_interval and timeout when not specified', async () => {
+		it('polls every 5 seconds by default', async () => {
 			vi.useFakeTimers()
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({

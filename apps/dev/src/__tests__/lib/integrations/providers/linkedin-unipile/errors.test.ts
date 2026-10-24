@@ -166,6 +166,13 @@ describe('LinkedInIntegrationError metadata', () => {
 		expect(err.retryable).toBe(false)
 	})
 
+	it('marks LINKEDIN_INMAIL_UNAVAILABLE as non-retryable with HTTP 402', () => {
+		const err = new LinkedInIntegrationError('LINKEDIN_INMAIL_UNAVAILABLE', 'no credits')
+		expect(err.retryable).toBe(false)
+		expect(err.httpStatus).toBe(402)
+		expect(RETRY_POLICY_BY_CODE.LINKEDIN_INMAIL_UNAVAILABLE).toBeNull()
+	})
+
 	it('marks LINKEDIN_ALREADY_CONNECTED as non-retryable', () => {
 		const err = new LinkedInIntegrationError('LINKEDIN_ALREADY_CONNECTED', 'already invited')
 		expect(err.retryable).toBe(false)

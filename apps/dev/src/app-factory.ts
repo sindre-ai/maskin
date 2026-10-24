@@ -302,6 +302,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
 	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
 	//     DO go through auth).
+	//   - POST /api/devices/unregister: a signed-out phone dropping its own push registration. It has
+	//     no API key after sign-out, so the device secret it registered with is the credential
+	//     (checked and rate limited per IP inside the handler; routes/devices.ts).
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -328,6 +331,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		) {
 			return next()
 		}
+		if (path === '/api/devices/unregister' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
