@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+	formatIntegrationAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
 	fromSuggestedStepSchema,
 	messageMetadataSchema,
 	neededToolsSchema,
+	sessionIntegrationAccessCardSchema,
 	sessionKeychainCardSchema,
 	stripServerOwnedMetadata,
 	suggestedStepSchema,
@@ -244,6 +246,33 @@ describe('formatKeychainRequestAsMarkdown', () => {
 	})
 })
 
+describe('sessionIntegrationAccessCardSchema', () => {
+	const id = '22222222-2222-4222-8222-222222222222'
+
+	it('needs an integration id and a level it knows, and trims the reason', () => {
+		expect(sessionIntegrationAccessCardSchema.safeParse({ level: 'read' }).success).toBe(false)
+		expect(
+			sessionIntegrationAccessCardSchema.safeParse({ integration_id: id, level: 'none' }).success,
+		).toBe(false)
+		expect(
+			sessionIntegrationAccessCardSchema.parse({
+				integration_id: id,
+				level: 'read_write',
+				reason: '  To post the summary.  ',
+			}),
+		).toEqual({ integration_id: id, level: 'read_write', reason: 'To post the summary.' })
+	})
+
+	it('says what is asked for and where else it can be set, for readers that are not the chat UI', () => {
+		const text = formatIntegrationAccessRequestAsMarkdown('Slack', 'read_write', 'To post.')
+		expect(text).toContain('read and write access')
+		expect(text).toContain('**Slack**')
+		expect(text).toContain('To post.')
+		expect(text).toContain('Settings → Integrations')
+		expect(formatIntegrationAccessRequestAsMarkdown('Slack', 'read')).toContain('read access')
+	})
+})
+
 // Keys the schema comments mark "Backend-owned" (or "Never accepted from a client").
 // A new metadata key must be added to one of these two lists, or the test below fails.
 const BACKEND_OWNED_KEYS = [
@@ -254,6 +283,7 @@ const BACKEND_OWNED_KEYS = [
 	'integration_connect',
 	'keychain_request',
 	'keychain_access_request',
+	'integration_access_request',
 	'computer_request',
 	'helper_return',
 	'delivery',

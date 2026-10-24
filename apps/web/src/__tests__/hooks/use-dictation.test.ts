@@ -14,6 +14,7 @@ vi.mock('sonner', () => ({ toast: mockToast }))
 vi.mock('@/lib/wav', () => ({
 	blobToWav16k: vi.fn(async () => new Blob(['wav'])),
 	blobToBase64: vi.fn(async () => 'BASE64'),
+	concatWav: vi.fn(async () => new Blob(['wav'])),
 }))
 
 const WORKSPACE = 'workspace-1'
@@ -128,6 +129,97 @@ describe('useDictation', () => {
 		await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Transcription failed'))
 		expect(onPhrase).not.toHaveBeenCalled()
 		expect(result.current.transcribing).toBe(false)
+	})
+
+	it('streams each phrase into the composer while still recording', async () => {
+		installMic()
+		// A fake level meter: the test drives the microphone level by hand.
+		let level = 0
+		vi.stubGlobal(
+			'AudioContext',
+			class {
+				resume = async () => {}
+				close = async () => {}
+				createAnalyser = () => ({
+					fftSize: 1024,
+					getFloatTimeDomainData: (out: Float32Array) => out.fill(level),
+				})
+				createMediaStreamSource = () => ({ connect: () => {} })
+			},
+		)
+		mockCreate
+			.mockResolvedValueOnce({ text: 'first' })
+			.mockResolvedValueOnce({ text: 'second' })
+			.mockResolvedValueOnce({ text: 'First, second.' })
+		const onRefine = vi.fn()
+		const onPhrase = vi.fn()
+		const { result } = renderHook(() => useDictation(onPhrase, WORKSPACE, onRefine))
+
+		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+		try {
+			act(() => result.current.toggle())
+			await vi.waitFor(() => expect(result.current.recording).toBe(true))
+
+			// Speak, then pause: the first phrase is sent without stopping.
+			level = 0.2
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200)
+			})
+			level = 0
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(900)
+			})
+			await vi.waitFor(() => expect(onPhrase).toHaveBeenCalledWith('first'))
+			expect(result.current.recording).toBe(true)
+			expect(recorders).toHaveLength(2)
+
+			// Speak a second phrase and pause: it is cleaned up without stopping.
+			level = 0.2
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200)
+			})
+			level = 0
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(900)
+			})
+			await vi.waitFor(() => expect(onPhrase).toHaveBeenCalledWith('second'))
+			await vi.waitFor(() =>
+				expect(onRefine).toHaveBeenCalledWith('first second', 'First, second.'),
+			)
+			expect(result.current.recording).toBe(true)
+			act(() => result.current.toggle())
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(onPhrase.mock.calls.map(([text]) => text)).toEqual(['first', 'second'])
+		expect(result.current.recording).toBe(false)
+		expect(trackStop).toHaveBeenCalled()
+	})
+
+	it('does not send a pause that held no speech', async () => {
+		installMic()
+		vi.stubGlobal(
+			'AudioContext',
+			class {
+				resume = async () => {}
+				close = async () => {}
+				createAnalyser = () => ({
+					fftSize: 1024,
+					// A tiny but non-zero hiss: the meter is alive and hears silence.
+					getFloatTimeDomainData: (out: Float32Array) => out.fill(0.001),
+				})
+				createMediaStreamSource = () => ({ connect: () => {} })
+			},
+		)
+		const { result } = renderHook(() => useDictation(vi.fn(), WORKSPACE))
+
+		act(() => result.current.toggle())
+		await waitFor(() => expect(result.current.recording).toBe(true))
+		act(() => result.current.toggle())
+
+		await waitFor(() => expect(mockToast.info).toHaveBeenCalledWith('No speech detected'))
+		expect(mockCreate).not.toHaveBeenCalled()
 	})
 
 	it('stays idle and says so when microphone access is denied', async () => {

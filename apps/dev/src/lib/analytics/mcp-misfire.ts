@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { mcpTelemetry } from '@maskin/db/schema'
-import type { McpMisfireKind } from '@maskin/shared'
+import type { McpEra, McpMisfireKind, McpProtocolVersionLabel } from '@maskin/shared'
 import { logger } from '../logger'
 import { capturePosthogEvent } from './posthog'
 
@@ -22,6 +22,10 @@ export interface McpMisfire {
 	errorMessage?: string
 	sessionId: string | null
 	agentActorId: string | null
+	/** Protocol era of the request. Absent when the classifier faulted. */
+	mcpEra?: McpEra
+	/** Allowlisted protocol version label. Never the raw header value. */
+	mcpProtocolVersion?: McpProtocolVersionLabel
 }
 
 export interface JsonRpcErrorLike {
@@ -190,5 +194,7 @@ export async function recordMcpMisfire(
 		tool_name: event.toolName,
 		session_id: event.sessionId,
 		requested_shape: JSON.stringify(event.requestedShape),
+		mcp_era: event.mcpEra,
+		mcp_protocol_version: event.mcpProtocolVersion,
 	})
 }

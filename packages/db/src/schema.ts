@@ -1143,6 +1143,12 @@ export const voiceSessions = pgTable('voice_sessions', {
 	transcriptStorageKey: text('transcript_storage_key'),
 	inputAudioSeconds: integer('input_audio_seconds'),
 	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
 	inputTokens: integer('input_tokens'),
 	outputTokens: integer('output_tokens'),
 	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
@@ -2170,6 +2176,10 @@ export const deviceTokens = pgTable(
 		// 'sandbox' | 'production' — selects the APNs host.
 		environment: text('environment').notNull(),
 		appVersion: text('app_version'),
+		// SHA-256 (hex) of the secret the device generated and sent at registration. After sign-out the
+		// phone has no API key; POST /api/devices/unregister takes this secret as its credential. Null
+		// for rows registered by a client that does not send one: those cannot use that route.
+		unregisterSecretHash: text('unregister_secret_hash'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 	},

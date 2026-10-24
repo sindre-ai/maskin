@@ -155,7 +155,7 @@ export async function redactActorToolsForCaller(
 // the incoming body is always parsed, so compare the normalised form. Args are
 // compared with their secret parts masked, so a config read back masked still
 // matches the stored one, while a changed host, command or non-secret arg does not.
-function transportOf(server: JsonRecord): string {
+export function transportOf(server: JsonRecord): string {
 	return JSON.stringify([
 		server.type ?? (typeof server.url === 'string' ? 'http' : 'stdio'),
 		server.command ?? null,

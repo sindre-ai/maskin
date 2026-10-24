@@ -9,6 +9,18 @@ export type PosthogEventProps = Record<
 >
 
 /**
+ * One warn-level line at startup when production has no PostHog key.
+ * `capturePosthogEvent` returns silently without it (debug log only), so a
+ * missing key otherwise reads as "analytics healthy, nothing happened". A log
+ * line only: it cannot detect a key that is set but over its billing limit.
+ */
+export function warnIfPosthogKeyUnset(): void {
+	if (process.env.NODE_ENV !== 'production') return
+	if (process.env.POSTHOG_API_KEY?.trim()) return
+	logger.warn('POSTHOG_API_KEY is unset in production — all backend analytics events are dropped')
+}
+
+/**
  * Best-effort PostHog capture from the backend.
  *
  * Why this exists instead of `posthog-node`: there is exactly one call site

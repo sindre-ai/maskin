@@ -31,7 +31,7 @@ Then mention the person with `create_comment`. No `decision` is needed; the obje
 |---|---|---|---|---|
 | `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })` |
 | `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to`; `recipient_provider_id` (LinkedIn id, for a first message with no `thread_id`); `attachment_file_id` (one workspace PDF, PNG or JPEG up to 10 MB) | 8,000 | `reply({ object_id })` with a `thread_id`, `send_message({ object_id })` for a first message |
-| `linkedin_connection_request` | LinkedIn | `to` (required) | 200 | `send_connection_request` |
+| `linkedin_connection_request` | LinkedIn | `to` (required) | 300 | `send_connection_request` |
 | `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
 | `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date` | 3,000 | `publish_post` |
 | `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message` |

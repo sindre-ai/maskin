@@ -7,10 +7,10 @@ name: Apple
 # the paths below will never report it and will block — keep it non-required, or
 # add a path-aware aggregator job first.
 #
-# Triggers only on changes under apps/apple (plus this file). Consequence: token and
-# OpenAPI drift checks below do NOT run when only the backend, packages/shared,
-# packages/db or the design-system CSS change — drift surfaces on the next apps/apple
-# change instead.
+# Triggers only on changes under apps/apple (plus this file). Consequence: token drift
+# does NOT run when only the design-system CSS changes — it surfaces on the next apps/apple
+# change instead. OpenAPI snapshot drift from backend changes is caught by the
+# apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
 #
 # What each step guards against, cheapest first so a drift failure costs seconds,
 # not a 20-minute Xcode build:

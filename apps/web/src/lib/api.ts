@@ -302,10 +302,12 @@ export const api = {
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
 		// hash is the preview's `content_hash`, so a draft that changed since is refused.
-		approve: (id: string, contentHash?: string) =>
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
 			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
 				method: 'POST',
-				body: contentHash ? { content_hash: contentHash } : {},
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
 			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
@@ -642,6 +644,17 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
+		allowAccess: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			level: 'read' | 'read_write',
+		) =>
+			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-access`,
+				{ method: 'POST', body: { sessionId, level }, workspaceId },
+			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
 				method: 'DELETE',
@@ -817,6 +830,12 @@ export const api = {
 			request<{ session_id: string }>(`/sessions/${id}/continue`, {
 				method: 'POST',
 				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
 				workspaceId,
 			}),
 		stop: (id: string, workspaceId: string) =>
@@ -1713,6 +1732,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -2359,6 +2386,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -2398,6 +2427,8 @@ export interface MessageQuestion {
 /** An agent's request to connect an integration, surfaced into chat as a Connect card. */
 export interface MessageIntegrationConnect {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	provider: string
 }
 
@@ -2420,6 +2451,8 @@ export interface CustomMcpServerResponse {
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
@@ -2461,16 +2494,38 @@ export interface AgentAccessView {
 
 export interface MessageKeychainAccessRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	integration_id: string
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
 }
 
+/** An agent asking for more access to an integration that is connected, surfaced as a card. */
+export interface MessageIntegrationAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	provider: string
+	display_name: string
+	level: 'read' | 'read_write'
+	reason?: string
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2510,11 +2565,13 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
+	integration_access_request?: MessageIntegrationAccessRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
 	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
-	card_answer?: { message_id: number; outcome: 'declined' | 'done' }
+	card_answer?: MessageCardAnswer
 	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
 	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
@@ -2639,6 +2696,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {
@@ -2675,6 +2734,7 @@ export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
 	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

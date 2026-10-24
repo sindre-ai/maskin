@@ -174,6 +174,7 @@ describe('MCP telemetry wrapper', () => {
 			'stop_session',
 			'pause_session',
 			'resume_session',
+			'send_session_message',
 		])
 		// Tools whose names start with create_/update_/delete_ but are NOT
 		// mutations (e.g. delete_object is — but no such read-only impostors

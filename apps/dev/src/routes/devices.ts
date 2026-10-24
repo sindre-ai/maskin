@@ -1,12 +1,15 @@
+import { createHash } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { deviceTokens, liveActivityTokens, workspaceMembers } from '@maskin/db/schema'
-import { deviceResponseSchema, registerDeviceSchema } from '@maskin/shared'
+import { deviceResponseSchema, registerDeviceSchema, unregisterDeviceSchema } from '@maskin/shared'
 import { and, eq, ne } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { createWindowLimiter } from '../lib/fixed-window-limiter'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
+import { extractClientIp } from '../lib/trusted-proxy'
 
 type Env = {
 	Variables: {
@@ -17,6 +20,22 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+// POST /unregister is reachable without an API key, so it is brake-limited per IP. A real phone
+// calls it once per sign-out (plus a few retries), so the limit is far above honest use.
+const unregisterLimiter = createWindowLimiter({ limit: 20, windowMs: 60_000 })
+
+/** Exposed so integration tests do not poison each other through shared limiter state. */
+export function resetUnregisterLimiterForTests() {
+	unregisterLimiter.reset()
+}
+
+function callerIp(c: { req: { raw: Request; header(name: string): string | undefined } }): string {
+	const socketIp = (c.req.raw as unknown as { remoteAddress?: string }).remoteAddress
+	return extractClientIp(socketIp, c.req.header('X-Forwarded-For'))
+}
+
+const hashSecret = (secret: string) => createHash('sha256').update(secret).digest('hex')
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -105,6 +124,9 @@ app.openapi(registerDeviceRoute, async (c) => {
 
 	// created_at is only written on insert, so it equals `now` iff the row is new.
 	const now = new Date()
+	// Registering without a secret clears any earlier one: the row always reflects the latest
+	// registration, so a secret from a previous install or owner cannot outlive it.
+	const unregisterSecretHash = body.unregister_secret ? hashSecret(body.unregister_secret) : null
 	const [row] = await db
 		.insert(deviceTokens)
 		.values({
@@ -113,6 +135,7 @@ app.openapi(registerDeviceRoute, async (c) => {
 			apnsToken: body.apns_token.toLowerCase(),
 			environment: body.environment,
 			appVersion: body.app_version ?? null,
+			unregisterSecretHash,
 			createdAt: now,
 			lastSeenAt: now,
 		})
@@ -122,6 +145,7 @@ app.openapi(registerDeviceRoute, async (c) => {
 				actorId,
 				platform: body.platform,
 				appVersion: body.app_version ?? null,
+				unregisterSecretHash,
 				lastSeenAt: now,
 			},
 		})
@@ -146,6 +170,61 @@ app.openapi(registerDeviceRoute, async (c) => {
 	)
 
 	return c.json(serializeDevice(row), 200)
+})
+
+// POST /api/devices/unregister
+const unregisterDeviceRoute = createRoute({
+	method: 'post',
+	path: '/unregister',
+	tags: ['Devices'],
+	summary: 'Unregister a push device with its own secret (no API key)',
+	description:
+		'Public. A signed-out phone has no API key, so the secret it sent as unregister_secret when it registered is the credential. Deletes the device (and its Live Activity tokens) when apns_token, environment and the secret all match. Always answers 200: deleted is false for a wrong secret, an unknown token, or a device registered without a secret, and the three look the same. Rate limited per IP.',
+	request: {
+		body: { content: { 'application/json': { schema: unregisterDeviceSchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Processed; deleted says whether a device was removed',
+			content: { 'application/json': { schema: z.object({ deleted: z.boolean() }) } },
+		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: { description: 'Rate limited', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(unregisterDeviceRoute, async (c) => {
+	const db = c.get('db')
+	const body = c.req.valid('json')
+
+	const limit = unregisterLimiter.hit(callerIp(c))
+	if (!limit.allowed) {
+		c.header('Retry-After', String(Math.ceil(limit.retryAfterMs / 1000)))
+		return c.json(
+			createApiError('RATE_LIMITED', 'Too many attempts. Wait a minute and try again.'),
+			429,
+		)
+	}
+
+	// A null hash never equals the computed one (SQL NULL): a row without a secret matches nothing.
+	// live_activity_tokens.device_id cascades, so the device's Live Activity tokens go with the row.
+	const [deleted] = await db
+		.delete(deviceTokens)
+		.where(
+			and(
+				eq(deviceTokens.apnsToken, body.apns_token.toLowerCase()),
+				eq(deviceTokens.environment, body.environment),
+				eq(deviceTokens.unregisterSecretHash, hashSecret(body.unregister_secret)),
+			),
+		)
+		.returning()
+
+	if (deleted) await auditDevice(db, deleted.actorId, undefined, 'deleted', deleted)
+
+	return c.json({ deleted: Boolean(deleted) }, 200)
 })
 
 // DELETE /api/devices/:id_or_token
