@@ -32056,6 +32056,16 @@
 					{
 						"schema": {
 							"type": "string",
+							"description": "Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; any other value is ignored and the response is unchanged.",
+							"example": "mcp_age"
+						},
+						"required": false,
+						"name": "reason",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
