@@ -39,6 +39,7 @@ import {
 } from './errors'
 import {
 	type InmailBalance,
+	type InmailCredits,
 	UNKNOWN_INMAIL_BALANCE,
 	deriveInmailBalance,
 	parseInmailCredits,
@@ -1234,6 +1235,8 @@ export interface LinkedInOperationContext {
  */
 export interface LinkedInSendExtras {
 	attachments?: LinkedInFileAttachment[]
+	/** Start the chat as a classic InMail (one credit). Only send_inmail, in inmail-send.ts, sets it. */
+	inmail?: boolean
 }
 
 export async function sendLinkedInMessage(
@@ -1278,6 +1281,7 @@ export async function sendLinkedInMessage(
 						body: validation.payload.body,
 						...(inboxId ? { inbox_id: inboxId } : {}),
 						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
+						...(extras.inmail ? { inmail: true } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -2481,6 +2485,19 @@ export async function getLinkedInProfile(
 	if (!wantsExperience) return person
 	const experience = experienceFailed ? null : toExperience(upstream.body)
 	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
+}
+
+/** The raw InMail credits of the connected account. Throws when the call fails. */
+export async function readLinkedInInmailCredits(
+	ctx: LinkedInOperationContext,
+): Promise<InmailCredits> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.getInmailCredits({ account_id: pre.credentials.account_id }),
+	)
+	return parseInmailCredits(upstream.body)
 }
 
 /**

@@ -6,9 +6,25 @@
  * `{ credits: { classic, recruiter, sales_navigator } }`. Unipile exposes no refill date and
  * no seat field, so the seat is derived from which keys come back.
  */
+import type { CapSpec } from './caps'
 
 /** Classic InMail credits we never spend: sends refuse at or below this many. */
 export const INMAIL_CREDIT_FLOOR = 2
+
+/** send_inmail: 5 a day per connected account (spec §4), counted from the action log. */
+export const INMAIL_DAILY_CAP: CapSpec = {
+	name: 'send_inmail',
+	limit: 5,
+	tools: ['send_inmail'],
+}
+
+/**
+ * What marks a chat start as a classic InMail. The reference schema names the field
+ * `specifics`; the guide example uses `options`. The body schema rejects neither, so a wrong
+ * key silently sends a plain chat start. The deploy check must see credits drop by exactly one;
+ * if they do not, switch the key here.
+ */
+export const INMAIL_CHAT_SPECIFICS = { linkedin: { classic: { inmail: true } } } as const
 
 export type InmailSeat = 'premium' | 'sales_navigator' | 'recruiter' | 'free' | 'unknown'
 
@@ -37,6 +53,11 @@ export function inmailCreditsPath(accountId: string): string {
 
 function creditCount(raw: unknown): number | null {
 	return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : null
+}
+
+/** True when a send must not go: no classic key at all, or classic credits at or below the floor. */
+export function inmailFloorReached(credits: InmailCredits): boolean {
+	return credits.classic === null || credits.classic <= INMAIL_CREDIT_FLOOR
 }
 
 /** Reads `{ credits: {...} }` off a credits response; anything else is "no keys". */

@@ -22,6 +22,7 @@ import {
 } from './action-log'
 import type { CapSpec } from './caps'
 import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
+import { INMAIL_DAILY_CAP } from './inmail'
 import {
 	REINVITE_LOCK_DAYS,
 	WITHDRAW_DAILY_CAP,
@@ -896,6 +897,46 @@ export function registerLinkedInMcpInstance(
 					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'react_to_post'), err)
+				}
+			},
+		)
+	}
+
+	// Flag-gated like the other outreach writes: absent from tools/list while the flag is off.
+	if (
+		allowed.has('send_inmail') &&
+		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
+			actorId: ctx.actorId,
+		})
+	) {
+		server.registerTool(
+			toolName(cfg, 'send_inmail'),
+			{
+				description: scopedDescription(
+					'Send a LinkedIn InMail to someone you are not connected to, spending exactly one InMail credit. Pass only object_id: the task or object that holds a linkedin_inmail draft (recipient_provider_id, body of at most 1900 characters, no subject, optional attachment_file_id). The text, recipient and file sent are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been sent. Refused with nothing sent when the recipient is already a 1st-degree connection (use send_message), when classic credits are 2 or fewer (LINKEDIN_INMAIL_UNAVAILABLE: stop drafting InMails for this account and use another channel; check get_inmail_balance first), or after 5 InMails in a rolling 24 hours (RATE_LIMITED_LINKEDIN). Returns message_id, chat_id, sent_at, credits_before and credits_after.',
+					cfg,
+				),
+				inputSchema: { object_id: z.string().uuid() },
+			},
+			async (args) => {
+				try {
+					return await logged(
+						'send_inmail',
+						'send',
+						undefined,
+						async (rec) => {
+							rec.set({ objectId: args.object_id })
+							const sent = await sendApprovedLinkedInObject(opCtx, {
+								object_id: args.object_id,
+								onResolved: (resolved) => rec.set(resolved),
+								inmail: { onCredits: (data) => rec.set({ data }) },
+							})
+							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						},
+						INMAIL_DAILY_CAP,
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'send_inmail'), err)
 				}
 			},
 		)
