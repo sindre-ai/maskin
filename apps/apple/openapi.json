@@ -24,36 +24,6 @@
 					"voice_session_id"
 				]
 			},
-			"VoiceSessionRateLimited": {
-				"type": "object",
-				"properties": {
-					"error": {
-						"type": "object",
-						"properties": {
-							"code": {
-								"type": "string",
-								"enum": [
-									"RATE_LIMITED"
-								]
-							},
-							"message": {
-								"type": "string"
-							}
-						},
-						"required": [
-							"code",
-							"message"
-						]
-					},
-					"retry_after_seconds": {
-						"type": "number"
-					}
-				},
-				"required": [
-					"error",
-					"retry_after_seconds"
-				]
-			},
 			"CreateVoiceSessionBody": {
 				"type": "object",
 				"properties": {
@@ -91,6 +61,36 @@
 					"sdp",
 					"tools_available",
 					"persist_transcripts"
+				]
+			},
+			"VoiceSessionRateLimited": {
+				"type": "object",
+				"properties": {
+					"error": {
+						"type": "object",
+						"properties": {
+							"code": {
+								"type": "string",
+								"enum": [
+									"RATE_LIMITED"
+								]
+							},
+							"message": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"code",
+							"message"
+						]
+					},
+					"retry_after_seconds": {
+						"type": "number"
+					}
+				},
+				"required": [
+					"error",
+					"retry_after_seconds"
 				]
 			},
 			"VoiceSessionOfferBody": {
@@ -65214,16 +65214,6 @@
 									"required": [
 										"error"
 									]
-								}
-							}
-						}
-					},
-					"429": {
-						"description": "The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/VoiceSessionRateLimited"
 								}
 							}
 						}

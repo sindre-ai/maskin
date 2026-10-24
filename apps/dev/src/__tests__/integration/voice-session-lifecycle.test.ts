@@ -11,7 +11,6 @@ import {
 } from '../../services/voice-realtime-call'
 import {
 	endVoiceSession,
-	getVoiceMinutesUsedToday,
 	recordVoiceToolCall,
 	recordVoiceTurn,
 } from '../../services/voice-session-lifecycle'
@@ -238,7 +237,7 @@ describe('endAllLiveVoiceSessions', () => {
 	})
 })
 
-describe('daily minute cap + hangup route against real Postgres', () => {
+describe('hangup route against real Postgres', () => {
 	const app = () =>
 		createIntegrationApp({ path: '/api/voice-sessions', module: voiceSessionsRoutes })
 	const post = (path: string, body: unknown) =>
@@ -247,56 +246,6 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
 		})
-
-	it('sums wall-clock minutes for the workspace since 00:00 UTC, counting a live call up to now', async () => {
-		const { ws } = await seedCall({
-			status: 'ended',
-			startedAt: new Date(Date.now() - 40 * 60_000),
-			endedAt: new Date(Date.now() - 10 * 60_000),
-		})
-		// 30 minutes ended, plus a live call that started 5 minutes ago.
-		const humanB = await insertActor(db)
-		await seedCall({
-			workspaceId: ws.id,
-			humanId: humanB.id,
-			status: 'active',
-			startedAt: new Date(Date.now() - 5 * 60_000),
-		})
-		const midnight = new Date()
-		midnight.setUTCHours(0, 0, 0, 0)
-		// Skip the assertion's lower bound only when the test straddles midnight UTC.
-		if (Date.now() - 40 * 60_000 >= midnight.getTime()) {
-			const used = await getVoiceMinutesUsedToday(db, ws.id)
-			expect(used).toBeGreaterThan(34.9)
-			expect(used).toBeLessThan(35.5)
-		}
-	})
-
-	it('POST /api/voice-sessions returns 429 with retry_after_seconds once the workspace used 60 minutes', async () => {
-		const humanId = getTestActorId()
-		const { ws, agent } = await seedCall({
-			status: 'ended',
-			startedAt: new Date(Date.now() - 90 * 60_000),
-			endedAt: new Date(Date.now() - 1_000),
-		})
-		const midnight = new Date()
-		midnight.setUTCHours(0, 0, 0, 0)
-		if (Date.now() - 90 * 60_000 < midnight.getTime()) return // straddling midnight UTC
-
-		const res = await post('/api/voice-sessions', { agent_actor_id: agent.id })
-		expect(res.status).toBe(429)
-		const body = (await res.json()) as { error: { code: string }; retry_after_seconds: number }
-		expect(body.error.code).toBe('RATE_LIMITED')
-		expect(body.retry_after_seconds).toBeGreaterThan(0)
-		expect(body.retry_after_seconds).toBeLessThanOrEqual(24 * 60 * 60)
-
-		// A capped workspace wrote nothing new.
-		const rows = await db
-			.select()
-			.from(voiceSessions)
-			.where(and(eq(voiceSessions.workspaceId, ws.id), eq(voiceSessions.humanActorId, humanId)))
-		expect(rows).toHaveLength(1)
-	})
 
 	it("POST /:id/hangup ends the caller's call, and a repeat hangup returns the same terminal state", async () => {
 		const { session } = await seedCall()

@@ -14,9 +14,6 @@ import { captureVoiceException } from '../lib/sentry-voice'
  * voice_session_ended event cannot drift between paths.
  */
 
-/** Crash floor from the tech spec §Error handling. Pricing Strategist owns the real number. */
-export const VOICE_DAILY_MINUTE_CAP = 60
-
 const LIVE_STATUSES = ['pending', 'active'] as const
 
 /** Which row status each terminal reason lands in (tech spec §Session lifecycle). */
@@ -207,41 +204,4 @@ async function emitEnded(
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
-}
-
-// ── Daily minute cap ─────────────────────────────────────────────────
-
-function startOfUtcDay(now: Date): Date {
-	return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-}
-
-/**
- * Minutes of voice a workspace has used since 00:00 UTC. Wall-clock call
- * duration (a live call counts up to now), because that is what the cap is
- * protecting: spend on the operator's vendor key.
- */
-export async function getVoiceMinutesUsedToday(
-	db: Database,
-	workspaceId: string,
-	now: Date = new Date(),
-): Promise<number> {
-	const [row] = await db
-		.select({
-			seconds: sql<string>`coalesce(sum(extract(epoch from (coalesce(${voiceSessions.endedAt}, now()) - ${voiceSessions.startedAt}))), 0)`,
-		})
-		.from(voiceSessions)
-		.where(
-			and(
-				eq(voiceSessions.workspaceId, workspaceId),
-				sql`${voiceSessions.startedAt} >= ${startOfUtcDay(now).toISOString()}::timestamptz`,
-			),
-		)
-	const seconds = Number(row?.seconds ?? 0)
-	return Number.isFinite(seconds) ? seconds / 60 : 0
-}
-
-/** Seconds until the daily window resets (next 00:00 UTC), at least 1. */
-export function secondsUntilVoiceCapResets(now: Date = new Date()): number {
-	const next = startOfUtcDay(now).getTime() + 24 * 60 * 60 * 1000
-	return Math.max(1, Math.ceil((next - now.getTime()) / 1000))
 }

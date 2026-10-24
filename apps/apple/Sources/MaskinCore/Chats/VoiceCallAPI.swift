@@ -29,7 +29,7 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 	case notAnAgent
 	/// 409: this person already has a live call (or the session already took its offer).
 	case alreadyInCall
-	/// 429: the vendor or the workspace's daily voice minutes are used up.
+	/// 429: the vendor is rate limiting calls.
 	case rateLimited(retryAfterSeconds: Int?)
 	case server(String)
 	case network(String)
@@ -40,7 +40,7 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 		case .unavailable: return "Voice calls aren't available right now."
 		case .notAnAgent: return "That isn't an agent, so it can't take a call."
 		case .alreadyInCall: return "You're already in a call. End it and try again."
-		case .rateLimited: return "Voice minutes are used up for today. Try again later."
+		case .rateLimited: return "Voice is busy right now. Try again in a moment."
 		case .server(let text), .network(let text): return text
 		}
 	}
