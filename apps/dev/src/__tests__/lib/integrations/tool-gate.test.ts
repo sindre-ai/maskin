@@ -43,6 +43,20 @@ describe('classifyTool', () => {
 		)
 	})
 
+	it('classifies the LinkedIn outreach reads as reads and its writes as writes', () => {
+		for (const verb of [
+			'list_sent_invitations',
+			'list_user_posts',
+			'get_company',
+			'get_inmail_balance',
+		]) {
+			expect(classifyTool('linkedin-unipile', `linkedin-acc-me__${verb}`), verb).toBe('read')
+		}
+		for (const verb of ['withdraw_invitation', 'react_to_post', 'send_inmail']) {
+			expect(classifyTool('linkedin-unipile', `linkedin-acc-me__${verb}`), verb).toBe('write')
+		}
+	})
+
 	it('fails closed on a tool nobody classified, even if its name or annotation looks like a read', () => {
 		expect(classifyTool('slack', 'slack_brand_new_tool')).toBe('write')
 		expect(classifyTool('slack', 'slack_list_everything', { readOnlyHint: true })).toBe('write')

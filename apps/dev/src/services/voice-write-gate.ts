@@ -66,6 +66,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	// Starts work
 	'create_session',
 	'resume_session',
+	'send_session_message',
 	'create_trigger',
 	'update_trigger',
 	'create_loop',

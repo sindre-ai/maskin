@@ -1,0 +1,4 @@
+{
+	"_provenance": "DOCUMENTED, NOT RECORDED. Built from the Unipile v2 reference for POST /v2/{account_id}/users/me/relation-requests/{request_id}/cancel, which answers { object: RelationRequestCanceled }. Not a live capture. Replace with a recording from the first real withdrawal.",
+	"object": "RelationRequestCanceled"
+}

@@ -567,8 +567,9 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 	// Voice v1 (bet 16bd0042): Chief of Staff is the sole default-on voice
 	// agent. The 4 other launch candidates (Strategist, Sales Coach, PM
 	// Maskin, Personal Assistant) keep `voice_enabled` addressable via
-	// `update_actor` but off at seed. Read by the session-mint route
-	// (POST /api/voice-sessions) — anything without this key = 400.
+	// `update_actor` but off at seed. Not read by the session-mint route
+	// (POST /api/voice-sessions), which calls any agent in the workspace, so
+	// this key is unused until a bet needs it.
 	metadata: { voice_enabled: true } as Record<string, unknown>,
 	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL],
 } as const

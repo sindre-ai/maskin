@@ -69,6 +69,29 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(toolsForIdentity(personal).sort()).toEqual([...LINKEDIN_ALL_VERBS].sort())
 	})
 
+	it('personal registers the outreach verb get_inmail_balance', () => {
+		expect(toolsForIdentity(personal)).toContain('get_inmail_balance')
+	})
+
+	it('personal registers the outreach verb list_sent_invitations', () => {
+		expect(toolsForIdentity(personal)).toContain('list_sent_invitations')
+	})
+
+	it('personal registers the outreach verb withdraw_invitation', () => {
+		expect(toolsForIdentity(personal)).toContain('withdraw_invitation')
+	})
+
+	it('personal registers the outreach verbs list_user_posts, get_company and react_to_post', () => {
+		const verbs = toolsForIdentity(personal)
+		expect(verbs).toContain('list_user_posts')
+		expect(verbs).toContain('get_company')
+		expect(verbs).toContain('react_to_post')
+	})
+
+	it('personal registers the outreach verb send_inmail', () => {
+		expect(toolsForIdentity(personal)).toContain('send_inmail')
+	})
+
 	it('page with messagingEnabled=true registers posts + messaging suites but never personal-only ones', () => {
 		const verbs = new Set(toolsForIdentity(pageMessagingEnabled))
 		expect(verbs.has('publish_post')).toBe(true)
@@ -86,6 +109,13 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('list_connections')).toBe(false)
 		expect(verbs.has('search_people')).toBe(false)
 		expect(verbs.has('get_profile')).toBe(false)
+		expect(verbs.has('get_inmail_balance')).toBe(false)
+		expect(verbs.has('list_sent_invitations')).toBe(false)
+		expect(verbs.has('withdraw_invitation')).toBe(false)
+		expect(verbs.has('list_user_posts')).toBe(false)
+		expect(verbs.has('get_company')).toBe(false)
+		expect(verbs.has('react_to_post')).toBe(false)
+		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('page with messagingEnabled=false registers posts suite only', () => {
@@ -106,6 +136,13 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		expect(verbs.has('list_connections')).toBe(false)
 		expect(verbs.has('search_people')).toBe(false)
 		expect(verbs.has('get_profile')).toBe(false)
+		expect(verbs.has('get_inmail_balance')).toBe(false)
+		expect(verbs.has('list_sent_invitations')).toBe(false)
+		expect(verbs.has('withdraw_invitation')).toBe(false)
+		expect(verbs.has('list_user_posts')).toBe(false)
+		expect(verbs.has('get_company')).toBe(false)
+		expect(verbs.has('react_to_post')).toBe(false)
+		expect(verbs.has('send_inmail')).toBe(false)
 	})
 
 	it('preserves canonical order (spec order, not alphabetical) — stable tools/list diffs', () => {

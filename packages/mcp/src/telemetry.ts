@@ -486,6 +486,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	pause_session: 'session_pause',
 	ask_user_question: 'session_ask_user',
 	resume_session: 'session_resume',
+	send_session_message: 'session_message_send',
 }
 
 /** Resets the warned flag — only used in tests. */
