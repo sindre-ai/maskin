@@ -278,6 +278,79 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
+		describe('a card whose drafts have all been dealt with', () => {
+			async function draftTask(status: string) {
+				return insertObject(db, workspaceId, humanId, { type: 'task', status, content: 'Hej' })
+			}
+			const withDrafts = (ids: string[]) => ({
+				...DECISION,
+				drafts: ids.map((object_id, i) => ({ id: `d${i}`, object_id, label: `Reply ${i}` })),
+			})
+
+			it('drops once every draft task is done or discarded', async () => {
+				const sent = await draftTask('done')
+				const skipped = await draftTask('discarded')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, { decision: withDrafts([sent.id, skipped.id]) })
+				expect(await list()).toEqual([])
+			})
+
+			it('drops a card with a single draft once its task is done', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, {
+					decision: { ...DECISION, draft: { object_id: sent.id, label: 'Email to Hans' } },
+				})
+				expect(await list()).toEqual([])
+			})
+
+			it('keeps the card while one draft task is still open', async () => {
+				const sent = await draftTask('done')
+				const waiting = await draftTask('in_review')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, { decision: withDrafts([sent.id, waiting.id]) })
+				expect(await list()).toHaveLength(1)
+			})
+
+			it('keeps a card that has a draft with no task behind it', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, {
+					decision: {
+						...DECISION,
+						drafts: [{ object_id: sent.id, label: 'Sent one' }, { body: 'Hi', label: 'Text only' }],
+					},
+				})
+				expect(await list()).toHaveLength(1)
+			})
+
+			it('drops a curated item whose source card has finished drafts', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				const sourceId = await decisionComment(obj.id, {
+					decision: withDrafts([sent.id]),
+					mentions: [agentId],
+				})
+				await item({}, { source_comment_id: sourceId })
+				expect(await list()).toEqual([])
+			})
+		})
+
 		it('lists a curated item first and does not repeat its object as a decision card', async () => {
 			const both = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
 			await decisionComment(both.id)
