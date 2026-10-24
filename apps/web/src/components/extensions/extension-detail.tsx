@@ -2,6 +2,7 @@ import { AgentAccessSection } from '@/components/extensions/agent-access-section
 import { extensionRowStatus } from '@/components/extensions/custom-extensions-section'
 import { DeliveryHistory } from '@/components/extensions/delivery-history'
 import { MappingSection } from '@/components/extensions/mapping-section'
+import { McpSection } from '@/components/extensions/mcp-section'
 import { SampleTester } from '@/components/extensions/sample-tester'
 import { SetupProgressCard } from '@/components/extensions/setup-progress-card'
 import {
@@ -155,6 +156,8 @@ function ExtensionDetailBody({
 			</div>
 
 			<SetupProgressCard ext={ext} />
+
+			<McpSection ext={ext} workspaceId={workspaceId} recipes={recipes} />
 
 			<WebhookSection
 				ext={ext}

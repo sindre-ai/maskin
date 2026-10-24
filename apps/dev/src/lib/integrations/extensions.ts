@@ -1,8 +1,35 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { type ToolGrant, type WebhookConfig, evalJsonPath } from '@maskin/shared'
+import {
+	MAX_EXTENSION_TOOLS,
+	type McpConfig,
+	type ToolGrant,
+	type WebhookConfig,
+	evalJsonPath,
+} from '@maskin/shared'
 import type { WebhookConfig as VerifierConfig } from './types'
 import type { WebhookHandler } from './webhooks/handler'
 import { verifyTimestampSignature } from './webhooks/signatures'
+
+// The cap itself lives in @maskin/shared so the write schema and the runtime share it.
+export { MAX_EXTENSION_TOOLS }
+
+/**
+ * Plain reason an mcp_config cannot be saved, or null when it can. The tool cap
+ * is already enforced by the Zod body schema (400 with a field error); this
+ * covers what the schema deliberately still accepts: the http variant, which V1
+ * does not run.
+ */
+export function mcpConfigWriteError(config: McpConfig | null | undefined): string | null {
+	if (config && config.server.type !== 'stdio') {
+		return 'Only stdio MCP servers are supported for now. HTTP-transport-only vendors cannot be added yet.'
+	}
+	return null
+}
+
+/** integrations.provider value of an extension's MCP API key row. Not the webhook secret row. */
+export function extensionMcpProvider(slug: string): string {
+	return `extension-mcp:${slug}`
+}
 
 /** integrations.provider / webhook_deliveries.provider value for an extension. */
 export function extensionProvider(slug: string): string {

@@ -3,12 +3,15 @@ import type { Database, Transaction } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
 	actors,
+	extensions,
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, eq, isNull } from 'drizzle-orm'
+import type { McpConfig } from '@maskin/shared'
+import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../analytics/posthog'
 import { decrypt, encrypt } from '../crypto'
-import { extensionProvider } from './extensions'
+import { MAX_EXTENSION_TOOLS, extensionMcpProvider, extensionProvider } from './extensions'
 
 const EXTENSION_SYSTEM_ACTOR_NAME = 'Custom extension'
 
@@ -126,4 +129,180 @@ export async function readExtensionSecret(
 		.limit(1)
 	if (!row?.credentials) return null
 	return decrypt(row.credentials)
+}
+
+// ── MCP API key row (provider extension-mcp:{slug}) ─────────────────────────
+// Its own row, so saving the MCP key never overwrites the webhook signing
+// secret and hasExtensionSecret stays true only for a real signing secret.
+// The read goes through Keychain (see extensionMcpKeyReader below); there is
+// deliberately no decrypting counterpart here.
+
+function mcpKeyRowWhere(workspaceId: string, slug: string) {
+	return and(
+		eq(integrations.workspaceId, workspaceId),
+		eq(integrations.provider, extensionMcpProvider(slug)),
+		isNull(integrations.actorId),
+	)
+}
+
+/** Store (or replace) an extension's MCP API key, encrypted, on its own integrations row. */
+export async function upsertExtensionMcpKey(
+	db: Database | Transaction,
+	args: { workspaceId: string; slug: string; key: string; createdBy: string },
+): Promise<void> {
+	const credentials = encrypt(args.key)
+	const [existing] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(mcpKeyRowWhere(args.workspaceId, args.slug))
+		.limit(1)
+	if (existing) {
+		await db
+			.update(integrations)
+			.set({ credentials, status: INTEGRATION_STATUS_ACTIVE, updatedAt: new Date() })
+			.where(eq(integrations.id, existing.id))
+		return
+	}
+	await db.insert(integrations).values({
+		workspaceId: args.workspaceId,
+		provider: extensionMcpProvider(args.slug),
+		status: INTEGRATION_STATUS_ACTIVE,
+		credentials,
+		config: {},
+		actorId: null,
+		createdBy: args.createdBy,
+	})
+}
+
+export async function hasExtensionMcpKey(
+	db: Database | Transaction,
+	workspaceId: string,
+	slug: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(mcpKeyRowWhere(workspaceId, slug))
+		.limit(1)
+	return !!row
+}
+
+// ── MCP runtime shim ────────────────────────────────────────────────────────
+
+export type ExtensionMcpEntry = {
+	slug: string
+	extensionId: string
+	config: McpConfig
+	/** The extension's MCP key row (provider extension-mcp:{slug}), when one exists. Never its credentials. */
+	credentialIntegrationId: string | null
+}
+
+/**
+ * Active extensions in a workspace that want their MCP server attached to
+ * sessions: status active, an mcp_config, autoInject true. Ordered by slug so
+ * the attach order is stable.
+ */
+export async function resolveMcpFromExtension(
+	db: Database | Transaction,
+	workspaceId: string,
+): Promise<ExtensionMcpEntry[]> {
+	const rows = await db
+		.select({
+			id: extensions.id,
+			slug: extensions.slug,
+			mcpConfig: extensions.mcpConfig,
+			credentialIntegrationId: integrations.id,
+		})
+		.from(extensions)
+		.leftJoin(
+			integrations,
+			and(
+				eq(integrations.workspaceId, extensions.workspaceId),
+				eq(integrations.provider, sql`'extension-mcp:' || ${extensions.slug}`),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+				isNull(integrations.actorId),
+			),
+		)
+		.where(
+			and(
+				eq(extensions.workspaceId, workspaceId),
+				eq(extensions.status, 'active'),
+				isNotNull(extensions.mcpConfig),
+				sql`(${extensions.mcpConfig}->>'autoInject')::boolean = true`,
+			),
+		)
+		.orderBy(asc(extensions.slug))
+	return rows.flatMap((r) =>
+		r.mcpConfig
+			? [
+					{
+						slug: r.slug,
+						extensionId: r.id,
+						config: r.mcpConfig,
+						credentialIntegrationId: r.credentialIntegrationId,
+					},
+				]
+			: [],
+	)
+}
+
+export type ExtensionMcpKeyReader = (entry: ExtensionMcpEntry) => Promise<string | null>
+
+/**
+ * The Keychain-backed read of an extension's MCP key (row extension-mcp:{slug}).
+ * Stays null until Keychain getCredential is on main; while it is null no
+ * extension MCP server attaches to any session.
+ */
+export const extensionMcpKeyReader: ExtensionMcpKeyReader | null = null
+
+/**
+ * Turn a workspace's extension MCPs into session entries, keyed extension-{slug}
+ * so they never collide with integration-{provider}. An extension over the tool
+ * cap is not attached: its mcp_last_error says so and a PostHog event fires.
+ * Only stdio attaches in V1. readKey is the injected Keychain read for the
+ * extension's key row; its value is passed as a Bearer value through the env
+ * var the config names. If the key cannot be read the server does not attach
+ * and mcp_last_error says so. With no reader nothing attaches.
+ */
+export async function buildExtensionMcpServers(
+	db: Database | Transaction,
+	workspaceId: string,
+	readKey: ExtensionMcpKeyReader | null,
+): Promise<{ servers: Record<string, unknown>; env: Record<string, string> }> {
+	const servers: Record<string, unknown> = {}
+	const env: Record<string, string> = {}
+	if (!readKey) return { servers, env }
+	for (const entry of await resolveMcpFromExtension(db, workspaceId)) {
+		const { server, tools } = entry.config
+		if (server.type !== 'stdio') continue
+		if (tools.length > MAX_EXTENSION_TOOLS) {
+			await db
+				.update(extensions)
+				.set({ mcpLastError: `tool cap exceeded: ${tools.length}/${MAX_EXTENSION_TOOLS}` })
+				.where(eq(extensions.id, entry.extensionId))
+			void capturePosthogEvent('extension_mcp_tool_cap_exceeded', workspaceId, {
+				extension_id: entry.extensionId,
+				slug: entry.slug,
+				tool_count: tools.length,
+			})
+			continue
+		}
+		if (server.envFromCredential) {
+			const key = await readKey(entry)
+			if (!key) {
+				await db
+					.update(extensions)
+					.set({ mcpLastError: 'key not readable' })
+					.where(eq(extensions.id, entry.extensionId))
+				continue
+			}
+			env[server.envFromCredential] = `Bearer ${key}`
+		}
+		servers[`extension-${entry.slug}`] = {
+			type: 'stdio',
+			command: server.command,
+			args: server.args,
+		}
+	}
+	return { servers, env }
 }

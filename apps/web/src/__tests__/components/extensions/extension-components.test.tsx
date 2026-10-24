@@ -25,6 +25,7 @@ function buildExtension(overrides: Partial<ExtensionResponse> = {}): ExtensionRe
 		webhookToken: 'tok',
 		webhookUrl: 'http://localhost:3000/api/webhooks/x/tok',
 		hasSigningSecret: true,
+		hasMcpKey: false,
 		toolGrants: {},
 		mcpLastError: null,
 		createdBy: null,

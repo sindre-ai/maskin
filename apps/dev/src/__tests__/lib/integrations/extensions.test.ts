@@ -21,6 +21,7 @@ import {
 	grantEffect,
 	isStaleDelivery,
 	mapWebhookEvent,
+	mcpConfigWriteError,
 	resetWebhookRateLimits,
 	verifyExtensionSignature,
 } from '../../../lib/integrations/extensions'
@@ -69,7 +70,7 @@ describe('mcpConfigSchema', () => {
 	const base = {
 		envKey: 'FIREFLIES_TOKEN',
 		server: fireflies?.mcpConfig?.server,
-		credentialProvider: 'extension:fireflies',
+		credentialProvider: 'extension-mcp:fireflies',
 	}
 	const tool = (i: number) => ({ name: `get_thing_${i}`, kind: 'read' as const })
 
@@ -331,5 +332,30 @@ describe('generators', () => {
 		expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 		expect(deliveryEntityId('ext-1', 'ASxwZxCstx')).toBe(a)
 		expect(deliveryEntityId('ext-2', 'ASxwZxCstx')).not.toBe(a)
+	})
+})
+
+describe('mcpConfigWriteError', () => {
+	const stdio = mcpConfigSchema.parse({
+		envKey: 'AUTHORIZATION',
+		server: { type: 'stdio', command: 'npx', args: ['mcp-remote', 'https://example.com/mcp'] },
+		credentialProvider: 'extension:example',
+	})
+
+	it('accepts a stdio server', () => {
+		expect(mcpConfigWriteError(stdio)).toBeNull()
+	})
+
+	it('accepts no config at all', () => {
+		expect(mcpConfigWriteError(null)).toBeNull()
+		expect(mcpConfigWriteError(undefined)).toBeNull()
+	})
+
+	it('rejects the http variant with a plain message', () => {
+		const http = mcpConfigSchema.parse({
+			...stdio,
+			server: { type: 'http', url: 'https://example.com/mcp' },
+		})
+		expect(mcpConfigWriteError(http)).toMatch(/stdio/i)
 	})
 })
