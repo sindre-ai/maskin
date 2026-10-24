@@ -273,6 +273,10 @@ jobs:
   # script that aborts under `set -e` otherwise takes down every session at once.
   # The image build is skipped on PRs that don't touch its inputs; the job still
   # reports success so it can be a required check.
+  #
+  # It also proves the BYO guard wrapper fails closed: on an image without
+  # maskin-mcp-guard a guarded MCP server is dropped and logged, and on the
+  # image currently deployed (pulled below) it cannot start.
   agent-image-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -305,12 +309,32 @@ jobs:
           tags: maskin-agent-base:smoke
           cache-from: type=gha
 
+      # The image agents run on today, for the guard-wrapper check in the smoke:
+      # a guarded MCP server must not be startable on an image without the
+      # wrapper. Read-only: a public pull, no login, nothing pushed, nothing
+      # restarted. A failed pull fails the job; an unreadable previous image is
+      # not a pass.
+      - name: Pull the currently deployed image
+        if: steps.changed.outputs.run == 'true'
+        env:
+          DEPLOYED_IMAGE: ${{ vars.AGENT_BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOYED_IMAGE" ]; then
+            echo "::error::vars.AGENT_BASE_IMAGE is empty, so the previous image cannot be checked"
+            exit 1
+          fi
+          docker pull --platform linux/amd64 "$DEPLOYED_IMAGE:latest"
+          echo "PREVIOUS_IMAGE=$DEPLOYED_IMAGE:latest" >> "$GITHUB_ENV"
+
       - name: Sessions reach the agent launch
         if: steps.changed.outputs.run == 'true'
         run: AGENT_IMAGE=maskin-agent-base:smoke bash scripts/checks/agent-image-smoke.sh
 
   verify-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright cannot install chromium on
+    # ("does not support chromium on ubuntu26.04-x64"). Unpin once Playwright supports it.
     # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
