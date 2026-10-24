@@ -61,6 +61,11 @@
 						"type": "string",
 						"format": "uuid",
 						"description": "Actor id of the agent to call. Must be an agent that is a workspace member."
+					},
+					"conversation_id": {
+						"type": "string",
+						"format": "uuid",
+						"description": "The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise."
 					}
 				},
 				"required": [
@@ -32046,6 +32051,16 @@
 						},
 						"required": false,
 						"name": "repo",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"description": "Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; any other value is ignored and the response is unchanged.",
+							"example": "mcp_age"
+						},
+						"required": false,
+						"name": "reason",
 						"in": "query"
 					},
 					{
@@ -65010,7 +65025,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-				"description": "Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"description": "Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 				"requestBody": {
 					"required": true,
 					"content": {
