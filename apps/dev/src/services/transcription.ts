@@ -18,6 +18,19 @@ export function readTranscriptionModel(env: NodeJS.ProcessEnv = process.env): st
 	return env.MASKIN_TRANSCRIPTION_MODEL?.trim() || DEFAULT_TRANSCRIPTION_MODEL
 }
 
+/**
+ * Speech goes to MASKIN_TRANSCRIPTION_BASE_URL when set, otherwise the shared
+ * OpenRouter base. Point it at https://eu.openrouter.ai/api to keep audio in
+ * OpenRouter's EU in-region routing (Business/Enterprise plan; fails closed
+ * rather than leaving the region) without moving the rest of the LLM traffic.
+ */
+export function readTranscriptionBaseUrl(
+	fallbackBaseUrl: string,
+	env: NodeJS.ProcessEnv = process.env,
+): string {
+	return (env.MASKIN_TRANSCRIPTION_BASE_URL?.trim() || fallbackBaseUrl).replace(/\/+$/, '')
+}
+
 export async function transcribeAudio(input: {
 	/** Base64 of a WAV file — the only input format OpenRouter documents for these models. */
 	audioBase64: string
@@ -31,6 +44,7 @@ export async function transcribeAudio(input: {
 	}
 
 	const model = readTranscriptionModel()
+	const baseUrl = readTranscriptionBaseUrl(fallback.baseUrl ?? 'https://openrouter.ai/api')
 	const body: Record<string, unknown> = {
 		model,
 		input_audio: { data: input.audioBase64, format: 'wav' },
@@ -38,7 +52,7 @@ export async function transcribeAudio(input: {
 	if (input.language) body.language = input.language
 
 	try {
-		const response = await fetch(`${fallback.baseUrl}/v1/audio/transcriptions`, {
+		const response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',

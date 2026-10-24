@@ -12,11 +12,29 @@ export const apnsTokenSchema = z
 	.max(512)
 	.regex(/^[0-9a-fA-F]+$/, 'APNs token must be a hex string')
 
+/**
+ * Device-generated secret that lets a signed-out phone drop its own registration. The server only
+ * keeps its SHA-256, so it is as strong as the client makes it (the Apple app sends 32 random
+ * bytes, url-safe).
+ */
+export const unregisterSecretSchema = z
+	.string()
+	.min(32)
+	.max(128)
+	.regex(/^[A-Za-z0-9_-]+$/, 'unregister_secret must be url-safe')
+
 export const registerDeviceSchema = z.object({
 	platform: devicePlatformSchema,
 	apns_token: apnsTokenSchema,
 	environment: apnsEnvironmentSchema,
 	app_version: z.string().min(1).max(64).optional(),
+	unregister_secret: unregisterSecretSchema.optional(),
+})
+
+export const unregisterDeviceSchema = z.object({
+	apns_token: apnsTokenSchema,
+	environment: apnsEnvironmentSchema,
+	unregister_secret: unregisterSecretSchema,
 })
 
 export const deviceResponseSchema = z.object({
@@ -91,4 +109,5 @@ export type LiveActivityTokenResponse = z.infer<typeof liveActivityTokenResponse
 export type LiveActivityContentState = z.infer<typeof liveActivityContentStateSchema>
 
 export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>
+export type UnregisterDeviceInput = z.infer<typeof unregisterDeviceSchema>
 export type DeviceResponse = z.infer<typeof deviceResponseSchema>

@@ -1,3 +1,4 @@
+import { idempotencyRecords, linkedinActions, linkedinToolCalls } from '@maskin/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PurgeIdempotencyJob } from '../../jobs/purge-idempotency'
 
@@ -27,7 +28,7 @@ describe('PurgeIdempotencyJob', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('issues scoped DELETEs against idempotency_records + linkedin_tool_calls on tick', async () => {
+	it('issues scoped DELETEs against idempotency_records, linkedin_tool_calls and linkedin_actions on tick', async () => {
 		const { db, whereSpy } = makeFakeDb(['old-1', 'old-2'])
 		const job = new PurgeIdempotencyJob(db as never)
 
@@ -36,8 +37,23 @@ describe('PurgeIdempotencyJob', () => {
 		// The drizzle `lt(col, cutoff)` expression is opaque, but the count of
 		// `.where(...)` calls confirms both purges are scoped, not table-wide,
 		// and that Task 7b's linkedin_tool_calls extension fires alongside the
-		// original idempotency_records purge.
-		expect(whereSpy).toHaveBeenCalledTimes(2)
+		// original idempotency_records purge, and the 180-day linkedin_actions purge.
+		expect(whereSpy).toHaveBeenCalledTimes(3)
+	})
+
+	it('purges the linkedin_actions action log in the same tick', async () => {
+		const tables: unknown[] = []
+		const db = {
+			delete: (table: unknown) => {
+				tables.push(table)
+				return { where: () => ({ returning: () => Promise.resolve([]) }) }
+			},
+		}
+		const job = new PurgeIdempotencyJob(db as never)
+
+		await job.tick()
+
+		expect(tables).toEqual([idempotencyRecords, linkedinToolCalls, linkedinActions])
 	})
 
 	it('does not delete twice when ticks overlap', async () => {
@@ -68,8 +84,8 @@ describe('PurgeIdempotencyJob', () => {
 		// tick.
 		expect(whereSpy).toHaveBeenCalledTimes(1)
 
-		// Release both purges the first tick will make (idempotency_records
-		// then linkedin_tool_calls). A resolved promise unblocks the awaiter,
+		// Release the purges the first tick will make (idempotency_records,
+		// linkedin_tool_calls, then linkedin_actions). A resolved promise unblocks the awaiter,
 		// which then calls the next delete → next promise.
 		while (releases.length > 0) {
 			const release = releases.shift()
@@ -77,8 +93,8 @@ describe('PurgeIdempotencyJob', () => {
 			await Promise.resolve()
 		}
 		await first
-		// After the first tick fully resolves it has performed both purges.
-		expect(whereSpy).toHaveBeenCalledTimes(2)
+		// After the first tick fully resolves it has performed all three purges.
+		expect(whereSpy).toHaveBeenCalledTimes(3)
 	})
 
 	it('swallows delete failures — a broken tick must not crash the process', async () => {

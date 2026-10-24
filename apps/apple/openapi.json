@@ -61,6 +61,11 @@
 						"type": "string",
 						"format": "uuid",
 						"description": "Actor id of the agent to call. Must be an agent that is a workspace member."
+					},
+					"conversation_id": {
+						"type": "string",
+						"format": "uuid",
+						"description": "The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise."
 					}
 				},
 				"required": [
@@ -29066,6 +29071,324 @@
 				}
 			}
 		},
+		"/api/integrations/{id}/allow-access": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Let the agent that asked in a chat use a connected integration (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"sessionId": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"level": {
+										"type": "string",
+										"enum": [
+											"read",
+											"read_write"
+										]
+									}
+								},
+								"required": [
+									"sessionId",
+									"level"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Allowed. changed is false when the agent already had that much. relaunch says whether the agent was restarted to pick it up",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"changed": {
+											"type": "boolean"
+										},
+										"relaunch": {
+											"type": "string",
+											"enum": [
+												"stopped",
+												"failed"
+											]
+										}
+									},
+									"required": [
+										"actorId",
+										"changed",
+										"relaunch"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Not active",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/gmail/send": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -31728,6 +32051,16 @@
 						},
 						"required": false,
 						"name": "repo",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"description": "Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; any other value is ignored and the response is unchanged.",
+							"example": "mcp_age"
+						},
+						"required": false,
+						"name": "reason",
 						"in": "query"
 					},
 					{
@@ -37077,6 +37410,51 @@
 													"kind"
 												]
 											},
+											"integration_access_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"integration_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													},
+													"display_name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													},
+													"level": {
+														"type": "string",
+														"enum": [
+															"read",
+															"read_write"
+														]
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													}
+												},
+												"required": [
+													"session_id",
+													"integration_id",
+													"provider",
+													"display_name",
+													"level"
+												]
+											},
 											"computer_request": {
 												"type": "object",
 												"properties": {
@@ -39976,6 +40354,51 @@
 													"integration_id",
 													"credential_name",
 													"kind"
+												]
+											},
+											"integration_access_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"integration_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													},
+													"display_name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 100
+													},
+													"level": {
+														"type": "string",
+														"enum": [
+															"read",
+															"read_write"
+														]
+													},
+													"reason": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													}
+												},
+												"required": [
+													"session_id",
+													"integration_id",
+													"provider",
+													"display_name",
+													"level"
 												]
 											},
 											"computer_request": {
@@ -46556,6 +46979,382 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/integration-access-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post a card in the session chat asking the person to allow a connected integration",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"integration_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"level": {
+										"type": "string",
+										"enum": [
+											"read",
+											"read_write"
+										]
+									},
+									"reason": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 300
+									}
+								},
+								"required": [
+									"integration_id",
+									"level"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted, or the agent already has that much access",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean"
+										},
+										"already_granted": {
+											"type": "boolean"
+										},
+										"message_id": {
+											"type": [
+												"number",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"posted",
+										"already_granted",
+										"message_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Not an integration with levels (a saved key or login), or a level it lacks",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session or active integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}/logs": {
 			"get": {
 				"tags": [
@@ -50079,6 +50878,12 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 64
+									},
+									"unregister_secret": {
+										"type": "string",
+										"minLength": 32,
+										"maxLength": 128,
+										"pattern": "^[A-Za-z0-9_-]+$"
 									}
 								},
 								"required": [
@@ -50150,6 +50955,184 @@
 					},
 					"400": {
 						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/devices/unregister": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister a push device with its own secret (no API key)",
+				"description": "Public. A signed-out phone has no API key, so the secret it sent as unregister_secret when it registered is the credential. Deletes the device (and its Live Activity tokens) when apns_token, environment and the secret all match. Always answers 200: deleted is false for a wrong secret, an unknown token, or a device registered without a secret, and the three look the same. Rate limited per IP.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"apns_token": {
+										"type": "string",
+										"minLength": 32,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"environment": {
+										"type": "string",
+										"enum": [
+											"sandbox",
+											"production"
+										]
+									},
+									"unregister_secret": {
+										"type": "string",
+										"minLength": 32,
+										"maxLength": 128,
+										"pattern": "^[A-Za-z0-9_-]+$"
+									}
+								},
+								"required": [
+									"apns_token",
+									"environment",
+									"unregister_secret"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Processed; deleted says whether a device was removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -64042,7 +65025,7 @@
 					"Voice"
 				],
 				"summary": "Start a 1:1 voice call: reserve the caller’s live-call slot",
-				"description": "Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
+				"description": "Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 				"requestBody": {
 					"required": true,
 					"content": {
@@ -64065,7 +65048,7 @@
 						}
 					},
 					"400": {
-						"description": "Target agent is not voice-enabled",
+						"description": "Target actor is not an agent",
 						"content": {
 							"application/json": {
 								"schema": {

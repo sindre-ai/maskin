@@ -5,14 +5,19 @@ import { agentChatGrants, agentGrants, integrations, sessions } from '@maskin/db
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { actorsAreWorkspaceAgents, isKeychainMode } from '../lib/integrations/agent-access'
+import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
+import {
+	actorsAreWorkspaceAgents,
+	isKeychainMode,
+	resolveAgentAccess,
+} from '../lib/integrations/agent-access'
 import {
 	removeAgentGrant,
 	replaceAgentGrants,
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
-import { CUSTOM_MCP_PROVIDER, isGatedRow } from '../lib/integrations/custom-mcp'
+import { isGatedRow } from '../lib/integrations/custom-mcp'
 import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
@@ -143,25 +148,6 @@ async function loadEditable(
 		gated: isGatedRow(row.config),
 		before: row.defaultAgentAccess,
 	}
-}
-
-/**
- * Whether this access level makes no sense for the integration. A saved key or login is on or
- * off (read_write or no row). A custom tool server has the full levels only when Maskin can
- * sit in front of it (an HTTP server at a public address, see isGatewayable); otherwise, like
- * a stdio server that runs inside the container, it is on (read_write) or off (none).
- */
-function levelNotAllowed(
-	target: { provider: string; providerMode: string; gated: boolean },
-	access: string,
-): 'keychain_access' | 'custom_access' | null {
-	if (isKeychainMode(target.providerMode as never)) {
-		return access !== 'read_write' && access !== 'none' ? 'keychain_access' : null
-	}
-	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
-		return 'custom_access'
-	}
-	return null
 }
 
 function failure(reason: string): {
@@ -732,5 +718,140 @@ app.openapi(allowFromChatRoute, (async (c) => {
 	})
 	return c.json({ actorId: session.actorId, relaunch }, 200)
 }) as RouteHandler<typeof allowFromChatRoute, Env>)
+
+// ── POST /api/integrations/:id/allow-access ──────────────────────────────
+
+const allowAccessRoute = createRoute({
+	method: 'post',
+	path: '/{id}/allow-access',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Let the agent that asked in a chat use a connected integration (humans only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParams,
+		body: {
+			content: {
+				'application/json': {
+					schema: z
+						.object({
+							sessionId: z.string().uuid(),
+							level: z.enum(['read', 'read_write']),
+						})
+						.strict(),
+				},
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description:
+				'Allowed. changed is false when the agent already had that much. relaunch says whether the agent was restarted to pick it up',
+			content: {
+				'application/json': {
+					schema: z.object({
+						actorId: z.string().uuid(),
+						changed: z.boolean(),
+						relaunch: z.enum(['stopped', 'failed']),
+					}),
+				},
+			},
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(allowAccessRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+	const { sessionId, level } = c.req.valid('json')
+
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
+	}
+
+	// The agent is the one whose session asked: the card cannot name anyone else.
+	const [session] = await db
+		.select({ actorId: sessions.actorId })
+		.from(sessions)
+		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
+		.limit(1)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const outcome = await db.transaction(async (tx) => {
+		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
+		if (!target.ok) return target.reason
+		// A saved key or login is shared with request_keychain_access, not by level.
+		if (isKeychainMode(target.providerMode as never)) return 'not_standard' as const
+		const bad = levelNotAllowed(target, level)
+		if (bad) return bad
+		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [session.actorId]))) {
+			return 'outside' as const
+		}
+		// Never narrows: an agent that already has this much (a grant or the default) keeps it.
+		const current = await resolveAgentAccess(tx, workspaceId, id, session.actorId)
+		if (current && accessCovers(current, level)) return 'unchanged' as const
+		const previous = await upsertAgentGrant(tx, {
+			workspaceId,
+			integrationId: id,
+			actorId: session.actorId,
+			access: level,
+			createdBy: callerId,
+		})
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				change: 'agent_grant',
+				provider: target.provider,
+				agent_id: session.actorId,
+				access_before: previous,
+				access_after: level,
+				via: 'chat_card',
+				scope: 'always',
+			},
+		})
+		return 'saved' as const
+	})
+
+	if (outcome === 'not_standard') {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A saved key or login is shared with request_keychain_access, not by access level',
+			),
+			400,
+		)
+	}
+	if (outcome !== 'saved' && outcome !== 'unchanged') {
+		const f = failure(outcome)
+		return c.json(f.error, f.status)
+	}
+	if (outcome === 'unchanged') {
+		return c.json({ actorId: session.actorId, changed: false, relaunch: 'stopped' as const }, 200)
+	}
+
+	// The running session was told its old access at launch: stop it, and the next message
+	// starts a fresh one that knows. Never fails the grant, which already committed.
+	const relaunch = await relaunchChatSession(
+		{ db, sessionManager: c.get('sessionManager') },
+		{ workspaceId, originSessionId: sessionId },
+	).catch((err: unknown) => {
+		logger.error('Relaunch after an integration access grant threw', {
+			workspaceId,
+			sessionId,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		return 'failed' as const
+	})
+	return c.json({ actorId: session.actorId, changed: true, relaunch }, 200)
+}) as RouteHandler<typeof allowAccessRoute, Env>)
 
 export default app

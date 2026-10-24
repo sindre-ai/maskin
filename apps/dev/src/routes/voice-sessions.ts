@@ -23,6 +23,11 @@ import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
 import {
+	findReadableConversationId,
+	formatVoiceChatHistory,
+	loadVoiceChatHistory,
+} from '../services/voice-chat-history'
+import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
 	VOICE_REALTIME_VOICE,
@@ -60,6 +65,10 @@ const createVoiceSessionBody = z
 	.object({
 		agent_actor_id: z.string().uuid().openapi({
 			description: 'Actor id of the agent to call. Must be an agent that is a workspace member.',
+		}),
+		conversation_id: z.string().uuid().optional().openapi({
+			description:
+				'The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise.',
 		}),
 	})
 	.openapi('CreateVoiceSessionBody')
@@ -180,7 +189,7 @@ const postVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
-		'Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
+		"Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 	request: {
 		body: {
 			content: { 'application/json': { schema: createVoiceSessionBody } },
@@ -193,7 +202,7 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: createVoiceSessionResponse } },
 		},
 		400: {
-			description: 'Target agent is not voice-enabled',
+			description: 'Target actor is not an agent',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -283,6 +292,24 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Target actor is not an agent'), 400)
 	}
 
+	// A call started from a chat carries that chat's history and saves its transcript
+	// there. A chat the caller cannot read is ignored, not an error, so a stale id
+	// never blocks the call.
+	let conversationId: string | null = null
+	if (body.conversation_id) {
+		conversationId = await findReadableConversationId(db, {
+			conversationId: body.conversation_id,
+			workspaceId,
+			humanActorId,
+		})
+		if (!conversationId) {
+			logger.warn('Voice call started from a conversation the caller cannot read; ignoring it', {
+				workspace_id: workspaceId,
+				agent_actor_id: agentActorId,
+			})
+		}
+	}
+
 	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,
 	// not the packaging number: Pricing Strategist owns that. Checked before any
 	// row is written or vendor call is made, so a capped workspace costs nothing.
@@ -316,6 +343,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 				workspaceId,
 				agentActorId,
 				humanActorId,
+				conversationId,
 				status: 'pending',
 				vendor: 'openai_realtime',
 				model: VOICE_REALTIME_MODEL,
@@ -487,12 +515,27 @@ app.openapi(postOfferRoute, async (c) => {
 		.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
 		.where(eq(agentSkills.actorId, session.agentActorId))
 
+	// The chat the call was started from, re-checked here: the caller may have left it
+	// between the two requests.
+	let chatHistory = ''
+	if (
+		session.conversationId &&
+		(await findReadableConversationId(db, {
+			conversationId: session.conversationId,
+			workspaceId: session.workspaceId,
+			humanActorId,
+		}))
+	) {
+		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
+	}
+
 	const instructions = [
 		agent.systemPrompt ?? '',
 		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		// The server holds every write until the person says yes; this only makes the agent ask naturally.
 		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
+		chatHistory ? `\n\n${chatHistory}` : '',
 	]
 		.join('')
 		.trim()
@@ -602,7 +645,7 @@ app.openapi(postOfferRoute, async (c) => {
 		agent_id: session.agentActorId,
 		agent_name: agent.name,
 		workspace_id: session.workspaceId,
-		conversation_id: null,
+		conversation_id: session.conversationId,
 		model: VOICE_REALTIME_MODEL,
 		vendor: 'openai_realtime',
 	})
