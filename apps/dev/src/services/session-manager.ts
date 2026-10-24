@@ -135,7 +135,10 @@ import {
 } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
-import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+} from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -2913,13 +2916,34 @@ ${cont.continues_prompt}
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		for (const { ownerLogin, token } of resolvedGithubInstalls) {
-			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
-				type: 'stdio',
-				command: GITHUB_MCP_SERVER_SPEC.command,
-				args: GITHUB_MCP_SERVER_SPEC.args,
-				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
-			}
+		// MASKIN_GITHUB_MCP_REFRESH is the host kill switch for the token-refresh
+		// supervisor. Unset (the default), "0" or "false" keeps today's entries. When on,
+		// each entry mints against its OWN install, and the Maskin vars stay envsubst
+		// placeholders so the key is never baked into the session row. The launch token
+		// stays in env because the startup preflight reads it from there.
+		const githubMcpRefresh = !['', '0', 'false'].includes(
+			(process.env.MASKIN_GITHUB_MCP_REFRESH ?? '').trim().toLowerCase(),
+		)
+		for (const { ownerLogin, token, integrationId } of resolvedGithubInstalls) {
+			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = githubMcpRefresh
+				? {
+						type: 'stdio',
+						command: GITHUB_MCP_SUPERVISED_SPEC.command,
+						args: GITHUB_MCP_SUPERVISED_SPEC.args,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: token,
+							GITHUB_MCP_INTEGRATION_ID: integrationId,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					}
+				: {
+						type: 'stdio',
+						command: GITHUB_MCP_SERVER_SPEC.command,
+						args: GITHUB_MCP_SERVER_SPEC.args,
+						env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+					}
 		}
 		// Register the session's github installs with the log classifier so
 		// tool_result envelopes coming back from the container carry a cause_tag
