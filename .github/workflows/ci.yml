@@ -280,6 +280,42 @@ jobs:
       - name: A busy SeaweedFS master port is routed around
         run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
 
+  # apps/apple/openapi.json is a snapshot of the served spec. apple.yml only runs when
+  # apps/apple changes, so a PR that adds or changes a route never reached that check and the
+  # snapshot went stale on main until an unrelated Apple PR tripped over it. This is the cheap
+  # half of the same check on ubuntu: it runs when the backend can have changed the spec
+  # (the `backend` area from the changes job) and fails the PR that moved the spec.
+  # The generated Swift client still needs swift, so apple.yml checks that once the snapshot
+  # is refreshed (the refresh touches apps/apple, so that workflow runs on it).
+  apple-openapi-snapshot:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build workspace deps of @maskin/dev
+        run: pnpm --filter "@maskin/dev^..." build
+
+      - name: Apple OpenAPI snapshot is up to date
+        run: |
+          pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
+          if ! git diff --exit-code -- apps/apple/openapi.json; then
+            echo "::error::This change moves the API spec but apps/apple/openapi.json was not refreshed. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result. The Apple workflow then prints the diff for the generated Swift client (Sources/MaskinAPI/Generated) if that needs refreshing too."
+            exit 1
+          fi
+
   # Boots the real agent-base image through its entrypoint and agent-run.sh with
   # a stub `claude` (scripts/checks/agent-image-smoke.sh). Merging a change under
   # docker/agent-base/ publishes the image and restarts the shared agent-server
