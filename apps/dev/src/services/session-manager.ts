@@ -80,15 +80,8 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
-<<<<<<< HEAD
-import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
-=======
 import { buildExtensionMcpServers, extensionMcpKeyReader } from '../lib/integrations/extensions-db'
-import {
-	mcpServersReferenceEnvKey,
-	serverSpecReferencesEnvKey,
-} from '../lib/integrations/mcp-server-spec-refs'
->>>>>>> ffc60a4d6 (Extension MCP: key on its own extension-mcp row, fail closed when unreadable, wire shim into session launch (inert until Keychain reader lands))
+import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
@@ -2506,8 +2499,6 @@ ${HUMAN_MESSAGE_STYLE}`
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-<<<<<<< HEAD
-=======
 		// Custom extension MCPs (extension-<slug>). Inert until the Keychain-backed
 		// key reader is wired: with no reader nothing attaches.
 		const extensionMcp = await buildExtensionMcpServers(
@@ -2517,8 +2508,6 @@ ${HUMAN_MESSAGE_STYLE}`
 		)
 		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
 		Object.assign(envVars, extensionMcp.env)
-		const integrationTokens: Record<string, string> = {}
->>>>>>> ffc60a4d6 (Extension MCP: key on its own extension-mcp row, fail closed when unreadable, wire shim into session launch (inert until Keychain reader lands))
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
