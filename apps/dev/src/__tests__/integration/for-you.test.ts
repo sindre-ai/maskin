@@ -330,7 +330,10 @@ describe('GET /api/for-you', () => {
 				await decisionComment(obj.id, {
 					decision: {
 						...DECISION,
-						drafts: [{ object_id: sent.id, label: 'Sent one' }, { body: 'Hi', label: 'Text only' }],
+						drafts: [
+							{ object_id: sent.id, label: 'Sent one' },
+							{ body: 'Hi', label: 'Text only' },
+						],
 					},
 				})
 				expect(await list()).toHaveLength(1)
