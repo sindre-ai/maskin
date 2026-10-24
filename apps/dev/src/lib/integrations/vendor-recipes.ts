@@ -1,3 +1,4 @@
+import { type McpRemoteServer, mcpRemoteServer } from '@maskin/shared'
 import type { WebhookConfig } from './types'
 
 /**
@@ -10,13 +11,8 @@ export type VendorRecipe = {
 	slug: string
 	displayName: string
 	mcpConfig?: {
-		server: {
-			type: 'stdio'
-			command: string
-			args: string[]
-			/** Env var the stdio server reads its auth header from; value comes from the credential. */
-			envFromCredential: string
-		}
+		/** envFromCredential names the env var the auth header is read from; its value comes from the credential. */
+		server: McpRemoteServer
 		credentialProvider: string
 		autoInject: boolean
 	}
@@ -40,12 +36,8 @@ export const VENDOR_RECIPES: VendorRecipe[] = [
 		slug: 'fireflies',
 		displayName: 'Fireflies',
 		mcpConfig: {
-			server: {
-				type: 'stdio',
-				command: 'npx',
-				args: ['mcp-remote', 'https://api.fireflies.ai/mcp'],
-				envFromCredential: 'AUTHORIZATION',
-			},
+			// Argument form not yet run against Fireflies live (smoke moves to the aggregate review).
+			server: mcpRemoteServer('https://api.fireflies.ai/mcp', true),
 			credentialProvider: 'extension-mcp:fireflies',
 			autoInject: true,
 		},

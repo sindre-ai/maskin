@@ -113,6 +113,8 @@ export type ToolGrants = z.infer<typeof toolGrantsSchema>
 
 // ── API bodies ──────────────────────────────────────────────────────────────
 
+const mcpApiKeySchema = z.string().min(1).max(2048)
+
 export const createExtensionBodySchema = z.object({
 	slug: extensionSlugSchema,
 	name: z.string().min(1).max(80),
@@ -121,6 +123,8 @@ export const createExtensionBodySchema = z.object({
 	webhook_config: webhookConfigSchema.nullish(),
 	/** Required whenever webhook_config is set (no unsigned webhooks). */
 	signing_secret: z.string().min(16).max(512).optional(),
+	/** The MCP API key, stored on its own row. Optional: an MCP can take no auth. */
+	mcp_api_key: mcpApiKeySchema.optional(),
 })
 export type CreateExtensionBody = z.infer<typeof createExtensionBodySchema>
 
@@ -133,6 +137,8 @@ export const updateExtensionBodySchema = z
 		webhook_config: webhookConfigSchema.nullish(),
 		/** Replaces the stored secret. */
 		signing_secret: z.string().min(16).max(512).optional(),
+		/** Replaces the stored MCP API key (row extension-mcp:{slug}). Never returned. */
+		mcp_api_key: mcpApiKeySchema.optional(),
 	})
 	.strict()
 export type UpdateExtensionBody = z.infer<typeof updateExtensionBodySchema>
@@ -152,3 +158,15 @@ export type SetAgentGrantBody = z.infer<typeof setAgentGrantBodySchema>
 /** Flip one tool for one agent. */
 export const setToolGrantBodySchema = z.object({ effect: z.enum(['allow', 'deny']) }).strict()
 export type SetToolGrantBody = z.infer<typeof setToolGrantBodySchema>
+
+// ── MCP probe ───────────────────────────────────────────────────────────────
+
+/** Verify & save in the MCP modal: ask the server for its tools before anything is stored. */
+export const probeMcpBodySchema = z
+	.object({
+		server_url: z.string().url().max(2048),
+		/** Sent as Authorization: Bearer. Used for this one call, never stored. */
+		api_key: mcpApiKeySchema.optional(),
+	})
+	.strict()
+export type ProbeMcpBody = z.infer<typeof probeMcpBodySchema>

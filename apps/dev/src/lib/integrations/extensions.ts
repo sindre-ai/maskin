@@ -26,6 +26,11 @@ export function mcpConfigWriteError(config: McpConfig | null | undefined): strin
 	return null
 }
 
+/** integrations.provider value of an extension's MCP API key row. Not the webhook secret row. */
+export function extensionMcpProvider(slug: string): string {
+	return `extension-mcp:${slug}`
+}
+
 /** integrations.provider / webhook_deliveries.provider value for an extension. */
 export function extensionProvider(slug: string): string {
 	return `extension:${slug}`

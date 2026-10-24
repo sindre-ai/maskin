@@ -11,6 +11,7 @@ import {
 	type ToolGrants,
 	createExtensionBodySchema,
 	mcpConfigSchema,
+	probeMcpBodySchema,
 	setAgentGrantBodySchema,
 	setToolGrantBodySchema,
 	toolGrantsSchema,
@@ -31,9 +32,12 @@ import {
 } from '../lib/integrations/extensions'
 import {
 	ensureExtensionSystemActor,
+	hasExtensionMcpKey,
 	hasExtensionSecret,
+	upsertExtensionMcpKey,
 	upsertExtensionSecret,
 } from '../lib/integrations/extensions-db'
+import { probeMcpTools } from '../lib/integrations/mcp-probe'
 import { VENDOR_RECIPES } from '../lib/integrations/vendor-recipes'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -92,6 +96,8 @@ const extensionResponseSchema = z.object({
 	webhookUrl: z.string().nullable(),
 	/** True when a signing secret is stored. The secret itself is never returned. */
 	hasSigningSecret: z.boolean(),
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: z.boolean(),
 	toolGrants: z.record(z.string(), z.unknown()),
 	mcpLastError: z.string().nullable(),
 	createdBy: z.string().uuid().nullable(),
@@ -172,7 +178,12 @@ async function deliveryStats(
 
 function toResponse(
 	row: ExtensionRow,
-	extra: { origin: string; hasSigningSecret: boolean; stats?: DeliveryStats },
+	extra: {
+		origin: string
+		hasSigningSecret: boolean
+		hasMcpKey: boolean
+		stats?: DeliveryStats
+	},
 ): ExtensionResponse {
 	const base = serialize(row)
 	return {
@@ -186,6 +197,7 @@ function toResponse(
 		webhookToken: base.webhookToken,
 		webhookUrl: base.webhookToken ? `${extra.origin}/api/webhooks/x/${base.webhookToken}` : null,
 		hasSigningSecret: extra.hasSigningSecret,
+		hasMcpKey: extra.hasMcpKey,
 		toolGrants: base.toolGrants as Record<string, unknown>,
 		mcpLastError: base.mcpLastError,
 		createdBy: base.createdBy,
@@ -210,13 +222,15 @@ async function respond(
 	db: Database,
 	row: ExtensionRow,
 ): Promise<ExtensionResponse> {
-	const [hasSecret, stats] = await Promise.all([
+	const [hasSecret, hasMcpKey, stats] = await Promise.all([
 		hasExtensionSecret(db, row.workspaceId, row.slug),
+		hasExtensionMcpKey(db, row.workspaceId, row.slug),
 		deliveryStats(db, row.workspaceId, row.slug),
 	])
 	return toResponse(row, {
 		origin: resolvePublicOrigin(c.req.url, c.req.header()),
 		hasSigningSecret: hasSecret,
+		hasMcpKey,
 		stats: stats.get(extensionProvider(row.slug)),
 	})
 }
@@ -247,9 +261,10 @@ app.openapi(listRoute, async (c) => {
 		.from(extensions)
 		.where(eq(extensions.workspaceId, workspaceId))
 		.orderBy(desc(extensions.createdAt))
-	const [stats, secretRows] = await Promise.all([
+	const [stats, secretRows, keyRows] = await Promise.all([
 		deliveryStats(db, workspaceId),
 		Promise.all(rows.map((r) => hasExtensionSecret(db, workspaceId, r.slug))),
+		Promise.all(rows.map((r) => hasExtensionMcpKey(db, workspaceId, r.slug))),
 	])
 	const origin = resolvePublicOrigin(c.req.url, c.req.header())
 	return c.json(
@@ -257,6 +272,7 @@ app.openapi(listRoute, async (c) => {
 			toResponse(r, {
 				origin,
 				hasSigningSecret: secretRows[i] ?? false,
+				hasMcpKey: keyRows[i] ?? false,
 				stats: stats.get(extensionProvider(r.slug)),
 			}),
 		),
@@ -281,6 +297,7 @@ const recipesRoute = createRoute({
 						z.object({
 							slug: z.string(),
 							displayName: z.string(),
+							mcpConfig: z.record(z.string(), z.unknown()).optional(),
 							webhookConfig: z.record(z.string(), z.unknown()).optional(),
 							docsUrl: z.string(),
 						}),
@@ -296,6 +313,7 @@ app.openapi(recipesRoute, async (c) => {
 		VENDOR_RECIPES.map((r) => ({
 			slug: r.slug,
 			displayName: r.displayName,
+			mcpConfig: r.mcpConfig,
 			webhookConfig: r.webhookConfig,
 			docsUrl: r.docsUrl,
 		})),
@@ -325,6 +343,54 @@ const generateSecretRoute = createRoute({
 app.openapi(generateSecretRoute, async (c) => {
 	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
 	return c.json({ secret: generateSigningSecret() }, 200)
+})
+
+// ── POST /api/extensions/mcp/probe ──────────────────────────────────────────
+
+const probeMcpRoute = createRoute({
+	method: 'post',
+	path: '/mcp/probe',
+	'x-viewer-policy': 'writer',
+	tags: ['extensions'],
+	summary:
+		'Verify an MCP server: list its tools with the given API key. Nothing is stored; the key is used for this call only.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: probeMcpBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'The tools the server lists, or why it could not be verified',
+			content: {
+				'application/json': {
+					schema: z.discriminatedUnion('ok', [
+						z.object({
+							ok: z.literal(true),
+							tools: z.array(
+								z.object({
+									name: z.string(),
+									kind: z.enum(['read', 'write']),
+									description: z.string().optional(),
+								}),
+							),
+						}),
+						z.object({
+							ok: z.literal(false),
+							reason: z.enum(['rejected', 'unreachable', 'invalid', 'blocked']),
+							message: z.string(),
+						}),
+					]),
+				},
+			},
+		},
+		403: { description: 'Not an owner', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(probeMcpRoute, async (c) => {
+	if (!isOwnerOrAdmin(c.get('workspaceRole'))) return c.json(forbidden(), 403)
+	const { server_url, api_key } = c.req.valid('json')
+	return c.json(await probeMcpTools(server_url, api_key), 200)
 })
 
 // ── POST /api/extensions ────────────────────────────────────────────────────
@@ -399,6 +465,14 @@ app.openapi(createExtensionRoute, async (c) => {
 					workspaceId,
 					slug: body.slug,
 					secret: body.signing_secret,
+					createdBy: actorId,
+				})
+			}
+			if (body.mcp_api_key) {
+				await upsertExtensionMcpKey(tx, {
+					workspaceId,
+					slug: body.slug,
+					key: body.mcp_api_key,
 					createdBy: actorId,
 				})
 			}
@@ -543,6 +617,14 @@ app.openapi(updateExtensionRoute, async (c) => {
 				createdBy: actorId,
 			})
 		}
+		if (body.mcp_api_key) {
+			await upsertExtensionMcpKey(tx, {
+				workspaceId,
+				slug: existing.slug,
+				key: body.mcp_api_key,
+				createdBy: actorId,
+			})
+		}
 		return updated
 	})
 
@@ -554,8 +636,9 @@ app.openapi(updateExtensionRoute, async (c) => {
 		entityId: row.id,
 		data: {
 			slug: row.slug,
-			fields: Object.keys(body).filter((k) => k !== 'signing_secret'),
+			fields: Object.keys(body).filter((k) => k !== 'signing_secret' && k !== 'mcp_api_key'),
 			secret_replaced: !!body.signing_secret,
+			mcp_key_replaced: !!body.mcp_api_key,
 		},
 	})
 

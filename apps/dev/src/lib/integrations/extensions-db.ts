@@ -11,7 +11,7 @@ import type { McpConfig } from '@maskin/shared'
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { decrypt, encrypt } from '../crypto'
-import { MAX_EXTENSION_TOOLS, extensionProvider } from './extensions'
+import { MAX_EXTENSION_TOOLS, extensionMcpProvider, extensionProvider } from './extensions'
 
 const EXTENSION_SYSTEM_ACTOR_NAME = 'Custom extension'
 
@@ -129,6 +129,62 @@ export async function readExtensionSecret(
 		.limit(1)
 	if (!row?.credentials) return null
 	return decrypt(row.credentials)
+}
+
+// ── MCP API key row (provider extension-mcp:{slug}) ─────────────────────────
+// Its own row, so saving the MCP key never overwrites the webhook signing
+// secret and hasExtensionSecret stays true only for a real signing secret.
+// The read goes through Keychain (see extensionMcpKeyReader below); there is
+// deliberately no decrypting counterpart here.
+
+function mcpKeyRowWhere(workspaceId: string, slug: string) {
+	return and(
+		eq(integrations.workspaceId, workspaceId),
+		eq(integrations.provider, extensionMcpProvider(slug)),
+		isNull(integrations.actorId),
+	)
+}
+
+/** Store (or replace) an extension's MCP API key, encrypted, on its own integrations row. */
+export async function upsertExtensionMcpKey(
+	db: Database | Transaction,
+	args: { workspaceId: string; slug: string; key: string; createdBy: string },
+): Promise<void> {
+	const credentials = encrypt(args.key)
+	const [existing] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(mcpKeyRowWhere(args.workspaceId, args.slug))
+		.limit(1)
+	if (existing) {
+		await db
+			.update(integrations)
+			.set({ credentials, status: INTEGRATION_STATUS_ACTIVE, updatedAt: new Date() })
+			.where(eq(integrations.id, existing.id))
+		return
+	}
+	await db.insert(integrations).values({
+		workspaceId: args.workspaceId,
+		provider: extensionMcpProvider(args.slug),
+		status: INTEGRATION_STATUS_ACTIVE,
+		credentials,
+		config: {},
+		actorId: null,
+		createdBy: args.createdBy,
+	})
+}
+
+export async function hasExtensionMcpKey(
+	db: Database | Transaction,
+	workspaceId: string,
+	slug: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(mcpKeyRowWhere(workspaceId, slug))
+		.limit(1)
+	return !!row
 }
 
 // ── MCP runtime shim ────────────────────────────────────────────────────────
