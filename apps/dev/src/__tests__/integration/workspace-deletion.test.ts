@@ -24,7 +24,11 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WORKSPACE_PURGE_CASCADE, WORKSPACE_PURGE_EXPLICIT } from '../../lib/workspace-purge'
+import {
+	WORKSPACE_PURGE_CASCADE,
+	WORKSPACE_PURGE_EXPLICIT,
+	purgeWorkspace,
+} from '../../lib/workspace-purge'
 import {
 	insertActor,
 	insertConversation,
@@ -643,5 +647,41 @@ describe('workspace deletion (integration)', () => {
 			expect(rows.length, table).toBeGreaterThan(0)
 			expect(new Set(rows.map((r) => r.workspace_id)), table).toEqual(new Set([bystander.ws.id]))
 		}
+	})
+
+	it('reports the final Keychain chain head and the erased row counts', async () => {
+		const ws = await insertWorkspace(db, me.id, { name: 'Chain head' })
+		for (let i = 0; i < 3; i++) {
+			await sql`
+				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+				VALUES (${ws.id}, ${randomUUID()}, ${me.id}, ${randomUUID()})`
+		}
+		await sql`
+			INSERT INTO credential_chain_snapshots (workspace_id, snapshot_date, max_id, row_hash)
+			VALUES (${ws.id}, '2026-10-01', 1, 'h1'), (${ws.id}, '2026-10-02', 2, 'h2')`
+		const [head] = await sql<{ id: string; row_hash: string }[]>`
+			SELECT id::text AS id, row_hash FROM credential_access_log
+			WHERE workspace_id = ${ws.id} ORDER BY credential_access_log.id DESC LIMIT 1`
+
+		const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
+
+		expect(result.keychainAudit).toEqual({
+			logRows: 3,
+			snapshotRows: 2,
+			chainHeadId: head?.id,
+			chainHeadHash: head?.row_hash,
+		})
+		expect(await countRows('credential_access_log', 'workspace_id', ws.id)).toBe(0)
+	})
+
+	it('reports an empty Keychain trail for a workspace that never read a credential', async () => {
+		const ws = await insertWorkspace(db, me.id, { name: 'No audit' })
+		const result = await db.transaction((tx) => purgeWorkspace(tx, ws.id))
+		expect(result.keychainAudit).toEqual({
+			logRows: 0,
+			snapshotRows: 0,
+			chainHeadId: null,
+			chainHeadHash: null,
+		})
 	})
 })

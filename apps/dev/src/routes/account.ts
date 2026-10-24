@@ -270,7 +270,11 @@ app.openapi(deleteRoute, async (c) => {
 	for (const workspaceId of result.workspaceIds) evictMembership(actorId, workspaceId)
 	for (const p of result.purged) {
 		evictPurgedWorkspace(p.workspaceId, p.result)
-		logger.info('account: workspace deleted with account', { actorId, workspaceId: p.workspaceId })
+		logger.info('account: workspace deleted with account', {
+			actorId,
+			workspaceId: p.workspaceId,
+			keychainAudit: p.result.keychainAudit,
+		})
 		await stopPurgedSessions(c.get('sessionManager'), p.result)
 		await purgeWorkspaceStorage(c.get('storageProvider'), p.workspaceId, p.result)
 	}
