@@ -1636,6 +1636,60 @@ export const linkedinToolCalls = pgTable(
 	],
 )
 
+// ── LinkedIn Actions (permanent action log) ─────────────────────────────────
+// One append-only row per call to any LinkedIn MCP tool, old and new. It is the
+// source for the server-side caps (rolling 24h counts under an advisory lock),
+// the per-person rules, and the outreach measurement join, so unlike
+// `linkedin_tool_calls` above (a 24h duplicate-send guard) it keeps rows 180
+// days. A row is inserted `pending` before the call and moved to its final
+// outcome after it.
+//
+// It carries NO content: no message or post text, no names, no file contents.
+// `target_provider_id` and `ref_id` are opaque provider ids; `data` holds only
+// credits_before / credits_after for InMail. `workspace_id` has no foreign key
+// on purpose (like webhook_deliveries): the log must outlive nothing it does not
+// own, and the workspace purge deletes it explicitly.
+//
+// The unique partial index makes "already withdrawn" / "already liked" a
+// database fact: only one `ok` row can exist per (account, tool, ref_id).
+export const linkedinActions = pgTable(
+	'linkedin_actions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').notNull(),
+		// The connected account row (integrations.id). Caps key on this.
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		// read | write | send
+		kind: text('kind').notNull(),
+		targetProviderId: text('target_provider_id'),
+		refId: text('ref_id'),
+		objectId: uuid('object_id'),
+		approvalId: text('approval_id'),
+		// pending | ok | noop | refused_cap | refused_rule | refused_flag | error
+		outcome: text('outcome').notNull(),
+		errorCode: text('error_code'),
+		data: jsonb('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('linkedin_actions_integration_tool_created_idx').on(t.integrationId, t.tool, t.createdAt),
+		index('linkedin_actions_workspace_target_created_idx').on(
+			t.workspaceId,
+			t.targetProviderId,
+			t.createdAt,
+		),
+		uniqueIndex('linkedin_actions_ok_ref_uniq')
+			.on(t.integrationId, t.tool, t.refId)
+			.where(sql`${t.outcome} = 'ok'`),
+		// The nightly purge deletes by age.
+		index('linkedin_actions_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type LinkedinAction = typeof linkedinActions.$inferSelect
+
 // ── User Display Settings ───────────────────────────────────────────────────
 //
 // Per-actor, per-workspace, per-object-type display preferences for the

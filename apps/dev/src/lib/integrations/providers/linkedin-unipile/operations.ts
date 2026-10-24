@@ -9,6 +9,7 @@ import {
 } from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { recordEvent } from '../../../events/record-event'
@@ -23,6 +24,8 @@ import {
 } from '../../errors'
 import { findIntegrationRow, getCredential } from '../../lookup'
 import { readContextFor } from '../../read-context'
+import { type ActionRecorder, LinkedInActionRefusal } from './action-log'
+import type { LinkedInFileAttachment } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -34,6 +37,30 @@ import {
 	isAccountStatusRevoked,
 	isLinkedInIntegrationError,
 } from './errors'
+import {
+	type InmailBalance,
+	type InmailCredits,
+	UNKNOWN_INMAIL_BALANCE,
+	deriveInmailBalance,
+	parseInmailCredits,
+} from './inmail'
+import {
+	REINVITE_LOCK_DAYS,
+	type SentListCaches,
+	WITHDRAW_MIN_AGE_DAYS,
+	addDays,
+	findFirstSeen,
+	findPriorWithdrawal,
+	findSentInvitation,
+	forgetSentInvitation,
+	recordFirstSeen,
+} from './invitation-withdrawal'
+import {
+	type SentInvitation,
+	inviteAgeDays,
+	nextSentOffset,
+	parseSentInvitations,
+} from './invitations'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -83,7 +110,7 @@ let clientOverride: ClientOverride | null = null
  * `__setLinkedInClientForTests` so the routes don't have to touch the real
  * fetch during unit tests.
  */
-function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
+export function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
 	if (clientOverride) return clientOverride.build(credentials)
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
@@ -154,7 +181,7 @@ type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
 
-async function preamble(
+export async function preamble(
 	db: Database,
 	actorId: string,
 	workspaceId: string,
@@ -356,7 +383,7 @@ async function markIntegrationRevoked(
  * success. 429 stays retryable either way — a rate-limited request is
  * rejected before execution, so replaying it cannot duplicate anything.
  */
-async function callLinkedInWithRetry<T>(
+export async function callLinkedInWithRetry<T>(
 	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
 	opts: { mutating?: boolean } = {},
 ): Promise<{ status: number; body: T; headers: Record<string, string> }> {
@@ -1053,15 +1080,6 @@ type SendPayload = {
 	recipient_urn: string
 	body: string
 	idempotency_key: string
-	/**
-	 * Optional messaging attachments. Passed through to the Unipile client
-	 * verbatim; each entry carries `send_mode` (native vs file). Shape is
-	 * validated at the MCP tool boundary via `linkedinAttachmentsArraySchema`
-	 * in `packages/mcp/src/lib/linkedin-attachments.ts`, so this operation
-	 * treats them as opaque objects and lets the tool layer reject
-	 * mixed-type arrays with the exact §4.2 refinement message.
-	 */
-	attachments?: unknown[]
 }
 type ReplyPayload = {
 	thread_id: string
@@ -1073,12 +1091,22 @@ type ReplyPayload = {
 
 const IDEMPOTENCY_KEY_MAX = 128
 
+/**
+ * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
+ * on a message a person approved, through the object it is filed on.
+ */
+export const ATTACHMENTS_REFUSED_MESSAGE =
+	'send_message does not take attachments. File the workspace file on the draft instead: set metadata.attachment_file_id on the object, have a person approve it, then send with object_id.'
+
 function validateSendPayload(input: {
 	recipient_urn?: unknown
 	body?: unknown
 	idempotency_key?: unknown
 	attachments?: unknown
 }): { ok: true; payload: SendPayload } | { ok: false; error: string } {
+	if (input.attachments !== undefined) {
+		return { ok: false, error: ATTACHMENTS_REFUSED_MESSAGE }
+	}
 	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
 		return { ok: false, error: 'recipient_urn is required' }
 	}
@@ -1092,20 +1120,12 @@ function validateSendPayload(input: {
 	) {
 		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
 	}
-	let attachments: unknown[] | undefined
-	if (input.attachments !== undefined) {
-		if (!Array.isArray(input.attachments)) {
-			return { ok: false, error: 'attachments must be an array when provided' }
-		}
-		attachments = input.attachments
-	}
 	return {
 		ok: true,
 		payload: {
 			recipient_urn: input.recipient_urn,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
-			...(attachments !== undefined ? { attachments } : {}),
 		},
 	}
 }
@@ -1201,6 +1221,22 @@ export interface LinkedInOperationContext {
 	 * this will become required.
 	 */
 	identity?: LinkedInMcpInstanceConfig
+	/**
+	 * Where workspace files are read from, for a send that carries an approved file. Injected
+	 * by the MCP route the way Slack's fan-out receives it; absent for callers that never
+	 * send a file (the REST routes).
+	 */
+	storage?: StorageProvider
+}
+
+/**
+ * Only the approved-send path (send-object.ts) passes these: the caller of a tool or the REST
+ * route cannot, so a file never goes out on a message nobody approved.
+ */
+export interface LinkedInSendExtras {
+	attachments?: LinkedInFileAttachment[]
+	/** Start the chat as a classic InMail (one credit). Only send_inmail, in inmail-send.ts, sets it. */
+	inmail?: boolean
 }
 
 export async function sendLinkedInMessage(
@@ -1211,6 +1247,7 @@ export async function sendLinkedInMessage(
 		idempotency_key?: unknown
 		attachments?: unknown
 	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateSendPayload(input)
 	if (!validation.ok) {
@@ -1243,9 +1280,8 @@ export async function sendLinkedInMessage(
 						recipient_urn: validation.payload.recipient_urn,
 						body: validation.payload.body,
 						...(inboxId ? { inbox_id: inboxId } : {}),
-						...(validation.payload.attachments !== undefined
-							? { attachments: validation.payload.attachments }
-							: {}),
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
+						...(extras.inmail ? { inmail: true } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -1262,6 +1298,7 @@ export async function replyToLinkedInThread(
 		idempotency_key?: unknown
 		in_reply_to_message_id?: unknown
 	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateReplyPayload(input)
 	if (!validation.ok) {
@@ -1291,6 +1328,7 @@ export async function replyToLinkedInThread(
 						account_id: pre.credentials.account_id,
 						thread_id: validation.payload.thread_id,
 						body: validation.payload.body,
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -2449,6 +2487,43 @@ export async function getLinkedInProfile(
 	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
 }
 
+/** The raw InMail credits of the connected account. Throws when the call fails. */
+export async function readLinkedInInmailCredits(
+	ctx: LinkedInOperationContext,
+): Promise<InmailCredits> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.getInmailCredits({ account_id: pre.credentials.account_id }),
+	)
+	return parseInmailCredits(upstream.body)
+}
+
+/**
+ * `get_inmail_balance`: the connected account's InMail credits and what is still sendable
+ * above the floor we keep back. A failed credits call answers `seat: unknown` instead of an
+ * error, so an agent that only wants to know whether to try an InMail gets an answer it can
+ * act on. A missing or revoked credential still throws, as for every other tool.
+ */
+export async function getLinkedInInmailBalance(
+	ctx: LinkedInOperationContext,
+): Promise<InmailBalance> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	try {
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getInmailCredits({ account_id: pre.credentials.account_id }),
+		)
+		return deriveInmailBalance(parseInmailCredits(upstream.body))
+	} catch (err) {
+		if (!isLinkedInIntegrationError(err)) throw err
+		logger.warn('linkedin-unipile get_inmail_balance: credits read failed', { code: err.code })
+		return UNKNOWN_INMAIL_BALANCE
+	}
+}
+
 /**
  * Validate the optional `sections` input. Absent or empty means off (the
  * default, which costs nothing and leaves the response unchanged). Only
@@ -2540,5 +2615,218 @@ function normalizeConnectionRequestResponse(
 		status: 'sent',
 		sent_at: sentAt,
 		...(invitationId ? { invitation_id: invitationId } : {}),
+	}
+}
+
+const SENT_INVITATIONS_DEFAULT_LIMIT = 50
+const SENT_INVITATIONS_MAX_LIMIT = 100
+
+/** An optional whole number within [min, max]; anything else is an input error naming the field. */
+function optionalInt(raw: unknown, field: string, min: number, max: number): number | undefined {
+	if (raw === undefined || raw === null) return undefined
+	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < min || raw > max) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`${field} must be a whole number from ${min} to ${max}`,
+		)
+	}
+	return raw
+}
+
+export type ListSentInvitationsResult = {
+	invitations: SentInvitation[]
+	total_pending: number | null
+	next_offset: number | null
+	/** Rows on this page with no date from LinkedIn. They never match older_than_days. */
+	rows_without_date: number
+}
+
+/**
+ * `list_sent_invitations`: the invitations this account sent that are still pending, one page
+ * at a time. A read of the account's own list, so it is neither capped nor flagged.
+ *
+ * `older_than_days` keeps rows at least that many days old and never matches a row with no
+ * date; `rows_without_date` says how many such rows the page held, so an empty result is not
+ * mistaken for "nothing is stale". `next_offset` moves by what LinkedIn returned, not by what
+ * the filter kept, so paging with a filter still walks the whole list.
+ */
+export async function listLinkedInSentInvitations(
+	ctx: LinkedInOperationContext,
+	input: { limit?: unknown; offset?: unknown; older_than_days?: unknown } = {},
+	now: () => Date = () => new Date(),
+): Promise<ListSentInvitationsResult> {
+	const limit =
+		optionalInt(input.limit, 'limit', 1, SENT_INVITATIONS_MAX_LIMIT) ??
+		SENT_INVITATIONS_DEFAULT_LIMIT
+	const offset = optionalInt(input.offset, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0
+	const olderThanDays = optionalInt(input.older_than_days, 'older_than_days', 0, 3650)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.listRelationRequests({ account_id: pre.credentials.account_id, offset, limit }),
+	)
+	const page = parseSentInvitations(upstream.body, now())
+	// Where Unipile gives no send date, the age of an invitation counts from the first time a
+	// list showed it, so note that for every undated row seen here.
+	if (ctx.identity) {
+		await recordFirstSeen(
+			ctx.db,
+			{
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				integrationId: ctx.identity.integrationId,
+			},
+			page.invitations.filter((i) => i.sent_at === null),
+		)
+	}
+	return {
+		invitations:
+			olderThanDays === undefined
+				? page.invitations
+				: page.invitations.filter((i) => i.age_days !== null && i.age_days >= olderThanDays),
+		total_pending: page.total,
+		next_offset: nextSentOffset(offset, limit, page),
+		rows_without_date: page.invitations.filter((i) => i.sent_at === null).length,
+	}
+}
+
+export type WithdrawInvitationResult = {
+	invitation_id: string
+	recipient_provider_id: string | null
+	withdrawn: true
+	already_withdrawn: boolean
+	/** When LinkedIn lets this account invite the person again: the withdrawal plus 21 days. */
+	can_reinvite_after: string
+}
+
+function refuseWithdrawal(message: string): never {
+	throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', message)
+}
+
+/**
+ * `withdraw_invitation`: takes back one pending invitation this account sent.
+ *
+ * Unipile's cancel call withdraws a sent invite and refuses a received one with the same call,
+ * so the id is checked against the account's own sent list before anything is cancelled. The
+ * caller passes an id only: the age that gates the call comes from LinkedIn's send date, or,
+ * where LinkedIn gave none, from the first time our own list showed the id, never from the caller.
+ *
+ * Runs inside `withActionLog` (the daily cap of 30 is checked there, before this runs), and
+ * refuses with `refused_rule` when a rule says no. Order here:
+ *   1. A success already on the log for this invitation returns `already_withdrawn` at once. This
+ *      comes before the sent-list lookup because a withdrawn invitation leaves the sent list, so
+ *      asking the list afterwards would call it "not a sent invitation". Such a call is logged
+ *      as `noop`, which the cap does not count.
+ *   2. The id must be in the sent list, and at least 14 days old.
+ *   3. Cancel. A 404 means it is already gone: `already_withdrawn`, also a `noop`.
+ * The feature flag is checked when the tool is registered (mcp-server.ts).
+ */
+export async function withdrawLinkedInInvitation(
+	ctx: LinkedInOperationContext,
+	input: { invitation_id?: unknown },
+	deps: {
+		integrationId: string
+		recorder: ActionRecorder
+		now?: () => Date
+		caches?: SentListCaches
+	},
+): Promise<WithdrawInvitationResult> {
+	const invitationId = typeof input.invitation_id === 'string' ? input.invitation_id.trim() : ''
+	if (!invitationId) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', 'invitation_id is required')
+	}
+	const now = (deps.now ?? (() => new Date()))()
+	const { recorder } = deps
+	recorder.set({ refId: invitationId })
+
+	const prior = await findPriorWithdrawal(ctx.db, deps.integrationId, invitationId)
+	if (prior) {
+		recorder.set({ refId: invitationId, targetProviderId: prior.recipientProviderId })
+		recorder.markNoop()
+		return {
+			invitation_id: invitationId,
+			recipient_provider_id: prior.recipientProviderId,
+			withdrawn: true,
+			already_withdrawn: true,
+			can_reinvite_after: addDays(prior.withdrawnAt, REINVITE_LOCK_DAYS).toISOString(),
+		}
+	}
+
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const accountId = pre.credentials.account_id
+	const scope = {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		integrationId: deps.integrationId,
+	}
+
+	const found = await findSentInvitation({
+		accountKey: accountId,
+		invitationId,
+		nowMs: now.getTime(),
+		caches: deps.caches,
+		fetchPage: async (offset, limit) => {
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+				client.listRelationRequests({ account_id: accountId, offset, limit }),
+			)
+			return parseSentInvitations(upstream.body, now)
+		},
+		onPage: (rows) =>
+			recordFirstSeen(
+				ctx.db,
+				scope,
+				rows.filter((row) => row.sent_at === null),
+			),
+	})
+	if (!found) {
+		refuseWithdrawal(
+			`Invitation ${invitationId} is not in this account's list of pending sent invitations: not a sent invitation; this tool never refuses received invites. Nothing was withdrawn.`,
+		)
+	}
+	recorder.set({ refId: invitationId, targetProviderId: found.recipient_provider_id })
+
+	// The age is recomputed here, not read from the cached row, which may be 10 minutes old.
+	let ageDays = inviteAgeDays(found.sent_at, now)
+	if (found.sent_at === null) {
+		const firstSeen = await findFirstSeen(ctx.db, deps.integrationId, invitationId)
+		ageDays = inviteAgeDays(firstSeen ? firstSeen.toISOString() : null, now)
+		if (ageDays === null) {
+			refuseWithdrawal(
+				`The age of invitation ${invitationId} is unknown: LinkedIn gave no send date and this account's list has not shown it before. Nothing was withdrawn. List the sent invitations, then try again.`,
+			)
+		}
+	}
+	if (ageDays === null || ageDays < WITHDRAW_MIN_AGE_DAYS) {
+		const basis =
+			found.sent_at === null
+				? " (LinkedIn gave no send date, so the age counts from when this account's list first showed it)"
+				: ''
+		refuseWithdrawal(
+			`Invitation ${invitationId} is ${ageDays ?? 0} days old${basis}; only invitations at least ${WITHDRAW_MIN_AGE_DAYS} days old can be withdrawn. Nothing was withdrawn.`,
+		)
+	}
+
+	let alreadyGone = false
+	try {
+		await callLinkedInWithRetry(
+			() => client.cancelRelationRequest({ account_id: accountId, request_id: invitationId }),
+			{ mutating: true },
+		)
+	} catch (err) {
+		// The sent list just showed this id, so a 404 is about the request: it is already gone.
+		if (!(isLinkedInIntegrationError(err) && err.httpStatus === 404)) throw err
+		alreadyGone = true
+	}
+	forgetSentInvitation(accountId, invitationId, deps.caches)
+	if (alreadyGone) recorder.markNoop()
+	return {
+		invitation_id: invitationId,
+		recipient_provider_id: found.recipient_provider_id,
+		withdrawn: true,
+		already_withdrawn: alreadyGone,
+		can_reinvite_after: addDays(now, REINVITE_LOCK_DAYS).toISOString(),
 	}
 }
