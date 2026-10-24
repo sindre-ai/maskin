@@ -263,8 +263,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 
 		setState('connecting')
 
-		// Session mint. A failure here (route not deployed, agent not
-		// voice-enabled, 429) returns the dialog to Permission with a notice.
+		// Session mint. A failure here (route not deployed, agent not found in
+		// this workspace, 429) returns the dialog to Permission with a notice.
 		let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
 		try {
 			session = await api.voiceSessions.create(workspaceId, { agent_actor_id: agentActorId })
