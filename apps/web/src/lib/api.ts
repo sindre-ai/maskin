@@ -265,6 +265,8 @@ export interface ExtensionResponse {
 	webhookUrl: string | null
 	/** True when a signing secret is stored. The secret itself is never returned. */
 	hasSigningSecret: boolean
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: boolean
 	toolGrants: ExtensionToolGrants
 	mcpLastError: string | null
 	createdBy: string | null
@@ -305,6 +307,25 @@ export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 
+/** The stdio server V1 runs: npx mcp-remote <url>, key passed as an Authorization header. */
+export interface ExtensionMcpConfig {
+	envKey: string
+	server:
+		| { type: 'stdio'; command: string; args: string[]; envFromCredential?: string }
+		| { type: 'http'; url: string }
+	autoInject: boolean
+	credentialProvider: string
+	tools: ExtensionTool[]
+}
+
+export type ExtensionMcpProbeResult =
+	| { ok: true; tools: ExtensionTool[] }
+	| {
+			ok: false
+			reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'
+			message: string
+	  }
+
 export interface ExtensionWebhookConfig {
 	signatureScheme: ExtensionSignatureScheme
 	signatureHeader: string
@@ -325,6 +346,7 @@ export interface ExtensionWebhookConfig {
 export interface VendorRecipe {
 	slug: string
 	displayName: string
+	mcpConfig?: ExtensionMcpConfig
 	webhookConfig?: Partial<ExtensionWebhookConfig>
 	docsUrl: string
 }
@@ -333,15 +355,19 @@ export interface CreateExtensionInput {
 	slug: string
 	name: string
 	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
 	webhook_config?: ExtensionWebhookConfig | null
 	signing_secret?: string
+	mcp_api_key?: string
 }
 
 export interface UpdateExtensionInput {
 	name?: string
 	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
 	webhook_config?: ExtensionWebhookConfig | null
 	signing_secret?: string
+	mcp_api_key?: string
 }
 
 export interface ExtensionDeliveries {
@@ -1015,6 +1041,12 @@ export const api = {
 			}),
 		recipes: (workspaceId: string) =>
 			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		probeMcp: (workspaceId: string, data: { server_url: string; api_key?: string }) =>
+			request<ExtensionMcpProbeResult>('/extensions/mcp/probe', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 		generateSecret: (workspaceId: string) =>
 			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
 		regenerateToken: (workspaceId: string, id: string) =>

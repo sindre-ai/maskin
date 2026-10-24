@@ -1,4 +1,5 @@
 import { AddExtensionDialog } from '@/components/extensions/add-extension-dialog'
+import { mcpReady, mcpToolCount } from '@/components/extensions/mcp-form'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,15 +10,26 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 
-/** One status chip per row: Live beats Listening beats Not configured. */
+/**
+ * One status chip per row: Live beats Listening beats Not configured. An
+ * extension with only an MCP reads On, N tools once its MCP is attached.
+ */
 export function extensionRowStatus(ext: ExtensionResponse): {
 	label: string
 	variant: 'default' | 'secondary' | 'outline'
 } {
+	if (!ext.webhookConfig && ext.mcpConfig && ext.status === 'active' && mcpReady(ext)) {
+		return { label: `On, ${mcpToolCount(ext)} tools`, variant: 'default' }
+	}
 	if (ext.lastDeliveryAt) return { label: 'Live', variant: 'default' }
 	if (ext.webhookConfig && ext.status === 'active')
 		return { label: 'Listening', variant: 'secondary' }
 	return { label: 'Not configured', variant: 'outline' }
+}
+
+function extensionKinds(ext: ExtensionResponse): string {
+	const kinds = [ext.mcpConfig && 'MCP', ext.webhookConfig && 'Webhook'].filter(Boolean)
+	return kinds.length > 0 ? kinds.join(' + ') : 'Webhook'
 }
 
 /**
@@ -64,7 +76,9 @@ export function CustomExtensionsSection() {
 								>
 									<div className="min-w-0">
 										<span className="block truncate text-[13px] font-semibold">{ext.name}</span>
-										<span className="block truncate text-xs text-muted-foreground">Webhook</span>
+										<span className="block truncate text-xs text-muted-foreground">
+											{extensionKinds(ext)}
+										</span>
 									</div>
 									<div className="flex shrink-0 items-center gap-2">
 										<Badge variant={status.variant}>{status.label}</Badge>

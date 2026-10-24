@@ -40,6 +40,7 @@ function buildExtension(overrides: Partial<ExtensionResponse> = {}): ExtensionRe
 		webhookToken: null,
 		webhookUrl: null,
 		hasSigningSecret: false,
+		hasMcpKey: false,
 		toolGrants: {},
 		mcpLastError: null,
 		createdBy: null,

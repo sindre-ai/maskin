@@ -85,6 +85,13 @@ export function useGenerateExtensionSecret(workspaceId: string) {
 	return useMutation({ mutationFn: () => api.extensions.generateSecret(workspaceId) })
 }
 
+export function useProbeMcp(workspaceId: string) {
+	return useMutation({
+		mutationFn: (data: { server_url: string; api_key?: string }) =>
+			api.extensions.probeMcp(workspaceId, data),
+	})
+}
+
 export function useExtensionSample(workspaceId: string, id: string) {
 	return useMutation({
 		mutationFn: (data: { payload: string; webhook_config?: ExtensionWebhookConfig }) =>
