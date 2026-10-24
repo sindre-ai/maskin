@@ -129,6 +129,8 @@ async function setup(options = {}) {
 		env,
 		command: process.execPath,
 		args: [FAKE_SERVER, ...ARGS],
+		spawn: options.spawn,
+		drainCapMs: options.drainCapMs,
 		now: () => clock.now,
 		stdin,
 		stdout,
@@ -418,6 +420,86 @@ test('repeated 401s mint at most once per 30 seconds', async () => {
 		h.clock.now += 2_000
 		await h.call('get_me')
 		assert.equal(h.mint.calls.length, 2)
+	})
+})
+
+test('parallel calls that all hit the expiry are each answered after a single mint', async () => {
+	await withSupervisor({ mint: { delayMs: 100 } }, async (h) => {
+		const responses = await Promise.all([
+			h.call('get_me', { tag: 'a' }),
+			h.call('get_me', { tag: 'b' }),
+			h.call('get_me', { tag: 'c' }),
+		])
+		for (const response of responses) {
+			assert.equal(response.result.isError, undefined)
+			assert.ok(!response.result.content[0].text.includes(REMINT_MARKER))
+		}
+		assert.deepEqual(
+			responses.map((r) => h.payload(r).tag),
+			['a', 'b', 'c'],
+		)
+		assert.equal(new Set(responses.map((r) => h.payload(r).pid)).size, 1)
+		assert.equal(h.mint.calls.length, 1)
+		assert.equal(remintLines(h).length, 1)
+		const stats = h.payload(await h.call('stats'))
+		assert.equal(stats.initializeCount, 0)
+	})
+})
+
+test('a call still running on the old child is answered with an error when that child dies', async () => {
+	await withSupervisor({}, async (h) => {
+		const before = h.payload(await h.call('stats'))
+		const slow = h.call('slow', { ms: 60_000, tag: 'slow' })
+		const recovered = await h.call('get_me', { tag: 'expired' })
+		assert.equal(recovered.result.isError, undefined)
+		process.kill(before.pid)
+		const response = await slow
+		assert.equal(response.result, undefined)
+		assert.equal(response.error.code, -32603)
+		assert.match(response.error.message, /Retry the call/)
+		assert.deepEqual(h.exits, [])
+		assert.equal(h.payload(await h.call('echo', { tag: 'after' })).tag, 'after')
+	})
+})
+
+test('a call still running when the drain cap kills the old child is answered with an error', async () => {
+	await withSupervisor({ drainCapMs: 200 }, async (h) => {
+		const slow = h.call('slow', { ms: 60_000, tag: 'slow' })
+		await h.call('get_me', { tag: 'expired' })
+		const response = await slow
+		assert.equal(response.error.code, -32603)
+		assert.deepEqual(h.exits, [])
+		assert.equal(h.payload(await h.call('echo', { tag: 'after' })).tag, 'after')
+	})
+})
+
+function failingSecondSpawn() {
+	let calls = 0
+	return (...args) => {
+		calls += 1
+		if (calls > 1) throw new Error('spawn EMFILE')
+		return require('node:child_process').spawn(...args)
+	}
+}
+
+test('a restart that throws during 401 recovery delivers the original answer and keeps the pipe working', async () => {
+	await withSupervisor({ spawn: failingSecondSpawn() }, async (h) => {
+		const response = await h.call('get_me')
+		assert.equal(response.result.isError, true)
+		assert.match(response.result.content[0].text, /401 Bad credentials/)
+		assert.match(h.errText(), /recovery failed/)
+		assert.deepEqual(h.exits, [])
+		assert.equal(h.payload(await h.call('echo', { tag: 'after' })).tag, 'after')
+	})
+})
+
+test('an age restart that throws still answers the request on the current child', async () => {
+	await withSupervisor({ spawn: failingSecondSpawn(), validToken: STALE_TOKEN }, async (h) => {
+		h.clock.now += 61_000
+		const response = await h.call('echo', { tag: 'aged' })
+		assert.equal(h.payload(response).tag, 'aged')
+		assert.match(h.errText(), /age refresh failed/)
+		assert.deepEqual(h.exits, [])
 	})
 })
 

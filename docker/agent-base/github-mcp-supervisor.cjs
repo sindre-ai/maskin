@@ -87,6 +87,7 @@ function createSupervisor(options) {
 	const output = options.stdout
 	const errput = options.stderr
 	const onExit = options.onExit
+	const drainCapMs = options.drainCapMs || DRAIN_CAP_MS
 
 	const missing = REQUIRED_ENV.filter((name) => !env[name])
 	const refreshEnabled = missing.length === 0
@@ -99,6 +100,7 @@ function createSupervisor(options) {
 	let mintCount = 0
 	let current = null
 	let gate = null
+	let restarting = null
 	let cachedInitialize = null
 	let cachedInitialized = null
 	let replaySeq = 0
@@ -143,7 +145,15 @@ function createSupervisor(options) {
 			}
 		})
 		proc.on('exit', (code) => {
-			if (current === child && !stopped) finish(code === null ? 1 : code)
+			if (stopped) return
+			if (current === child) {
+				finish(code === null ? 1 : code)
+				return
+			}
+			// A retired child that dies (or is killed at the drain cap) takes its
+			// unanswered calls with it; tell the client instead of leaving it waiting.
+			failInflight(child)
+			retired.delete(child)
 		})
 		return child
 	}
@@ -164,8 +174,33 @@ function createSupervisor(options) {
 			return
 		}
 		retired.add(child)
-		const timer = setTimeout(() => child.proc.kill(), DRAIN_CAP_MS)
+		const timer = setTimeout(() => child.proc.kill(), drainCapMs)
 		timer.unref()
+	}
+
+	function releaseIfDone(child) {
+		if (child.retiring && child.ids.size === 0) {
+			child.proc.kill()
+			retired.delete(child)
+		}
+	}
+
+	function failInflight(child) {
+		const keys = [...child.ids]
+		for (const key of keys) {
+			const entry = inflight.get(key)
+			if (!entry || entry.child !== child) continue
+			deliver(entry, {
+				jsonrpc: '2.0',
+				id: entry.message.id,
+				error: {
+					code: -32603,
+					message:
+						'The GitHub MCP server was restarted to refresh its token before this call finished. Retry the call.',
+				},
+			})
+		}
+		if (keys.length > 0) log(`answered ${keys.length} call(s) lost with a retired child`)
 	}
 
 	function send(child, message) {
@@ -191,10 +226,7 @@ function createSupervisor(options) {
 		if (!entry) return
 		inflight.delete(key)
 		entry.child.ids.delete(key)
-		if (entry.child.retiring && entry.child.ids.size === 0) {
-			entry.child.proc.kill()
-			retired.delete(entry.child)
-		}
+		releaseIfDone(entry.child)
 		if (inflight.size === 0) {
 			const waiters = drainWaiters
 			drainWaiters = []
@@ -205,7 +237,7 @@ function createSupervisor(options) {
 	function drained() {
 		if (inflight.size === 0) return Promise.resolve()
 		return new Promise((resolve) => {
-			const timer = setTimeout(resolve, DRAIN_CAP_MS)
+			const timer = setTimeout(resolve, drainCapMs)
 			drainWaiters.push(() => {
 				clearTimeout(timer)
 				resolve()
@@ -277,16 +309,27 @@ function createSupervisor(options) {
 		const old = current
 		current = startChild()
 		if (old) retire(old)
-		await replayInit(current)
+		const ready = replayInit(current)
+		restarting = ready
+		try {
+			await ready
+		} finally {
+			if (restarting === ready) restarting = null
+		}
 	}
 
 	async function ageRefresh() {
 		if (!refreshEnabled || now() - tokenIssuedAt < refreshAfterMs) return
 		const due = lastMintAt === null || now() - lastMintAt >= MINT_COOLDOWN_MS
 		if (!due) return
-		await drained()
-		const fresh = await mint('mcp_age')
-		if (fresh) await restart(fresh, 'age')
+		try {
+			await drained()
+			const fresh = await mint('mcp_age')
+			if (fresh) await restart(fresh, 'age')
+		} catch (err) {
+			// The request still goes to whichever child is current.
+			log(`age refresh failed: ${err?.code || err?.name || 'error'}`)
+		}
 	}
 
 	async function handleClientLine(line) {
@@ -301,31 +344,51 @@ function createSupervisor(options) {
 	async function pump() {
 		if (pumping) return
 		pumping = true
-		while (pending.length > 0 && !stopped) {
-			if (gate) await gate
-			try {
-				await handleClientLine(pending.shift())
-			} catch {
-				log('error handling a client message')
+		try {
+			while (pending.length > 0 && !stopped) {
+				if (gate) await gate
+				try {
+					await handleClientLine(pending.shift())
+				} catch {
+					log('error handling a client message')
+				}
 			}
+		} finally {
+			pumping = false
 		}
-		pumping = false
 	}
 
+	// Never rejects: whatever goes wrong, the caller gets GitHub's answer.
 	async function recover(entry, message) {
-		const fresh = await mint('mcp_401')
-		if (!fresh) {
-			deliver(entry, message)
-			return
-		}
 		const key = JSON.stringify(entry.message.id)
-		entry.retried = true
-		entry.original = message
-		entry.child.ids.delete(key)
-		await restart(fresh, '401')
-		entry.child = current
-		current.ids.add(key)
-		send(current, entry.line)
+		let resent = false
+		try {
+			if (entry.child === current) {
+				const fresh = await mint('mcp_401')
+				if (!fresh) {
+					deliver(entry, message)
+					return
+				}
+				await restart(fresh, '401')
+			} else if (restarting) {
+				// The call went out on a child that has since been replaced, so the
+				// token is already fresh: send it again once the new child is ready.
+				await restarting
+			}
+			if (stopped || inflight.get(key) !== entry) return
+			const old = entry.child
+			entry.retried = true
+			entry.original = message
+			old.ids.delete(key)
+			releaseIfDone(old)
+			entry.child = current
+			current.ids.add(key)
+			send(current, entry.line)
+			resent = true
+		} catch (err) {
+			log(`recovery failed: ${err?.code || err?.name || 'error'}`)
+			if (!resent && inflight.get(key) === entry) deliver(entry, message)
+		}
 	}
 
 	function deliver(entry, message) {
@@ -362,9 +425,16 @@ function createSupervisor(options) {
 			return
 		}
 		// Hold everything behind the restart so order is kept.
-		gate = recover(entry, message).finally(() => {
-			gate = null
-		})
+		// Recoveries queue behind each other, so a second expiry from the same
+		// replaced child is resent on the new child instead of minting again.
+		const previous = gate || Promise.resolve()
+		const mine = previous
+			.then(() => recover(entry, message))
+			.catch(() => log('recovery error'))
+			.finally(() => {
+				if (gate === mine) gate = null
+			})
+		gate = mine
 	}
 
 	function start() {
