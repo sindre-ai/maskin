@@ -342,10 +342,15 @@ describe('Loops read API integration', () => {
 			title: 'No override loop',
 		})
 
+		// The clock starts at the in_loop edge, so the edge joins when the lead was
+		// created and the lead closes 5s later.
+		const joinedAt = new Date('2026-01-01T00:00:00.000Z')
 		const wonLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
 			status: 'won',
 			title: 'Acme',
+			createdAt: joinedAt,
+			updatedAt: new Date(joinedAt.getTime() + 5000),
 		})
 		const activeLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
@@ -367,6 +372,7 @@ describe('Loops read API integration', () => {
 				targetType: 'object',
 				targetId: target.id,
 				type: 'in_loop',
+				createdAt: joinedAt,
 			})
 		}
 		await insertRelationship(db, actorId, {
@@ -390,7 +396,7 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.inProgressCount).toBe(1)
 		expect(row?.closedCount).toBe(1)
-		expect(row?.medianTimeToCloseMs).not.toBeNull()
+		expect(row?.medianTimeToCloseMs).toBe(5000)
 
 		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(noOverrideRow?.inProgressCount).toBe(1)
