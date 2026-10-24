@@ -101,7 +101,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			expect(await first.json()).toMatchObject({ status: 'committed' })
 			await expect(page.getByText('Receiving', { exact: true })).toBeVisible({ timeout: 20_000 })
 			await expect(page.getByRole('cell', { name: 'e2e-meeting-1' })).toBeVisible()
-			await expect(page.getByText('Committed')).toBeVisible()
+			await expect(page.getByText('Committed', { exact: true })).toBeVisible()
 
 			// A repeat is a duplicate and adds no row.
 			const repeat = await post()
