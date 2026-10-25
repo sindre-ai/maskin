@@ -35,12 +35,16 @@ vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 vi.mock('@/hooks/use-sessions', () => ({
 	useActiveSessionsForConversation: () => ({ data: [] }),
 }))
+const pendingTurns = vi.hoisted(() => ({ fallback: [] as Array<{ sessionId: string }> }))
 vi.mock('@/hooks/use-conversation-activity', () => ({
 	useConversationActivity: () => ({
 		byReplyMessageId: new Map(),
 		byTriggerMessageId: new Map(),
-		fallback: [],
+		fallback: pendingTurns.fallback,
 	}),
+}))
+vi.mock('@/components/chat/message-activity', () => ({
+	MessageActivity: () => <div>waiting for the agent</div>,
 }))
 
 import { MessageThreadPane } from '@/components/chat/replies/message-thread-pane'
@@ -135,6 +139,20 @@ describe('MessageThreadPane', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		sessionStorage.clear()
+		pendingTurns.fallback = []
+	})
+
+	it('shows an untagged turn in the thread when the newest message is a reply in it', async () => {
+		pendingTurns.fallback = [{ sessionId: 's1' }]
+		setup()
+		expect(await screen.findByText('waiting for the agent')).toBeInTheDocument()
+	})
+
+	it('leaves an untagged turn to the main chat when the newest message is not in this thread', async () => {
+		pendingTurns.fallback = [{ sessionId: 's1' }]
+		setup({ main: [agentRoot(), message(9)], replies: [reply(3), reply(2)] })
+		await screen.findByText('message 2')
+		expect(screen.queryByText('waiting for the agent')).not.toBeInTheDocument()
 	})
 
 	it('shows the root and its replies oldest first under a reply count', async () => {
