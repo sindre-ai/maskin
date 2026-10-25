@@ -112,8 +112,8 @@ describe('normaliseArgs', () => {
 	})
 
 	it('returns the same arguments for a tool with no rows', () => {
-		const input = { query: 'x' }
-		const result = normaliseArgs('search_objects', input)
+		const input = { content: 'x' }
+		const result = normaliseArgs('create_comment', input)
 		expect(result.args).toBe(input)
 		expect(result.renames).toEqual([])
 		expect(result.bothSent).toBe(false)
@@ -218,6 +218,17 @@ describe('alias table', () => {
 		expect(new Set(keys).size).toBe(keys.length)
 	})
 
+	it('has the four misfire rows, each a rename to the name the tool advertises', () => {
+		for (const [tool, oldPath, newPath] of [
+			['get_comments', 'object_id', 'entity_id'],
+			['search_objects', 'query', 'q'],
+			['get_session', 'session_id', 'id'],
+			['get_actor', 'actor_id', 'id'],
+		]) {
+			expect(ALIASES).toContainEqual({ tool, oldPath, newPath, kind: 'rename' })
+		}
+	})
+
 	it('has the three skill rows, id to name', () => {
 		for (const tool of [
 			'get_workspace_skill',
@@ -286,6 +297,15 @@ describe('through the real SDK path', () => {
 		const onlyNew = await harness.call('get_objects', { ids: [U2] })
 		expect(both).toEqual(onlyNew)
 		expect(both.requests.some((r) => r.path.includes(U1))).toBe(false)
+	})
+
+	it('conflict: on get_comments the canonical entity_id wins over object_id', async () => {
+		const both = await harness.call('get_comments', { object_id: U1, entity_id: U2 })
+		const onlyNew = await harness.call('get_comments', { entity_id: U2 })
+		expect(isValidationError(both)).toBe(false)
+		expect(both).toEqual(onlyNew)
+		expect(both.requests.some((r) => r.path.includes(U1))).toBe(false)
+		expect(both.requests.some((r) => r.path.includes(U2))).toBe(true)
 	})
 
 	it('unknown keys are still stripped, not rejected', async () => {
