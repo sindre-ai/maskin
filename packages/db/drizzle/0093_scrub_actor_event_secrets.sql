@@ -23,6 +23,10 @@
 -- afterwards, or if the number of these events changed. Zero matching rows (a fresh
 -- database) passes quietly.
 --
+-- The extra-keys test is wrapped in CASE because Postgres does not promise to evaluate
+-- the terms of an AND in the order written: without CASE the "data - text[]" operator
+-- can run on a row whose data is a JSON scalar and raise "cannot delete from scalar".
+--
 -- Single DO statement, so it runs atomically in one transaction. events is not on the
 -- hot-table list in MIGRATIONS.md and this touches a few dozen rows in production, so
 -- the unchunked UPDATE is deliberate. events has an AFTER INSERT notify trigger only
@@ -51,9 +55,11 @@ BEGIN
 		WHERE ((action = 'deleted' AND entity_type = 'agent')
 				OR (action = 'reset' AND entity_type = 'actor'))
 			AND id <= max_id
-			AND data IS NOT NULL
-			AND jsonb_typeof(data) = 'object'
-			AND (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb;
+			AND CASE
+				WHEN jsonb_typeof(data) = 'object'
+					THEN (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb
+				ELSE false
+			END;
 
 	SELECT count(*) INTO after_n
 		FROM events
@@ -65,9 +71,11 @@ BEGIN
 		FROM events
 		WHERE ((action = 'deleted' AND entity_type = 'agent')
 				OR (action = 'reset' AND entity_type = 'actor'))
-			AND data IS NOT NULL
-			AND jsonb_typeof(data) = 'object'
-			AND (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb;
+			AND CASE
+				WHEN jsonb_typeof(data) = 'object'
+					THEN (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb
+				ELSE false
+			END;
 
 	IF left_n <> 0 THEN
 		RAISE EXCEPTION 'scrub failed: % actor deleted or reset events still hold extra keys', left_n;
