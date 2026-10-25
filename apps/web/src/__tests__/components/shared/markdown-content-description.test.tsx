@@ -1,7 +1,4 @@
-import {
-	MarkdownContent,
-	READ_ONLY_DESCRIPTION_BANNER,
-} from '@/components/shared/markdown-content'
+import { MarkdownContent, READ_ONLY_DESCRIPTION_BANNER } from '@/components/shared/markdown-content'
 import { capture } from '@/lib/posthog'
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,10 +48,18 @@ describe('MarkdownContent description with preserveSource', () => {
 
 	it.each([
 		['front matter', '---\ntitle: Spec\n---\n\nBody.\n', 'front_matter'],
-		['raw HTML', 'Intro.\n\n<details>\n<summary>More</summary>\n\nhidden\n\n</details>\n', 'raw_html'],
+		[
+			'raw HTML',
+			'Intro.\n\n<details>\n<summary>More</summary>\n\nhidden\n\n</details>\n',
+			'raw_html',
+		],
 		['an HTML comment', 'Intro.\n\n<!-- agent note -->\n\nOutro.\n', 'raw_html'],
 		['a footnote', 'A claim.[^1]\n\n[^1]: The source.\n', 'footnote'],
-		['a link reference definition', 'See [docs][ref].\n\n[ref]: https://example.com\n', 'link_reference'],
+		[
+			'a link reference definition',
+			'See [docs][ref].\n\n[ref]: https://example.com\n',
+			'link_reference',
+		],
 	])('opens read-only with the banner and one event for %s', async (_label, text, cause) => {
 		const { container, onChange } = mount(text)
 		await screen.findByText(READ_ONLY_DESCRIPTION_BANNER)
