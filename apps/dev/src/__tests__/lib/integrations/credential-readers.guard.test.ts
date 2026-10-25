@@ -8,8 +8,9 @@
  *      ctx property. (The overload stays, marked deprecated, for the lookup
  *      semantics tests; nothing in shipped code may use it.)
  *   2. findIntegrationRow (the row resolver that reads no value) is called only
- *      from lookup.ts, the LinkedIn preamble (which follows it with getCredential)
- *      and the vat-notifications Slack DM (an accepted gap, see the allowlist).
+ *      from lookup.ts, the LinkedIn preamble (which follows it with getCredential),
+ *      the Drive MCP route (which only needs the row id for the tool gate) and the
+ *      vat-notifications Slack DM (an accepted gap, see the allowlist).
  *   3. The two provider directories do not decrypt a stored credential
  *      themselves.
  *   4. A file in those directories that asks TokenManager for a token also
@@ -37,6 +38,9 @@ const rel = (p: string) => relative(SRC, p).split(sep).join('/')
 const FIND_ROW_ALLOWLIST = new Set([
 	'lib/integrations/lookup.ts',
 	'lib/integrations/providers/linkedin-unipile/operations.ts',
+	// Resolves the row id only, for the per-agent tool gate. The credential stays sealed, and it is
+	// the same row the Drive token lookup picks, so the gate judges the connection the tool uses.
+	'routes/integrations-google-drive-mcp.ts',
 	// Accepted gap: system caller with no actor (the Stripe webhook), and Slack is outside the two
 	// provider directories. Same class as Meet watch.ts. This read writes no audit row.
 	'lib/vat-notifications.ts',
