@@ -201,6 +201,7 @@ struct ChatThreadView: View {
 				} message: {
 					Text(store.notice ?? "")
 				}
+				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
 					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
 						ThreadScreen(store: store, root: root)
@@ -328,6 +329,19 @@ struct ChatThreadView: View {
 				.buttonStyle(.maskinPressed)
 			}
 		}
+	}
+
+	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
+	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
+	/// request, and an unreachable root leaves the chat open on its own.
+	private func openRequestedThread() async {
+		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
+			return
+		}
+		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
+		if !held() { await store.loadThread(request.rootId) }
+		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
 	// MARK: Linked
