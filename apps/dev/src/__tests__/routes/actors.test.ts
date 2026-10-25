@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
 import { PlanCapExceededError } from '../../lib/llm-routing'
+import { heartbeatCronExpression } from '../../services/default-heartbeat'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import { createMockAgentStorage, createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -25,20 +26,22 @@ describe('Actors Routes', () => {
 			expect(body.type).toBe('human')
 		})
 
-		it('does not return passwordHash in the 201 body for a human signup with a password', async () => {
-			const actor = buildActor({
-				passwordHash: '$2b$10$abcdefghijklmnopqrstuuvwxyz0123456789ABCDEFGHIJKLMNOPQ',
-			})
+		it('never returns passwordHash (or any undeclared column) on signup', async () => {
+			const actor = buildActor({ passwordHash: 'argon2id$secret-hash', metadata: { internal: 1 } })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insert = [actor]
 
 			const res = await app.request(jsonRequest('POST', '/api/actors', buildCreateActorBody()))
 
 			expect(res.status).toBe(201)
-			const body = await res.json()
-			expect(body).not.toHaveProperty('passwordHash')
-			expect(body).not.toHaveProperty('password_hash')
-			expect(body.api_key).toBeDefined()
+			const text = await res.text()
+			const body = JSON.parse(text)
+			expect(body.passwordHash).toBeUndefined()
+			expect(body.password_hash).toBeUndefined()
+			expect(body.apiKey).toBeUndefined()
+			expect(body.metadata).toBeUndefined()
+			expect(text).not.toContain('argon2id$secret-hash')
+			expect(body.api_key).toMatch(/^ank_/)
 		})
 
 		describe('creating an agent', () => {
@@ -68,7 +71,7 @@ describe('Actors Routes', () => {
 			) {
 				mockResults.selectQueue = [
 					[{ id: CALLER_ID, type: callerType }],
-					[{ actorId: CALLER_ID }],
+					[{ actorId: CALLER_ID, role: 'member' }],
 					...(role ? [[{ role, type: callerType }]] : []),
 				]
 			}
@@ -91,6 +94,31 @@ describe('Actors Routes', () => {
 					workspaceId: WORKSPACE_ID,
 					actorId: actor.id,
 					role: 'member',
+				})
+			})
+
+			it('gives the new agent a daily Heartbeat trigger, written in the same transaction', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				// inserts: [actor, workspace member, workspace_member event, Heartbeat trigger, trigger event]
+				expect(calls.inserts[3]).toMatchObject({
+					workspaceId: WORKSPACE_ID,
+					name: 'Heartbeat',
+					type: 'cron',
+					targetActorId: actor.id,
+					enabled: true,
+					config: { expression: heartbeatCronExpression(actor.id) },
+				})
+				expect(calls.inserts[4]).toMatchObject({
+					entityType: 'trigger',
+					action: 'created',
+					workspaceId: WORKSPACE_ID,
 				})
 			})
 
@@ -1037,7 +1065,14 @@ describe('Actors Routes', () => {
 
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const agentStorage = createMockAgentStorage()
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
 			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -1053,6 +1088,39 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		it('returns 500 and does not delete the agent when its storage files cannot be removed', async () => {
+			const agentActor = buildActor({ type: 'agent' })
+			const agentStorage = createMockAgentStorage({
+				deleteAllAgentFiles: vi.fn().mockRejectedValue(new Error('s3 down')),
+			})
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.deleted).toBeUndefined()
+			expect(body.error.message).toContain('agent not deleted')
+			// No deleted event was recorded, so the failure is not reported as success.
+			expect(
+				calls.inserts.find((v) => (v as { action?: string }).action === 'deleted'),
+			).toBeUndefined()
 		})
 
 		it('records only identity fields in the deleted event, never tools, llm_config or credentials', async () => {
@@ -1073,7 +1141,13 @@ describe('Actors Routes', () => {
 				llmConfig: { api_key: 'fake-llm-key-for-test', model: 'fake-model' },
 				memory: { notes: 'fake memory for test' },
 			})
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
@@ -1590,6 +1664,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			sessionManager.createSession.mockRejectedValueOnce(
 				new PlanCapExceededError({
@@ -1617,6 +1692,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1656,6 +1732,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[],
 				[],
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({

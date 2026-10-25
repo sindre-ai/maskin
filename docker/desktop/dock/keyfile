@@ -1,0 +1,13 @@
+[net/launchpad/plank/docks/dock1]
+theme='Maskin'
+icon-size=56
+zoom-enabled=false
+zoom-percent=135
+position='bottom'
+alignment='center'
+items-alignment='center'
+hide-mode='window-dodge'
+lock-items=true
+show-dock-item=false
+pressure-reveal=false
+dock-items=['browser.dockitem', 'files.dockitem', 'terminal.dockitem']

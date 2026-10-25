@@ -4,7 +4,11 @@ import { conversations, files, objects, relationships, sessions } from '@maskin/
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
 import { resolveEndpointTitles } from '../lib/graph/endpoint-titles'
@@ -19,12 +23,18 @@ import {
 	findEndpointIdsInWorkspace,
 } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 	}
 }
@@ -35,6 +45,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const createRelationshipRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Create relationship',
 	request: {
@@ -71,6 +82,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
 
@@ -279,8 +291,8 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 	const cursorOn = Boolean(query.snapshot_at)
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(relationships.createdAt), asc(relationships.id)]
-			: [desc(relationships.createdAt), asc(relationships.id)]
+			? [asc(msCreatedAt(relationships.createdAt)), asc(relationships.id)]
+			: [desc(msCreatedAt(relationships.createdAt)), asc(relationships.id)]
 		: [relationships.createdAt]
 
 	const skipOffset = useKeysetSeek(query)
@@ -366,6 +378,7 @@ function bucket(
 const deleteRelationshipRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Delete relationship',
 	request: {
@@ -410,7 +423,7 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 			.limit(1),
 	])
 	const sourceWorkspaceId = sourceObjectRows[0]?.workspaceId ?? sourceFileRows[0]?.workspaceId
-	if (!sourceWorkspaceId || !(await isWorkspaceMember(db, actorId, sourceWorkspaceId))) {
+	if (!sourceWorkspaceId || !(await isWorkspaceWriter(db, actorId, sourceWorkspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 	}
 

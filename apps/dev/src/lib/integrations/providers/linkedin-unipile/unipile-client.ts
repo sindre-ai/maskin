@@ -14,6 +14,13 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
+import { INMAIL_CHAT_SPECIFICS, type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
+import {
+	type LinkedInCancelRelationRequestPayload,
+	type LinkedInListRelationRequestsQuery,
+	cancelRelationRequestPath,
+	listRelationRequestsPath,
+} from './invitations'
 
 export type LinkedInHttpResult<TBody = unknown> = {
 	status: number
@@ -35,12 +42,19 @@ export type LinkedInSendMessagePayload = {
 	attachments?: unknown[]
 	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
 	inbox_id?: string
+	/**
+	 * Start the chat as a classic InMail, which spends one credit. Only `send_inmail` sets it.
+	 * A wrong key is silently a plain chat start, so the body is pinned by a test (see inmail.ts).
+	 */
+	inmail?: boolean
 }
 
 export type LinkedInReplyPayload = {
 	account_id: string
 	thread_id: string
 	body: string
+	/** Same shape and meaning as on {@link LinkedInSendMessagePayload}; omitted when empty. */
+	attachments?: unknown[]
 }
 
 export type LinkedInListConversationsQuery = {
@@ -144,6 +158,13 @@ export type LinkedInGetProfileQuery = {
 	 * request goes out — see `normalizeProfileIdentifier`.
 	 */
 	identifier: string
+	/**
+	 * Extra profile sections to pull, as Unipile v2 `with_sections` values (e.g.
+	 * `linkedin_experience`). Omit for the base profile: the param is only sent
+	 * when set, because LinkedIn may throttle section pulls and callers that do
+	 * not need them should pay nothing.
+	 */
+	with_sections?: readonly string[]
 }
 
 /**
@@ -395,12 +416,23 @@ export interface LinkedInClient {
 		query: LinkedInSearchPeopleQuery,
 	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
 	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// Bet aff468ba · InMail credit balance; the reducers live in inmail.ts.
+	getInmailCredits(
+		query: LinkedInInmailCreditsQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	getManagedCompanyPages(
 		query: LinkedInListManagedPagesQuery,
 	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
 	sendConnectionRequest(
 		payload: LinkedInConnectionRequestPayload,
 	): Promise<LinkedInHttpResult<LinkedInConnectionRequestResponse | Record<string, unknown>>>
+	// Bet aff468ba · sent invitations; the path builders live in invitations.ts.
+	listRelationRequests(
+		query: LinkedInListRelationRequestsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	cancelRelationRequest(
+		payload: LinkedInCancelRelationRequestPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	// Task 7b content/community verbs — see notes above the payload types.
 	publishPost(
 		payload: LinkedInPublishPostPayload,
@@ -450,16 +482,21 @@ export type LinkedInHttpClientOptions = {
 }
 
 /**
- * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
- * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
- * include the `/v2` suffix — the path lives here so this client owns the
- * v1 → v2 migration surface in a single spot.
+ * The fetch wrapper behind `createLinkedInHttpClient`, exported so a sibling
+ * client (posts-reads.ts) shares the exact same auth headers, JSON handling and
+ * result shape instead of copying them.
  */
-export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+export type LinkedInHttpCall = <T>(
+	method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+	path: string,
+	body?: unknown,
+) => Promise<LinkedInHttpResult<T>>
+
+export function createLinkedInHttpCall(options: LinkedInHttpClientOptions): LinkedInHttpCall {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '')
 	const fetchFn = options.fetchImpl ?? fetch
 
-	async function call<T>(
+	return async function call<T>(
 		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
 		path: string,
 		body?: unknown,
@@ -490,6 +527,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		}
 		return { status: response.status, body: parsed as T, headers }
 	}
+}
+
+/**
+ * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
+ * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
+ * include the `/v2` suffix — the path lives here so this client owns the
+ * v1 → v2 migration surface in a single spot.
+ */
+export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+	const call = createLinkedInHttpCall(options)
 
 	return {
 		sendMessage(payload) {
@@ -520,6 +567,7 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			if (payload.attachments && payload.attachments.length > 0) {
 				body.attachments = payload.attachments
 			}
+			if (payload.inmail) body.specifics = INMAIL_CHAT_SPECIFICS
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/inboxes/${inbox}/chats/send`,
@@ -529,10 +577,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		reply(payload) {
 			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
 			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			// An approved message that carries a file adds `attachments`, folded in the same way
+			// as on `sendMessage`; a text-only reply keeps its exact wire body.
+			const body: Record<string, unknown> = { text: payload.body }
+			if (payload.attachments && payload.attachments.length > 0) {
+				body.attachments = payload.attachments
+			}
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
-				{ text: payload.body },
+				body,
 			)
 		},
 		listConversations(query) {
@@ -595,7 +649,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			// with INVALID_INPUT.
 			const acc = encodeURIComponent(query.account_id)
 			const identifier = normalizeProfileIdentifier(query.identifier)
-			return call('GET', `/v2/${acc}/users/${encodeURIComponent(identifier)}`)
+			// Unipile encodes an array query param as one `with_sections` pair
+			// per value.
+			const params = new URLSearchParams()
+			for (const section of query.with_sections ?? []) params.append('with_sections', section)
+			const qs = params.toString()
+			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
+			return call('GET', qs ? `${path}?${qs}` : path)
+		},
+		getInmailCredits(query) {
+			return call('GET', inmailCreditsPath(query.account_id))
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected
@@ -618,6 +681,17 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const body: Record<string, unknown> = { user_id: payload.user_id }
 			if (payload.message !== undefined) body.message = payload.message
 			return call('POST', `/v2/${acc}/users/me/relation-requests`, body)
+		},
+		listRelationRequests(query) {
+			// GET /v2/{account_id}/users/me/relation-requests?type=sent&offset=&limit=.
+			// LinkedIn pages this with `offset`, not a cursor.
+			return call('GET', listRelationRequestsPath(query))
+		},
+		cancelRelationRequest(payload) {
+			// POST /v2/{account_id}/users/me/relation-requests/{request_id}/cancel.
+			// The same call withdraws a sent invite and refuses a received one, so a
+			// caller must have confirmed the id is in the sent list first.
+			return call('POST', cancelRelationRequestPath(payload))
 		},
 		publishPost(payload) {
 			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint

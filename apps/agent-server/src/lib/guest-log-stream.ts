@@ -6,7 +6,7 @@ import { logger } from './logger'
  * stderr).
  *
  * The guest helper processes launched by agent-run.sh — input-stream.js,
- * output-stream.js, preview-port-watcher.js, cdp-retry-proxy.js — write their
+ * output-stream.js, strip-images-proxy.js — write their
  * diagnostics to stderr, which is inherited by `msb exec` on the host. That
  * stream used to be drained into empty callbacks, so when a helper died
  * silently the only evidence of it was discarded (see the wedged-chat incident

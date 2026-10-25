@@ -13,16 +13,16 @@
  *     re-enumeration for the credential. In practice "enqueue" is an
  *     inline await on the same handler.
  *
- * Kept dependency-light: this module resolves the credential from the
- * database, decrypts it, and hands off to the diff engine in
- * `./fan-out.ts`. Nothing about the webhook transport (headers, secret,
+ * Kept dependency-light: this module resolves the matching rows from the
+ * database and hands off to the diff engine in `./fan-out.ts`. It never
+ * reads a credential: the Unipile account id is the row's `external_id`.
+ * Nothing about the webhook transport (headers, secret,
  * status codes) lives here — that stays in the route.
  */
 
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { decrypt } from '../../../crypto'
 import { logger } from '../../../logger'
 import { LinkedInIntegrationError } from './errors'
 import { type FanOutDiff, reEnumerateAndSyncLinkedInInstances } from './fan-out'
@@ -52,7 +52,7 @@ export function __setLinkedInWebhookClientForTests(builder: WebhookClientBuilder
  * surfaces the same way for both. `UNIPILE_BASE_URL` must NOT include
  * `/v2` — the client owns the path prefix.
  */
-export function buildLinkedInClientForWebhook(): LinkedInClient {
+export function buildLinkedInClientForWebhook(fetchImpl?: typeof fetch): LinkedInClient {
 	if (webhookClientOverride) return webhookClientOverride()
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
@@ -62,7 +62,7 @@ export function buildLinkedInClientForWebhook(): LinkedInClient {
 			'LinkedIn client is not configured (missing UNIPILE_BASE_URL or UNIPILE_API_KEY)',
 		)
 	}
-	return createLinkedInHttpClient({ baseUrl, apiKey })
+	return createLinkedInHttpClient({ baseUrl, apiKey, fetchImpl })
 }
 
 /**
@@ -92,8 +92,16 @@ export async function handleUnipileAccountReconnect(
 		diff: FanOutDiff | { error: string }
 	}>
 }> {
+	// Explicit columns: the credentials ciphertext is never loaded here.
 	const rows = await db
-		.select()
+		.select({
+			id: integrations.id,
+			workspaceId: integrations.workspaceId,
+			actorId: integrations.actorId,
+			createdBy: integrations.createdBy,
+			externalId: integrations.externalId,
+			unipileAccSlug: integrations.unipileAccSlug,
+		})
 		.from(integrations)
 		.where(
 			and(
@@ -117,25 +125,23 @@ export async function handleUnipileAccountReconnect(
 	}> = []
 
 	for (const row of rows) {
-		let credentials: { account_id?: string } = {}
-		try {
-			credentials = JSON.parse(decrypt(row.credentials)) as { account_id?: string }
-		} catch (err) {
-			logger.warn('linkedin-unipile account.reconnect: failed to decrypt credentials', {
+		if (!row.externalId) {
+			// Unreachable while the lookup keys on external_id; keeps the
+			// one-entry-per-row contract if that ever changes.
+			logger.info('linkedin-unipile account.reconnect: skipping row without external_id', {
 				integrationId: row.id,
-				error: err instanceof Error ? err.message : String(err),
 			})
 			appliedTo.push({
 				integrationId: row.id,
 				workspaceId: row.workspaceId,
-				diff: { error: 'CREDENTIAL_UNREADABLE' },
+				diff: { error: 'MISSING_EXTERNAL_ID' },
 			})
 			continue
 		}
-		if (!credentials.account_id || !row.unipileAccSlug) {
-			// A credential landed pre-R11 has account_id but no unipileAccSlug
-			// yet — the first webhook fires the R11-A `updateIntegrationAccSlug`
-			// side-effect that fills it in. Skip diffing until then.
+		if (!row.unipileAccSlug) {
+			// A row without unipileAccSlug has not had the R11-A
+			// `updateIntegrationAccSlug` side-effect run yet — the first webhook
+			// fires it. Skip diffing until then.
 			logger.info('linkedin-unipile account.reconnect: skipping row without unipile_acc_slug', {
 				integrationId: row.id,
 			})
@@ -154,7 +160,7 @@ export async function handleUnipileAccountReconnect(
 			workspaceId: row.workspaceId,
 			actorId,
 			integrationId: row.id,
-			unipileAccountId: credentials.account_id,
+			unipileAccountId: row.externalId,
 			unipileAccSlug: row.unipileAccSlug,
 		})
 		if ('error' in diff) {

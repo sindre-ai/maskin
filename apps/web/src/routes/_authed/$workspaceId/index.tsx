@@ -1,25 +1,31 @@
-import { BriefCard } from '@/components/foryou/brief-card'
+import { BriefingRow } from '@/components/foryou/briefing-row'
+import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
 import {
 	type FeedMode,
-	type FeedSort,
 	type ForYouBulkAction,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
-import { ReleaseCard } from '@/components/foryou/release-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
+import { useForYou } from '@/hooks/use-for-you'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { trackForyouCardMarkedRead } from '@/lib/analytics'
-import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
+import {
+	type CreateCommentInput,
+	type DisplaySettingsBody,
+	type LatestMentionDecisionDraft,
+	type UnreadItem,
+	api,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
@@ -56,7 +62,7 @@ export function feedModeToForyouViewMode(
 /**
  * For You — the feed (mockup `Maskin For You - Feed v4`).
  *
- * A single scrolling column: today's brief, then every unread thread as a
+ * A single scrolling column: the briefing cards, then every unread thread as a
  * card. Cards view expands them all; List view shows one line each until you
  * open one. Nothing leaves the column until it is answered or dismissed.
  */
@@ -64,13 +70,12 @@ function ForYouFeed() {
 	useDocumentTitle('For You')
 	const { workspaceId } = useWorkspace()
 	const queryClient = useQueryClient()
-	const { data, isLoading, isError, error, refetch } = useUnread(workspaceId, undefined, true)
+	const { data, isLoading, isError, error, refetch } = useForYou(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [sort, setSort] = useState<FeedSort>('attention')
 	const [filterPills, setFilterPills] = useState(false)
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
@@ -138,25 +143,13 @@ function ForYouFeed() {
 		[items],
 	)
 
-	// `attention` (default) sorts by the sender's attention score (1-5) on each
-	// card's highest-scored unread comment, highest first; unscored comments
-	// sort below any scored one. Ties fall back to latest activity.
-	// `chrono` is a straight latest-activity-first ordering.
-	const sortedRegular = useMemo(() => {
-		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
-		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
-			const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
-			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
-			return bt - at
-		}
-		if (sort === 'chrono') return base.slice().sort(byLatestDesc)
-		return base.slice().sort((a, b) => {
-			const aAttention = a.max_unread_attention ?? -1
-			const bAttention = b.max_unread_attention ?? -1
-			if (aAttention !== bAttention) return bAttention - aAttention
-			return byLatestDesc(a, b)
-		})
-	}, [items, sort])
+	// The Chief of Staff's rank is the order: the server returns the list
+	// already sorted, so the feed shows it as given. Onboarding sessions keep
+	// their own prompt card above it.
+	const sortedRegular = useMemo(
+		() => items.filter((item) => item.object?.type !== 'onboarding_session'),
+		[items],
+	)
 
 	const visibleRegular = useMemo(() => {
 		if (pendingKeys.size === 0 && answeredAt.size === 0) return sortedRegular
@@ -196,7 +189,7 @@ function ForYouFeed() {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
 			if (repliedKeys.has(key)) return 'waiting'
-			return classifyCardKind(item) === 'thread' ? 'fyi' : 'needs'
+			return 'needs'
 		},
 		[decided, repliedKeys],
 	)
@@ -309,19 +302,27 @@ function ForYouFeed() {
 		(item: UnreadItem, option: DecidedOption) => {
 			const key = feedItemKey(item)
 			setDecided((prev) => new Map(prev).set(key, { item, option }))
+			// Choosing the option that sends is the person's approval of the draft behind the
+			// card. It is recorded first, bound to the text they saw, so the agent's send
+			// tool can check it. A draft that changed since refuses here and the card reopens.
+			const decision = item.latest_mention?.decision
+			const sends = decision?.options.some((o) => o.label === option.label && o.destructive)
+			const approval = sends ? approveDraft(decision?.draft) : Promise.resolve()
 			// `mutateAsync` for the same reason as `markItemRead`: "Take every
 			// suggested option" calls this in a loop over one shared observer,
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
-			postReply
-				.mutateAsync({
-					entity_id: item.entity_id,
-					content: option.label,
-					// The answer belongs under the question. Without this it lands as
-					// a loose comment on the object, and the agent that asked has to
-					// infer from timing which of its asks was just answered.
-					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
-				})
+			approval
+				.then(() =>
+					postReply.mutateAsync({
+						entity_id: item.entity_id,
+						content: option.label,
+						// The answer belongs under the question. Without this it lands as
+						// a loose comment on the object, and the agent that asked has to
+						// infer from timing which of its asks was just answered.
+						...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+					}),
+				)
 				.then(() => {
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
@@ -337,6 +338,42 @@ function ForYouFeed() {
 				})
 		},
 		[markItemRead, postReply, undoDecision],
+	)
+
+	// One message of a stacked card. The reply names the message by the agent's own
+	// key, so the agent can tell which one was sent and which was skipped. It goes
+	// under the question like any other answer. Rejects when the reply fails, so the
+	// card keeps that message open instead of showing it as dealt with.
+	const handleDraftAction = useCallback(
+		(item: UnreadItem, draft: LatestMentionDecisionDraft, action: DraftAction) => {
+			const what = [draft.label ?? 'Message', draft.to ? `to ${draft.to}` : null]
+				.filter(Boolean)
+				.join(' ')
+			const approval = action === 'send' ? approveDraft(draft) : Promise.resolve()
+			return approval.then(() =>
+				postReply.mutateAsync({
+					entity_id: item.entity_id,
+					content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
+					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+				}),
+			)
+		},
+		[postReply],
+	)
+
+	// The last message has been dealt with: the card settles the way a taken option
+	// does, but without a further reply, since each message already got its own.
+	const handleDraftsDone = useCallback(
+		(item: UnreadItem) => {
+			setDecided((prev) =>
+				new Map(prev).set(feedItemKey(item), {
+					item,
+					option: { id: 'drafts', label: 'Dealt with every message' },
+				}),
+			)
+			if (!markItemRead(item)) toast.warning('Replies sent, but the thread stayed unread.')
+		},
+		[markItemRead],
 	)
 
 	// Typing an answer settles the thread exactly as taking an option does, so
@@ -487,18 +524,7 @@ function ForYouFeed() {
 			),
 		[filteredRegular, bucketOf],
 	)
-	const fyiCards = useMemo(
-		() => filteredRegular.filter((item) => bucketOf(item) === 'fyi'),
-		[filteredRegular, bucketOf],
-	)
-
 	const bulkActions: ForYouBulkAction[] = [
-		{
-			id: 'fyi',
-			label: 'Dismiss all FYIs',
-			count: fyiCards.length,
-			onSelect: () => dismissAll(fyiCards, 'FYIs cleared'),
-		},
 		{
 			id: 'suggested',
 			label: 'Take every suggested option',
@@ -559,7 +585,11 @@ function ForYouFeed() {
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
 			<PageHeader
 				title="For you"
-				subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
+				subtitle={
+					unreadRegular.length === 0
+						? 'All caught up'
+						: `${unreadRegular.length} ${unreadRegular.length === 1 ? 'needs' : 'need'} you`
+				}
 				scrollLocked
 			/>
 
@@ -570,8 +600,6 @@ function ForYouFeed() {
 				typeCounts={typeCounts}
 				mode={mode}
 				onModeChange={handleModeChange}
-				sort={sort}
-				onSortChange={setSort}
 				filterPills={filterPills}
 				onFilterPillsChange={setFilterPills}
 				bulkActions={bulkActions}
@@ -579,8 +607,7 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
-					<BriefCard workspaceId={workspaceId} />
-					<ReleaseCard />
+					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (
 						<div className="mt-3 space-y-3">
@@ -617,6 +644,8 @@ function ForYouFeed() {
 									}
 									decided={decided.get(key)?.option ?? null}
 									onDecide={(option) => handleDecide(item, option)}
+									onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
+									onDraftsDone={() => handleDraftsDone(item)}
 									replied={repliedKeys.has(key)}
 									onReplied={() => handleReplied(item)}
 									onMarkRead={() => dismissAll([item], 'Marked as read')}
@@ -636,6 +665,14 @@ function ForYouFeed() {
 			</div>
 		</div>
 	)
+}
+
+// Records the person's approval of the object behind a draft, bound to the text the card
+// showed. A draft without a preview (plain text on the card) has nothing to approve and
+// resolves at once; the reply to the agent is what carries the decision for those.
+function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<unknown> {
+	if (!draft?.preview || !draft.object_id) return Promise.resolve()
+	return api.objects.approve(draft.object_id, draft.preview.content_hash)
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on

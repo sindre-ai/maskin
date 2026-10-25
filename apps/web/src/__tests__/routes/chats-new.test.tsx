@@ -30,8 +30,9 @@ vi.mock('@/hooks/use-actors', () => ({
 	useDefaultChatAgent: () => ({ id: 'cos-1', name: 'Chief of Staff' }),
 }))
 
+const mockMembers = vi.fn()
 vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaceMembers: () => ({ data: [] }),
+	useWorkspaceMembers: () => ({ data: mockMembers() }),
 }))
 
 const mockReferencedObjects = vi.fn()
@@ -55,14 +56,6 @@ vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: (name: string | null) =>
 		name ? name.toLowerCase().replace(/\s+/g, '-') : null,
 	trackChatSessionStarted: trackChatSessionStartedMock,
-}))
-
-// The route gates the v4 rewrite behind the `chats-v4-polish` umbrella AND its
-// `.new_chat` sub-flag (bet/bdda1c1e-chats-v4-polish). These tests exercise the
-// v4 screen, so the boundary resolves on by default; the rollback test flips it.
-const v4Flags = vi.hoisted(() => ({ on: true }))
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => v4Flags.on && id.startsWith('chats-v4-polish'),
 }))
 
 // The real composer pulls the whole chat surface in; this route needs only the
@@ -115,7 +108,11 @@ function conversationsPage(
 	convs: Array<{
 		id: string
 		lastMessageAt: string | null
-		participants: Array<{ actorId: string; actorName: string; actorType: 'human' | 'agent' }>
+		participants: Array<{
+			actorId: string
+			actorName: string
+			actorType: 'human' | 'agent' | 'system'
+		}>
 	}>,
 ) {
 	return {
@@ -148,28 +145,16 @@ describe('New chat', () => {
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
 		mockActors.mockReturnValue([CHIEF, FORGE, SENTINEL])
+		mockMembers.mockReturnValue([])
 		mockReferencedObjects.mockReturnValue(undefined)
 		mockConversationsInfinite.mockReturnValue(undefined)
 		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
-		v4Flags.on = true
 	})
 
 	it('does not render the removed CHAT_SUGGESTIONS list', () => {
 		render(<NewChatPage />)
 		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
 		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
-	})
-
-	it('renders the pre-bet screen with its suggestions when the flag is off', async () => {
-		// Rollback path: umbrella off renders the vendored legacy form — the
-		// picker popover header, the CHAT_SUGGESTIONS list, and no v4 chip input.
-		v4Flags.on = false
-		render(<NewChatPage />)
-		expect(await screen.findByText('What needs a decision from me today?')).toBeInTheDocument()
-		expect(screen.getByText('New chat')).toBeInTheDocument()
-		// Pre-v4 addresses the conversation with a picker pill, not a chip list.
-		expect(screen.getByRole('button', { name: /Talking to Chief of Staff/ })).toBeInTheDocument()
-		expect(screen.queryByLabelText('Remove Chief of Staff')).not.toBeInTheDocument()
 	})
 
 	it('seeds the workspace default chat agent as an initial chip', async () => {
@@ -183,7 +168,7 @@ describe('New chat', () => {
 		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
 	})
 
-	it('renders a RECENT eyebrow with recently-collaborated actors on empty query', () => {
+	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {
 		mockConversationsInfinite.mockReturnValue(
 			conversationsPage([
 				{
@@ -196,14 +181,46 @@ describe('New chat', () => {
 				},
 			]),
 		)
+		const user = userEvent.setup()
 		render(<NewChatPage />)
+		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
+		await user.click(screen.getByLabelText('Add recipients'))
 		expect(screen.getByText('RECENT')).toBeInTheDocument()
 		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
 	})
 
-	it('omits the RECENT section entirely when the derivation returns zero candidates', () => {
-		mockConversationsInfinite.mockReturnValue({ pages: [] })
+	it('never offers integration system members as recipients, typed or in RECENT', async () => {
+		mockMembers.mockReturnValue([
+			{ actorId: 'slack-1', name: 'Slack', type: 'system', role: 'member' },
+			{ actorId: 'sam-1', name: 'Sam Slack', type: 'human', role: 'member' },
+		])
+		mockConversationsInfinite.mockReturnValue(
+			conversationsPage([
+				{
+					id: 'c-1',
+					lastMessageAt: '2026-09-01T10:00:00.000Z',
+					participants: [
+						{ actorId: 'slack-1', actorName: 'Slack', actorType: 'system' },
+						{ actorId: 'forge-1', actorName: 'Forge', actorType: 'agent' },
+					],
+				},
+			]),
+		)
+		const user = userEvent.setup()
 		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
+		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
+		await user.type(screen.getByLabelText('Add recipients'), 'sl')
+		expect(screen.getByRole('option', { name: /Sam Slack/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
+	})
+
+	it('omits the RECENT section entirely when the derivation returns zero candidates', async () => {
+		mockConversationsInfinite.mockReturnValue({ pages: [] })
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
 		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
 	})
 
@@ -211,7 +228,7 @@ describe('New chat', () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await user.type(screen.getByLabelText('Add recipients'), 'f')
-		expect(screen.getByText('ADD SOMEONE \u2014 PERSON OR AGENT')).toBeInTheDocument()
+		expect(screen.getByText('ADD SOMEONE — PERSON OR AGENT')).toBeInTheDocument()
 	})
 
 	it('renders the muted empty-match line when the typed query has no matches', async () => {

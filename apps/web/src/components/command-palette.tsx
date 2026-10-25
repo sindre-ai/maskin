@@ -4,15 +4,17 @@ import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useObjects } from '@/hooks/use-objects'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { type SearchRow, matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
-import {
-	type TaxonomyEntityType,
-	trackCommandPaletteOpened,
-	trackSearchResultOpened,
-} from '@/lib/analytics'
+import { type TaxonomyEntityType, trackCommandPaletteOpened } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { pushRecentObject, pushRecentSearch } from '@/lib/search-recents'
+import {
+	SEARCH_DEBOUNCE_MS,
+	searchRowEntityType,
+	trackSearchRowOpened,
+	useTrackSettledSearch,
+} from '@/lib/search-telemetry'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
@@ -35,7 +37,6 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-const SEARCH_DEBOUNCE_MS = 300
 // The mockup caps the workspace index at six rows so the Commands / Go to
 // groups stay reachable without scrolling (mockup 5812).
 const MAX_JUMP_ROWS = 6
@@ -111,7 +112,13 @@ export function CommandPalette() {
 
 	// The workspace index behind "Jump to" — chats, loops, agents, objects and
 	// automations, the same hook the /search view ranks with.
-	const { rows: searchRows } = useWorkspaceSearch(workspaceId, { q: debouncedQuery })
+	const {
+		rows: searchRows,
+		total: searchTotal,
+		isSettled,
+		isError,
+		isPartial,
+	} = useWorkspaceSearch(workspaceId, { q: debouncedQuery })
 	const { data: objects } = useObjects(workspaceId)
 	const objectTypes = useAvailableObjectTypes()
 
@@ -196,31 +203,27 @@ export function CommandPalette() {
 
 	const openObject = useCallback(
 		(obj: ObjectResponse) => {
-			trackSearchResultOpened({
-				entity_id: obj.id,
-				entity_type: obj.type as TaxonomyEntityType,
-				surface: 'command_palette',
-			})
 			pushRecentObject(workspaceId, obj.id)
 			navigateTo(`/${workspaceId}/objects/${obj.id}`)
 		},
 		[navigateTo, workspaceId],
 	)
 
-	const openSearchRow = useCallback(
-		(row: SearchRow) => {
-			if (row.object) {
-				openObject(row.object)
-				return
-			}
-			navigate({ to: row.to, params: row.params })
-			setOpen(false)
-		},
-		[navigate, openObject, setOpen],
-	)
-
 	const trimmedQuery = query.trim()
 	const hasQuery = trimmedQuery.length > 0
+
+	// Only count a search while the palette is open and the results on screen
+	// belong to what is typed: right after a close and quick reopen the debounced
+	// query still holds the previous one.
+	useTrackSettledSearch({
+		surface: 'command_palette',
+		active: open && debouncedQuery.trim() === trimmedQuery,
+		query: debouncedQuery,
+		isSettled,
+		isError,
+		isPartial,
+		total: searchTotal,
+	})
 
 	const seeAll = useCallback(() => {
 		if (!trimmedQuery) return
@@ -373,9 +376,34 @@ export function CommandPalette() {
 		}))
 	}, [matchesQuery, navigateTo, workspaceId])
 
+	// Opening a Jump to row reports which row it was (1-based, rendered order)
+	// and the list it sat in. Rows with no query (the recent-objects list) carry
+	// no search id.
+	const openJumpRow = useCallback(
+		(row: SearchRow, position: number, listSize: number) => {
+			trackSearchRowOpened({
+				surface: 'command_palette',
+				entityId: row.id,
+				entityType: searchRowEntityType(row),
+				group: row.group,
+				position,
+				hasQuery,
+				listSize,
+			})
+			if (row.object) {
+				openObject(row.object)
+				return
+			}
+			navigate({ to: row.to, params: row.params })
+			setOpen(false)
+		},
+		[hasQuery, navigate, openObject, setOpen],
+	)
+
 	const jumpRows = useMemo(() => {
 		if (hasQuery) {
-			return searchRows.slice(0, MAX_JUMP_ROWS).map((row) => ({
+			const shown = searchRows.slice(0, MAX_JUMP_ROWS)
+			return shown.map((row, index) => ({
 				id: `jump-${row.group}-${row.id}`,
 				group: 'Jump to',
 				kind: row.kind,
@@ -390,11 +418,12 @@ export function CommandPalette() {
 						fallback={<GlyphTile icon={GROUP_GLYPH[row.group] ?? LayoutGrid} />}
 					/>
 				),
-				run: () => openSearchRow(row),
+				run: () => openJumpRow(row, index + 1, shown.length),
 				object: row.object,
 			}))
 		}
-		return (objects ?? []).slice(0, MAX_JUMP_ROWS).map((object) => ({
+		const recent = (objects ?? []).slice(0, MAX_JUMP_ROWS)
+		return recent.map((object, index) => ({
 			id: `jump-object-${object.id}`,
 			group: 'Jump to',
 			kind: object.type.toUpperCase(),
@@ -408,10 +437,21 @@ export function CommandPalette() {
 					fallback={null}
 				/>
 			),
-			run: () => openObject(object),
+			run: () => {
+				trackSearchRowOpened({
+					surface: 'command_palette',
+					entityId: object.id,
+					entityType: object.type as TaxonomyEntityType,
+					group: 'objects',
+					position: index + 1,
+					hasQuery: false,
+					listSize: recent.length,
+				})
+				openObject(object)
+			},
 			object,
 		}))
-	}, [hasQuery, objects, openObject, openSearchRow, searchRows])
+	}, [hasQuery, objects, openJumpRow, openObject, searchRows])
 
 	const searchTerminalRow: PaletteRow = {
 		id: 'search-everything',

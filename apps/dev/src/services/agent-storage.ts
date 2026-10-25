@@ -286,6 +286,41 @@ export class AgentStorageManager {
 			)
 	}
 
+	/**
+	 * Remove every S3 object stored for one agent (skills, learnings, memory).
+	 * The prefix ends in a slash so it can only match this workspace and this
+	 * actor id, never another actor whose id merely starts the same way.
+	 * Throws if the listing or any single delete fails, after trying every key,
+	 * so the caller never reports a delete as complete when objects remain.
+	 */
+	async deleteAllAgentFiles(actorId: string, workspaceId: string): Promise<void> {
+		const prefix = `agents/${workspaceId}/${actorId}/`
+		const keys = await this.storage.list(prefix)
+
+		const failures: { key: string; error: string }[] = []
+		for (const key of keys) {
+			try {
+				await this.storage.delete(key)
+			} catch (err) {
+				logger.error('Failed to delete agent file from storage', {
+					actorId,
+					workspaceId,
+					key,
+					error: String(err),
+				})
+				failures.push({ key, error: String(err) })
+			}
+		}
+
+		if (failures.length > 0) {
+			throw new Error(
+				`Failed to delete ${failures.length}/${keys.length} agent files for ${actorId}: ${failures
+					.map((f) => `${f.key}: ${f.error}`)
+					.join('; ')}`,
+			)
+		}
+	}
+
 	async putWorkspaceSkill(
 		workspaceId: string,
 		skillId: string,

@@ -104,6 +104,10 @@ export function OwnerSelect({
 	compact?: boolean
 }) {
 	const current = members.find((m) => m.actorId === currentOwnerId)
+	// Integrations are system actors and never pick work up, so they are not
+	// offered as a driver. A driver that is already a system actor stays in the
+	// list so the select can still show it as the current value.
+	const choices = members.filter((m) => m.type !== 'system' || m.actorId === currentOwnerId)
 	const isChip = variant === 'chip'
 	const isRow = variant === 'row'
 
@@ -169,7 +173,7 @@ export function OwnerSelect({
 					<SelectItem value={UNASSIGNED_OWNER}>
 						<span className="text-muted-foreground">Unassigned</span>
 					</SelectItem>
-					{members.map((m) => (
+					{choices.map((m) => (
 						<SelectItem key={m.actorId} value={m.actorId}>
 							<span className="inline-flex items-center gap-1.5">
 								<ActorAvatar name={m.name} type={m.type} size="sm" />

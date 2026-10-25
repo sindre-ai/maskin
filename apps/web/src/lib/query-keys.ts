@@ -1,4 +1,11 @@
 export const queryKeys = {
+	account: {
+		deletionPreview: (deleteSoleWorkspaces: boolean) =>
+			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
+	},
+	webPush: {
+		config: () => ['web-push', 'config'] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -35,10 +42,14 @@ export const queryKeys = {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
 	},
+	desktops: {
+		all: (workspaceId: string) => ['desktops', workspaceId] as const,
+	},
 	workspaces: {
 		all: () => ['workspaces'] as const,
 		detail: (id: string) => ['workspaces', 'detail', id] as const,
 		members: (id: string) => ['workspaces', id, 'members'] as const,
+		deletionPreview: (id: string) => ['workspaces', id, 'deletion-preview'] as const,
 	},
 	invites: {
 		list: (workspaceId: string) => ['invites', workspaceId] as const,
@@ -56,12 +67,16 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['loops', workspaceId] as const,
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
-		steps: (workspaceId: string, loopId: string) =>
-			['loops', workspaceId, 'steps', loopId] as const,
 	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		// Nested under all(), so every invalidation of the integration list (a grant, a connect,
+		// a disconnect, an SSE event) refreshes what each agent can use as well.
+		agentAccess: (workspaceId: string, actorId: string) =>
+			['integrations', workspaceId, 'agent-access', actorId] as const,
+		auditLog: (workspaceId: string, integrationId: string) =>
+			['integrations', workspaceId, integrationId, 'audit-log'] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>
@@ -108,6 +123,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'mention-object', objectId] as const,
 		byConversation: (workspaceId: string, conversationId: string) =>
 			['sessions', workspaceId, 'conversation', conversationId] as const,
+		firstOutput: (workspaceId: string, sessionId: string) =>
+			['sessions', workspaceId, 'first-output', sessionId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,
@@ -144,6 +161,9 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+	},
+	forYou: {
+		list: (workspaceId: string) => ['for-you', workspaceId] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

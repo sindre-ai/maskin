@@ -19,10 +19,13 @@ public protocol ConversationsAPI: Sendable {
 	/// The newest message in a conversation, which "read" is recorded against. The list rows
 	/// carry no message id, so marking a chat read from the list has to ask.
 	func latestMessageID(conversationID: String) async throws -> Int?
+	/// Threads you started or replied in, across conversations, most recently active first.
+	func threads(limit: Int) async throws -> [ThreadListItem]
 }
 
 extension ConversationsAPI {
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
+	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		try await list(archived: archived, pinnedOnly: false, unreadOnly: false, limit: limit, offset: offset)
@@ -47,6 +50,18 @@ public protocol ChatAPI: Sendable {
 	func send(
 		conversationID: String, content: String, metadata: ChatSendMetadata?, idempotencyKey: String
 	) async throws -> ChatMessage
+	/// The same, as a reply inside a thread. A source without threads refuses rather than
+	/// quietly posting it to the main timeline.
+	func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
+	) async throws -> ChatMessage
+	/// The replies of one thread, oldest first.
+	func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage]
+	/// Add (`add`) or take back your `emoji` on a message.
+	func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws
+	/// Advance the caller's read marker for a thread to `lastMessageID`.
+	func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws
 	/// Ask the agents to answer again (`POST …/messages/{id}/retry`).
 	func retry(conversationID: String, messageID: Int, agentID: String?) async throws
 	func markRead(conversationID: String, lastMessageID: Int) async throws
@@ -63,6 +78,20 @@ public protocol ChatAPI: Sendable {
 }
 
 extension ChatAPI {
+	public func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
+	) async throws -> ChatMessage {
+		guard thread == nil else { throw ChatsError("Threads aren't available here.") }
+		return try await send(
+			conversationID: conversationID, content: content, metadata: metadata,
+			idempotencyKey: idempotencyKey)
+	}
+	public func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage] { [] }
+	public func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws {
+		throw ChatsError("Reactions aren't available here.")
+	}
+	public func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws {}
 	public func removeParticipant(conversationID: String, actorID: String) async throws {
 		throw ChatsError("Removing people isn't available.")
 	}

@@ -36,6 +36,7 @@ vi.mock('../../lib/crypto', () => ({
 
 vi.mock('../../lib/workspace-auth', () => ({
 	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	assertWorkspaceWriterRole: vi.fn(),
 }))
 
 // Structured warn log lines are load-bearing: the "reconnect returned a

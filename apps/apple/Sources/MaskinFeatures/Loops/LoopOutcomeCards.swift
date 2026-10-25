@@ -158,9 +158,9 @@ struct OutcomeScoreRow: View {
 	}
 }
 
-/// QUALITY on a flow's Outcome tab: three small cards of what is measured today (cycles done,
+/// STATS on a flow's Outcome tab: three small cards of what is measured today (cycles done,
 /// decisions needed, failed steps). Rework and edit rate wait for the API to record edits.
-struct LoopQualitySection: View {
+struct LoopStatsSection: View {
 	let loop: LoopSummary
 	/// Steps that failed in the last seven days.
 	let failedSteps: Int
@@ -168,7 +168,7 @@ struct LoopQualitySection: View {
 	var body: some View {
 		let stats = LoopQuality.cardStats(for: loop, failedSteps: failedSteps)
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			FlowSectionHeader("Quality")
+			FlowSectionHeader("Stats")
 			HStack(alignment: .top, spacing: MaskinSpace.s4) {
 				ForEach(stats) { stat in
 					VStack(alignment: .leading, spacing: MaskinSpace.s3) {

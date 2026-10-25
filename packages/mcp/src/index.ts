@@ -1,5 +1,18 @@
-export { createMcpServer } from './server.js'
+export { createMcpServer, getServerHandlers } from './server.js'
+export type { McpConfig, McpToolHandler } from './server.js'
 export { tools } from './tools.js'
+
+// CTO pre-req 1 for Voice v1 (bet 16bd0042). Extracted so both the stdio
+// transport (via createMcpServer) and the voice tool-proxy (Task 3) dispatch
+// tools through the same wrapped handler map — no drift between "chat" and
+// "voice" tool behaviour. See ./invoke.ts for the shape.
+export {
+	UnknownToolError,
+	createInvokeTool,
+	invokeTool,
+	_resetInvokeToolForTests,
+} from './invoke.js'
+export type { InvokeContext, InvokeTool } from './invoke.js'
 
 // R11-A · LinkedIn fan-out foundation exports.
 // Kept out of any barrel that a non-linkedin caller would import so the type
@@ -67,3 +80,13 @@ export type {
 	PublishPostInput,
 	SendMessageInput,
 } from './lib/linkedin-tool-schemas.js'
+
+// Live (voice) calls get the same tools as chat, read straight from the MCP
+// server. See ./voice-tools.ts.
+export { createVoiceToolkit } from './voice-tools.js'
+export { READ_ONLY_TOOLS } from './annotations.js'
+export type {
+	VoiceExternalMcpServer,
+	VoiceRealtimeTool,
+	VoiceToolkit,
+} from './voice-tools.js'

@@ -1,33 +1,52 @@
 import './lib/sentry'
 import './extensions'
+import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
+import type { NodeWebSocket } from '@hono/node-ws'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
+import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { RotateDeksJob } from './jobs/rotate-deks'
+import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
+import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
+import { canAccessDesktop } from './lib/desktop-access'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
+import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
+import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
+import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingPushScheduler } from './services/briefing-push-scheduler'
+import { CapabilityScanner } from './services/capability-scanner'
+import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
-import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
+import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
+import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { NotificationPushFanout } from './services/notification-push'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
@@ -38,8 +57,14 @@ import { SessionManager } from './services/session-manager'
 import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
+import {
+	VoiceSessionTimeoutSweeper,
+	endAllLiveVoiceSessions,
+} from './services/voice-session-timeout-sweeper'
+import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
+import { createWorkspaceDesktopService } from './services/workspace-desktop'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -47,6 +72,12 @@ if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
+
+// A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
+// first credential read.
+assertKeychainKeyConfig()
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -136,9 +167,6 @@ const sessionManager = new SessionManager(db, storageProvider, runtimeTelemetry)
 sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 )
-sessionManager.setBrowserSidecarBuildContext(
-	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
-)
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
 // The one entry point for starting a session — every wrapper (chat, trigger,
@@ -148,7 +176,19 @@ configureSessionLifecycle({ db, sessionManager })
 
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+// Voice v1 needs a WebSocket upgrade path next to the HTTP routes. createApp
+// builds the socket handle (it owns the app instance); we hold it here and
+// attach it to the server once serve() returns it, below.
+let nodeWebSocket: NodeWebSocket | undefined
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{
+		port,
+		onNodeWebSocket: (ws) => {
+			nodeWebSocket = ws
+		},
+	},
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
@@ -172,9 +212,23 @@ triggerRunner
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
 
+const apnsSender = new ApnsSender(db)
+const webPushSender = new WebPushSender(db)
+const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
+notificationPush.start()
+
+const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
+	turns: sessionManager,
+})
+liveActivityPush.start()
+
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const gscSyncScheduler = new GscSyncScheduler(db)
+gscSyncScheduler.start()
+logger.info('GSC sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
@@ -208,6 +262,14 @@ const sessionRetryScheduler = new SessionRetryScheduler(db)
 sessionRetryScheduler.start()
 logger.info('Session retry scheduler started')
 
+// Scheduled pushes. Both only create `notifications` rows; the push fan-out (policy: quiet
+// hours, category toggles, rate limits) delivers them. Briefing: killswitch
+// FEATURE_BRIEFING_PUSH=0. Lifecycle: off unless PUSH_LIFECYCLE_ENABLED=1.
+const briefingPushScheduler = new BriefingPushScheduler(db)
+briefingPushScheduler.start()
+const lifecyclePushScheduler = new LifecyclePushScheduler(db)
+lifecyclePushScheduler.start()
+
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
 const sessionSelfHealJob = new SessionSelfHealJob(db)
@@ -222,6 +284,29 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Keychain: flips chat-captured keys from pending_undo to active once the undo
+// window has passed. One UPDATE per minute, no key use.
+const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
+keychainUndoSweeperJob.start()
+logger.info('Keychain undo sweeper started')
+
+// Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
+// unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
+const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
+upgradeLegacyCredentialsJob.start()
+logger.info('Legacy credential upgrade job scheduled')
+
+// Keychain: nightly re-wrap of every envelope credential read in the last 24 hours
+// under a fresh DEK and the current master key (the lazy half of master key rotation).
+const rotateDeksJob = new RotateDeksJob(db)
+rotateDeksJob.start()
+logger.info('DEK rotation job scheduled')
+
+// Keychain: daily audit-chain snapshot into credential_chain_snapshots, plus the verifier.
+const chainSnapshotJob = new ChainSnapshotJob(db)
+chainSnapshotJob.start()
+logger.info('Chain snapshot job scheduled')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -230,20 +315,40 @@ const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')
 
+// Custom MCP servers used to live on each agent. Move them up to the workspace, where grants
+// decide who gets them. Idempotent, and a failure here never blocks startup.
+migrateAgentToolServers(db)
+	.then(({ servers, agents }) => {
+		if (servers > 0) logger.info('Moved agent tool servers to the workspace', { servers, agents })
+	})
+	.catch((err) => logger.error('Agent tool server migration failed', { error: String(err) }))
+
+// One-off: gives every existing agent its default Heartbeat. Does nothing unless
+// RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
+void runDefaultHeartbeatBackfillOnBoot(db)
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
-// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
-// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
-// unsetting the sub-flag from the env + restarting is the rollback path.
-const loopEscalationReconciler = new LoopEscalationReconciler(db)
-loopEscalationReconciler.start()
-logger.info('Loop escalation reconciler started')
-
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
+
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
+// Voice v1: ends calls whose timeout_at has passed (tab closed with no
+// hangup). A no-op until a voice_sessions row exists.
+const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
+voiceSessionTimeoutSweeper.start()
+logger.info('Voice session timeout sweeper started')
+if (!process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()) {
+	logger.warn('MASKIN_VOICE_OPENAI_API_KEY is unset: voice calls will fail at call start')
+}
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -290,8 +395,6 @@ if (process.env.NODE_ENV === 'production') {
 				env: spec.env,
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
-				...(spec.browserRequired && { browserRequired: true }),
-				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 				// Layer 1 skills provisioning — agent-server materialises the
 				// manifest into `<sessionDir>/skills/<name>/` after the S3
@@ -352,6 +455,21 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	keychainUndoSweeperJob.stop()
+	upgradeLegacyCredentialsJob.stop()
+	rotateDeksJob.stop()
+	chainSnapshotJob.stop()
+	notificationPush.stop()
+	briefingPushScheduler.stop()
+	lifecyclePushScheduler.stop()
+	liveActivityPush.stop()
+	voiceSessionTimeoutSweeper.stop()
+	// Rows would otherwise stay live until the sweeper finds them after restart.
+	await endAllLiveVoiceSessions(db).catch((err) =>
+		logger.error(
+			`Failed to end live voice sessions on shutdown: ${err instanceof Error ? err.message : String(err)}`,
+		),
+	)
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
@@ -386,7 +504,7 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
 
@@ -432,9 +550,9 @@ ${mcpSetup}
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
 	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
-	// no Docker socket exists; the two warm calls below could only fail there.
+	// no Docker socket exists; the warm call below could only fail there.
 	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
-		logger.warn('Docker unavailable; skipping agent-base and browser-sidecar image warm-up')
+		logger.warn('Docker unavailable; skipping agent-base image warm-up')
 		return
 	}
 	sessionManager.warmAgentBaseImage().catch((err) => {
@@ -442,11 +560,39 @@ ${mcpSetup}
 			error: err instanceof Error ? err.message : String(err),
 		})
 	})
-	sessionManager.warmBrowserSidecarImage().catch((err) => {
-		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
-			error: err instanceof Error ? err.message : String(err),
-		})
+})
+nodeWebSocket?.injectWebSocket(server)
+
+// Hono has no WebSocket support, so the workspace-desktop stream is handled on
+// the raw http.Server — see services/desktop-relay.ts. Any other upgrade
+// request is refused rather than left hanging.
+const desktopService = createWorkspaceDesktopService(db)
+const httpServer = server as Server
+// injectWebSocket (voice) installed its own 'upgrade' listener, and it answers EVERY
+// upgrade it is shown: for a path it does not know it passes the request to the HTTP
+// app, gets a 401 and closes the socket, before ours could act. So take over: one
+// listener that sends desktop stream upgrades to the relay and everything else to the
+// voice handler, and no request is ever seen by both.
+const voiceUpgradeListeners = httpServer.listeners('upgrade') as Array<(...args: unknown[]) => void>
+httpServer.removeAllListeners('upgrade')
+httpServer.on('upgrade', (req, socket, head) => {
+	if (!isDesktopStreamRequest(req)) {
+		for (const listener of voiceUpgradeListeners) listener.call(httpServer, req, socket, head)
+		return
+	}
+	handleDesktopStreamUpgrade(req, socket, head, {
+		isMember: (actorId, workspaceId) => isWorkspaceMember(db, actorId, workspaceId),
+		canAccess: (actorId, workspaceId, agentId) =>
+			canAccessDesktop(db, actorId, workspaceId, agentId),
+		locate: (workspaceId, agentId) => desktopService.locate(workspaceId, agentId),
 	})
+		.then((handled) => {
+			if (!handled) socket.destroy()
+		})
+		.catch((err) => {
+			logger.error('Desktop upgrade handler threw', { error: String(err) })
+			socket.destroy()
+		})
 })
 
 export default app

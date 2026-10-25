@@ -15,10 +15,15 @@ public struct ActivityStep: Identifiable, Equatable, Sendable, Codable {
 	public var startedAt: Date?
 	public var finishedAt: Date?
 	public var status: Status
+	/// What kind of tool call a `.toolUse` step is (nil for other kinds and older cached traces).
+	public var category: ToolCategory?
+	/// A short preview of what the tool returned (or why it failed). Nil until it has.
+	public var output: String?
 
 	public init(
 		id: String, kind: Kind, label: String, detail: String? = nil, startedAt: Date? = nil,
-		finishedAt: Date? = nil, status: Status = .completed
+		finishedAt: Date? = nil, status: Status = .completed, category: ToolCategory? = nil,
+		output: String? = nil
 	) {
 		self.id = id
 		self.kind = kind
@@ -27,6 +32,8 @@ public struct ActivityStep: Identifiable, Equatable, Sendable, Codable {
 		self.startedAt = startedAt
 		self.finishedAt = finishedAt
 		self.status = status
+		self.category = category
+		self.output = output
 	}
 
 	public var isRunning: Bool { status == .running }

@@ -4,10 +4,7 @@ import Foundation
 /// reader's own message: the real agent answers, nothing here pretends to.
 public enum ForYouQuickQuestions {
 	public static func chips(for card: ForYouCard) -> [String] {
-		if let decision = card.decision {
-			let why = decision.recommended.map { "Why \($0.label)?" } ?? "Why is this needed?"
-			return [why, "What if I wait?", "Explain this simply"]
-		}
+		if card.decision != nil { return ["Explain it simply", "What if I wait?", "Who\u{2019}s involved?"] }
 		return ["Summarise this", "What do you need from me?", "Explain this simply"]
 	}
 }

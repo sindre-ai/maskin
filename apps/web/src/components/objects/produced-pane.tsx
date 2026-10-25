@@ -19,6 +19,8 @@ interface ProducedPaneProps {
 	 *  toggle as the close affordance; the bottom-sheet needs an in-sheet X
 	 *  because the toggle isn't reachable behind the overlay). */
 	onClose?: () => void
+	/** The Overview pane supplies its own tab header; hide this one there. */
+	hideHeader?: boolean
 	className?: string
 }
 
@@ -42,6 +44,7 @@ export function ProducedPane({
 	producedFiles,
 	isLoading,
 	onClose,
+	hideHeader = false,
 	className,
 }: ProducedPaneProps) {
 	const total = producedObjects.length + producedFiles.length
@@ -52,21 +55,23 @@ export function ProducedPane({
 			className={cn('flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
 			aria-label="Produced items"
 		>
-			<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
-				<h3 className="text-[13px] font-semibold text-foreground">Produced</h3>
-				{onClose ? (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-6 w-6"
-						onClick={onClose}
-						aria-label="Close Produced pane"
-					>
-						<X size={14} />
-					</Button>
-				) : null}
-			</div>
+			{hideHeader ? null : (
+				<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+					<h3 className="text-[13px] font-semibold text-foreground">Produced</h3>
+					{onClose ? (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="h-6 w-6"
+							onClick={onClose}
+							aria-label="Close Produced pane"
+						>
+							<X size={14} />
+						</Button>
+					) : null}
+				</div>
+			)}
 
 			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
 				{isLoading ? (
@@ -88,7 +93,7 @@ export function ProducedPane({
 	)
 }
 
-function ProducedObjectsGroup({
+export function ProducedObjectsGroup({
 	workspaceId,
 	items,
 }: { workspaceId: string; items: ProducedObjectItem[] }) {
@@ -111,7 +116,7 @@ function ProducedObjectsGroup({
 	)
 }
 
-function ProducedFilesGroup({
+export function ProducedFilesGroup({
 	workspaceId,
 	items,
 }: { workspaceId: string; items: ProducedFileItem[] }) {
@@ -148,6 +153,7 @@ function FileCard({ workspaceId, file }: { workspaceId: string; file: ProducedFi
 						.join(' · ')}
 				</span>
 			</span>
+			<TypeBadge type="file" className="shrink-0" />
 		</Link>
 	)
 }
@@ -168,8 +174,7 @@ function ProducedEmpty() {
 		<div className="rounded-lg border border-dashed border-border bg-background px-4 py-6 text-center">
 			<p className="text-[13px] font-semibold text-foreground">Nothing produced yet</p>
 			<p className="mt-1.5 text-[12px] leading-[1.5] text-muted-foreground">
-				This chat hasn't spawned any sessions. When an agent creates an object or file from a
-				message here, it'll appear in this list — no wiring required.
+				When an agent creates an object or file from a message here, it'll appear in this list.
 			</p>
 		</div>
 	)

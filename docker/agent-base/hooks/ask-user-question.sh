@@ -15,10 +15,12 @@
 # this same live session as the next turn. So the agent never blocks and no
 # microVM is held idle waiting on a human.
 #
-# Availability is decided by the BACKEND, not by this script: POST /ask returns
-# 409 for any session that is not an interactive chat session. An autonomous
-# (trigger-driven) session has nobody to ask, so it is told to decide for
-# itself rather than stranding the run until the timeout backstop.
+# Availability is decided by the BACKEND, not by this script. POST /ask answers
+# delivered_to=chat for a session in a chat (the answer comes back as its next
+# turn) and delivered_to=chief_of_staff for an autonomous one (the question goes
+# to the person's 1-1 with the Chief of Staff, and the answer goes there too, not
+# back here). An autonomous session must never wait on it, or the run would be
+# stranded until the timeout backstop. 409 means there is nobody to ask.
 #
 # `--dangerously-skip-permissions` is set on the CLI, so this hook must NOT
 # depend on the permission decision alone being honoured. It writes the
@@ -57,14 +59,9 @@ decide() {
 
 DECIDE_YOURSELF="You cannot ask the user a question in this session — there is nobody on the other end. Do not call AskUserQuestion again. Choose the most reasonable option yourself, state the assumption you made, and continue."
 
-# INTERACTIVE=1 is set by SessionManager only for stdin-driven sessions, so an
-# autonomous run short-circuits here without an HTTP round-trip. This is a cheap
-# filter, NOT the gate: an interactive session can exist without a conversation
-# attached, and the attachment can change after launch, so the backend's 409
-# remains the authority on whether there is anyone to ask.
-if [ "$INTERACTIVE" != "1" ]; then
-  decide "$DECIDE_YOURSELF"
-fi
+# No INTERACTIVE gate here any more: an autonomous session's question goes to
+# the person's 1-1 with the Chief of Staff, and only the backend knows whether
+# one exists. A 409 still means "nobody to ask".
 
 if [ -z "$MASKIN_API_URL" ] || [ -z "$MASKIN_API_KEY" ] || [ -z "$SESSION_ID" ] || [ -z "$MASKIN_WORKSPACE_ID" ]; then
   decide "$DECIDE_YOURSELF"
@@ -110,6 +107,10 @@ RESPONSE=$(curl -4 -s -m 15 -w '\n%{http_code}' -X POST \
 STATUS=$(echo "$RESPONSE" | tail -n1)
 
 if [ "$STATUS" = "200" ]; then
+  DELIVERED_TO=$(echo "$RESPONSE" | sed '$d' | jq -r '.delivered_to // "chat"' 2>/dev/null || echo chat)
+  if [ "$DELIVERED_TO" = "chief_of_staff" ]; then
+    decide "Your question has been sent to the user in their chat with the Chief of Staff. Their answer will go there, not back to this session, so do not wait for it and do not call AskUserQuestion again. Choose the most reasonable option yourself, state the assumption you made in your output, and continue."
+  fi
   decide "Your question has been posted to the chat and the user is being shown the options to pick from. Do not call AskUserQuestion again and do not repeat the question in your own words — it is already on screen. End your turn now, without a closing message; their answer will arrive as your next turn."
 fi
 

@@ -116,11 +116,32 @@ export const LINKEDIN_PHASE2_VERBS = ['edit_post', 'delete_post'] as const
 export type LinkedInPhase2Verb = (typeof LINKEDIN_PHASE2_VERBS)[number]
 
 /**
- * Union of every verb R11 registers per-identity — Phase 1 + Phase 2. The
- * canonical order is Phase 1 first (preserving the diff-stable order the
+ * Outreach-loop verbs (bet aff468ba), registered on personal identities only: the InMail
+ * credit read, the sent invitations read and the withdraw write, the posts and company reads and
+ * the like and the InMail send here, with the rest of the suite joining as its tasks land.
+ * `withdraw_invitation`, `react_to_post` and `send_inmail` are only registered while the
+ * LINKEDIN_OUTREACH_ACTIONS flag is on (see the LinkedIn MCP server).
+ */
+export const LINKEDIN_OUTREACH_VERBS = [
+	'get_inmail_balance',
+	'list_sent_invitations',
+	'withdraw_invitation',
+	'list_user_posts',
+	'get_company',
+	'react_to_post',
+	'send_inmail',
+] as const
+
+/**
+ * Union of every verb R11 registers per-identity — Phase 1 + Phase 2, then the outreach
+ * verbs. The canonical order is Phase 1 first (preserving the diff-stable order the
  * baseline pinned), then Phase 2 appended.
  */
-export const LINKEDIN_ALL_VERBS = [...LINKEDIN_PHASE1_VERBS, ...LINKEDIN_PHASE2_VERBS] as const
+export const LINKEDIN_ALL_VERBS = [
+	...LINKEDIN_PHASE1_VERBS,
+	...LINKEDIN_PHASE2_VERBS,
+	...LINKEDIN_OUTREACH_VERBS,
+] as const
 
 export type LinkedInVerb = (typeof LINKEDIN_ALL_VERBS)[number]
 

@@ -63,6 +63,11 @@ export interface WorkspaceSearchResult {
 	 *  while the object search succeeded. Results are real but incomplete, so
 	 *  counts would otherwise understate silently. */
 	isPartial: boolean
+	/** The object search and all four secondary lists have finished loading (or
+	 *  failed). False while any is still pending, so a cold deep link is not read
+	 *  as a zero-result search. A failed source counts as finished: it shows up as
+	 *  isPartial, or as isError for the object search. */
+	isSettled: boolean
 }
 
 export function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
@@ -92,20 +97,46 @@ export function titleCoverage(query: string, title: string): number {
 	return Math.min(matched / title.length, 1)
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** True when `term` begins a word in `title` (so "b" matches "Anna Baker", not "Anna Eve"). */
+function startsAWord(term: string, title: string): boolean {
+	return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}`, 'u').test(title)
+}
+
 /**
- * Title matches first (largest share of the title matched first), content-only
- * matches after. Array.sort is stable, so the group order (and the server's
- * rank order) is kept among equals.
+ * How well a title matches, best first: the whole query typed at a word start
+ * ("anna b" → "Anna Baker") beats every term starting a word, which beats a
+ * term merely appearing somewhere, which beats a content-only match.
+ */
+function titleTier(query: string, title: string): number {
+	const lowerTitle = title.toLowerCase()
+	const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+	if (terms.length === 0) return 0
+	if (startsAWord(terms.join(' '), lowerTitle)) return 3
+	if (terms.every((term) => startsAWord(term, lowerTitle))) return 2
+	return titleMatches(query, title) ? 1 : 0
+}
+
+/**
+ * Best title matches first; within a tier the largest share of the title
+ * matched first, content-only matches last. Array.sort is stable, so the group
+ * order (and the server's rank order) is kept among equals.
  */
 export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchRow[] {
-	const titleHits: SearchRow[] = []
-	const contentOnly: SearchRow[] = []
-	for (const row of rows) {
-		;(titleMatches(query, row.title) ? titleHits : contentOnly).push(row)
-	}
-	const coverage = new Map(titleHits.map((row) => [row, titleCoverage(query, row.title)]))
-	titleHits.sort((a, b) => (coverage.get(b) ?? 0) - (coverage.get(a) ?? 0))
-	return [...titleHits, ...contentOnly]
+	const scored = rows.map((row) => {
+		const tier = titleTier(query, row.title)
+		const phraseLength = query.trim().replace(/\s+/g, ' ').length
+		const coverage =
+			tier === 3
+				? Math.min(phraseLength / (row.title.length || 1), 1)
+				: titleCoverage(query, row.title)
+		return { row, tier, coverage }
+	})
+	scored.sort((a, b) => b.tier - a.tier || b.coverage - a.coverage)
+	return scored.map(({ row }) => row)
 }
 
 export function useWorkspaceSearch(
@@ -115,20 +146,40 @@ export function useWorkspaceSearch(
 	const query = q.trim()
 	const enabled = query.length > 0
 
-	const { data: objectResults, isError: objectsFailed } = useSearchObjects(workspaceId, {
+	const {
+		data: objectResults,
+		isError: objectsFailed,
+		isPending: objectsPending,
+	} = useSearchObjects(workspaceId, {
 		q: query,
 		type,
 		status,
 	})
-	const { data: loops, isError: loopsFailed } = useLoops(workspaceId)
-	const { data: actors, isError: actorsFailed } = useActors(workspaceId)
-	const { data: triggers, isError: triggersFailed } = useTriggers(workspaceId)
-	const { data: conversations, isError: chatsFailed } = useConversationsInfinite(workspaceId)
+	const { data: loops, isError: loopsFailed, isPending: loopsPending } = useLoops(workspaceId)
+	const { data: actors, isError: actorsFailed, isPending: actorsPending } = useActors(workspaceId)
+	const {
+		data: triggers,
+		isError: triggersFailed,
+		isPending: triggersPending,
+	} = useTriggers(workspaceId)
+	const {
+		data: conversations,
+		isError: chatsFailed,
+		isPending: chatsPending,
+	} = useConversationsInfinite(workspaceId)
 
 	// Secondary sources are consumed as `?? []` below, so a failure would drop a
 	// whole group to zero and hide its chip while the header still claimed a
 	// confident total. Track it so the page can say results are incomplete.
 	const isPartial = loopsFailed || actorsFailed || triggersFailed || chatsFailed
+
+	const isSettled =
+		enabled &&
+		!objectsPending &&
+		!loopsPending &&
+		!actorsPending &&
+		!triggersPending &&
+		!chatsPending
 
 	const firstChatPage = conversations?.pages?.[0]?.conversations
 
@@ -143,7 +194,15 @@ export function useWorkspaceSearch(
 		}
 
 		if (!enabled) {
-			return { rows, countsByGroup, total: 0, isPending: false, isError: false, isPartial: false }
+			return {
+				rows,
+				countsByGroup,
+				total: 0,
+				isPending: false,
+				isError: false,
+				isPartial: false,
+				isSettled: false,
+			}
 		}
 
 		for (const conversation of firstChatPage ?? []) {
@@ -233,6 +292,7 @@ export function useWorkspaceSearch(
 			isPending: objectResults === undefined && !objectsFailed,
 			isError: objectsFailed,
 			isPartial,
+			isSettled,
 		}
 	}, [
 		enabled,
@@ -245,5 +305,6 @@ export function useWorkspaceSearch(
 		triggers,
 		objectsFailed,
 		isPartial,
+		isSettled,
 	])
 }

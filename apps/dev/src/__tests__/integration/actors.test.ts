@@ -11,12 +11,15 @@ import {
 	readState,
 	sessions,
 	subscriptions,
+	triggers,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
 import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import type { StorageProvider } from '@maskin/storage'
+import { and, eq } from 'drizzle-orm'
+import { HEARTBEAT_PROMPT, heartbeatCronExpression } from '../../services/default-heartbeat'
 import {
 	buildAgentFile,
 	buildFile,
@@ -30,10 +33,11 @@ import {
 	insertWorkspace,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, setTestAgentStorage } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: eventsRoutes } = await import('../../routes/events')
+const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -263,13 +267,164 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		expect(res.status).toBe(403)
 		expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
 	})
+
+	describe('tools.envFrom needs a human admin or owner', () => {
+		const storedEnvFrom = ['AGENT_SECRET_FAKE_STORED']
+
+		/** An app where the caller is the given agent, as with an agent API key. */
+		function createAgentCallerApp(agentId: string) {
+			const app = new OpenAPIHono<{ Variables: Record<string, unknown> }>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', agentId)
+				c.set('actorType', 'agent')
+				c.set('sessionManager', { stopSession: async () => {} })
+				await next()
+			})
+			app.route('/api/actors', actorsRoutes as never)
+			return app
+		}
+
+		async function seedAgentWithEnvFrom(callerRole?: 'member' | 'admin') {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { ws, agent } = await seedAgentInWorkspaceOf(otherOwner.id, callerRole)
+			await db
+				.update(actors)
+				.set({ tools: { mcpServers: {}, envFrom: storedEnvFrom } })
+				.where(eq(actors.id, agent.id))
+			return { ws, agent }
+		}
+
+		it('returns 403 and leaves the row unchanged when an agent adds a name to its own tools', async () => {
+			const { agent } = await seedAgentWithEnvFrom()
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: [...storedEnvFrom, 'AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('returns 403 when an agent with no stored envFrom adds one to its own tools', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
+		})
+
+		it('returns 403 when an agent with the admin role changes envFrom on another agent', async () => {
+			const { ws, agent } = await seedAgentWithEnvFrom()
+			const adminAgent = await insertActor(db, { type: 'agent', name: 'Admin Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: adminAgent.id, role: 'admin' })
+
+			const res = await createAgentCallerApp(adminAgent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('lets an agent edit its other tools while envFrom stays as stored', async () => {
+			const { agent } = await seedAgentWithEnvFrom()
+
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { ...fakeTools, envFrom: storedEnvFrom },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await readAgent(agent.id)).tools).toMatchObject({
+				...fakeTools,
+				envFrom: storedEnvFrom,
+			})
+		})
+
+		it('returns 403 when a plain human member changes envFrom', async () => {
+			const { agent } = await seedAgentWithEnvFrom('member')
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {}, envFrom: storedEnvFrom })
+		})
+
+		it('lets a human admin change envFrom', async () => {
+			const { agent } = await seedAgentWithEnvFrom('admin')
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, {
+					tools: { mcpServers: {}, envFrom: ['AGENT_SECRET_FAKE_ADDED'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await readAgent(agent.id)).tools).toMatchObject({
+				envFrom: ['AGENT_SECRET_FAKE_ADDED'],
+			})
+		})
+	})
 })
+
+function createMemoryStorage(): StorageProvider {
+	const store = new Map<string, Buffer>()
+	return {
+		async put(key, data) {
+			store.set(key, Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array))
+		},
+		async get(key) {
+			const buf = store.get(key)
+			if (!buf) throw new Error(`Not found: ${key}`)
+			return buf
+		},
+		async list(prefix) {
+			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
+		async delete(key) {
+			store.delete(key)
+		},
+		async exists(key) {
+			return store.has(key)
+		},
+		async ensureBucket() {},
+	}
+}
 
 describe('Actors Integration — DELETE', () => {
 	let workspaceId: string
 	let agentId: string
+	let storage: StorageProvider
+
+	afterAll(() => {
+		setTestAgentStorage(undefined)
+	})
 
 	beforeEach(async () => {
+		storage = createMemoryStorage()
+		setTestAgentStorage(new AgentStorageManager(storage, db))
 		const ws = await insertWorkspace(db, getTestActorId())
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Delete Me' })
@@ -471,6 +626,68 @@ describe('Actors Integration — DELETE', () => {
 		expect(sseText).toContain('Delete Me')
 		expect(sseText).not.toMatch(/fake-/)
 	})
+
+	it('removes every storage object under the deleted agent and leaves other agents untouched', async () => {
+		const app = createApp()
+		const body = Buffer.from('fake memory')
+		const own = [
+			`agents/${workspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}/learnings/session-1.md`,
+			`agents/${workspaceId}/${agentId}/skills/s/SKILL.md`,
+		]
+		// Keys that must survive: another agent in the same workspace, the same
+		// id in another workspace, and an id that merely starts with this one.
+		const otherAgentId = randomUUID()
+		const otherWorkspaceId = randomUUID()
+		const survivors = [
+			`agents/${workspaceId}/${otherAgentId}/memory/CLAUDE.md`,
+			`agents/${otherWorkspaceId}/${agentId}/memory/CLAUDE.md`,
+			`agents/${workspaceId}/${agentId}-extra/memory/CLAUDE.md`,
+		]
+		for (const key of [...own, ...survivors]) await storage.put(key, body)
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		expect(await storage.list(`agents/${workspaceId}/${agentId}/`)).toEqual([])
+		for (const key of own) expect(await storage.exists(key)).toBe(false)
+		for (const key of survivors) expect(await storage.exists(key)).toBe(true)
+	})
+
+	it('returns 500 and keeps the agent when a storage object cannot be deleted', async () => {
+		const app = createApp()
+		const failingKey = `agents/${workspaceId}/${agentId}/memory/CLAUDE.md`
+		const otherKey = `agents/${workspaceId}/${agentId}/learnings/session-1.md`
+		await storage.put(failingKey, Buffer.from('fake memory'))
+		await storage.put(otherKey, Buffer.from('fake learning'))
+		const realDelete = storage.delete.bind(storage)
+		storage.delete = async (key: string) => {
+			if (key === failingKey) throw new Error('s3 unavailable')
+			await realDelete(key)
+		}
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(500)
+		expect((await res.json()).deleted).toBeUndefined()
+
+		// The agent is still there so the delete can be retried, and no
+		// deleted event was recorded.
+		const remaining = await db.select().from(actors).where(eq(actors.id, agentId))
+		expect(remaining).toHaveLength(1)
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		expect(rows.filter((r) => r.action === 'deleted')).toHaveLength(0)
+		// Every other key was still attempted, the failing one remains.
+		expect(await storage.exists(failingKey)).toBe(true)
+		expect(await storage.exists(otherKey)).toBe(false)
+	})
 })
 
 // An agent is created by an authenticated caller and born as a member of the
@@ -651,6 +868,28 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			expect(await agentRowsNamed(name)).toHaveLength(0)
 		})
 
+		it('returns 403 and writes no rows when an agent caller with the admin role sends envFrom', async () => {
+			const ws = await workspaceWithTestActor('member')
+			const callerKey = `ank_envfromagent${randomUUID()}`
+			const caller = await insertActor(db, {
+				type: 'agent',
+				name: 'Env Admin Agent',
+				apiKey: callerKey,
+			})
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: caller.id, role: 'admin' })
+			const name = `Agent admin with envFrom ${randomUUID()}`
+
+			const res = await post(
+				{ name, workspace_id: ws.id, tools: { envFrom: ['AGENT_SECRET_FAKE_NAME'] } },
+				bearer(callerKey),
+			)
+
+			expect(res.status).toBe(403)
+			expect(await agentRowsNamed(name)).toHaveLength(0)
+		})
+
 		it('lets a human admin set tools and llm_config, merged over the Maskin MCP', async () => {
 			const ws = await workspaceWithTestActor('admin')
 			const name = `Admin with config ${randomUUID()}`
@@ -680,6 +919,51 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const [row] = await agentRowsNamed(name)
 			expect(Object.keys((row.tools as { mcpServers: object }).mcpServers)).toEqual(['maskin'])
 		})
+	})
+
+	it('gives a new agent a daily Heartbeat trigger, and a human none', async () => {
+		const ws = await workspaceWithTestActor('member')
+		const name = `Heartbeat agent ${randomUUID()}`
+
+		const res = await post(
+			{ name, workspace_id: ws.id, system_prompt: 'You are a test agent', description: 'Test' },
+			bearer(TEST_ACTOR_KEY),
+		)
+		expect(res.status).toBe(201)
+		const created = await res.json()
+
+		const rows = await db.select().from(triggers).where(eq(triggers.targetActorId, created.id))
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({
+			workspaceId: ws.id,
+			name: 'Heartbeat',
+			type: 'cron',
+			enabled: true,
+			actionPrompt: HEARTBEAT_PROMPT,
+			config: { expression: heartbeatCronExpression(created.id) },
+		})
+		const [createdEvent] = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'trigger'), eq(events.entityId, rows[0].id)))
+		expect(createdEvent).toMatchObject({ action: 'created', workspaceId: ws.id })
+
+		const humanRes = await createApp().request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'Human Without Heartbeat',
+				email: `no-heartbeat-${randomUUID()}@example.com`,
+				password: 'correct-horse-battery',
+				auto_create_workspace: false,
+			}),
+		)
+		expect(humanRes.status).toBe(201)
+		const human = await humanRes.json()
+		const humanTriggers = await db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.targetActorId, human.id))
+		expect(humanTriggers).toHaveLength(0)
 	})
 
 	it('rejects workspace_id on a human signup', async () => {
@@ -799,5 +1083,64 @@ describe('Actors Integration — signup workspace provisioning', () => {
 			.where(eq(actors.id, defaultAgentId as string))
 			.limit(1)
 		expect(chief?.name).toBe('Chief of Staff')
+	})
+})
+
+describe('Actors Integration — GET voice_enabled projection', () => {
+	// A read-time smoke check that the projection lives on every read path a
+	// UI consumer touches: list, get, and pause/run's returning clause.
+	it('GET /:id projects voice_enabled from metadata', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey Read' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, agent.id))
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(true)
+	})
+
+	it('GET /:id returns false when metadata is null or missing the key', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Voiceless' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`, { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(false)
+	})
+
+	it('GET /api/actors workspace-scoped list projects voice_enabled per row', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const on = await insertActor(db, { type: 'agent', name: 'On' })
+		const off = await insertActor(db, { type: 'agent', name: 'Off' })
+		await db.insert(workspaceMembers).values([
+			{ workspaceId: ws.id, actorId: on.id, role: 'member' },
+			{ workspaceId: ws.id, actorId: off.id, role: 'member' },
+		])
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, on.id))
+
+		const res = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const rowFor = (name: string) => body.find((r: { name: string }) => r.name === name)
+		expect(rowFor('On')?.voice_enabled).toBe(true)
+		expect(rowFor('Off')?.voice_enabled).toBe(false)
 	})
 })

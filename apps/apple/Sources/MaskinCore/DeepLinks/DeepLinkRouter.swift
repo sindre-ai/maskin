@@ -66,6 +66,10 @@ public final class DeepLinkRouter {
 	/// system whether they handled it.
 	@discardableResult
 	public func open(_ url: URL) -> Bool {
+		// The integration connect callback belongs to the web-authentication sheet that is waiting
+		// for it. If it ever arrives here (cold launch, sheet already gone) there is nothing to
+		// navigate to, and it must not read as a broken link or hold a pending route.
+		if IntegrationConnectOutcome.isCallback(url) { return true }
 		guard let link = DeepLink(url: url, universalHosts: universalHosts) else {
 			rejection = .unrecognized
 			return false

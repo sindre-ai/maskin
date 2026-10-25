@@ -6,8 +6,8 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: vi.fn(() => ['work']),
 }))
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useUnread: vi.fn(() => ({ data: { items: [] } })),
+vi.mock('@/hooks/use-for-you', () => ({
+	useForYou: vi.fn(() => ({ data: { items: [] } })),
 }))
 
 vi.mock('@/hooks/use-chat-unread', () => ({
@@ -77,7 +77,7 @@ vi.mock('@/components/layout/workspace-switcher', () => ({
 
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useUnread } from '@/hooks/use-subscriptions'
+import { useForYou } from '@/hooks/use-for-you'
 
 describe('AppSidebar', () => {
 	it('renders the v2 core navigation items in mockup order', () => {
@@ -119,7 +119,7 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	// The release note moved into the For You feed (`foryou/release-card.tsx`),
+	// The release note is gone from the sidebar (and from For You),
 	// so the footer is the working-agents row and the profile only.
 	it('renders SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
@@ -159,9 +159,9 @@ describe('AppSidebar', () => {
 		expect(screen.getByLabelText('50+ unread')).toBeInTheDocument()
 	})
 
-	it('shows an unread count next to For You when there are unread threads', () => {
+	it('shows a count next to For You for each item on the curated list', () => {
 		vi.mocked(useChatUnreadCount).mockReturnValue({ count: 0, hasMore: false })
-		vi.mocked(useUnread).mockReturnValue({
+		vi.mocked(useForYou).mockReturnValue({
 			data: {
 				items: [
 					{
@@ -187,15 +187,15 @@ describe('AppSidebar', () => {
 					},
 				],
 			},
-		} as unknown as ReturnType<typeof useUnread>)
+		} as unknown as ReturnType<typeof useForYou>)
 		render(<AppSidebar />)
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
 	})
 
-	it('hides the unread badge when there are no unread threads', () => {
-		vi.mocked(useUnread).mockReturnValue({
+	it('hides the badge when the curated list is empty', () => {
+		vi.mocked(useForYou).mockReturnValue({
 			data: { items: [] },
-		} as unknown as ReturnType<typeof useUnread>)
+		} as unknown as ReturnType<typeof useForYou>)
 		render(<AppSidebar />)
 		expect(screen.queryByLabelText(/unread$/)).not.toBeInTheDocument()
 	})

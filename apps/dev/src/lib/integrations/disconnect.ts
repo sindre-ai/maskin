@@ -7,6 +7,7 @@ import { recordEvent } from '../events/record-event'
 import { LINKEDIN_IDENTITY_PROVIDER } from '../linkedin-addon'
 import { syncLinkedInAddonQuantity } from '../linkedin-addon-billing'
 import { logger } from '../logger'
+import { requireCredentials } from './credential-column'
 import { detachProviderMcpServers } from './mcp-detach'
 import { getProvider } from './registry'
 import type { StoredCredentials } from './types'
@@ -36,7 +37,7 @@ export async function disconnectIntegrationRow(
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(existing)))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
@@ -98,5 +99,8 @@ export async function disconnectIntegrationRow(
 	// outlives the credential behind it. Left in place, the agent boots with
 	// the server attached, advertises its tools, and fails every call — so it
 	// reports a broken platform instead of a missing connection.
-	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+	//
+	// What counts as this integration's entry is declared in the provider's own
+	// config.ts, and only this credential's entries go (mcp-detach.ts).
+	await detachProviderMcpServers(db, existing, actorId)
 }

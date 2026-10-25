@@ -1,4 +1,9 @@
-import type { FailureReasonCode, SessionResultFailureReason } from '@maskin/shared'
+import {
+	type FailureReasonCode,
+	type SessionResultFailureReason,
+	type StreamJsonResult,
+	parseResultLine,
+} from '@maskin/shared'
 
 import { parseCliResetBanner } from './subscription-limit-reset'
 
@@ -219,4 +224,49 @@ function classifyOpenRouterEnvelope(
 		}
 	}
 	return null
+}
+
+const MAX_LINES_SCANNED_FOR_RESULT = 200
+
+/**
+ * The last top-level stream-json `result` envelope in the tail, or null when
+ * the run never wrote one (cut off mid-work, or a runtime without stream-json).
+ */
+function findFinalResult(tail: string): StreamJsonResult | null {
+	const lines = tail.split('\n')
+	const stop = Math.max(0, lines.length - MAX_LINES_SCANNED_FOR_RESULT)
+	for (let i = lines.length - 1; i >= stop; i--) {
+		const result = parseResultLine(lines[i] ?? '')
+		if (result) return result
+	}
+	return null
+}
+
+/**
+ * Classifies a finished session's exit. Both completion paths (the local
+ * handleCompletion and the remote markRemoteSessionComplete) call this, so the
+ * two cannot drift apart.
+ *
+ * A run that exited 0 with a final `result` that is not an error finished its
+ * job. Limit text elsewhere in its output is something it read (the stalled-work
+ * watchdog quotes other sessions' limit messages), not a stop, so only the
+ * result text is consulted, and only when it opens with a CLI banner — which is
+ * how the CLI prints a real stop. A banner mid-text does not count. Every other
+ * exit (non-zero, an error result, or no result at all) is classified on the
+ * whole tail exactly as before.
+ */
+export function classifySessionExit(
+	tail: string,
+	exitCode: number,
+): SessionResultFailureReason | null {
+	if (exitCode === 0) {
+		const result = findFinalResult(tail)
+		if (result && !result.isError) {
+			const text = result.text.trimStart()
+			return CLI_BANNERS.some((banner) => text.startsWith(banner.match))
+				? classifyCreditExhaustion(text, { includeAmbiguousSignals: false })
+				: null
+		}
+	}
+	return classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
 }

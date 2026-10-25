@@ -1,6 +1,6 @@
 import { CommandPalette } from '@/components/command-palette'
 import type { SearchRow } from '@/hooks/use-workspace-search'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { buildObjectResponse } from '../factories'
@@ -21,6 +21,7 @@ installGlobalDomMocks()
 const mockNavigate = vi.fn()
 const trackCommandPaletteOpenedMock = vi.fn()
 const trackSearchResultOpenedMock = vi.fn()
+const trackSearchPerformedMock = vi.fn()
 const markReadMutateAsync = vi.fn(() => Promise.resolve())
 const toastMock = vi.fn()
 const toastErrorMock = vi.fn()
@@ -28,6 +29,7 @@ const toastErrorMock = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackCommandPaletteOpened: (p: unknown) => trackCommandPaletteOpenedMock(p),
 	trackSearchResultOpened: (p: unknown) => trackSearchResultOpenedMock(p),
+	trackSearchPerformed: (p: unknown) => trackSearchPerformedMock(p),
 }))
 
 vi.mock('sonner', () => ({
@@ -189,12 +191,78 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 		await user.click(screen.getByText('Alpha Insight'))
 
+		// The empty-query Jump to list is not a search: no search id, has_query
+		// false, counted against the six-row list it was shown in.
 		expect(trackSearchResultOpenedMock).toHaveBeenCalledWith({
 			entity_id: 'obj-1',
 			entity_type: 'insight',
 			surface: 'command_palette',
+			search_id: null,
+			has_query: false,
+			result_count: 1,
+			position: 1,
+			result_group: 'objects',
 		})
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/objects/obj-1' })
+	})
+
+	it('fires one search_performed per settled query with counts and no query text', async () => {
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [buildSearchRow()],
+			total: 4,
+			isSettled: true,
+			isError: false,
+			isPartial: false,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		expect(trackSearchPerformedMock).not.toHaveBeenCalled()
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'billing  catch up')
+		await waitFor(() => expect(trackSearchPerformedMock).toHaveBeenCalledTimes(1))
+
+		const payload = trackSearchPerformedMock.mock.calls[0]?.[0]
+		expect(payload).toEqual({
+			surface: 'command_palette',
+			search_id: expect.any(String),
+			result_count: 4,
+			is_partial: false,
+			query_length: 'billing  catch up'.length,
+			words_count: 3,
+			type_filter: null,
+			status_filter: null,
+		})
+		expect(JSON.stringify(payload)).not.toContain('billing')
+	})
+
+	it('fires no search_performed while results are unsettled or the search failed', async () => {
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [],
+			total: 0,
+			isSettled: false,
+			isError: false,
+			isPartial: false,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'zzzz')
+		await screen.findByText(/Search everything for/)
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		expect(trackSearchPerformedMock).not.toHaveBeenCalled()
+
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [],
+			total: 0,
+			isSettled: true,
+			isError: true,
+			isPartial: false,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'y')
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		expect(trackSearchPerformedMock).not.toHaveBeenCalled()
 	})
 
 	it('lists the commands group', async () => {
@@ -306,6 +374,10 @@ describe('CommandPalette', () => {
 	it('jumps to a non-object workspace row', async () => {
 		vi.mocked(useWorkspaceSearch).mockReturnValue({
 			rows: [buildSearchRow()],
+			total: 1,
+			isSettled: true,
+			isError: false,
+			isPartial: false,
 		} as unknown as ReturnType<typeof useWorkspaceSearch>)
 		const user = userEvent.setup()
 		render(<CommandPalette />)
@@ -314,11 +386,24 @@ describe('CommandPalette', () => {
 		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'billing')
 		// The typed query is highlighted, so the title is split across nodes —
 		// match on the unhighlighted tail.
+		// Wait for the settled search so the open can be tied to it.
+		await waitFor(() => expect(trackSearchPerformedMock).toHaveBeenCalledTimes(1))
 		await user.click(await screen.findByText(/catch-up/))
 
 		expect(mockNavigate).toHaveBeenCalledWith({
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: 'chat-1' },
+		})
+		// A chat row now reports its open too, tied to the search it came from.
+		expect(trackSearchResultOpenedMock).toHaveBeenCalledWith({
+			entity_id: 'chat-1',
+			entity_type: 'conversation',
+			surface: 'command_palette',
+			search_id: expect.any(String),
+			has_query: true,
+			result_count: 1,
+			position: 1,
+			result_group: 'chats',
 		})
 	})
 

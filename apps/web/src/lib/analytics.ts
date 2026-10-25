@@ -50,6 +50,7 @@ export type TaxonomyEntityType =
 	| 'relationship'
 	| 'file'
 	| 'loop'
+	| 'conversation'
 
 // `file_viewer` was added so `comment_posted.source` can attribute review
 // comments back to the viewer surface — required for the "≥40% comment-after-
@@ -354,6 +355,31 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
+// Mobile switcher bug (taps register, menu doesn't open): the two events below
+// split "the tap never reached the trigger" (no `open_attempted`) from "the
+// menu opened and closed again before the user could see it" (`open_attempted`
+// then `dismissed_immediately`), which have different fixes. `pointerType`
+// ('touch' | 'mouse' | 'pen') lets mobile and desktop be compared directly.
+export function trackSidebarWorkspaceSwitcherOpenAttempted(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.open_attempted', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
+}
+
+export function trackSidebarWorkspaceSwitcherDismissedImmediately(p: {
+	workspaceId: string
+	openMs: number
+}): void {
+	trackEvent('sidebar.workspace_switcher.dismissed_immediately', {
+		workspaceId: p.workspaceId,
+		openMs: p.openMs,
+	})
+}
+
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
@@ -567,10 +593,50 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'objects' | 'automations'
+
+// Fires once per settled query on either surface. Never carries the query text
+// (queries can name customers and PostHog is a third party): only its length
+// and word count. `result_count` is the hook's full total across all five
+// groups, not the rows a surface shows; zero-result means result_count 0 with
+// is_partial false.
+export function trackSearchPerformed(p: {
+	surface: SearchSurface
+	search_id: string
+	result_count: number
+	is_partial: boolean
+	query_length: number
+	words_count: number
+	type_filter: string | null
+	status_filter: string | null
+}): void {
+	trackEvent('search_performed', { ...p, source: 'web' })
+}
+
+// Fires for every result row on both surfaces. `search_id` joins the open to
+// its `search_performed` (null when there is no query: recents, the palette's
+// empty-query list). `position` is 1-based in rendered order. Only has_query
+// true opens count toward the search-to-open metric.
 export function trackSearchResultOpened(
-	p: BaseProps & { entity_type: TaxonomyEntityType; surface: SearchSurface },
+	p: BaseProps & {
+		entity_type: TaxonomyEntityType
+		surface: SearchSurface
+		search_id: string | null
+		has_query: boolean
+		result_count: number
+		position: number
+		result_group: SearchResultGroup
+	},
 ): void {
-	trackEvent('search_result_opened', { ...fillBase(p), surface: p.surface })
+	trackEvent('search_result_opened', {
+		...fillBase(p),
+		surface: p.surface,
+		search_id: p.search_id,
+		has_query: p.has_query,
+		result_count: p.result_count,
+		position: p.position,
+		result_group: p.result_group,
+	})
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when
@@ -698,26 +764,6 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 		trigger_id: p.trigger_id,
 		channel_id: p.channel_id,
 		time_since_pause_ms: p.time_since_pause_ms,
-	})
-}
-
-// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
-// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
-// container into view — exactly once per depth per mount. Wired to the parent
-// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
-// event as load-bearing). `depth` is the four-value union rather than a raw
-// number so a typo can't invent a fifth bucket, and `loopId` is the
-// `objects.id` for taxonomy joins on the standard `entity_id` field.
-export function trackLoopsDetailFlowScrollDepth(p: {
-	depth: 25 | 50 | 75 | 100
-	loopId: string
-}): void {
-	trackEvent('loops.detail.flow_scroll_depth', {
-		depth: p.depth,
-		loopId: p.loopId,
-		entity_id: p.loopId,
-		entity_type: 'loop',
-		source: 'web',
 	})
 }
 

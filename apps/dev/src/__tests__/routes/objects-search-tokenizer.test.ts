@@ -133,18 +133,29 @@ describe('tokenRankOrderBy — deterministic tie-break', () => {
 		expect(rendered[2]).toContain('asc')
 	})
 
-	it('rank expression sums a title and a content hit-indicator per token', () => {
+	it('rank expression sums a title and a content hit-indicator per token, plus a phrase bonus', () => {
 		const { searchRankExpr } = buildObjectListConditions({ q: 'alpha beta gamma' })
 		expect(searchRankExpr).not.toBeNull()
 		const { sql: rendered, params } = dialect.sqlToQuery(searchRankExpr as never)
 		const lowered = rendered.toLowerCase()
-		// Two indicators per token (title, content)…
-		expect(lowered.match(/case when/g)?.length ?? 0).toBe(6)
+		// Two indicators per token (title, content), plus one for the phrase bonus…
+		expect(lowered.match(/case when/g)?.length ?? 0).toBe(7)
 		// …per token, one `+` adding the title-coverage bonus to the title weight and
-		// one joining the title and content indicators, plus two joining the tokens.
-		expect(lowered.match(/ \+ /g)?.length ?? 0).toBe(8)
+		// one joining the title and content indicators, plus three joining the three
+		// tokens and the phrase bonus.
+		expect(lowered.match(/ \+ /g)?.length ?? 0).toBe(9)
 		// The title indicator carries the heavier weight, so a title hit
 		// outranks a content-only hit.
 		expect(params.filter((p) => p === 1000)).toHaveLength(3)
+	})
+
+	it('phrase bonus matches the whole typed phrase at the start or at a word start', () => {
+		const { searchRankExpr } = buildObjectListConditions({ q: 'Anna  B' })
+		const { params } = dialect.sqlToQuery(searchRankExpr as never)
+		// "B" is dropped by the tokenizer, but still shapes the phrase patterns.
+		expect(params).toContain('anna b%')
+		expect(params).toContain('% anna b%')
+		// A phrase hit outranks coverage, but is worth less than a full token hit.
+		expect(params).toContain(500)
 	})
 })

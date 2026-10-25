@@ -88,9 +88,9 @@ describe('eviction', () => {
 	async function warmedCaches() {
 		const caches = createAuthCaches(60_000)
 		const keyLoad = vi.fn(async () => ({ actorId: 'actor-1', type: 'human' }))
-		const memberLoad = vi.fn(async () => true)
+		const memberLoad = vi.fn(async (): Promise<string | null> => 'member')
 		await caches.apiKeys.get('ank_1', keyLoad, present)
-		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v)
+		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v !== null)
 		keyLoad.mockClear()
 		memberLoad.mockClear()
 		return { caches, keyLoad, memberLoad }
@@ -107,12 +107,12 @@ describe('eviction', () => {
 
 	it('evictMembership drops only that actor/workspace pair', async () => {
 		const { caches, memberLoad } = await warmedCaches()
-		await caches.memberships.get('actor-1|ws-2', memberLoad, (v) => v)
+		await caches.memberships.get('actor-1|ws-2', memberLoad, (v) => v !== null)
 		memberLoad.mockClear()
 
 		evictMembership('actor-1', 'ws-1')
-		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v)
-		await caches.memberships.get('actor-1|ws-2', memberLoad, (v) => v)
+		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v !== null)
+		await caches.memberships.get('actor-1|ws-2', memberLoad, (v) => v !== null)
 
 		expect(memberLoad).toHaveBeenCalledTimes(1)
 	})
@@ -122,7 +122,7 @@ describe('eviction', () => {
 
 		evictActor('actor-1')
 		await caches.apiKeys.get('ank_1', keyLoad, present)
-		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v)
+		await caches.memberships.get('actor-1|ws-1', memberLoad, (v) => v !== null)
 
 		expect(keyLoad).toHaveBeenCalledTimes(1)
 		expect(memberLoad).toHaveBeenCalledTimes(1)

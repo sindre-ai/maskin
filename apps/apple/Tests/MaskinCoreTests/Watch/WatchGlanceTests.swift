@@ -52,4 +52,16 @@ struct WatchGlanceTests {
 	func paragraphs() {
 		#expect(WatchBriefingText.paragraphs("One\n\n\nTwo\n\n") == ["One", "Two"])
 	}
+
+	@Test("the footer counts what waits behind the decision")
+	func remaining() {
+		#expect(WatchDecisionOptions.remainingLabel(2) == "2 MORE \u{00B7} SCROLL")
+		#expect(WatchDecisionOptions.remainingLabel(0) == "LAST ONE")
+	}
+
+	@Test("the confirm title is a question")
+	func confirmTitle() {
+		#expect(WatchDecisionOptions.confirmTitle(for: "Approve $2,400") == "Approve $2,400?")
+		#expect(WatchDecisionOptions.confirmTitle(for: "Sure?") == "Sure?")
+	}
 }

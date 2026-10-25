@@ -19,7 +19,7 @@ struct CycleLiveActivity: Widget {
 			let state = context.state
 			return DynamicIsland {
 				DynamicIslandExpandedRegion(.leading) {
-					CycleRing(state: state, size: 36)
+					CycleRing(state: state, size: 44)
 				}
 				DynamicIslandExpandedRegion(.center) {
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
@@ -31,7 +31,7 @@ struct CycleLiveActivity: Widget {
 				}
 				DynamicIslandExpandedRegion(.bottom) {
 					VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-						Text(state.summary).maskinText(.subhead).lineLimit(2)
+						CycleSummary(state: state, font: .subhead, color: MaskinColor.ink3)
 						CycleActions(attributes: context.attributes, state: state)
 					}
 					.frame(maxWidth: .infinity, alignment: .leading)
@@ -90,18 +90,16 @@ private struct CycleActions: View {
 			HStack(spacing: MaskinSpace.s4) {
 				Link(destination: attributes.openURL) {
 					Text("Review")
-						.maskinText(.caption)
-						.foregroundStyle(MaskinSurface.onInverse)
-						.padding(.horizontal, MaskinSpace.s9)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.background(MaskinSurface.inverse, in: Capsule())
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinPatina.decisionInkText)
+						.frame(maxWidth: .infinity, minHeight: 44)
+						.background(MaskinGradient.decisionInk, in: Capsule())
 				}
 				Button(intent: DismissCycleActivityIntent(flowId: attributes.flowId)) {
 					Text("Later")
-						.maskinText(.caption)
+						.maskinText(.subhead).fontWeight(.semibold)
 						.foregroundStyle(MaskinColor.ink3)
-						.padding(.horizontal, MaskinSpace.s9)
-						.frame(minHeight: MaskinSpace.touchMin)
+						.frame(maxWidth: .infinity, minHeight: 44)
 						.background(MaskinSurface.fill, in: Capsule())
 				}
 				.buttonStyle(.plain)
@@ -110,40 +108,89 @@ private struct CycleActions: View {
 	}
 }
 
+/// One sentence of who is doing what, the lead name bold ("**Writer** is drafting ...").
+private struct CycleSummary: View {
+	let state: CycleActivityState
+	var font: MaskinTextRole = .subhead
+	var color: Color
+
+	var body: some View {
+		Group {
+			if let parts = state.summaryParts {
+				Text(parts.actor).bold().foregroundStyle(MaskinColor.ink) + Text(parts.rest)
+			} else {
+				Text(state.summary)
+			}
+		}
+		.maskinText(font)
+		.foregroundStyle(color)
+		.lineLimit(2)
+	}
+}
+
+/// The running bar: signal gradient on the quiet track, as in the mockup.
+private struct CycleBar: View {
+	let progress: Double
+
+	var body: some View {
+		Capsule().fill(MaskinSurface.line)
+			.overlay(alignment: .leading) {
+				GeometryReader { proxy in
+					Capsule().fill(MaskinGradient.ring)
+						.frame(width: proxy.size.width * progress)
+				}
+			}
+			.frame(height: 6)
+			.accessibilityElement(children: .ignore)
+			.accessibilityLabel("\(Int((progress * 100).rounded())) percent")
+	}
+}
+
 private struct CycleLockScreenView: View {
 	let attributes: MaskinCycleAttributes
 	let state: CycleActivityState
 
 	var body: some View {
+		if state.phase == .needsYou {
+			needsYou
+		} else {
+			running
+		}
+	}
+
+	/// Ended needing the reader: "NEEDS YOU", the sentence as the headline, Review and Later.
+	private var needsYou: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text("NEEDS YOU").maskinText(.microLabel).foregroundStyle(MaskinColor.sigInk)
+				Text(state.summary.isEmpty ? state.flowName : state.summary)
+					.maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(3)
+			}
+			CycleActions(attributes: attributes, state: state)
+		}
+		.accessibilityElement(children: .contain)
+	}
+
+	private var running: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(spacing: MaskinSpace.s7) {
 				CycleRing(state: state, size: 52)
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-					Text(state.phase == .needsYou ? "NEEDS YOU" : state.eyebrow)
-						.maskinText(.microLabel)
-						.foregroundStyle(state.phase == .needsYou ? MaskinColor.sigInk : MaskinColor.ink4)
-						.lineLimit(1)
+					Text(state.eyebrow)
+						.maskinText(.microLabel).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 					Text(state.flowName)
 						.maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 				}
 				Spacer(minLength: MaskinSpace.s4)
-				if state.phase == .running {
-					Text("RUNNING")
-						.maskinText(.microLabel)
-						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.horizontal, MaskinSpace.s4)
-						.padding(.vertical, MaskinSpace.s2)
-						.background(MaskinColor.sigTint, in: Capsule())
-				}
+				Text("RUNNING")
+					.maskinText(.microLabel)
+					.foregroundStyle(MaskinColor.sigInk)
+					.padding(.horizontal, MaskinSpace.s4)
+					.padding(.vertical, MaskinSpace.s2)
+					.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.key, style: .continuous))
 			}
-			Text(state.summary)
-				.maskinText(.subhead).foregroundStyle(MaskinColor.ink3).lineLimit(2)
-			if state.phase == .running {
-				ProgressView(value: state.progress)
-					.progressViewStyle(.linear)
-					.tint(MaskinColor.sig)
-			}
-			CycleActions(attributes: attributes, state: state)
+			CycleSummary(state: state, font: .body, color: MaskinColor.ink3)
+			CycleBar(progress: state.progress)
 		}
 		.accessibilityElement(children: .combine)
 	}

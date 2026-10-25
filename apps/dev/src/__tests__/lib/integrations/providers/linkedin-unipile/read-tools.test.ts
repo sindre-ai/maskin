@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
 vi.mock('../../../../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: credentialMock,
+	findIntegrationRow: credentialMock,
+	getCredential: vi.fn(async () => ({ value: JSON.stringify({ account_id: 'acc_1' }) })),
 }))
 vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
 vi.mock('../../../../../lib/crypto', () => ({
@@ -299,6 +300,144 @@ describe('getLinkedInProfile', () => {
 		await expect(getLinkedInProfile(ctx, { identifier: 'x' })).rejects.toBeInstanceOf(
 			LinkedInIntegrationError,
 		)
+	})
+})
+
+describe('getLinkedInProfile sections', () => {
+	/** A v2 profile with the experience section, as the reference documents it. */
+	const WITH_EXPERIENCE = {
+		...LIVE_PROFILE,
+		specifics: {
+			network_distance: 'SECOND_DEGREE',
+			experience: [
+				{
+					id: 'exp-1',
+					company: { id: 'c1', name: 'Acme' },
+					job_title: 'Head of Growth',
+					started_on: '03/15/2024',
+				},
+				{
+					id: 'exp-2',
+					company: { id: 'c2', name: 'Globex' },
+					job_title: 'Growth Lead',
+					started_on: '01/01/2020',
+					ended_on: '02/28/2024',
+				},
+				{ id: 'exp-3', company: { name: 'Initech' }, job_title: 'Analyst', started_on: '06/2017' },
+			],
+		},
+	}
+
+	const withExperience = () =>
+		getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: ['experience'] })
+
+	it('asks for the experience section only when sections includes it', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await withExperience()
+		expect(calls[0].query.with_sections).toEqual(['linkedin_experience'])
+	})
+
+	it('maps each position to company, title, ISO start and end, and current', async () => {
+		stubClient(WITH_EXPERIENCE)
+		const person = await withExperience()
+		expect(person.experience).toEqual([
+			{ company: 'Acme', title: 'Head of Growth', start: '2024-03-15', end: null, current: true },
+			{
+				company: 'Globex',
+				title: 'Growth Lead',
+				start: '2020-01-01',
+				end: '2024-02-28',
+				current: false,
+			},
+			{ company: 'Initech', title: 'Analyst', start: '2017-06', end: null, current: true },
+		])
+		expect(person.experience_unavailable).toBeUndefined()
+	})
+
+	it('returns an empty list when LinkedIn lists no jobs', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { experience: [] } })
+		const person = await withExperience()
+		expect(person.experience).toEqual([])
+		expect(person.experience_unavailable).toBeUndefined()
+	})
+
+	// Off means rep lanes pay nothing and see exactly today's shape.
+	it('sends no sections and adds no experience keys by default', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(calls[0].query).not.toHaveProperty('with_sections')
+		expect(Object.keys(person).sort()).toEqual([
+			'headline',
+			'location',
+			'name',
+			'network_distance',
+			'profile_url',
+			'public_identifier',
+			'recipient_urn',
+		])
+	})
+
+	it('treats an empty sections list as off', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: [] })
+		expect(calls[0].query).not.toHaveProperty('with_sections')
+		expect(person).not.toHaveProperty('experience')
+	})
+
+	it.each([['education'], ['all'], ['about']])('rejects the %s section', async (section) => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await expect(
+			getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: [section] }),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	it('rejects a sections value that is not an array', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await expect(
+			getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: 'experience' }),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	// A throttled or rejected section pull must not fail the whole call, and
+	// must not look like a person with no jobs.
+	it('falls back to the base profile when the section pull is rejected', async () => {
+		const calls: Array<Record<string, unknown>> = []
+		__setLinkedInClientForTests(
+			() =>
+				({
+					getProfile: async (query: Record<string, unknown>) => {
+						calls.push(query)
+						return query.with_sections
+							? { status: 400, body: { error_code: 'invalid_input' }, headers: {} }
+							: { status: 200, body: LIVE_PROFILE, headers: {} }
+					},
+				}) as never,
+		)
+		const person = await withExperience()
+		expect(person).toMatchObject({ name: 'Alex Rivera', experience_unavailable: true })
+		expect(person).not.toHaveProperty('experience')
+		expect(calls).toHaveLength(2)
+		expect(calls[1]).not.toHaveProperty('with_sections')
+	})
+
+	it('flags experience_unavailable when the response carries no experience section', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { network_distance: 'SECOND_DEGREE' } })
+		const person = await withExperience()
+		expect(person.experience_unavailable).toBe(true)
+		expect(person).not.toHaveProperty('experience')
+	})
+
+	// When the base profile fails as well, that error is the real answer.
+	it('still throws when the base profile cannot be fetched either', async () => {
+		__setLinkedInClientForTests(
+			() =>
+				({
+					getProfile: async () => ({ status: 404, body: { error_code: 'not_found' }, headers: {} }),
+				}) as never,
+		)
+		await expect(withExperience()).rejects.toBeInstanceOf(LinkedInIntegrationError)
 	})
 })
 

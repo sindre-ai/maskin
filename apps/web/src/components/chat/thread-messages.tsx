@@ -1,21 +1,44 @@
+import { HandoffCard } from '@/components/chat/handoff-card'
+import { HelperQuestionCard } from '@/components/chat/helper-question-card'
+import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useActors } from '@/hooks/use-actors'
+import { useBackfilledRunActivity } from '@/hooks/use-backfilled-run-activity'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import {
+	type MessageTurnActivity,
+	useConversationActivity,
+} from '@/hooks/use-conversation-activity'
+import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import type { SessionResponse } from '@/lib/api'
+import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
+import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+	type RedoneTurns,
+	dropRedoneFailedTurns,
+	redoKey,
+	snapshotRedo,
+	supersededFailedReplyIds,
+} from '@/lib/failed-turns'
+import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
+import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
+import { NeededTools } from './needed-tools'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { SuggestedSteps } from './suggested-steps'
+import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -32,58 +55,67 @@ interface ThreadMessagesProps {
 	workspaceId: string
 	conversationId: string
 	className?: string
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Threaded from the route
-	 *  boundary — the umbrella flag AND the `.banner` sub-flag — into the
-	 *  resume banner. */
-	v4PolishBanner?: boolean
-	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
-	 *  message bubble. */
-	v4PolishBubbles?: boolean
-	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
-	 *  a persistent vertical --brand bar to their right and a spawn chip below
-	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
-	 *  route boundary on `graph-provenance-writes` so the sessions query fires
-	 *  only for tester actors. */
-	producedEnabled?: boolean
-	/** Chat thread `HANDED OFF` sub-agent delegation strip
-	 *  (bet/444b-handed-off-strip). Threaded from the route boundary as a
-	 *  plain boolean; the bubble decides per-message whether to render the
-	 *  strip based on this flag AND the message's own `spawned_sessions`. */
-	handedOffStripEnabled?: boolean
+	/** Fills the composer with a fill step's prompt. */
+	onPickStep?: (prompt: string) => void
+	/** Sends a send step's label as the person's message, with the intro step marker. */
+	onSendStep?: (content: string, metadata: MessageMetadata) => void
+	/** A step send is in flight. */
+	sendingStep?: boolean
 }
 
 export function ThreadMessages({
 	workspaceId,
 	conversationId,
 	className,
-	v4PolishBanner = false,
-	v4PolishBubbles = false,
-	producedEnabled = false,
-	handedOffStripEnabled = false,
+	onPickStep,
+	onSendStep,
+	sendingStep = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const threadsPane = useThreadsPane()
 	const messages = flattenMessagesOldestFirst(data)
+	// The step row is disabled only once the actor list has loaded and the intro's
+	// agent is not in it. While it loads, or when it fails, the row stays usable.
+	const actors = useActors(workspaceId)
+	const handoffs = useConversationThreads(workspaceId, conversationId)
+	// Each handoff is its own row in the timeline, at the moment its session was
+	// created: before the first message written after it, or at the foot of the
+	// thread when nothing has been written since.
+	const showHandoffCards = Boolean(threadsPane)
+	const handoffsByNextMessage = useMemo(() => {
+		if (!showHandoffCards) return new Map<number | 'end', typeof handoffs>()
+		return groupHandoffsByNextMessage(handoffs, messages)
+	}, [handoffs, messages, showHandoffCards])
+	const renderHandoffCards = (items: typeof handoffs | undefined) =>
+		items && items.length > 0 && threadsPane ? (
+			<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
+				{items.map((session) => (
+					<HandoffCard key={session.id} session={session} onViewThread={threadsPane.openThread} />
+				))}
+			</div>
+		) : null
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
 		messages,
 	)
+	// Replies copied in from a background run, whose thinking and tool calls live in that run's log.
+	const backfilledActivity = useBackfilledRunActivity(workspaceId, messages)
 	// Every session `useActiveSessionsForConversation` returns already carries
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
 	// the query cache-shared with useConversationActivity above (same key).
-	// Only fires when the S2 pane is enabled for the actor.
-	const { data: sessionList } = useActiveSessionsForConversation(
-		workspaceId,
-		producedEnabled ? conversationId : null,
-	)
+	const { data: sessionList } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
-		() =>
-			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
-		[sessionList, producedEnabled],
+		() => deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]),
+		[sessionList],
 	)
+
+	// Head/tail dividers for each run of voice-call messages. Derived from the
+	// messages themselves (metadata.source === 'voice').
+	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -92,6 +124,71 @@ export function ThreadMessages({
 			.map((m) => m.metadata?.question_answer?.question_message_id)
 			.filter((id): id is number => typeof id === 'number'),
 	)
+
+	// A helper's question and the person's answer are a conversation with that
+	// helper, which lives in its thread. Until it is answered the question stays
+	// here with its buttons; once answered, both messages leave the main chat.
+	const helperQuestionIds = new Set(
+		messages.filter((m) => m.metadata?.question?.reply_to_session).map((m) => m.id),
+	)
+	// Turns the person redid in this view, with what had already failed at that
+	// moment. Those failed notices leave the timeline so the new attempt takes
+	// their place; a later failure of the new attempt stays visible.
+	const [redoneTurns, setRedoneTurns] = useState<RedoneTurns>(new Map())
+	const supersededFailedIds = useMemo(
+		() => supersededFailedReplyIds(messages, redoneTurns),
+		[messages, redoneTurns],
+	)
+	const handleRetried = (retried: MessageResponse) => {
+		const key = redoKey(retried)
+		setRedoneTurns((prev) =>
+			new Map(prev).set(key, snapshotRedo(messages, byTriggerMessageId.get(key) ?? [])),
+		)
+	}
+	const visibleMessages = messages.filter((m) => {
+		if (supersededFailedIds.has(m.id)) return false
+		// A helper's result handed to the agent that started it: the agent gets it, the
+		// person reads it in the helper's thread as its final output.
+		if (m.metadata?.helper_return) return false
+		// A card button's nudge to the agent: delivered, but not something to read.
+		if (m.metadata?.hidden_from_chat) return false
+		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
+		const answered = m.metadata?.question_answer?.question_message_id
+		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
+	})
+
+	// A turn a hidden nudge started (a card's Done or Save) has no bubble to hang under, so it
+	// hangs under the last message the person can see. Without it the wait for the agent's
+	// answer would show nothing at all.
+	const turnsFromHidden = new Map<number, MessageTurnActivity[]>()
+	const visibleIds = new Set(visibleMessages.map((m) => m.id))
+	let lastVisibleId: number | null = null
+	for (const m of messages) {
+		if (visibleIds.has(m.id)) {
+			lastVisibleId = m.id
+			continue
+		}
+		const turns = m.metadata?.hidden_from_chat ? byTriggerMessageId.get(m.id) : undefined
+		if (turns && lastVisibleId !== null) {
+			turnsFromHidden.set(lastVisibleId, [...(turnsFromHidden.get(lastVisibleId) ?? []), ...turns])
+		}
+	}
+
+	// A linked object's card shows once, on the first message that links it; later
+	// messages keep the link but not another copy of the card. Only messages that
+	// draw cards count: your own bubble draws none, so a link you posted first must
+	// not hide the card from the agent's reply.
+	const ownActorId = getStoredActor()?.id
+	const shownLinkedObjectIdsByMessage = useMemo(() => {
+		const seen = new Set<string>()
+		const byMessage = new Map<number, ReadonlySet<string>>()
+		for (const m of visibleMessages) {
+			byMessage.set(m.id, new Set(seen))
+			if (m.kind !== 'message' || m.actorId === ownActorId) continue
+			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
+		}
+		return byMessage
+	}, [visibleMessages, ownActorId])
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -102,7 +199,20 @@ export function ThreadMessages({
 	// grow the scroller upward. Cleared once applied.
 	const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
 	const pageCount = data?.pages.length ?? 0
-	const [isNearBottom, setIsNearBottom] = useState(true)
+	// A ref, not state: it only steers scrolling, and it has to be reset
+	// synchronously when the reader opens a different conversation.
+	const nearBottomRef = useRef(true)
+	const messagesContentRef = useRef<HTMLDivElement | null>(null)
+	const hasMessages = messages.length > 0
+
+	// Opening a conversation always starts at its newest message. This component
+	// is reused across conversations, so without a reset the previous thread's
+	// message count and scroll position leak into the next one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger — a different thread was opened — and its value is not read inside the effect.
+	useLayoutEffect(() => {
+		lastMessageCountRef.current = 0
+		nearBottomRef.current = true
+	}, [conversationId])
 
 	// Auto-scroll to the newest message on first load and whenever a new
 	// message arrives while the user is already near the bottom (own sends,
@@ -113,9 +223,24 @@ export function ThreadMessages({
 		const grew = messages.length > lastMessageCountRef.current
 		lastMessageCountRef.current = messages.length
 		if (!grew) return
-		if (!isNearBottom) return
+		if (!nearBottomRef.current) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
-	}, [messages.length, isNearBottom])
+	}, [messages.length])
+
+	// Rows keep growing after they mount (markdown, images, activity cards,
+	// session chips), which pushes the newest message below the fold of a view
+	// that was scrolled to the bottom a moment earlier. Follow that growth for as
+	// long as the reader hasn't scrolled away.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: hasMessages and conversationId only decide when the scroller element exists / is replaced, so the observer re-attaches to it; neither is read inside.
+	useEffect(() => {
+		const content = messagesContentRef.current
+		if (!content || typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(() => {
+			if (nearBottomRef.current) bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
+		})
+		observer.observe(content)
+		return () => observer.disconnect()
+	}, [hasMessages, conversationId])
 
 	// Auto-load older messages when the user scrolls to the top of the thread.
 	// The button below stays as an accessible fallback for keyboard users and
@@ -160,7 +285,7 @@ export function ThreadMessages({
 		const el = scrollerRef.current
 		if (!el) return
 		const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-		setIsNearBottom(distanceFromBottom < 120)
+		nearBottomRef.current = distanceFromBottom < 120
 	}
 
 	if (isLoading) {
@@ -230,7 +355,6 @@ export function ThreadMessages({
 				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
-				v4Polish={v4PolishBanner}
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
@@ -268,65 +392,142 @@ export function ThreadMessages({
 					) : null}
 				</div>
 			) : null}
-			<div className="flex flex-col gap-4">
-				{messages.map((message, index) => {
-					const prev = messages[index - 1]
-					const isLast = index === messages.length - 1
+			<div ref={messagesContentRef} className="flex flex-col gap-4">
+				{visibleMessages.map((message, index) => {
+					const prev = visibleMessages[index - 1]
+					const isLast = index === visibleMessages.length - 1
 					// Turns this message's own reply resulted from render above
 					// it; turns this message triggered (still in progress, no
 					// reply yet) render below it, in the gap before that reply
 					// lands — see useConversationActivity's doc comment.
-					const turnsAbove = byReplyMessageId.get(message.id) ?? []
-					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
+					const turnsAbove =
+						byReplyMessageId.get(message.id) ?? backfilledActivity.get(message.id) ?? []
+					const turnsBelow = dropRedoneFailedTurns(
+						[
+							...(byTriggerMessageId.get(message.id) ?? []),
+							...(turnsFromHidden.get(message.id) ?? []),
+						],
+						message.id,
+						redoneTurns,
+					)
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
+					// A helper's question is put to the person from outside this chat, so it
+					// is drawn as a card rather than as a message from the helper.
+					const helperQuestion = message.metadata?.question?.reply_to_session
+						? message.metadata.question
+						: null
+					if (helperQuestion) {
+						return (
+							<Fragment key={message.id}>
+								{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+								<HelperQuestionCard
+									workspaceId={workspaceId}
+									conversationId={conversationId}
+									questionMessageId={message.id}
+									actorId={message.actorId}
+									actorName={message.actorName}
+									question={helperQuestion}
+									answered={answeredQuestionIds.has(message.id)}
+									onViewThread={threadsPane?.openThread}
+								/>
+							</Fragment>
+						)
+					}
+					// An agent intro written with steps and tools: the buttons and rows replace
+					// the plain list and tools sentence at the end of its body.
+					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
+					const bubbleMessage = intro
+						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
+						: message
+					// The steps go once the person has written anything after the intro, an
+					// unsent-yet bubble included. The tool rows stay.
+					const showSteps =
+						intro?.steps != null &&
+						onPickStep != null &&
+						onSendStep != null &&
+						!messages.slice(messages.indexOf(message) + 1).some((m) => m.actorType === 'human')
 					return (
-						<div
-							key={message.id}
-							data-message-id={message.id}
-							className="flex flex-col gap-1 scroll-mt-[60px]"
-						>
-							{/* A divider separates two days; there is nothing above the
+						<Fragment key={message.id}>
+							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
+							<div data-message-id={message.id} className="flex flex-col gap-1 scroll-mt-[60px]">
+								{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}
-							{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
-								<MessageDivider date={message.createdAt} />
-							) : null}
-							{/* A finished turn belongs to the reply it produced, so it
+								{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
+									<MessageDivider date={message.createdAt} />
+								) : null}
+								{voiceBoundaries.get(message.id)?.start ? (
+									<VoiceCallBoundary variant="start" {...voiceBoundaries.get(message.id)?.start} />
+								) : null}
+								{/* A finished turn belongs to the reply it produced, so it
 							    renders *inside* that message under the agent's name
 							    rather than as a separate row above it — which read as
 							    a stray line belonging to nothing. Live turns stay
 							    standalone below their trigger, where they carry their
 							    own avatar. */}
-							<MessageBubble
-								workspaceId={workspaceId}
-								message={message}
-								questionAnswered={answeredQuestionIds.has(message.id)}
-								v4Polish={v4PolishBubbles}
-								spawnInfo={spawnByMessageId.get(message.id)}
-								handedOffStripEnabled={handedOffStripEnabled}
-								// Keyed by index as well as session: one session can put two
-								// turns under the same message (a result segment plus the
-								// live turn that follows it), so `sessionId` alone is not
-								// unique and React would reconcile the two as one row.
-								activity={turnsAbove.map((turn, turnIndex) => (
+								<MessageBubble
+									workspaceId={workspaceId}
+									message={bubbleMessage}
+									questionAnswered={answeredQuestionIds.has(message.id)}
+									spawnInfo={spawnByMessageId.get(message.id)}
+									onRetried={handleRetried}
+									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
+									// Keyed by index as well as session: one session can put two
+									// turns under the same message (a result segment plus the
+									// live turn that follows it), so `sessionId` alone is not
+									// unique and React would reconcile the two as one row.
+									activity={turnsAbove.map((turn, turnIndex) => (
+										<MessageActivity
+											key={`${turn.sessionId}-above-${turnIndex}`}
+											workspaceId={workspaceId}
+											turn={turn}
+											layout="inline"
+										/>
+									))}
+								/>
+								{intro && (showSteps || intro.tools) ? (
+									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
+										{showSteps && intro.steps ? (
+											<SuggestedSteps
+												steps={intro.steps}
+												onPickStep={onPickStep}
+												onSendStep={(step, stepIndex) =>
+													onSendStep(step.prompt, {
+														from_suggested_step: { intro_message_id: message.id, index: stepIndex },
+													})
+												}
+												sending={sendingStep}
+												disabled={
+													actors.isSuccess && !actors.data.some((a) => a.id === message.actorId)
+												}
+											/>
+										) : null}
+										{intro.tools ? (
+											<NeededTools
+												workspaceId={workspaceId}
+												conversationId={conversationId}
+												agentId={message.actorId}
+												agentName={message.actorName}
+												tools={intro.tools}
+											/>
+										) : null}
+									</div>
+								) : null}
+								{turnsBelowHere.map((turn, turnIndex) => (
 									<MessageActivity
-										key={`${turn.sessionId}-above-${turnIndex}`}
+										key={`${turn.sessionId}-below-${turnIndex}`}
 										workspaceId={workspaceId}
 										turn={turn}
-										layout="inline"
 									/>
 								))}
-							/>
-							{turnsBelowHere.map((turn, turnIndex) => (
-								<MessageActivity
-									key={`${turn.sessionId}-below-${turnIndex}`}
-									workspaceId={workspaceId}
-									turn={turn}
-								/>
-							))}
-						</div>
+								{voiceBoundaries.get(message.id)?.end ? <VoiceCallBoundary variant="end" /> : null}
+							</div>
+						</Fragment>
 					)
 				})}
+				{/* Handoffs created after the newest message: the person sees the work
+				    begin instead of waiting for the agent's next message. */}
+				{renderHandoffCards(handoffsByNextMessage.get('end'))}
 			</div>
 			<div ref={bottomAnchorRef} />
 		</div>

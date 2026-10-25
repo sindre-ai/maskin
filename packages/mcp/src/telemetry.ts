@@ -1,4 +1,15 @@
+import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
 import { measureResponseShape } from './response-shape'
+
+/**
+ * Symbol-keyed (so it never serializes) hook a tool handler attaches to its
+ * response to tell the size event which shape of answer it gave. Same pattern
+ * as RESUME_CURSOR in response-cap.ts: the `registerAppTool` wrapper reads it
+ * after the handler returns, on the success path only.
+ */
+export const TELEMETRY_VIEW = Symbol('telemetryView')
+/** Fixed values only, never free text: `slim` is the default directory row, `full` is a call that asked for connected triggers or loops. */
+export type ListActorsView = 'slim' | 'full'
 
 // MCP telemetry — fire-and-forget POSTs to /api/telemetry/mcp.
 //
@@ -64,6 +75,15 @@ export interface TelemetryConfig {
 	 *  `unknown` marks a per-request throwaway that groups nothing — the host
 	 *  had no client identity to work from. */
 	sessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label of the request this server is
+	 * serving, stamped onto `tool_call` and `tool_call_response_size` events.
+	 * Decided by `classifyMcpEra` in apps/dev (the only place the rule exists)
+	 * and threaded in by `routes/mcp.ts`; this package never classifies. Absent
+	 * means "not known", and the events then omit the fields.
+	 */
+	mcpEra?: McpEra
+	mcpProtocolVersion?: McpProtocolVersionLabel
 }
 
 /**
@@ -105,6 +125,10 @@ export interface ToolCallEvent {
 	 * the ingest route drops it rather than persisting it as a session.
 	 */
 	session_source?: 'maskin-session' | 'process' | 'unknown'
+	/** Protocol era of the request. Absent when unknown. */
+	mcp_era?: McpEra
+	/** Allowlisted protocol version label, never a raw header value. */
+	mcp_protocol_version?: McpProtocolVersionLabel
 }
 
 export interface MutationEvent {
@@ -156,6 +180,12 @@ export interface ToolCallResponseSizeEvent {
 	/** True when shape measurement faulted — the shape fields above are
 	 *  fallbacks, not observations. Absent means they are trustworthy. */
 	shape_error?: boolean
+	/** Protocol era of the request. Absent when unknown. */
+	mcp_era?: McpEra
+	/** Allowlisted protocol version label, never a raw header value. */
+	mcp_protocol_version?: McpProtocolVersionLabel
+	/** Which shape of answer the tool gave. Only list_actors sets it today. */
+	view?: ListActorsView
 }
 
 // MCP misfire event for the agent-reach-signal bet. The server-side
@@ -264,6 +294,8 @@ export function recordToolCall(
 			ok: event.ok ?? true,
 			transport: event.transport,
 			session_source: session.source,
+			mcp_era: target.mcpEra,
+			mcp_protocol_version: target.mcpProtocolVersion,
 		},
 		cfg,
 	)
@@ -309,6 +341,8 @@ export function recordToolCallResponseSize(
 		args?: unknown
 		/** Which transport the emitting server is exposed over. */
 		transport?: 'stdio' | 'http'
+		/** Set by a tool through TELEMETRY_VIEW; absent for every other tool. */
+		view?: ListActorsView
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
@@ -349,6 +383,9 @@ export function recordToolCallResponseSize(
 			// rather than observations, so a query can exclude them instead of
 			// averaging a measurement fault in as "this tool returned no rows".
 			shape_error: shape.shapeError ? true : undefined,
+			mcp_era: target.mcpEra,
+			mcp_protocol_version: target.mcpProtocolVersion,
+			view: event.view,
 		},
 		cfg,
 	)
@@ -423,6 +460,9 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	delete_loop: 'loop_delete',
 	// Comments
 	create_comment: 'comment_create',
+	// Notifications
+	create_notification: 'notification_create',
+	update_notification: 'notification_update',
 	// Workspace skills
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',
@@ -438,11 +478,15 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
+	gmail_send_email: 'gmail_email_send',
+	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
+	ask_user_question: 'session_ask_user',
 	resume_session: 'session_resume',
+	send_session_message: 'session_message_send',
 }
 
 /** Resets the warned flag — only used in tests. */

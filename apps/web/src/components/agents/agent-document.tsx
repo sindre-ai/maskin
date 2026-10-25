@@ -59,7 +59,6 @@ import { TypeBadge } from '../shared/type-badge'
 import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
-import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
@@ -78,7 +77,6 @@ interface AgentDocumentViewProps {
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
-	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
 	onRun: () => void
 	onPause: () => void
@@ -122,7 +120,6 @@ export function AgentDocumentView({
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
-	onUpdateTools,
 	onUpdateMemory,
 	onRun,
 	onPause,
@@ -429,11 +426,6 @@ export function AgentDocumentView({
 								/>
 							</div>
 						</div>
-					</Section>
-
-					{/* MCP Servers */}
-					<Section title="MCP Servers">
-						<McpServers tools={agent.tools} onUpdate={onUpdateTools} readOnly={isManaged} />
 					</Section>
 
 					{/* Skills */}
@@ -853,13 +845,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, agent.name, updateActor],
 	)
 
-	const handleUpdateTools = useCallback(
-		(tools: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { tools } })
-		},
-		[agent.id, updateActor],
-	)
-
 	const handleUpdateMemory = useCallback(
 		(memory: Record<string, unknown>) => {
 			updateActor.mutate({ id: agent.id, data: { memory } })
@@ -884,7 +869,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}
-				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
 				onRun={() =>
 					run.mutate(

@@ -15,11 +15,7 @@ import {
 	type SearchRow,
 	useWorkspaceSearch,
 } from '@/hooks/use-workspace-search'
-import {
-	type TaxonomyEntityType,
-	trackCommandPaletteOpened,
-	trackSearchResultOpened,
-} from '@/lib/analytics'
+import { type TaxonomyEntityType, trackCommandPaletteOpened } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
@@ -31,12 +27,16 @@ import {
 	pushRecentObject,
 	pushRecentSearch,
 } from '@/lib/search-recents'
+import {
+	SEARCH_DEBOUNCE_MS,
+	searchRowEntityType,
+	trackSearchRowOpened,
+	useTrackSettledSearch,
+} from '@/lib/search-telemetry'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ArrowLeft, MessageSquare, RefreshCw, Search, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
-const SEARCH_DEBOUNCE_MS = 300
 
 // Fallback workflow statuses. Custom statuses from workspace settings (per
 // object type) union over this — the filter chips always reflect the
@@ -146,14 +146,24 @@ function SearchRoute() {
 		setRecentSearches(getRecentSearches(workspaceId).slice(0, 4))
 	}, [query, workspaceId])
 
-	const { rows, countsByGroup, total, isPending, isError, isPartial } = useWorkspaceSearch(
-		workspaceId,
-		{
+	const { rows, countsByGroup, total, isPending, isError, isPartial, isSettled } =
+		useWorkspaceSearch(workspaceId, {
 			q: query,
 			type: search.type,
 			status: search.status,
-		},
-	)
+		})
+
+	useTrackSettledSearch({
+		surface: 'search_view',
+		active: true,
+		query,
+		type: search.type,
+		status: search.status,
+		isSettled,
+		isError,
+		isPartial,
+		total,
+	})
 
 	// Recents (empty-query state) resolved against the objects list cache.
 	const { data: objects = [] } = useObjects(workspaceId)
@@ -216,26 +226,28 @@ function SearchRoute() {
 
 	const openObject = useCallback(
 		(obj: ObjectResponse) => {
-			trackSearchResultOpened({
-				entity_id: obj.id,
-				entity_type: obj.type as TaxonomyEntityType,
-				surface: 'search_view',
-			})
 			pushRecentObject(workspaceId, obj.id)
 			navigate({ to: '/$workspaceId/objects/$objectId', params: { workspaceId, objectId: obj.id } })
 		},
 		[navigate, workspaceId],
 	)
 
-	const openRow = useCallback(
-		(row: SearchRow) => {
-			if (row.object) {
-				openObject(row.object)
-				return
-			}
-			navigate({ to: row.to, params: row.params })
+	// Recents on the idle screen are not search results: no query, no search id,
+	// counted against the size of the recents list.
+	const openRecentObject = useCallback(
+		(obj: ObjectResponse, position: number) => {
+			trackSearchRowOpened({
+				surface: 'search_view',
+				entityId: obj.id,
+				entityType: obj.type as TaxonomyEntityType,
+				group: 'objects',
+				position,
+				hasQuery: false,
+				listSize: recentObjects.length,
+			})
+			openObject(obj)
 		},
-		[navigate, openObject],
+		[openObject, recentObjects.length],
 	)
 
 	const runRecentSearch = useCallback(
@@ -263,6 +275,31 @@ function SearchRoute() {
 
 	const visibleRows = activeGroup ? rows.filter((row) => row.group === activeGroup) : rows
 	const visibleCount = visibleRows.length
+	// Rendered order is grouped by type, so a row's position is its index there,
+	// not in the ranked list.
+	const renderedRows = useMemo(
+		() => SEARCH_GROUPS.flatMap((group) => visibleRows.filter((row) => row.group === group)),
+		[visibleRows],
+	)
+	const openRow = useCallback(
+		(row: SearchRow) => {
+			trackSearchRowOpened({
+				surface: 'search_view',
+				entityId: row.id,
+				entityType: searchRowEntityType(row),
+				group: row.group,
+				position: renderedRows.indexOf(row) + 1,
+				hasQuery: true,
+				listSize: renderedRows.length,
+			})
+			if (row.object) {
+				openObject(row.object)
+				return
+			}
+			navigate({ to: row.to, params: row.params })
+		},
+		[navigate, openObject, renderedRows],
+	)
 	// "Searching…" only while a query is committed and no results have arrived
 	// yet. Otherwise the loading branch flashes the no-match state.
 	const searchRequested = hasQuery && isPending
@@ -375,7 +412,7 @@ function SearchRoute() {
 						recentSearches={recentSearches}
 						recentObjects={recentObjects}
 						onRecentSearchClick={runRecentSearch}
-						onRecentObjectClick={openObject}
+						onRecentObjectClick={openRecentObject}
 						onOpenPalette={() => setPaletteOpen(true)}
 					/>
 				) : searchFailed ? (
@@ -533,7 +570,7 @@ function SearchIdleState({
 	recentSearches: string[]
 	recentObjects: ObjectResponse[]
 	onRecentSearchClick: (query: string) => void
-	onRecentObjectClick: (obj: ObjectResponse) => void
+	onRecentObjectClick: (obj: ObjectResponse, position: number) => void
 	onOpenPalette: () => void
 }) {
 	return (
@@ -574,11 +611,11 @@ function SearchIdleState({
 				<section aria-label="Recent objects" className="w-full max-w-[520px]">
 					<h2 className="eyebrow pb-2">Recent objects</h2>
 					<ul className="flex flex-col">
-						{recentObjects.map((obj) => (
+						{recentObjects.map((obj, index) => (
 							<li key={obj.id}>
 								<button
 									type="button"
-									onClick={() => onRecentObjectClick(obj)}
+									onClick={() => onRecentObjectClick(obj, index + 1)}
 									className={cn(
 										'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors hover:bg-accent',
 										'max-sm:min-h-11',

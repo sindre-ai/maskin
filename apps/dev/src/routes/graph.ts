@@ -24,12 +24,15 @@ import { deriveEndpointKinds, findEndpointIdsInWorkspace } from '../lib/relation
 import { serialize } from '../lib/serialize'
 import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		/** Set by app-factory when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
@@ -48,6 +51,7 @@ const graphResponseSchema = z.object({
 const createGraphRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Graph'],
 	summary: 'Create objects and relationships in a single atomic operation',
 	description:
@@ -93,6 +97,7 @@ app.openapi(createGraphRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Validate workspace exists
 	const [workspace] = await db

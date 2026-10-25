@@ -1,0 +1,49 @@
+{
+	"_provenance": "DOCUMENTED, NOT RECORDED. Built from the Unipile v2 reference for GET /v2/{account_id}/users/me/relation-requests?type=sent (rows of { id, type, created_at (optional in the schema), message, user { id, public_identifier, display_name, description, profile_url } } inside { data, total_count }). Not a live capture; every name and id is a stand-in. Replace with a recording from the first real list_sent_invitations call (action log task, deploy check).",
+	"object": "RelationRequestList",
+	"total_count": 3,
+	"data": [
+		{
+			"object": "RelationRequest",
+			"id": "rr-with-date",
+			"type": "sent",
+			"created_at": "2026-09-28T09:15:00.000Z",
+			"message": "Hi, would like to connect",
+			"user": {
+				"object": "User",
+				"id": "ACoAA-with-date",
+				"public_identifier": "person-with-date",
+				"display_name": "Person With Date",
+				"description": "Head of Growth",
+				"profile_url": "https://www.linkedin.com/in/person-with-date"
+			}
+		},
+		{
+			"object": "RelationRequest",
+			"id": "rr-without-date",
+			"type": "sent",
+			"message": null,
+			"user": {
+				"object": "User",
+				"id": "ACoAA-without-date",
+				"public_identifier": "person-without-date",
+				"display_name": "Person Without Date",
+				"description": "CTO",
+				"profile_url": "https://www.linkedin.com/in/person-without-date"
+			}
+		},
+		{
+			"object": "RelationRequest",
+			"id": "rr-bad-date",
+			"type": "sent",
+			"created_at": "not-a-date",
+			"user": {
+				"object": "User",
+				"id": "ACoAA-bad-date",
+				"public_identifier": "person-bad-date",
+				"display_name": "Person Bad Date",
+				"profile_url": "https://www.linkedin.com/in/person-bad-date"
+			}
+		}
+	]
+}

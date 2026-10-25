@@ -41,6 +41,8 @@ export function formatEventDescription(event: EventLike, ctx?: FormatContext): s
 			return 'session failed'
 		case 'session_timeout':
 			return 'session timed out'
+		case 'session_stopped':
+			return 'stopped session'
 		case 'session_paused':
 			return 'paused session'
 		case 'trigger_fired':
