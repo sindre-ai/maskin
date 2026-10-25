@@ -166,6 +166,32 @@ describe('alias_use event through the real SDK path', () => {
 		expect(captured.filter((c) => c.event.event_type === 'alias_use')).toHaveLength(1)
 	})
 
+	describe.each([
+		['get_comments', { object_id: U1 }, 'object_id', 'entity_id'],
+		['search_objects', { query: 'roadmap' }, 'query', 'q'],
+		['get_session', { session_id: U1 }, 'session_id', 'id'],
+		['get_actor', { actor_id: U1 }, 'actor_id', 'id'],
+	] as const)('%s misfire row', (tool, args, oldKey, newKey) => {
+		it(`records one alias_use event for ${oldKey} -> ${newKey}, key names only`, async () => {
+			const { outcome, uses } = await callAndCapture(tool, {
+				workspace_id: DEFAULT_WORKSPACE_ID,
+				...args,
+			})
+
+			expect(isValidationError(outcome)).toBe(false)
+			expect(uses).toHaveLength(1)
+			expect(uses[0].event).toMatchObject({
+				event_type: 'alias_use',
+				tool_name: tool,
+				renames: [{ old: oldKey, new: newKey }],
+				both_sent: false,
+			})
+			const serialised = JSON.stringify(uses[0].event)
+			expect(serialised).not.toContain(U1)
+			expect(serialised).not.toContain('roadmap')
+		})
+	})
+
 	describe('run_agent', () => {
 		const legacyCall = {
 			actor_id: U1,
