@@ -167,6 +167,8 @@ export class SessionRetryScheduler {
 				// any session_failed event still link back to what it was doing.
 				initiatedFromObjectId: row.initiatedFromObjectId,
 				retryOf: row.id,
+				// Restore the failed session's /agent folder snapshot (same as the usage-limit failover); a missing snapshot starts fresh.
+				parentSessionId: row.id,
 				attemptNumber: row.attemptNumber + 1,
 				// Whoever handed this work over still wants its result, so the rerun
 				// reports back to them like the first attempt would have.
