@@ -499,6 +499,56 @@ describe('IntegrationsPage', () => {
 			expect(screen.getByText('Gmail')).toBeInTheDocument()
 			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
 		})
+
+		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByLabelText('New')).toBeInTheDocument()
+			expect(
+				screen.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+			).toBeInTheDocument()
+			expect(screen.getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+		})
+
+		it('keeps the Details link on a connected Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						id: 'gd-1',
+						provider: 'google-drive',
+						status: 'active',
+						externalId: 'kai@acme.test',
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+		})
+
+		it('does not put Drive extras on other providers', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
+		})
 	})
 
 	describe('gmail label remains unchanged', () => {
