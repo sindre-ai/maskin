@@ -639,6 +639,27 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/feature-flags`.
     /// - Remark: Generated from `#/paths//api/feature-flags/get`.
     func get_sol_api_sol_feature_hyphen_flags(_ input: Operations.get_sol_api_sol_feature_hyphen_flags.Input) async throws -> Operations.get_sol_api_sol_feature_hyphen_flags.Output
+    /// Start a 1:1 voice call: reserve the caller’s live-call slot
+    ///
+    /// Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/post`.
+    func post_sol_api_sol_voice_hyphen_sessions(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions.Output
+    /// Connect a reserved voice session to the vendor
+    ///
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.
+    func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Output
+    /// End a voice call
+    ///
+    /// Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions/{id}/hangup`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/hangup/post`.
+    func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Output
 }
 
 /// Convenience overloads for operation inputs.
@@ -2240,6 +2261,55 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/feature-flags/get`.
     public func get_sol_api_sol_feature_hyphen_flags(headers: Operations.get_sol_api_sol_feature_hyphen_flags.Input.Headers = .init()) async throws -> Operations.get_sol_api_sol_feature_hyphen_flags.Output {
         try await get_sol_api_sol_feature_hyphen_flags(Operations.get_sol_api_sol_feature_hyphen_flags.Input(headers: headers))
+    }
+    /// Start a 1:1 voice call: reserve the caller’s live-call slot
+    ///
+    /// Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/post`.
+    public func post_sol_api_sol_voice_hyphen_sessions(
+        headers: Operations.post_sol_api_sol_voice_hyphen_sessions.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_voice_hyphen_sessions.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions.Output {
+        try await post_sol_api_sol_voice_hyphen_sessions(Operations.post_sol_api_sol_voice_hyphen_sessions.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Connect a reserved voice session to the vendor
+    ///
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.
+    public func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer(
+        path: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Input.Path,
+        headers: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Output {
+        try await post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer(Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// End a voice call
+    ///
+    /// Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.
+    ///
+    /// - Remark: HTTP `POST /api/voice-sessions/{id}/hangup`.
+    /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/hangup/post`.
+    public func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(
+        path: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input.Path,
+        headers: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Output {
+        try await post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
     }
 }
 
