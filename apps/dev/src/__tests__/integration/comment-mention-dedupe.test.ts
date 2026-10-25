@@ -111,6 +111,8 @@ describe('Comment mention dispatch is idempotent per (comment event, mentioned a
 		return rows.filter((n) => n.objectId === objectId)
 	}
 
+	// dispatchMention starts the session without awaiting it, so handleEvent
+	// resolves before the session is created. Wait for it before counting starts.
 	const settle = () => new Promise((r) => setTimeout(r, 500))
 
 	it('two app instances receiving the same event start one session and write one notification', async () => {
@@ -147,6 +149,7 @@ describe('Comment mention dispatch is idempotent per (comment event, mentioned a
 		])
 		// And again after the first pair has finished: still a no-op.
 		await dispatchers[1].handleEvent(pgEvent(ws, human, object.id, id))
+		await settle()
 
 		expect(sessionStarts(sm)).toBe(1)
 		expect(await notificationsFor(agent.id, object.id)).toHaveLength(1)
@@ -178,6 +181,7 @@ describe('Comment mention dispatch is idempotent per (comment event, mentioned a
 		await dispatchers[0].handleEvent(pgEvent(ws, human, object.id, first))
 		await dispatchers[1].handleEvent(pgEvent(ws, human, object.id, second))
 		await dispatchers[0].handleEvent(pgEvent(ws, human, other.id, onOther))
+		await settle()
 
 		expect(sessionStarts(sm)).toBe(3)
 		expect(await notificationsFor(agent.id, object.id)).toHaveLength(2)
