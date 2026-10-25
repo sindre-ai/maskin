@@ -67,8 +67,11 @@ async function countExtraKeyRows(): Promise<number> {
 		SELECT count(*)::int AS n FROM events
 		WHERE ((action = 'deleted' AND entity_type = 'agent')
 				OR (action = 'reset' AND entity_type = 'actor'))
-			AND jsonb_typeof(data) = 'object'
-			AND (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb
+			AND CASE
+				WHEN jsonb_typeof(data) = 'object'
+					THEN (data - ARRAY['id', 'type', 'name', 'is_system']) <> '{}'::jsonb
+				ELSE false
+			END
 	`
 	return row.n
 }
