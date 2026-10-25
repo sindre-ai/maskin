@@ -322,4 +322,60 @@ describe('Search Console sync against real Postgres', () => {
 		expect(rows).toHaveLength(1)
 		expect(rows[0][6]).toBe(7)
 	})
+
+	it('states the outcome of the last read and keeps last_read_ok_at through a failed run', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const integration = await insertGscIntegration(ws.id)
+		const run = async (iso: string) =>
+			syncGscIntegration(db, await reloadIntegration(integration.id), {
+				now: () => new Date(iso),
+				getAccessToken: async () => 't',
+			})
+
+		// A clean read that returns nothing is ok_empty, not a failure.
+		stubSearchConsole([])
+		await run('2026-10-11T10:00:00Z')
+		let [property, ...rest] = await propertyObjects(ws.id)
+		expect(rest).toHaveLength(0)
+		expect(property.metadata).toMatchObject({
+			read_status: 'ok_empty',
+			last_read_ok_at: '2026-10-11T10:00:00.000Z',
+			last_synced_date: '2026-10-09',
+			row_count: 0,
+		})
+		expect(property.metadata).not.toHaveProperty('first_data_date')
+		expect(property.metadata).not.toHaveProperty('last_error')
+
+		// Rows arrive: ok, with the earliest date that has rows.
+		stubSearchConsole([{ keys: ['2026-10-10', '/pricing', 'maskin pricing', 'usa', 'DESKTOP'] }])
+		await run('2026-10-12T10:00:00Z')
+		;[property, ...rest] = await propertyObjects(ws.id)
+		expect(rest).toHaveLength(0)
+		expect(property.metadata).toMatchObject({
+			read_status: 'ok',
+			last_read_ok_at: '2026-10-12T10:00:00.000Z',
+			first_data_date: '2026-10-10',
+			row_count: 1,
+		})
+
+		// A failed run flips the status and leaves the last good read time alone.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.endsWith('/sites')
+					? Response.json({ siteEntry: [{ siteUrl: SITE, permissionLevel: 'siteOwner' }] })
+					: new Response('boom', { status: 403 }),
+			),
+		)
+		await expect(run('2026-10-13T10:00:00Z')).rejects.toThrow(/403/)
+		;[property, ...rest] = await propertyObjects(ws.id)
+		expect(rest).toHaveLength(0)
+		expect(property.metadata).toMatchObject({
+			read_status: 'failed',
+			last_read_ok_at: '2026-10-12T10:00:00.000Z',
+			first_data_date: '2026-10-10',
+			last_synced_date: '2026-10-10',
+			last_error: expect.stringContaining('HTTP 403'),
+		})
+	})
 })

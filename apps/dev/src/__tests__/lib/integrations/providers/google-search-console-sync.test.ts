@@ -206,14 +206,15 @@ describe('listSites', () => {
 })
 
 // ── syncGscIntegration against a recording fake db ────────────────────────────────────
-// Every property looks new (the lookup finds nothing), so each run inserts.
+// Every property looks new (the lookup finds nothing), so each run inserts,
+// unless a test hands in an existing object for the lookup to find.
 
-function makeFakeDb() {
+function makeFakeDb(existing?: { id: string; content: string; metadata: Record<string, unknown> }) {
 	const inserts: Record<string, unknown>[] = []
 	const integrationUpdates: Record<string, unknown>[] = []
 	const db = {
 		select: () => ({
-			from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }),
+			from: () => ({ where: () => ({ limit: () => Promise.resolve(existing ? [existing] : []) }) }),
 		}),
 		insert: () => ({
 			values: (v: Record<string, unknown>) => {
@@ -242,7 +243,7 @@ const integrationRow = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 })
 
-function stubSearchConsole(opts: { failQueryFor?: string } = {}) {
+function stubSearchConsole(opts: { failQueryFor?: string; noRows?: boolean } = {}) {
 	const fetchMock = vi.fn(async (url: string) => {
 		if (url.endsWith('/sites')) {
 			return jsonResponse({
@@ -255,6 +256,7 @@ function stubSearchConsole(opts: { failQueryFor?: string } = {}) {
 		if (opts.failQueryFor && url.includes(encodeURIComponent(opts.failQueryFor))) {
 			return new Response('forbidden', { status: 403 })
 		}
+		if (opts.noRows) return jsonResponse({})
 		return jsonResponse({
 			rows: [
 				{
@@ -508,6 +510,95 @@ describe('syncGscIntegration', () => {
 		})
 		await syncGscIntegration(db, row, deps)
 		expect((integrationUpdates.at(-1) as { status?: string }).status).toBe('active')
+	})
+	describe('read_status', () => {
+		const titled = (inserts: Record<string, unknown>[], siteUrl: string) =>
+			inserts.find(
+				(i) => (i as { title: string }).title === `Google Search Console: ${siteUrl}`,
+			) as { metadata: Record<string, unknown> }
+
+		it('is ok with last_read_ok_at and first_data_date when rows come back', async () => {
+			stubSearchConsole()
+			const { db, inserts } = makeFakeDb()
+			await syncGscIntegration(db, integrationRow(), deps)
+			const { metadata } = titled(inserts, 'sc-domain:a.test')
+			expect(metadata).toMatchObject({
+				read_status: 'ok',
+				last_read_ok_at: NOW.toISOString(),
+				first_data_date: '2026-10-10',
+			})
+		})
+
+		it('is ok_empty for an empty response, with a read time and no first_data_date', async () => {
+			stubSearchConsole({ noRows: true })
+			const { db, inserts } = makeFakeDb()
+			await syncGscIntegration(db, integrationRow(), deps)
+			const { metadata } = titled(inserts, 'sc-domain:a.test')
+			expect(metadata).toMatchObject({
+				read_status: 'ok_empty',
+				last_read_ok_at: NOW.toISOString(),
+				row_count: 0,
+				last_synced_date: '2026-10-10',
+			})
+			expect(metadata).not.toHaveProperty('first_data_date')
+			expect(metadata).not.toHaveProperty('last_error')
+			for (const value of Object.values(metadata)) {
+				expect(['string', 'number', 'boolean']).toContain(typeof value)
+			}
+		})
+
+		it('is failed after an error, with no read time written', async () => {
+			stubSearchConsole({ failQueryFor: 'sc-domain:a.test' })
+			const { db, inserts } = makeFakeDb()
+			await expect(syncGscIntegration(db, integrationRow(), deps)).rejects.toThrow()
+			const { metadata } = titled(inserts, 'sc-domain:a.test')
+			expect(metadata).toMatchObject({ read_status: 'failed', last_error: expect.any(String) })
+			expect(metadata).not.toHaveProperty('last_read_ok_at')
+			expect(metadata).not.toHaveProperty('first_data_date')
+			// the other property read fine in the same run
+			expect(titled(inserts, 'sc-domain:b.test').metadata.read_status).toBe('ok')
+		})
+
+		it('takes first_data_date from the earliest stored row, not just the new ones', async () => {
+			stubSearchConsole()
+			const stored: GscRow = ['2026-09-01', '/old', 'q', 'usa', 'DESKTOP', 5, 1, 0.2, 6]
+			const { db, integrationUpdates } = makeFakeDb({
+				id: 'obj-9',
+				content: serializeRows([stored]),
+				metadata: { provider: 'google-search-console', last_synced_date: '2026-10-08' },
+			})
+			await syncGscIntegration(db, integrationRow(), deps)
+			const written = integrationUpdates.find(
+				(u) => (u.metadata as { read_status?: string } | undefined)?.read_status,
+			) as { metadata: Record<string, unknown> }
+			expect(written.metadata).toMatchObject({ read_status: 'ok', first_data_date: '2026-09-01' })
+		})
+
+		it('keeps last_read_ok_at on an existing object when a later run fails', async () => {
+			stubSearchConsole({ failQueryFor: 'sc-domain:a.test' })
+			const { db, integrationUpdates } = makeFakeDb({
+				id: 'obj-9',
+				content: serializeRows([]),
+				metadata: {
+					provider: 'google-search-console',
+					last_synced_date: '2026-10-08',
+					read_status: 'ok',
+					last_read_ok_at: '2026-10-09T10:00:00.000Z',
+				},
+			})
+			await expect(syncGscIntegration(db, integrationRow(), deps)).rejects.toThrow()
+			// A failed run on an existing object is a jsonb merge, not a fresh metadata build.
+			const merge = integrationUpdates.find(
+				(u) => (u.metadata as { queryChunks?: unknown[] } | undefined)?.queryChunks,
+			) as { metadata: { queryChunks: unknown[] } }
+			const patch = JSON.parse(
+				merge.metadata.queryChunks.find(
+					(c) => typeof c === 'string' && c.startsWith('{'),
+				) as string,
+			)
+			expect(patch).toMatchObject({ read_status: 'failed', last_error: expect.any(String) })
+			expect(patch).not.toHaveProperty('last_read_ok_at')
+		})
 	})
 })
 
