@@ -56,8 +56,11 @@ export async function startAliasHarness(
 			}
 			recorded.push({
 				method: req.method ?? '',
-				// snapshot_at is the wall clock, so two otherwise identical calls differ.
-				path: (req.url ?? '').replace(/snapshot_at=[^&]*/, 'snapshot_at=<now>'),
+				// snapshot_at and before are the wall clock, so two otherwise identical
+				// calls differ.
+				path: (req.url ?? '')
+					.replace(/snapshot_at=[^&]*/, 'snapshot_at=<now>')
+					.replace(/([?&])before=[^&]*/, '$1before=<now>'),
 				body,
 				workspace: req.headers['x-workspace-id'] as string | undefined,
 			})
