@@ -1,4 +1,5 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { Textarea } from '@/components/ui/textarea'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
@@ -945,7 +946,22 @@ function TextareaMarkdownContent({
  * Blur-emit save semantics hold on both branches: onChange(markdown) fires only
  * on blur (tech spec §9).
  */
-export function MarkdownContent(props: Parameters<typeof TextareaMarkdownContent>[0]) {
+export function MarkdownContent({
+	preserveSource,
+	surface,
+	objectId,
+	...props
+}: Parameters<typeof TextareaMarkdownContent>[0] & {
+	/**
+	 * Rich editor only. Treat `content` as stored text to protect: a save rewrites
+	 * only the blocks the person touched, and text the editor cannot hold safely
+	 * opens read-only. Ignored on the Textarea path, which saves what was typed.
+	 */
+	preserveSource?: boolean
+	/** Rich editor only. Surface name carried on the editor events. */
+	surface?: string
+	objectId?: string
+}) {
 	const editorEnabled = useFeatureFlag('rich-markdown-editor')
 
 	if (props.editable && editorEnabled) {
@@ -955,6 +971,9 @@ export function MarkdownContent(props: Parameters<typeof TextareaMarkdownContent
 				onChange={props.onChange}
 				className={props.className}
 				disallowedElements={props.disallowedElements}
+				preserveSource={preserveSource}
+				surface={surface}
+				objectId={objectId}
 			/>
 		)
 	}
@@ -962,30 +981,72 @@ export function MarkdownContent(props: Parameters<typeof TextareaMarkdownContent
 	return <TextareaMarkdownContent {...props} />
 }
 
+export const READ_ONLY_DESCRIPTION_BANNER =
+	"This description is read-only here. Editing it could change parts you didn't touch."
+
+// Same wording as the file editor's refused-rewrite banner, for a description.
+export const REFUSED_DESCRIPTION_BANNER =
+	"Part of this description can't be written back without losing something, so that part was left as it was. Your other changes are saved."
+
 // Flag-on: dynamic-imported Tiptap surface. Blur-emit is delegated to the
 // editor itself (spec §9). While the chunk is fetching, render the raw
-// markdown so nothing flashes empty. `surface` / `objectId` are left
-// undefined here — Task 6 threads them through consumer call sites.
+// markdown so nothing flashes empty. `surface` / `objectId` ride on the editor
+// events; the object description and create form pass them.
 function EditorAdapter({
 	content,
 	onChange,
 	className,
 	disallowedElements,
+	preserveSource,
+	surface,
+	objectId,
 }: {
 	content: string
 	onChange?: (value: string) => unknown
 	className?: string
 	disallowedElements?: string[]
+	preserveSource?: boolean
+	surface?: string
+	objectId?: string
 }) {
+	const [readOnly, setReadOnly] = useState(false)
+	const [rewriteRefused, setRewriteRefused] = useState(false)
+	// The editor reads `value` once, at mount. With preserveSource it also builds
+	// its block map from that text, so a change that did not come from this editor
+	// (an agent edit landing over SSE) has to remount it, or the next blur would
+	// save the old text over the new. Our own save echoing back, and a change
+	// while the person is mid-edit, leave it alone.
+	const dirtyRef = useRef(false)
+	const settledTextRef = useRef(content)
+	const [editorKey, setEditorKey] = useState(0)
+	useEffect(() => {
+		if (!preserveSource) return
+		if (content === settledTextRef.current || dirtyRef.current) return
+		settledTextRef.current = content
+		setEditorKey((key) => key + 1)
+	}, [content, preserveSource])
+
 	const handleChange = useCallback(
 		(markdown: string) => {
+			dirtyRef.current = false
+			// A save that comes out identical to what is stored (every rewrite was
+			// refused, or the edit was undone) is not sent: it would only stamp an
+			// edit on the object that nobody made.
+			if (preserveSource && markdown === settledTextRef.current) return
+			settledTextRef.current = markdown
 			onChange?.(markdown)
 		},
-		[onChange],
+		[onChange, preserveSource],
 	)
+
+	const handleEdit = useCallback(() => {
+		dirtyRef.current = true
+	}, [])
 
 	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
 		captureEditorParseError(info)
+		if (info.reason === 'read_only_fallback') setReadOnly(true)
+		if (info.reason === 'loss_check') setRewriteRefused(true)
 	}, [])
 
 	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
@@ -1012,24 +1073,41 @@ function EditorAdapter({
 	}, [disallowedElements])
 
 	return (
-		<Suspense
-			fallback={
-				<div className={className}>
-					<MarkdownRenderer content={content} />
-				</div>
-			}
-		>
-			<MarkdownEditor
-				value={content}
-				onChange={handleChange}
-				variant="document"
-				className={className}
-				disallowedNodes={disallowedNodes}
-				onParseError={handleParseError}
-				onToolbarAction={handleToolbarAction}
-				onShortcutUsed={handleShortcutUsed}
-				onSaved={handleSaved}
-			/>
-		</Suspense>
+		<>
+			{readOnly && surface === 'description' && (
+				<EditorBanner tone="info" className="mb-3">
+					{READ_ONLY_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			{rewriteRefused && surface === 'description' && (
+				<EditorBanner tone="danger" heading="Couldn't save your changes" className="mb-3">
+					{REFUSED_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			<Suspense
+				fallback={
+					<div className={className}>
+						<MarkdownRenderer content={content} />
+					</div>
+				}
+			>
+				<MarkdownEditor
+					key={editorKey}
+					value={content}
+					onChange={handleChange}
+					onEdit={handleEdit}
+					variant="document"
+					className={className}
+					disallowedNodes={disallowedNodes}
+					onParseError={handleParseError}
+					onToolbarAction={handleToolbarAction}
+					onShortcutUsed={handleShortcutUsed}
+					onSaved={handleSaved}
+					preserveSource={preserveSource}
+					surface={surface}
+					objectId={objectId}
+				/>
+			</Suspense>
+		</>
 	)
 }
