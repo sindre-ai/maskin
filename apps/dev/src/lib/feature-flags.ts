@@ -27,162 +27,13 @@
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
 //
-// `loops-v4-polish` gates the Loops & Loop detail v4 UX/UI polish bet
-// (bet/d166-loops-v4-polish). The three sub-flags let a single delta be
-// reverted without dropping the rest: `.targets` for D5 (Loop targets),
-// `.step_flow` for D6 (vertical step flow + escalation reconciler), and
-// `.unread` for D8 (unread boundary + Mark read). Every sub-flag is
-// additionally gated by the umbrella at each read site — so flipping the
-// umbrella off kills every downstream v4 delta at once. See
-// `.claude/rules/feature-flags.md` for the boundary rule and
-// `bet/d166-loops-v4-polish` for the ship / rollback plan.
+// The `loops-v4-polish.*` sub-flags let a single Loops & Loop detail v4 delta be
+// reverted without dropping the rest: `.targets` for D5 (Loop targets) and
+// `.unread` for D8 (unread boundary + Mark read). See
+// `.claude/rules/feature-flags.md` for the boundary rule.
 export const FLAGS = {
-	/**
-	 * LinkedIn Identity add-on visibility on the plan surface
-	 * (Settings > Billing). When off, the $49/connected-identity/month line is
-	 * hidden regardless of how many `linkedin-unipile` credentials the
-	 * workspace has connected. Actor-scoped rollout — add the pilot workspace
-	 * admin's actor id to `FF_TESTER_ACTOR_IDS` and this flag id to
-	 * `FF_TESTER_FEATURES` to reveal. The line still stays hidden when the
-	 * flag is on but no credentials are connected (see
-	 * `apps/dev/src/lib/linkedin-addon.ts`).
-	 */
-	LINKEDIN_ADDON_VISIBLE: 'linkedin-addon-visible',
-	/**
-	 * Sales Rep loop's `Draft next LinkedIn touch` step: off means "draft
-	 * posted for human review only" (today's behaviour); on means "draft posted
-	 * → sent via `linkedin_send_message` with an idempotency key derived from
-	 * `(contact_id, draft_id)`". Per-actor, so the workspace admin can opt in
-	 * their own Sales Rep driver-actor without flipping every workspace at
-	 * once. See the parent bet [First-party LinkedIn MCP — LinkedIn-backed,
-	 * customer-auth](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/56c2ffd7-7e45-448b-a409-c08c15755f9a)
-	 * — this flag is the "human-fire path stays available (feature flag on the
-	 * loop) so early customers can opt in gradually" gate from the spec's
-	 * §Behavioral shape. Behavioural (not visual-layer) — the invocation
-	 * surface Task 3 delivers (`linkedin_send_message`) reads this via
-	 * `resolveFlags(driverActorId, config)` on each Sales Rep loop tick.
-	 * Retire once autosend is the default for every workspace with a
-	 * connected `linkedin-unipile` credential.
-	 */
-	SALES_REP_LINKEDIN_AUTOSEND: 'sales_rep__linkedin_autosend',
-	/**
-	 * Slack setup UX v2 — channel-picker membership indicators, per-row hints,
-	 * >2000-channel truncation footer, error state, and the picker-usage
-	 * PostHog event. Enabled per tester actor; roll to Marketplace-live
-	 * workspaces once the dogfood workspace (mesh-firm) has proven it out.
-	 * See parent bet 'Slack setup UX' for the shape spec.
-	 */
-	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
-	/**
-	 * Google Meet integration visibility on the Settings > Integrations page.
-	 * When off, the provider card + Connect button are filtered out of the
-	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
-	 * — the customer sees no google-meet entry point at all. When on, google-meet
-	 * appears alongside every other OAuth provider (Gmail, GCal, Slack, ...) with
-	 * a standard Connect button. Per-actor behaviour gate, never shared state:
-	 * the backend still registers the provider unconditionally, so
-	 * `POST /api/integrations/google-meet/connect`
-	 * and the seven `google_meet__*` MCP tools stay reachable for tester actors
-	 * (add them to `FF_TESTER_ACTOR_IDS` + `google-meet-integration-ui` to
-	 * `FF_TESTER_FEATURES`). See parent bet [Google Meet MCP — cover the top
-	 * JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/947eee4d-9b30-49c7-968c-9376b4f5d80e)
-	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
-	 * google-meet ships to every workspace.
-	 */
-	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
-	/**
-	 * Resend integration visibility on the Settings > Integrations page. When
-	 * off, the provider card + multi-step connect dialog are filtered out of the
-	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
-	 * and the awaiting_secret resume affordance for resend never shows. When on,
-	 * the resend card appears with the Slice 2 connect dialog (Task 4). Per-actor
-	 * behaviour gate, never shared state: the backend registers the provider
-	 * unconditionally so `POST /api/integrations/resend/connect`, the dedicated
-	 * `/api/webhooks/resend/:token` route, and MCP env-var injection stay
-	 * reachable for tester actors (add them to `FF_TESTER_ACTOR_IDS` +
-	 * `resend-integration-ui` to `FF_TESTER_FEATURES`). See parent bet [Resend
-	 * integration per workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/cf2bcc85-8a71-460b-975b-1635dd87594e)
-	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
-	 * resend ships to every workspace.
-	 */
-	RESEND_INTEGRATION_UI: 'resend-integration-ui',
-	/**
-	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
-	 * object** / **Mention an agent** / **Create an object** dropdown with a
-	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
-	 * the composer placeholder. Owned by task **6321aecf**, part of parent bet
-	 * **bet/f21a-chat-composer-completeness** ("Chat composer completeness").
-	 * OFF preserves today's three-item menu and today's placeholder verbatim.
-	 * See `.claude/rules/feature-flags.md` for the boundary rule.
-	 */
-	CHAT_PLUS_MENU_ATTACH_ONLY: 'chat-plus-menu-attach-only',
-	loopsV4Polish: 'loops-v4-polish',
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
-	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
 	loopsV4PolishUnread: 'loops-v4-polish.unread',
-	/**
-	 * `chats-v4-polish` gates the Chats v4 UX/UI polish bet
-	 * (bet/bdda1c1e-chats-v4-polish). The five sub-flags let a single delta be
-	 * reverted without dropping the rest: `.list` for the conversation-list
-	 * end-of-history footer, `.header` for the thread-header controls (loop
-	 * chip, copy whole conversation, mark as unread, mobile overflow menu),
-	 * `.banner` for the resume-banner restyle, `.bubbles` for the message-bubble
-	 * hover actions + attachment eyebrow, and `.new_chat` for the new-chat chip
-	 * picker. Every sub-flag is additionally gated by the umbrella at each read
-	 * site — so flipping the umbrella off kills every downstream v4 delta at
-	 * once. See `.claude/rules/feature-flags.md` for the boundary rule and
-	 * `bet/bdda1c1e-chats-v4-polish` for the ship / rollback plan.
-	 */
-	chatsV4Polish: 'chats-v4-polish',
-	chatsV4PolishList: 'chats-v4-polish.list',
-	chatsV4PolishHeader: 'chats-v4-polish.header',
-	chatsV4PolishBanner: 'chats-v4-polish.banner',
-	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
-	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
-	/**
-	 * Chat composer `/` picker v2 — unified search-and-create surface.
-	 * When off, typing `/` opens the create-only "Turn this into an object"
-	 * dropdown (today's behaviour). When on, `/` opens the unified picker with
-	 * Reference (existing objects via `search_objects`) on top and Create new
-	 * (Task / Bet / Insight) below, and NEWKIND prefixes like `/task ` become
-	 * type-filter chips in the composer. See parent bet
-	 * [Chat composer completeness](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f21ad246-ebef-4cd2-93e0-aa46c83ed954).
-	 * Retire once the unified picker is the default for every workspace and the
-	 * legacy `turnIntoOpen` branch in `apps/web/src/components/chat/chat.tsx`
-	 * has been deleted.
-	 */
-	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
-	/**
-	 * Gates the S2 writer hook on the parent bet
-	 * [Extend the graph: files, chats, and sessions as first-class nodes]
-	 * (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/34706e2f-943f-49f5-a832-400a702952c2).
-	 * Off means the `recordEvent` helper never writes `session → object|file`
-	 * `produced_by` edges and `POST /api/sessions` never writes a
-	 * `conversation → session` `spawned` edge — the mutations still succeed
-	 * silently, no lineage rows land. On (per driver-actor) means both writes
-	 * fire whenever their preconditions hold (`X-Maskin-Session-Id` header
-	 * present on the mutation, or `conversationId` set at session CREATE).
-	 * Migration 0074 (which widens the CHECK constraint and adds the
-	 * `metadata` column) ships LIVE regardless of this flag: schema tolerance
-	 * with zero writes is safe. Retire once the hook is on for every workspace
-	 * and the Task 4 `<Origin>` block + Task 5 Chat Produced pane depend on
-	 * the edges being present.
-	 */
-	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
-	/**
-	 * Voice v1 — 1:1 in-app click-to-talk to a voice-enabled agent. Gates the
-	 * **POST /api/voice-sessions** session-mint route (404 when off), the
-	 * Call button on `/agents/:id`, and the VoiceCallDialog. Per-actor: a
-	 * workspace tester with this flag on sees the button; every other member
-	 * of the same workspace sees nothing. See parent bet
-	 * [Voice with Maskin agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
-	 *
-	 * Boot-time invariant: when this flag id appears in `FF_TESTER_FEATURES`,
-	 * `MASKIN_VOICE_OPENAI_API_KEY` must be set. `apps/dev/src/lib/voice-boot-guard.ts`
-	 * asserts it at startup so a mis-configured deploy fails fast instead of
-	 * 500-ing on the first mint call.
-	 */
-	VOICE_MODE_V1: 'voice-mode-v1',
 	/**
 	 * Gates the trigger-engine v2 rollout (bet
 	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).
@@ -217,6 +68,40 @@ export const FLAGS = {
 	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
 	 */
 	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
+	/**
+	 * Gates the daily capability scan (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
+	 * `services/capability-scanner.ts`. Off means no scanner work and no
+	 * `capability_*` event is written. On ({workspaceId}:capability-scan in
+	 * `FF_WORKSPACE_FEATURES`, then restart) the scan runs in shadow mode: it
+	 * writes snapshots and findings as events and messages nobody. Backend only,
+	 * no UI reads it. Retire once the scan is on for every workspace.
+	 */
+	CAPABILITY_SCAN: 'capability-scan',
+	/**
+	 * Gates agent-started messages in a person's 1-1 chat (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Actor-scoped on the RECIPIENT, read with `isFlagEnabled(recipientId, ...)`
+	 * in `services/proactive-message.ts`. Off means `sendProactiveMessage` refuses
+	 * with flag_off and nobody is messaged; the capability scan keeps running in
+	 * shadow mode. Rollout: the tester's actor id in `FF_TESTER_ACTOR_IDS` and
+	 * this id in `FF_TESTER_FEATURES`, then restart. Backend only, no UI reads it.
+	 * Retire once agent-started notes are on for everyone.
+	 */
+	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
+	/**
+	 * Unipile webhook deliveries become `events` rows (message.new first). Read
+	 * per integration row on the dedicated linkedin-unipile webhook route, on the
+	 * integration's owner actor (actor_id, falling back to created_by), after
+	 * account resolution and before the dedupe claim. Off means a signed
+	 * delivery is acknowledged with `skipped: flag_off` and nothing is written,
+	 * so switching it on later needs no replay. A rollout gate, not a kill
+	 * switch (env + restart); the fast stop is disabling the trigger. Retire
+	 * once the Unipile webhook events bet is won. See parent bet [Unipile webhook
+	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
+	 */
+	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

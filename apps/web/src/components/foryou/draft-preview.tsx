@@ -1,25 +1,41 @@
-import { Button } from '@/components/ui/button'
+import { FilePreview } from '@/components/shared/file-preview'
+import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
-import { useState } from 'react'
-
-/** Past this many characters a draft folds to four lines until opened. */
-const FOLD_AFTER = 240
 
 interface DraftPreviewProps {
+	workspaceId: string
 	draft: LatestMentionDecisionDraft
 }
 
 /**
  * The message an agent proposes to send, shown above the decision buttons so the
- * reader sees exactly what Send would send. Read only: changing it is the For You
- * draft-edit bet's job. Renders nothing without text, so a draft the feed could not
+ * reader sees exactly what Send would send. Always the whole message, never folded:
+ * approving text you could not read in full is not approving it. Read only: changing it
+ * is the For You draft-edit bet's job. Renders nothing without text, so a draft the feed could not
  * fill never shows as an empty box.
+ *
+ * A card about a file (an HTML page, a document, a picture) shows the file itself, open, in
+ * the same place: the reader decides on what the file looks like, not on its name.
  */
-export function DraftPreview({ draft }: DraftPreviewProps) {
-	const [open, setOpen] = useState(false)
+export function DraftPreview({ workspaceId, draft }: DraftPreviewProps) {
+	if (draft.file) {
+		return (
+			<FilePreview
+				workspaceId={workspaceId}
+				fileId={draft.file.id}
+				meta={{
+					name: draft.file.name,
+					mimeType: draft.file.mime_type,
+					sizeBytes: draft.file.size_bytes,
+				}}
+				defaultExpanded
+				className="mt-0"
+			/>
+		)
+	}
+
 	const body = draft.body?.trim()
 	if (!body) return null
-	const folds = body.length > FOLD_AFTER || body.split('\n').length > 4
 
 	return (
 		<section
@@ -28,28 +44,12 @@ export function DraftPreview({ draft }: DraftPreviewProps) {
 		>
 			<div className="flex items-baseline gap-2">
 				<span className="eyebrow shrink-0">{draft.label ?? 'Draft'}</span>
-				{draft.to ? (
+				{draft.to && !draft.preview ? (
 					<span className="min-w-0 truncate text-[12px] text-muted-foreground">To {draft.to}</span>
 				) : null}
 			</div>
-			<p
-				className={`whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground ${
-					folds && !open ? 'line-clamp-4' : ''
-				}`}
-			>
-				{body}
-			</p>
-			{folds ? (
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="-ml-2 h-7 self-start px-2 text-xs"
-					onClick={() => setOpen((v) => !v)}
-				>
-					{open ? 'Show less' : 'Read all'}
-				</Button>
-			) : null}
+			{draft.preview ? <ObjectPreviewMeta preview={draft.preview} /> : null}
+			<p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">{body}</p>
 		</section>
 	)
 }

@@ -25,6 +25,8 @@ struct ConversationListView: View {
 	var onSearchEverywhere: (String) -> Void = { _ in }
 	/// A suggested first message from the empty state, sent to the Chief of Staff.
 	var onSuggestion: (String) -> Void = { _ in }
+	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
+	var onThreads: (() -> Void)?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
@@ -60,8 +62,14 @@ struct ConversationListView: View {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
 			if store.displayOptions.showsFilterChips, !picking.isActive {
-				TeamFilterChips(chip: $store.chip, unreadCount: layout.unreadCount)
+				TeamFilterChips(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
 					.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
+			}
+			if let onThreads, !store.displayOptions.showsFilterChips, !store.threads.isEmpty, !picking.isActive {
+				ThreadsEntryRow(unread: store.threadSections.unreadCount, onOpen: onThreads)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 			}
 			if !layout.tiles.isEmpty {
 				Section {

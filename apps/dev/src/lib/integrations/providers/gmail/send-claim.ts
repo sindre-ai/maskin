@@ -29,6 +29,8 @@ export interface ApprovalRef {
 	actorId: string
 	/** The id of the decision comment (events.id) the person answered. */
 	approvalCommentId: number
+	/** One message of a card that carries several (`decision.drafts[].id`). Each is its own approval. */
+	draftId?: string
 }
 
 const stateFilter = (ref: ApprovalRef) =>
@@ -36,13 +38,17 @@ const stateFilter = (ref: ApprovalRef) =>
 		eq(events.workspaceId, ref.workspaceId),
 		eq(events.entityId, ref.integrationId),
 		sql`${events.data}->>'approval_comment_id' = ${String(ref.approvalCommentId)}`,
+		// A card with one draft has no draft id; a stacked card's messages each have one.
+		ref.draftId === undefined
+			? sql`${events.data}->>'approval_draft_id' is null`
+			: sql`${events.data}->>'approval_draft_id' = ${ref.draftId}`,
 		inArray(sql`${events.data}->>'gmail_action'`, [...STATES]),
 	)
 
 export async function claimApprovalForSend(db: Database, ref: ApprovalRef): Promise<boolean> {
 	return db.transaction(async (tx) => {
 		await tx.execute(
-			sql`select pg_advisory_xact_lock(hashtext(${`gmail-send:${ref.integrationId}:${ref.approvalCommentId}`}))`,
+			sql`select pg_advisory_xact_lock(hashtext(${`gmail-send:${ref.integrationId}:${ref.approvalCommentId}:${ref.draftId ?? ''}`}))`,
 		)
 		const [latest] = await tx
 			.select({ action: sql<string>`${events.data}->>'gmail_action'` })
@@ -61,6 +67,7 @@ export async function claimApprovalForSend(db: Database, ref: ApprovalRef): Prom
 				provider: 'gmail',
 				gmail_action: 'send_claim',
 				approval_comment_id: ref.approvalCommentId,
+				...(ref.draftId === undefined ? {} : { approval_draft_id: ref.draftId }),
 			},
 		})
 		return true
@@ -97,6 +104,7 @@ export async function settleApprovalSend(
 			provider: 'gmail',
 			gmail_action: outcome === 'released' ? 'send_released' : 'send_unknown',
 			approval_comment_id: ref.approvalCommentId,
+			...(ref.draftId === undefined ? {} : { approval_draft_id: ref.draftId }),
 		},
 	})
 }

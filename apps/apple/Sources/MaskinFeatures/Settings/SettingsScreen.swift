@@ -6,7 +6,8 @@ import SwiftUI
 /// Settings, presented by the shell as a sheet or destination. Owns its `NavigationStack` and a
 /// Done button.
 ///
-/// ACCOUNT: your profile. SETUP: the workspace's name, skills, object types and extensions (web).
+/// ACCOUNT: your profile. NOTIFICATIONS: push permission, preferences and Lock Screen flows
+/// (`NotificationsPage`). SETUP: the workspace's name, skills, object types and extensions (web).
 /// Members, Integrations, Billing and Keys & MCP are not here: they live in the profile sheet's
 /// WORKSPACE group (handoff `7-Chat.md` §10). Log out at the end.
 public struct SettingsScreen: View {
@@ -51,6 +52,11 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
 					}
 				}
+				Section("Notifications") {
+					NavigationLink(value: SettingsRoute.notifications) {
+						SettingsRow(symbol: "bell", title: "Notifications")
+					}
+				}
 				if services.workspaceId != nil {
 					Section {
 						NavigationLink(value: SettingsRoute.workspace) {
@@ -90,6 +96,17 @@ public struct SettingsScreen: View {
 					}
 				}
 				Section("About") {
+					// Signed in, privacy choices are the workspace's own settings on the web app.
+					if let url = services.webSettingsURL {
+						Button("Privacy & data") { openURL(url) }
+					}
+					// The public pages; a link only appears when its Info.plist key is set.
+					if let url = AuthConfig.current.privacyURL {
+						Button("Privacy policy") { openURL(url) }
+					}
+					if let url = AuthConfig.current.termsURL {
+						Button("Terms of Service") { openURL(url) }
+					}
 					LabeledContent("Version", value: Self.versionString)
 				}
 				// Its own centred red card, as the mockup draws it.
@@ -111,6 +128,7 @@ public struct SettingsScreen: View {
 			.navigationDestination(for: SettingsRoute.self) { route in
 				switch route {
 				case .profile: ProfileView(store: services.profileStore())
+				case .notifications: SettingsNotificationsPage(environment: environment)
 				case .workspace:
 					WorkspaceSettingsView(
 						store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
@@ -158,5 +176,27 @@ public struct SettingsScreen: View {
 		let version = info?["CFBundleShortVersionString"] as? String ?? "dev"
 		let build = info?["CFBundleVersion"] as? String
 		return build.map { "\(version) (\($0))" } ?? version
+	}
+}
+
+/// Notifications, pushed from Settings. Loads the workspace's flows itself for the Lock Screen
+/// group, since Settings has no flows list of its own.
+private struct SettingsNotificationsPage: View {
+	let environment: AppEnvironment
+	@State private var loops: LoopsStore?
+
+	init(environment: AppEnvironment) {
+		self.environment = environment
+		if let workspaceID = environment.workspaceId {
+			_loops = State(
+				initialValue: LoopsStore(
+					api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+					events: nil, cache: environment.snapshotCache))
+		}
+	}
+
+	var body: some View {
+		NotificationsPage(flows: loops?.loops ?? [], workspaces: environment.workspaces.workspaces)
+			.task { await loops?.refresh() }
 	}
 }

@@ -13,6 +13,7 @@ import {
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -234,8 +235,7 @@ export const relationships = pgTable(
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
-		// Applied live via migration 0074; hook itself gated on
-		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
 			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
@@ -317,10 +317,13 @@ export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' |
  * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
  * Keychain credentials only ever use 'read_write' (on/off): no row is off.
  */
-export type AgentGrantAccess = 'none' | 'read' | 'ask_first' | 'read_write'
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
 
-/** What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything else. */
-export type IntegrationDefaultAccess = 'read' | 'none'
+/**
+ * What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything
+ * else unless a person picked 'read_write' (every agent may write) or 'none'.
+ */
+export type IntegrationDefaultAccess = 'read' | 'read_write' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -356,7 +359,7 @@ export const integrations = pgTable(
 			.default('registered'),
 		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
 		displayName: text('display_name'),
-		// What an agent with no agent_grants row may do: 'read' (default) or 'none'.
+		// What an agent with no agent_grants row may do: 'read' (default), 'read_write' or 'none'.
 		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
 		defaultAgentAccess: text('default_agent_access')
 			.$type<IntegrationDefaultAccess>()
@@ -397,7 +400,7 @@ export const integrations = pgTable(
 		),
 		check(
 			'integrations_default_agent_access_enum',
-			sql`${t.defaultAgentAccess} IN ('read', 'none')`,
+			sql`${t.defaultAgentAccess} IN ('read', 'read_write', 'none')`,
 		),
 		check(
 			'integrations_source_enum',
@@ -440,10 +443,7 @@ export const agentGrants = pgTable(
 	(t) => [
 		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
 		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
-		check(
-			'agent_grants_access_enum',
-			sql`${t.access} IN ('none', 'read', 'ask_first', 'read_write')`,
-		),
+		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
@@ -591,11 +591,8 @@ export const triggers = pgTable('triggers', {
 	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
 	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
 	escalateAfterMs: integer('escalate_after_ms'),
-	// D6b idempotency guard: the last time the escalation reconciler posted
-	// an escalation comment for this step. The reconciler skips a step whose
-	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
-	// timestamp for the hands-off actor), so a new wait spell re-arms
-	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
 	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
@@ -1146,6 +1143,12 @@ export const voiceSessions = pgTable('voice_sessions', {
 	transcriptStorageKey: text('transcript_storage_key'),
 	inputAudioSeconds: integer('input_audio_seconds'),
 	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
 	inputTokens: integer('input_tokens'),
 	outputTokens: integer('output_tokens'),
 	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
@@ -2135,6 +2138,89 @@ export const deviceTokens = pgTable(
 	],
 )
 
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+//
+// One row per browser push subscription (RFC 8030 / 8291). Kept apart from `device_tokens`,
+// whose APNs token is a hex string used as a URL path segment toward Apple; a browser
+// subscription is an opaque endpoint URL plus an encryption key pair. `endpoint` is unique so
+// re-subscribing from the same browser upserts, and a browser that changes hands moves to the
+// new actor. The p256dh/auth keys are per-subscription secrets: never logged, never returned
+// by the API. Cascades with the actor.
+
+export const webPushSubscriptions = pgTable(
+	'web_push_subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		endpoint: text('endpoint').notNull(),
+		p256dh: text('p256dh').notNull(),
+		auth: text('auth').notNull(),
+		userAgent: text('user_agent'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('web_push_subscriptions_endpoint_uniq').on(t.endpoint),
+		index('web_push_subscriptions_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
+// ── Notification preferences ────────────────────────────────────────────────
+//
+// Per-actor push policy settings (quiet hours, categories, muted workspaces,
+// morning briefing). One row per actor; a missing row means all defaults.
+// quiet_hours_* are minutes from local midnight in `timezone` (null => UTC).
+
+export const notificationPreferences = pgTable(
+	'notification_preferences',
+	{
+		actorId: uuid('actor_id')
+			.primaryKey()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		timezone: text('timezone'),
+		quietHoursStart: smallint('quiet_hours_start'),
+		quietHoursEnd: smallint('quiet_hours_end'),
+		categories: jsonb('categories')
+			.$type<Record<string, boolean>>()
+			.notNull()
+			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
+		briefingTime: smallint('briefing_time').notNull().default(510),
+		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
+		// Local date (in `timezone`) of the last daily briefing push; the scheduler claims a day
+		// with one conditional UPDATE, so it is sent once across restarts and replicas. Migration 0105.
+		briefingLastSentOn: date('briefing_last_sent_on', { mode: 'string' }),
+		// One-time lifecycle pushes already sent: { first_task, activation, reminder_at,
+		// 'reminded:<notification id>' } -> ISO timestamp. Migration 0105.
+		lifecycleSent: jsonb('lifecycle_sent')
+			.$type<Record<string, string>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'notification_preferences_quiet_start_chk',
+			sql`${t.quietHoursStart} IS NULL OR (${t.quietHoursStart} >= 0 AND ${t.quietHoursStart} <= 1439)`,
+		),
+		check(
+			'notification_preferences_quiet_end_chk',
+			sql`${t.quietHoursEnd} IS NULL OR (${t.quietHoursEnd} >= 0 AND ${t.quietHoursEnd} <= 1439)`,
+		),
+		check(
+			'notification_preferences_briefing_time_chk',
+			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+	],
+)
+
+export type NotificationPreferencesRow = typeof notificationPreferences.$inferSelect
+
 // ── Live Activity tokens ────────────────────────────────────────────────────
 //
 // ActivityKit push tokens. Two kinds share one table:
@@ -2340,3 +2426,42 @@ export const triggerEventQueue = pgTable(
 
 export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
 export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
+
+// A device (Apple TV) asking to be signed in by a person who is already signed in elsewhere:
+// the OAuth device-authorization pattern (RFC 8628). The device shows `user_code`; the person
+// types it into maskin.io/tv on a phone or laptop and approves; the device, polling with
+// `device_code`, then receives the actor's session exactly as `POST /api/auth/login` would give it.
+//
+// Both codes are stored only as SHA-256 hashes, so a database read cannot be replayed as a sign-in.
+// A row is single-use (`approved` -> `consumed` in one UPDATE) and short-lived (`expires_at`).
+export const deviceAuthCodes = pgTable(
+	'device_auth_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		deviceCodeHash: text('device_code_hash').notNull(),
+		userCodeHash: text('user_code_hash').notNull(),
+		// Which client is asking ('tvos'); the approver sees it so they know what they are signing in.
+		clientSource: text('client_source').notNull(),
+		deviceName: text('device_name'),
+		// pending -> approved -> consumed, or pending -> denied.
+		status: text('status').notNull().default('pending'),
+		// Who approved. Null until then.
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('device_auth_codes_device_code_hash_uniq').on(t.deviceCodeHash),
+		uniqueIndex('device_auth_codes_user_code_hash_uniq').on(t.userCodeHash),
+		index('device_auth_codes_expires_at_idx').on(t.expiresAt),
+		check(
+			'device_auth_codes_status_check',
+			sql`${t.status} IN ('pending','approved','denied','consumed')`,
+		),
+	],
+)
+
+export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
+export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert

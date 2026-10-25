@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { useContinueSession } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import {
@@ -63,6 +64,8 @@ export function KeychainRequestCard({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const { data: integrations } = useIntegrations(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
+	// A helper is not in this chat and was stopped to take the key, so its follow-up carries on.
+	const continueSession = useContinueSession(workspaceId, conversationId)
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
 	const agents = useMemo(() => {
@@ -135,9 +138,17 @@ export function KeychainRequestCard({
 			}
 			const vars = keychainEnvNames(request.kind, displayName)
 			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
+			if (request.reply_to_session) {
+				continueSession.mutate({
+					id: request.session_id,
+					content: `I've saved ${displayName} to the Keychain${where}. Carry on with the work.`,
+				})
+				return
+			}
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've saved ${displayName} to the Keychain${where}. Please carry on.`,
+				content: `I've saved ${displayName} to the Keychain${where}. Reply with one short line to say you have it, then carry on.`,
+				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {
 			setError(
@@ -176,7 +187,7 @@ export function KeychainRequestCard({
 
 	return (
 		<form
-			className="mt-2 flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
+			className="mt-2 flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
 			aria-label={isLogin ? 'Add a login to the Keychain' : 'Add an API key to the Keychain'}
 			onSubmit={(e) => {
 				e.preventDefault()

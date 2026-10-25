@@ -39,6 +39,7 @@ import conversationsRoutes from './routes/conversations'
 // import desktopTeachRoutes from './routes/desktop-teach'
 import customMcpServersRoutes from './routes/custom-mcp-servers'
 import desktopRoutes from './routes/desktop'
+import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -52,19 +53,23 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
+import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
+import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -74,9 +79,11 @@ import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
+import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
+import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -134,6 +141,9 @@ export interface CreateAppOptions {
 	 */
 	onNodeWebSocket?: (nodeWebSocket: NodeWebSocket) => void
 }
+
+const STATIC_FILE_PATH_RE =
+	/^\/(assets|fonts)\/|\.(js|mjs|css|map|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|xml|webmanifest)$/i
 
 const OPENAPI_INFO = {
 	title: 'Maskin Dev Workspace API',
@@ -288,6 +298,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/device-auth/start and /token: a keyboard-less device (Apple TV) asking to be
+	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
+	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
+	//     DO go through auth).
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -308,6 +322,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (
+			method === 'POST' &&
+			(path === '/api/device-auth/start' || path === '/api/device-auth/token')
+		) {
+			return next()
+		}
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -374,8 +394,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// reading the `X-Maskin-Session-Id` header once at the boundary and
 	// stashing it on the context. Any route that then calls `recordEvent`
 	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
-	// gets a `session → object|file` `produced_by` edge for free (gated on
-	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// gets a `session → object|file` `produced_by` edge for free. Non-mutating
 	// requests are unaffected; requests without the header — human writes
 	// direct from the UI — leave the context value undefined and no edge
 	// lands, exactly the intended contract.
@@ -389,6 +408,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
@@ -399,6 +419,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
+	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
@@ -423,8 +444,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
@@ -451,7 +474,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
+	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
+	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
@@ -468,6 +493,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
+	app.route('/api/transcriptions', transcriptionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
@@ -518,6 +544,15 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			}),
 		)
 		app.get('*', (c) => {
+			// A path under /assets/ or /fonts/, or one naming a static file, is a missing file
+			// rather than a client route. Answering it with index.html and a 200 lets a CDN cache
+			// HTML under a .js URL (Cloudflare caches by extension, 4h), so every browser that loads
+			// the module script gets "MIME type of text/html" and a blank page until it expires.
+			// This happens when a request for a new bundle lands before the new build is live.
+			if (STATIC_FILE_PATH_RE.test(c.req.path)) {
+				c.header('Cache-Control', 'no-store')
+				return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+			}
 			try {
 				const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
 				return c.html(html)

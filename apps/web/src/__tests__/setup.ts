@@ -203,3 +203,19 @@ export function createWorkspaceWrapper(
 			),
 		)
 }
+
+// The editor's bubble menu does `import tippy from 'tippy.js'`. tippy.js ships
+// CommonJS as its main entry, so under Vitest that import is the exports object and
+// the first editor transaction throws "tippy is not a function". Positioning is not
+// under test in jsdom, so stand in a no-op popper.
+vi.mock('tippy.js', () => {
+	const tippy = () => ({
+		popper: document.createElement('div'),
+		state: { isVisible: false },
+		setProps: () => {},
+		show: () => {},
+		hide: () => {},
+		destroy: () => {},
+	})
+	return { default: tippy, roundArrow: '' }
+})

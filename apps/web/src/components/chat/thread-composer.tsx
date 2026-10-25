@@ -1,6 +1,5 @@
 import { Composer } from '@/components/chat/chat'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -13,6 +12,8 @@ const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
+	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
+	fillRequest?: { text?: string; nonce: number } | null
 }
 
 /**
@@ -26,7 +27,7 @@ interface ThreadComposerProps {
  * responder pipeline's mention fast-path auto-joins them as participants if
  * they weren't one already.
  */
-export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerProps) {
+export function ThreadComposer({ workspaceId, conversationId, fillRequest }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
@@ -119,15 +120,9 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
 		firstMentionName ?? conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
-	// Task 6321aecf: same boundary as `<Composer>`'s `+` menu switch — when the
-	// flag is ON and there is no named counterpart, promote `/` and `@` in the
-	// placeholder rather than falling back to the generic phrase.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const placeholder = counterpart
 		? `Reply to ${counterpart}…`
-		: plusMenuAttachOnly
-			? 'Message… / reference or create · @ mention'
-			: 'Message this conversation'
+		: 'Message… / reference or create · @ mention'
 
 	return (
 		<Composer
@@ -151,6 +146,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			// would make the same control a different control to a screen reader.
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
+			fillRequest={fillRequest}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}

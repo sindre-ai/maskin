@@ -12,7 +12,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * WebSocket. What this spec proves is the wiring and layout: that opening the page never starts or wakes a computer on its own, the ticket
  * hand-off, error and retry states, the popup, and no horizontal overflow at the
  * ship-gate viewports. The live VNC picture is covered by the manual run in
- * docker/desktop-test/README.md.
+ * docker/desktop/README.md.
  */
 
 const CONNECT = /\/api\/desktop\/connect/
@@ -88,7 +88,7 @@ test.describe("An agent's computer", () => {
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
 			await expect(page.getByRole('button', { name: 'Wake up' })).toBeVisible()
-			await expect(page.getByText('Asleep')).toBeVisible()
+			await expect(page.getByText('Asleep', { exact: true })).toBeVisible()
 			await expectNoHorizontalOverflow(page)
 			expect(connectCalls).toBe(0)
 		})
@@ -139,7 +139,9 @@ test.describe("An agent's computer", () => {
 
 			const dialog = page.getByRole('dialog')
 			await expect(dialog).toBeVisible()
-			await expect(dialog.getByRole('toolbar', { name: 'Computer controls' })).toBeVisible()
+			// The controls float under the picture once it is live; until then the collapse
+			// button in the corner is what is there.
+			await expect(dialog.getByRole('button', { name: 'Close popup' })).toBeVisible()
 			const box = await dialog.boundingBox()
 			if (!box) throw new Error('popup not laid out')
 			expect(box.width).toBeLessThanOrEqual(vp.width)
@@ -169,11 +171,11 @@ test.describe("An agent's computer", () => {
 				}),
 			})
 		})
+		// Observed, not intercepted: noVNC rejects Playwright's mocked socket, and the real
+		// server refuses the fake ticket, which is the failure this test expects to see.
 		const streamUrl = new Promise<string>((resolve) => {
-			void page.routeWebSocket(/\/api\/desktop\/stream/, (ws) => {
-				resolve(ws.url())
-				// Close before any VNC handshake: the page must report it never came up.
-				void ws.close()
+			page.on('websocket', (ws) => {
+				if (/\/api\/desktop\/stream/.test(ws.url())) resolve(ws.url())
 			})
 		})
 

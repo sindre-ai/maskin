@@ -114,8 +114,12 @@ const envSchema = z.object({
 	// Image to keep present in libkrun's host cache so session spawns can skip
 	// the network pull. Unset disables warming entirely.
 	WARM_POOL_IMAGE: z.string().optional(),
-	// Desktop image for per-workspace noVNC desktops (docker/desktop-test).
-	DESKTOP_IMAGE: z.string().optional().default('desktop:latest'),
+	// Desktop image for per-workspace noVNC desktops (docker/desktop). Built and pushed
+	// by .github/workflows/desktop-docker.yml. Desktops are created with `--pull always`,
+	// so a new desktop picks up the newest `latest` without restarting the agent-server.
+	// Never default this to a bare name like `desktop:latest`: msb resolves it as
+	// docker.io/library/desktop, every provision then fails with "Not authorized".
+	DESKTOP_IMAGE: z.string().optional().default('magnusnoeddegaard/maskin-desktop:latest'),
 	// Suspend idle desktops to a full memory snapshot and restore them on demand,
 	// so windows, browser tabs and unsaved input come back exactly as left. Needs
 	// msb >= 0.7 (`msb snapshot create --full`); on older msb leave it off and a

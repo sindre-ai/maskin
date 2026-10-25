@@ -170,13 +170,13 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
-	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+	it('defaults ANTHROPIC_MODEL to Sonnet when agent has no model preference', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
 			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
 		})
-		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
@@ -318,6 +318,18 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+	})
+
+	it('4a. workspace api_key route defaults to Sonnet when the agent has no model', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {

@@ -167,12 +167,18 @@ export function SlashMenuPanel({
 				</Command.List>
 			</Command>
 		) : (
-			<Command shouldFilter={false} value={selectedId} onValueChange={onSelectedChange} label="Blocks">
+			<Command
+				shouldFilter={false}
+				value={selectedId}
+				onValueChange={onSelectedChange}
+				label="Blocks"
+			>
 				<div className={HEADER_CLASS}>{mobile ? 'Insert block' : 'Blocks'}</div>
 				<Command.List
 					className={cn(
 						// Desktop scrolls inside the popover itself, which already caps its height.
-						mobile && 'max-h-[50dvh] overflow-auto [&_[cmdk-list-sizer]]:grid [&_[cmdk-list-sizer]]:grid-cols-3 [&_[cmdk-list-sizer]]:gap-1',
+						mobile &&
+							'max-h-[50dvh] overflow-auto [&_[cmdk-list-sizer]]:grid [&_[cmdk-list-sizer]]:grid-cols-3 [&_[cmdk-list-sizer]]:gap-1',
 					)}
 				>
 					<Command.Empty className="px-2.5 py-3 text-[12.5px] text-muted-foreground">
@@ -202,23 +208,23 @@ export function SlashMenuPanel({
 
 	// Focus stays in the editor, so announce the highlighted row whenever it moves.
 	const announcement = (
-		<span role="status" className="sr-only">
+		<output className="sr-only">
 			{highlightAnnouncement({ step, items, selectedId, selectedLanguageId })}
-		</span>
+		</output>
 	)
 
 	if (mobile) {
 		return (
-			<div
-				role="dialog"
+			<dialog
+				open
 				aria-label="Insert block"
 				onMouseDown={keepEditorFocus}
 				style={{ bottom: keyboardInset }}
-				className="fixed inset-x-0 z-50 rounded-t-2xl border-t border-border bg-popover p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-popover-foreground shadow-xl"
+				className="fixed inset-x-0 z-50 m-0 w-auto rounded-t-2xl border-t border-border bg-popover p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-popover-foreground shadow-xl"
 			>
 				{announcement}
 				{body}
-			</div>
+			</dialog>
 		)
 	}
 

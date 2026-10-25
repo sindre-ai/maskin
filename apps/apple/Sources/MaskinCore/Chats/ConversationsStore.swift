@@ -33,6 +33,10 @@ public final class ConversationsStore {
 	public private(set) var hasMore = false
 	public private(set) var isLoadingMore = false
 	public private(set) var actors: [ChatActor] = []
+	/// Threads you are in, newest activity first (the Threads screen and its chip count).
+	public private(set) var threads: [ThreadListItem] = []
+	@ObservationIgnored private var refreshingThreads = false
+	public var threadSections: ThreadListSections { ThreadListSections(threads) }
 	/// Last mutation error (pin/archive/read), surfaced by the screen as a transient notice.
 	public var notice: String?
 	public var scope: Scope = .active {
@@ -236,8 +240,10 @@ public final class ConversationsStore {
 					case .reconnected:
 						await self.refresh()
 						await self.refreshArchived()
+						await self.refreshThreads()
 					case .event(let event) where event.entityType == .conversation:
 						await self.refresh()
+						await self.refreshThreads()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
 						await self.refreshActors()
@@ -252,7 +258,8 @@ public final class ConversationsStore {
 		async let archived: Void = refreshArchived()
 		async let flows: Void = refreshFlowRooms()
 		async let people: Void = refreshActors()
-		_ = await (main, archived, flows, people)
+		async let threadRows: Void = refreshThreads()
+		_ = await (main, archived, flows, people, threadRows)
 	}
 
 	public func stop() {
@@ -316,6 +323,14 @@ public final class ConversationsStore {
 	public func loadActors() async {
 		guard actors.isEmpty else { return }
 		await refreshActors()
+	}
+
+	/// Reload the Threads screen's rows. A failure keeps what is shown; the screen is secondary.
+	public func refreshThreads() async {
+		guard !refreshingThreads else { return }
+		refreshingThreads = true
+		defer { refreshingThreads = false }
+		if let rows = try? await api.threads(limit: 50) { threads = rows }
 	}
 
 	public func refreshActors() async {

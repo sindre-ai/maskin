@@ -34,6 +34,9 @@ vi.mock('@/components/agents/agent-usage-block', () => ({
 vi.mock('@/components/agents/agent-sessions-section', () => ({
 	AgentSessionsSection: () => null,
 }))
+vi.mock('@/components/agents/agent-triggers-section', () => ({
+	AgentTriggersSection: () => null,
+}))
 vi.mock('@/components/agents/agent-loops-section', () => ({
 	AgentLoopsSection: () => null,
 }))

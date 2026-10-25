@@ -604,7 +604,9 @@ function buildMaskinPlanEnv(
  * `enterprise` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
- * (the routes that don't already carry an explicit model of their own). Route
+ * (the routes that don't already carry an explicit model of their own). When it
+ * is unset they get CLAUDE_SUBSCRIPTION_MODEL instead: the Claude CLI's own
+ * default is not Sonnet, and an API key bills per token. Route
  * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
  * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
  * workspace/operator config and are left as-is.
@@ -620,7 +622,7 @@ function buildMaskinPlanEnv(
  * pre-flight and the post-hoc "the OAuth route produced nothing" check below
  * go through here so the two can't drift apart.
  */
-function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
 	return isClaudeFailoverEnabled(env)
 		? Boolean(resolveActiveSlot(claudeOauth))
 		: Boolean(readSlots(claudeOauth).primary)
@@ -667,9 +669,9 @@ export async function resolveLlmRoute(params: {
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
 			if (enterprise) {
-				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
-				if (agent.model) {
-					envVars.ANTHROPIC_MODEL = agent.model
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: agent.apiKey,
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 				}
 				return { route: LLM_ROUTE_AGENT, envVars }
 			}
@@ -786,9 +788,9 @@ export async function resolveLlmRoute(params: {
 		// 4. Workspace anthropic api key
 		const wsAnthropic = wsSettings.llm_keys?.anthropic
 		if (wsAnthropic) {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
+			const envVars: Record<string, string> = {
+				ANTHROPIC_API_KEY: wsAnthropic,
+				ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 			}
 			return { route: LLM_ROUTE_API_KEY, envVars }
 		}

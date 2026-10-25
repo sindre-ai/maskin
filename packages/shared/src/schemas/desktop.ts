@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // Agent control of the workspace desktop (see apps/agent-server/src/services/
-// workspace-desktop.ts and docker/desktop-test/desktopd.py). The same schema is
+// workspace-desktop.ts and docker/desktop/desktopd.py). The same schema is
 // enforced twice: here at the apps/dev boundary, and again inside the VM by
 // desktopd, which is the last line of defence before anything reaches xdotool.
 

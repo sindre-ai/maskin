@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
 import {
+	agentGrants,
 	conversationParticipants,
 	integrations,
 	sessions,
@@ -24,6 +25,7 @@ import {
 	RELAUNCH_TERMINAL_CAP_MS,
 	relaunchChatSession,
 } from '../../services/chat-relaunch'
+import { returnToSender } from '../../services/helper-return'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -481,6 +483,116 @@ describe('after a vault, the relaunched session has the key; after undo, the nex
 		} finally {
 			await manager.stop()
 		}
+	})
+
+	it('injects a key into an agent with no entry once its default is Full access, and not into one set to No access', async () => {
+		const chat = await setupChat()
+		const control = fakeSessionControl()
+		const app = appFor(chat.human, control)
+		const { integrationId } = (await (await capture(app as never, chat, 'Coolify')).json()) as {
+			integrationId: string
+		}
+		// Capture granted this agent; clear that so the default is the only thing in play.
+		await db.delete(agentGrants).where(eq(agentGrants.integrationId, integrationId))
+
+		const manager = new SessionManager(db, stubStorage())
+		const launch = async () => {
+			const s = await insertSession(db, chat.ws.id, chat.agent.id, chat.human, {
+				status: 'pending',
+				containerId: null,
+			})
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, s.id))
+			return (await manager.buildLaunchSpec(row as typeof sessions.$inferSelect)).env
+		}
+		try {
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
+
+			await db
+				.update(integrations)
+				.set({ defaultAgentAccess: 'read' })
+				.where(eq(integrations.id, integrationId))
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(FAKE_KEY)
+
+			await db.insert(agentGrants).values({
+				workspaceId: chat.ws.id,
+				integrationId,
+				actorId: chat.agent.id,
+				access: 'none',
+			})
+			expect((await launch()).KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
+		} finally {
+			await manager.stop()
+		}
+	})
+})
+
+describe('chat capture for a helper session (Integration)', () => {
+	/** A helper another agent started from the chat: no chat of its own, asks in the chat. */
+	async function setupHelper() {
+		const chat = await setupChat()
+		const helper = await insertSession(db, chat.ws.id, chat.agent.id, chat.human, {
+			conversationId: null,
+			interactive: true,
+			status: 'running',
+			spawnedBySessionId: chat.session.id,
+			config: {
+				stop_on_result: true,
+				notify_on_complete: true,
+				ask_conversation_id: chat.conversation.id,
+				origin_conversation_id: chat.conversation.id,
+			},
+		})
+		return { ...chat, helper }
+	}
+	const captureFor = (app: OpenAPIHono<never>, chat: Awaited<ReturnType<typeof setupHelper>>) =>
+		app.request('/api/integrations/chat-capture', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'x-workspace-id': chat.ws.id },
+			body: JSON.stringify({
+				sessionId: chat.helper.id,
+				providerMode: 'byo_apikey',
+				detectedProvider: 'manual',
+				displayName: 'Helper key',
+				rawSecret: FAKE_KEY,
+				fromCard: true,
+				agentIds: [chat.agent.id],
+			}),
+		})
+
+	it('lets a person in the chat the helper was started from save the key, and stops the helper for a follow-up', async () => {
+		const chat = await setupHelper()
+		const control = fakeSessionControl()
+		const res = await captureFor(appFor(chat.human, control) as never, chat)
+		expect(res.status).toBe(201)
+		expect(((await res.json()) as { relaunch: string }).relaunch).toBe('stopped')
+
+		expect(control.stopSession).toHaveBeenCalledWith(chat.helper.id)
+		expect(await statusOf(chat.helper.id)).toBe('user_stopped')
+		// The chat's own session is not the helper and is left alone.
+		expect(await statusOf(chat.session.id)).toBe('running')
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, chat.helper.id))
+		expect((row?.config as { relaunching?: boolean }).relaunching).toBe(true)
+	})
+
+	it('does not tell the sender a person stopped the helper when it was stopped to take the key', async () => {
+		const chat = await setupHelper()
+		const control = fakeSessionControl()
+		expect((await captureFor(appFor(chat.human, control) as never, chat)).status).toBe(201)
+
+		const out = await returnToSender(db, chat.helper.id)
+		expect(out).toEqual({ returned: false, reason: 'relaunching' })
+	})
+
+	it('refuses someone who is not in the chat the helper was started from', async () => {
+		const chat = await setupHelper()
+		await db
+			.delete(conversationParticipants)
+			.where(eq(conversationParticipants.conversationId, chat.conversation.id))
+		const control = fakeSessionControl()
+		const res = await captureFor(appFor(chat.human, control) as never, chat)
+		expect(res.status).toBe(403)
+		expect(control.stopSession).not.toHaveBeenCalled()
+		expect(await statusOf(chat.helper.id)).toBe('running')
 	})
 })
 

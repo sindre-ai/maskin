@@ -64,6 +64,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { resolveChatIdleCloseMs } from '../config/session-idle'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -95,7 +96,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
 	attachesServer,
@@ -590,10 +591,12 @@ export class SessionManager extends EventEmitter {
 	 * How long an interactive conversation session may sit with no log
 	 * activity (no user turn, no agent output) before the watchdog closes it
 	 * gracefully as `completed`. Well below the 2h hard timeout: an idle chat
-	 * container serves no one, and the conversation responder transparently
-	 * spawns a fresh session (seeded with history) on the next message.
+	 * container serves no one and holds an agent-server slot that queued
+	 * background sessions are waiting for, and the conversation responder
+	 * transparently spawns a fresh session (seeded with history) on the next
+	 * message. 15 min by default; CHAT_IDLE_CLOSE_MINUTES overrides it.
 	 */
-	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
+	private readonly chatIdleCloseMs = resolveChatIdleCloseMs()
 	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
@@ -2288,21 +2291,34 @@ export class SessionManager extends EventEmitter {
 		// agent into calling the MCP tool — it has to tell the agent that its
 		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
 		const helperPreamble =
 			sessionConfig.stop_on_result === true
-				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself.\n\n'
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
-		const accessPreamble = buildAccessPreamble(accessRows)
+		// A person can answer a card in a chat, and for a helper started from one.
+		const personReachable =
+			Boolean(sessionConfig.conversation) ||
+			(sessionConfig.stop_on_result === true &&
+				(typeof sessionConfig.ask_conversation_id === 'string' ||
+					typeof sessionConfig.origin_conversation_id === 'string'))
+		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
+		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
+		// in its reply, and the later instruction is the one that is followed.
+		const askWithButtonsRule =
+			sessionConfig.conversation || sessionConfig.stop_on_result === true
+				? '\n\n## Asking the person\nWhen you want the person to choose, confirm or decide something that fits in 2 to 4 options, never write that question in your reply. Call the ask_user_question tool instead, with your recommended option first and the reason in its description, and end your turn without repeating the question. This overrides any instruction above to ask a follow-up question in your reply. A question that needs a free-text answer can still be written.'
+				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2406,7 +2422,28 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.INTERACTIVE = '1'
 			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
 			// through the system prompt instead.
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
+			// A follow-up to a helper that ended: say what the agent did before, so the person's
+			// message (the prompt) can be read as what it is, a reply to that work.
+			const cont = session.config as {
+				continues_session_id?: unknown
+				continues_prompt?: unknown
+				continues_chain?: unknown
+			} | null
+			const continuation =
+				typeof cont?.continues_session_id === 'string'
+					? `
+
+## Earlier work
+You finished some work earlier in this chat and the person is now writing to you about it. ${
+							typeof cont.continues_prompt === 'string' && cont.continues_prompt
+								? `What you were asked then:
+${cont.continues_prompt}
+
+`
+								: ''
+						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
+					: ''
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
@@ -3254,11 +3291,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
 					sql`NOT (${integrations.config} @> '{"expose_to_agent_sessions":false}'::jsonb)`,
-					// Explicit grant only: a Keychain credential has no default access. Written as
-					// literal qualified SQL, not Drizzle column objects: a correlated subquery built
-					// from those renders unqualified (known-pitfalls.md).
+					// The same rule as effectiveAccess: the agent's own grant ('none' is off), else the
+					// credential's default ('none' unless a person set it to 'read', meaning every agent).
+					// Written as literal qualified SQL, not Drizzle column objects: a correlated subquery
+					// built from those renders unqualified (known-pitfalls.md).
 					// An Allow for this one chat counts too, but only for sessions in that conversation.
-					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId}) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
+					sql`(EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId} AND agent_grants.access <> 'none') OR (integrations.default_agent_access = 'read' AND NOT EXISTS (SELECT 1 FROM agent_grants WHERE agent_grants.integration_id = integrations.id AND agent_grants.actor_id = ${session.actorId})) OR EXISTS (SELECT 1 FROM agent_chat_grants WHERE agent_chat_grants.integration_id = integrations.id AND agent_chat_grants.actor_id = ${session.actorId} AND agent_chat_grants.conversation_id = ${session.conversationId ?? null}))`,
 				),
 			)
 			.orderBy(asc(integrations.createdAt))
@@ -4785,6 +4823,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// after it, and its duration is logged once per pass.
 		const passStartedAt = Date.now()
 		const stepDurationsMs: Record<string, number> = {}
+		let queuedForCapacity: number | null = null
 		const runStep = async (name: string, step: () => Promise<void>): Promise<void> => {
 			const stepStartedAt = Date.now()
 			try {
@@ -4976,7 +5015,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			// NULL`) is intentionally gone — every terminal writer now stamps
 			// session_state='done' via settleSession, and §16.2 collapses to five
 			// sections; the primary wall-timeout above catches every stuck row.
-			const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
+			const chatIdleCutoff = new Date(Date.now() - this.chatIdleCloseMs)
 			const idleChatCandidates = await this.db
 				.select()
 				.from(sessions)
@@ -5035,6 +5074,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				// idle; if it's still running, leave the reattach loop in
 				// streamContainerLogs to recover and try again next tick.
 				if (!session.containerId) {
+					// A row still waiting for a workspace or agent-server slot has no
+					// container yet, however long its last log line is. It is not
+					// dead; the dispatcher stamps it running once it starts. How long
+					// a row may wait is bounded by the waiting-bound step, not here.
+					if (session.status !== 'running') continue
+
 					// A `running` row with no containerId is unrecoverable — pauseSession
 					// would reject on the same guard and the watchdog would log-spam
 					// every minute forever. Route to terminal-failed instead.
@@ -5401,10 +5446,53 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 		})
 
+		await runStep('queue-depth', async () => {
+			// 11. Queue depth — sessions waiting for a slot, either a workspace
+			// session budget (status='queued') or an agent-server machine
+			// (session_state='waiting_for_machine'). A non-zero count means work is
+			// stuck behind full slots; alert on this line. Read-only.
+			const queued = await this.getQueuedForCapacity()
+			queuedForCapacity = queued.count
+			if (queued.count > 0) {
+				logger.warn('Sessions queued for capacity', {
+					queuedForCapacity: queued.count,
+					oldestWaitSeconds:
+						queued.oldestWaitMs === null ? null : Math.round(queued.oldestWaitMs / 1000),
+				})
+			}
+		})
+
 		logger.info('Session watchdog pass complete', {
 			totalMs: Date.now() - passStartedAt,
+			queuedForCapacity,
 			stepDurationsMs,
 		})
+	}
+
+	/**
+	 * How many live sessions are waiting for a slot, and how long the oldest has
+	 * waited. Counts both queues: the per-workspace session budget
+	 * (status='queued') and the agent-server's machine slots
+	 * (session_state='waiting_for_machine'). Terminal rows never count.
+	 */
+	async getQueuedForCapacity(): Promise<{ count: number; oldestWaitMs: number | null }> {
+		const [row] = await this.db
+			.select({
+				count: countFn(),
+				oldest: sql<
+					Date | string | null
+				>`min(coalesce(${sessions.stateEnteredAt}, ${sessions.createdAt}))`,
+			})
+			.from(sessions)
+			.where(
+				and(
+					notInArray(sessions.status, [...TERMINAL_STATUSES]),
+					or(eq(sessions.status, 'queued'), eq(sessions.sessionState, 'waiting_for_machine')),
+				),
+			)
+		const count = Number(row?.count ?? 0)
+		const oldest = row?.oldest ? new Date(row.oldest) : null
+		return { count, oldestWaitMs: oldest ? Math.max(0, Date.now() - oldest.getTime()) : null }
 	}
 
 	private async reportSkillPullFailures(

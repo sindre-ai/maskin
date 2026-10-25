@@ -185,8 +185,18 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-	// Clean all data except the test actor
-	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+	// Clean all data except the test actor. A previous test can leave fire-and-forget work running
+	// (e.g. the new agent's intro chat), which takes row locks that TRUNCATE's table locks can
+	// deadlock against. Postgres aborts one side; retrying the cleanup is safe.
+	for (let attempt = 1; ; attempt++) {
+		try {
+			await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+			break
+		} catch (err) {
+			if ((err as { code?: string }).code !== '40P01' || attempt >= 5) throw err
+			await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
+		}
+	}
 
 	// actors.default_workspace_id references workspaces, so Postgres cascades the
 	// TRUNCATE above into actors (CASCADE follows FK definitions, not row data) and

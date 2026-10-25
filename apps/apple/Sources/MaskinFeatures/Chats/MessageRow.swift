@@ -48,6 +48,32 @@ struct ThreadDivider: View {
 	}
 }
 
+/// A system line in the chat ("Sales Rep sent the connection request"): a small teal marker, the
+/// words, and the time on the right. Not a bubble and not a divider.
+struct SystemLine: View {
+	let message: ChatMessage
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			RoundedRectangle(cornerRadius: MaskinSpace.s1, style: .continuous)
+				.fill(MaskinColor.sig)
+				.frame(width: MaskinSpace.s3 + 1, height: MaskinSpace.s3 + 1)
+				.accessibilityHidden(true)
+			Text(message.content)
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink5)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			if let time = message.createdAt {
+				RelativeTime(time, style: .clock)
+					.font(MaskinTypeface.sans(MaskinFontSize.t11, relativeTo: .caption2))
+					.foregroundStyle(MaskinColor.inkPlaceholder)
+			}
+		}
+		.padding(.vertical, MaskinSpace.s4)
+		.accessibilityElement(children: .combine)
+	}
+}
+
 /// What a message attaches: photos as pictures (one large, several as tiles) and every other file
 /// as a chip. Each opens the file.
 struct MessageAttachments: View {
@@ -144,8 +170,17 @@ struct MessageRow: View {
 	var onRetrySend: () -> Void = {}
 	/// Swipe right (and the menu's Reply) start a reply; nil when there is nothing to quote.
 	var onReply: (() -> Void)?
+	/// The thread under this message, when it has replies; the pill under the bubble opens it.
+	var threadSummary: ThreadSummary?
+	var onOpenThread: () -> Void = {}
+	/// Tap on an emoji chip under the bubble (add or take back).
+	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	var onSelectVersion: (Int) -> Void = { _ in }
+	/// A person approved a draft shown as a card in this message: its title and the text approved.
+	/// The thread tells the agent.
+	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	@Environment(\.linkedItems) private var linked
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -170,6 +205,7 @@ struct MessageRow: View {
 	private func perform(_ title: String) {
 		switch title {
 		case "Reply": actions.onReply?()
+		case "Reply in thread": actions.onThread?()
 		case "Copy": actions.onCopy?()
 		case "Pin", "Unpin": actions.onPin?()
 		case "Edit": actions.onEdit?()
@@ -190,6 +226,45 @@ struct MessageRow: View {
 	/// The body with each tagged `@Name` marked so the renderer draws it bold.
 	private var markdownText: String {
 		mentions.isEmpty ? bodyText : MentionText.markdown(bodyText, mentions: mentions)
+	}
+
+	// MARK: Linked cards
+
+	/// Drafts and pages an agent links to are drawn as cards: in place where the link stands alone,
+	/// under the bubble where it sits in a sentence. Not for your own words, and only once the store
+	/// knows which links deserve a card (until then the link is just text).
+	private var linkedTargets: [LinkedTarget] {
+		guard linked != nil, !isOwn, message.kind == "message", !message.isEmojiOnly,
+			bodyText.contains("/objects/") || bodyText.contains("/files/")
+		else { return [] }
+		return LinkedTarget.extract(from: bodyText)
+	}
+
+	/// What to draw for the text, or nil when no link in it is a card (the text then renders as it
+	/// always did, folding included).
+	private func linkedLayout(for targets: [LinkedTarget]) -> (parts: [LinkedMessagePart], appended: [LinkedTarget])? {
+		guard let linked, !targets.isEmpty else { return nil }
+		let parts = LinkedMessageLayout.parts(segments: LinkedMessageSplitter.split(bodyText), isCard: linked.isCard)
+		let appended = LinkedMessageLayout.appended(message: bodyText, parts: parts, isCard: linked.isCard)
+		let hasCardInPlace = parts.contains { if case .card = $0 { true } else { false } }
+		return hasCardInPlace || !appended.isEmpty ? (parts, appended) : nil
+	}
+
+	private func linkedBody(_ parts: [LinkedMessagePart]) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			ForEach(parts.enumerated().map { (id: $1.stableID(at: $0), part: $1) }, id: \.id) { entry in
+				switch entry.part {
+				case .markdown(let text):
+					MarkdownContent(
+						mentions.isEmpty ? text : MentionText.markdown(text, mentions: mentions), style: .chat,
+						hardBreaks: message.author == .human
+					)
+					.textSelection(.enabled)
+				case .card(let target):
+					LinkedTargetCard(target: target, onApproved: onApprovedDraft)
+				}
+			}
+		}
 	}
 
 	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
@@ -244,6 +319,8 @@ struct MessageRow: View {
 			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
+			ReactionChips(reactions: message.reactions, isOwn: true, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, isOwn: true, onOpen: onOpenThread) }
 			if mentionChips.isEmpty {
 				MentionLine(names: untaggedNames, isOwn: true)
 			} else {
@@ -259,7 +336,10 @@ struct MessageRow: View {
 	// MARK: Theirs
 
 	private var theirs: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		// Read once per evaluation: finding the links costs a scan of the text.
+		let targets = linkedTargets
+		let layout = linkedLayout(for: targets)
+		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			if showsAuthor {
 				MessageHeader(
 					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
@@ -274,8 +354,12 @@ struct MessageRow: View {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
 						MessageAttachments(attachments: message.attachments)
 						if !bodyText.isEmpty {
-							MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
-								.textSelection(.enabled)
+							if let layout {
+								linkedBody(layout.parts)
+							} else {
+								MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
+									.textSelection(.enabled)
+							}
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
 						if message.isErrorReply, let onTryAgain = actions.onTryAgain {
@@ -294,6 +378,11 @@ struct MessageRow: View {
 			}
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: actions)
+			if let appended = layout?.appended {
+				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+			}
+			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
+			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty {
 				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}
@@ -301,6 +390,11 @@ struct MessageRow: View {
 			MentionLine(names: untaggedNames, isOwn: false)
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
+		// Which links are drafts or pages worth a card: asked once per target, cached by the store.
+		.task(id: targets.map(\.key)) {
+			guard let linked, !targets.isEmpty else { return }
+			await linked.resolveWithRetries(Array(targets.prefix(12)))
+		}
 	}
 
 	/// Versions pager and local feedback under an agent bubble.

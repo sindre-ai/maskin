@@ -156,16 +156,6 @@ describe('POST /sessions/:id/computer-card', () => {
 		expect(await messagesFor(conversationId)).toHaveLength(0)
 	})
 
-	it('404s when computers are not available in the workspace, and posts nothing', async () => {
-		const session = await chatSession()
-		const app = createSessionsApp(agentId)
-
-		const res = await app.request(computerCard(session.id, workspaceId, { task: 'Log in.' }))
-
-		expect(res.status).toBe(404)
-		expect(await messagesFor(conversationId)).toHaveLength(0)
-	})
-
 	it('refuses a session that belongs to a different actor', async () => {
 		const session = await chatSession()
 		const other = await insertActor(db, { type: 'agent' })

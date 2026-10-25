@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { firstStepSchema } from './first-steps'
 import { booleanQueryParam } from './primitives'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
@@ -48,6 +49,11 @@ export const messageFinalOutputSchema = z.object({
 	 * it makes the over-eager cases findable without hunting through logs.
 	 */
 	recovered: z.boolean().optional(),
+	/**
+	 * Copied in from a background run when it was opened as a chat, not posted live. Its
+	 * thinking and tool calls are read back from that run's own log (`messages.session_id`).
+	 */
+	backfilled: z.boolean().optional(),
 	is_error: z.boolean().optional(),
 	/**
 	 * How a failed turn (`is_error`) was read: 'transient' means the model API
@@ -166,6 +172,15 @@ export const messageQuestionAnswerSchema = z.object({
 })
 
 /**
+ * Set on a card a helper put in the chat it was started from. The helper is not in that
+ * chat, so the answer goes to its session, not to the chat's agents.
+ */
+// A function, not a shared schema: one instance reused in several places is emitted as a $ref in
+// the JSON schema of a tool that embeds the metadata (post_conversation_message), which tool
+// schemas must not contain (tool-schemas-no-ref.test.ts).
+const replyToSessionSchema = () => z.boolean().optional()
+
+/**
  * Set by the backend when an agent in a chat calls `connect_integration`: the
  * chat renders a Connect card (button for OAuth providers, key input for
  * API-key providers) instead of the agent pasting a URL. Never accepted from a
@@ -177,8 +192,47 @@ export const messageQuestionAnswerSchema = z.object({
 export const messageIntegrationConnectSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** Provider name as listed by `GET /api/integrations/providers`, e.g. 'linear'. */
 	provider: z.string().min(1).max(100),
+})
+
+/**
+ * Backend-owned marker for a message the server put in a chat on its own
+ * (nobody typed it). One object, no closed enum and no discriminated union, so
+ * a new kind never needs a schema change. kind is a plain string; the proactive
+ * capability note uses kind 'proactive' with a reason and a dedupe_key.
+ */
+export const messageDeliverySchema = z.object({
+	kind: z.string().min(1).max(40),
+	version: z.number().int().positive().optional(),
+	reason: z.string().min(1).max(80).optional(),
+	dedupe_key: z.string().min(1).max(200).optional(),
+	object_id: z.string().uuid().optional(),
+	comment_event_id: z.number().int().positive().optional(),
+})
+
+/**
+ * One first-step button in an agent intro. The same shape and rules as the
+ * creator's first_steps on create (firstStepSchema), so what is stored is held to
+ * the rule it was accepted under: a send step's prompt equals its label.
+ */
+export const suggestedStepSchema = firstStepSchema
+export const suggestedStepsSchema = z.array(suggestedStepSchema).min(1).max(4)
+
+/** A tool the job needs: the provider name only. Status is read live, never stored. */
+export const neededToolSchema = z.object({ provider: z.string().min(1).max(100) })
+export const neededToolsSchema = z.array(neededToolSchema).min(1).max(3)
+
+/**
+ * Set on the person's message when it came from tapping a send step. Client-
+ * supplied, so it carries no authority; it only lets tap-to-start be counted
+ * from saved messages.
+ */
+export const fromSuggestedStepSchema = z.object({
+	/** messages.id of the intro the step was on. */
+	intro_message_id: z.number().int(),
+	index: z.number().int().min(0).max(3),
 })
 
 /** What an agent can ask the human to put into the Keychain from a chat card. */
@@ -194,6 +248,7 @@ export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
 export const messageKeychainRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
 	/** A name for the credential the card pre-fills, e.g. "e-conomic". */
 	suggested_name: z.string().min(1).max(80).optional(),
@@ -209,6 +264,7 @@ export const messageKeychainRequestSchema = z.object({
 export const messageKeychainAccessRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** The credential being asked for. */
 	integration_id: z.string().uuid(),
 	/** Its name as the person knows it, e.g. "Stripe". */
@@ -229,8 +285,15 @@ export const messageKeychainAccessRequestSchema = z.object({
 export const messageComputerRequestSchema = z.object({
 	/** The session whose turn asked. Ties the card back to the right agent. */
 	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
 	/** What the person should do on the computer, in the agent's words. */
 	task: z.string().min(1).max(500),
+})
+
+/** Which card a message answers, and how: a Not now or a Done. */
+export const messageCardAnswerSchema = z.object({
+	message_id: z.number().int().positive(),
+	outcome: z.enum(['declined', 'done']),
 })
 
 export const messageMetadataSchema = z.object({
@@ -263,8 +326,28 @@ export const messageMetadataSchema = z.object({
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
 	computer_request: messageComputerRequestSchema.optional(),
+	/**
+	 * Client-supplied: this message is the person's answer to a card (a message id), so the
+	 * card reads as answered whenever the chat is opened again.
+	 */
+	card_answer: messageCardAnswerSchema.optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
+	/**
+	 * Client-supplied: the message is a nudge for the agent (a card's Done or Allow), not
+	 * something the person wrote. The agent receives it as usual; the chat does not draw it.
+	 */
+	hidden_from_chat: z.literal(true).optional(),
+	/** Backend-owned: how the server itself put this message in the chat. */
+	delivery: messageDeliverySchema.optional(),
+	/** Backend-owned: the intro's first-step buttons, written once with the intro. */
+	suggested_steps: suggestedStepsSchema.optional(),
+	/** Backend-owned: the providers the intro's job needs, in the creator's order. */
+	needed_tools: neededToolsSchema.optional(),
+	/** Backend-owned: how many trailing paragraphs of the intro body the web drops when it draws the buttons and rows. */
+	plain_tail: z.number().int().min(0).max(10).optional(),
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step: fromSuggestedStepSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -284,6 +367,11 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		question: _question,
 		voice_session_id: _voiceSessionId,
 		integration_connect: _integrationConnect,
+		helper_return: _helperReturn,
+		delivery: _delivery,
+		suggested_steps: _suggestedSteps,
+		needed_tools: _neededTools,
+		plain_tail: _plainTail,
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
 		computer_request: _computerRequest,
@@ -328,6 +416,13 @@ export const conversationListQuerySchema = z.object({
 	unread_only: booleanQueryParam.optional(),
 	subject_type: z.enum(['object', 'loop']).optional(),
 	subject_id: z.string().uuid().optional(),
+	// Only chats with a message after this time (ISO 8601).
+	updated_after: z.string().datetime({ offset: true }).optional(),
+	// Only chats that still have at least one human participant.
+	has_human: booleanQueryParam.optional(),
+	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
+	// 'activity' orders purely by last message, newest first.
+	sort: z.enum(['pinned', 'activity']).default('pinned'),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -405,6 +500,10 @@ export const updateConversationParticipantStateSchema = z
 	})
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
+export type MessageDelivery = z.infer<typeof messageDeliverySchema>
+export type SuggestedStep = z.infer<typeof suggestedStepSchema>
+export type NeededTool = z.infer<typeof neededToolSchema>
+export type FromSuggestedStep = z.infer<typeof fromSuggestedStepSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
 export type MessageQuestion = z.infer<typeof messageQuestionSchema>
 export type MessageIntegrationConnect = z.infer<typeof messageIntegrationConnectSchema>

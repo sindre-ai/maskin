@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import { events, sessionLogs, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -180,6 +180,7 @@ describe('Sessions Integration', () => {
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Test Agent' })
 		agentActorId = agent.id
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: agentActorId, role: 'member' })
 	})
 
 	describe('Create + Get lifecycle', () => {

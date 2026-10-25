@@ -1,6 +1,6 @@
 import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
-import { useProviderVisibility } from '@/hooks/use-provider-visibility'
+import type { IntegrationToolState } from '@/lib/integration-tool-state'
 
 interface IntegrationConnectCardProps {
 	workspaceId: string
@@ -8,6 +8,8 @@ interface IntegrationConnectCardProps {
 	conversationId: string
 	/** Provider name the agent asked to connect, e.g. 'linear'. */
 	provider: string
+	/** Draws the quiet row of an agent intro instead of the full card. */
+	introState?: IntegrationToolState
 }
 
 /**
@@ -29,16 +31,15 @@ export function IntegrationConnectCard({
 	workspaceId,
 	conversationId,
 	provider,
+	introState,
 }: IntegrationConnectCardProps) {
 	const { data: providers } = useProviders()
 	const { data: integrations } = useIntegrations(workspaceId)
-	const isProviderVisible = useProviderVisibility()
 
 	const info = providers?.find((p) => p.name === provider)
-	// Unknown, still loading, or hidden behind a flag this actor doesn't have →
-	// render nothing; the message's markdown already says what to connect, so the
-	// thread reads fine without the card.
-	if (!info || !isProviderVisible(provider)) return null
+	// Unknown or still loading → render nothing; the message's markdown already
+	// says what to connect, so the thread reads fine without the card.
+	if (!info) return null
 
 	const installations = (integrations ?? []).filter(
 		(i) => i.provider === provider && i.status === 'active',
@@ -61,6 +62,7 @@ export function IntegrationConnectCard({
 				returnTo={`/${workspaceId}/chats/${conversationId}`}
 				variant="chat"
 				reconnect={reconnect}
+				introState={introState}
 			/>
 		</div>
 	)

@@ -252,7 +252,10 @@ export const SlashCommand = Extension.create<SlashCommandOptions, SlashCommandSt
 					// "/ " is a literal slash followed by a space, not a query.
 					if (/^\s/.test(query)) return false
 					// Once the query has a space and nothing matches, the person is writing.
-					if (/\s/.test(query) && filterSlashItems(query, availableSlashItems(editor)).length === 0) {
+					if (
+						/\s/.test(query) &&
+						filterSlashItems(query, availableSlashItems(editor)).length === 0
+					) {
 						return false
 					}
 					return true

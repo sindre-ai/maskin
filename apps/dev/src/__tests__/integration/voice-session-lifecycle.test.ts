@@ -2,7 +2,6 @@ import { actors, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import voiceSessionsRoutes, { setVoiceInvokeToolFactory } from '../../routes/voice-sessions'
 import {
 	type CreateRealtimeCallFn,
@@ -120,22 +119,70 @@ describe('endVoiceSession', () => {
 		expect(row?.endedReason).toBe(first ? 'user_hangup' : 'idle_timeout')
 	})
 
-	it('uses audio the event channel recorded, and clamps client-reported audio to the call length', async () => {
+	it('records counters on the row as the call runs, and only for live calls', async () => {
+		const { session } = await seedCall()
+		await recordVoiceTurn(db, session.id, { userAudioMs: 4_000, agentAudioMs: 9_000 })
+		await recordVoiceTurn(db, session.id, { userAudioMs: 1_500, agentAudioMs: 500 })
+		await recordVoiceToolCall(db, session.id)
+		const live = await reload(session.id)
+		expect(live).toMatchObject({
+			turnCount: 2,
+			toolCallsCount: 1,
+			inputAudioMs: 5_500,
+			outputAudioMs: 9_500,
+		})
+
+		await endVoiceSession(db, { id: session.id, reason: 'user_hangup' })
+		// A late event after the call ended changes nothing.
+		await recordVoiceTurn(db, session.id, { userAudioMs: 9_000, agentAudioMs: 9_000 })
+		await recordVoiceToolCall(db, session.id)
+		expect(await reload(session.id)).toMatchObject({ turnCount: 2, toolCallsCount: 1 })
+	})
+
+	it('survives a server restart: a fresh process ends the call with the counters and cost recorded before it', async () => {
 		const { session } = await seedCall({ startedAt: new Date(Date.now() - 60_000) })
-		recordVoiceTurn(session.id, { userAudioMs: 20_000, agentAudioMs: 10_000 })
-		recordVoiceToolCall(session.id)
+		await recordVoiceTurn(db, session.id, { userAudioMs: 20_000, agentAudioMs: 10_000 })
+		await recordVoiceToolCall(db, session.id)
+		await recordVoiceToolCall(db, session.id)
+
+		// A restart drops every module-level variable. Re-import the lifecycle
+		// module so nothing from this process's memory can leak into the end.
+		vi.resetModules()
+		const fresh = await import('../../services/voice-session-lifecycle')
+		// The reset also gave the fresh module its own mocked analytics client.
+		const freshPosthog = await import('../../lib/analytics/posthog')
+		await fresh.endVoiceSession(db, { id: session.id, reason: 'server_stop' })
+
+		const row = await reload(session.id)
+		expect(row?.inputAudioSeconds).toBe(20)
+		expect(row?.outputAudioSeconds).toBe(10)
+		// 20s * $0.001 + 10s * $0.004
+		expect(Number(row?.totalCostUsd)).toBeCloseTo(0.06, 6)
+		const ended = vi
+			.mocked(freshPosthog.capturePosthogEvent)
+			.mock.calls.find(
+				([event, , props]) =>
+					event === 'voice_session_ended' && props?.voice_session_id === session.id,
+			)
+		expect(ended?.[2]).toMatchObject({ turn_count: 1, tool_calls_count: 2 })
+	})
+
+	it('treats the client report as a fallback only: recorded audio wins, even when the client reports more', async () => {
+		const { session } = await seedCall({ startedAt: new Date(Date.now() - 60_000) })
+		await recordVoiceTurn(db, session.id, { userAudioMs: 20_000, agentAudioMs: 0 })
 
 		await endVoiceSession(db, {
 			id: session.id,
 			reason: 'user_hangup',
-			reportedInputAudioSeconds: 99_999,
+			reportedInputAudioSeconds: 50,
+			reportedOutputAudioSeconds: 99_999,
 		})
 		const row = await reload(session.id)
-		// Input: reported figure wins but cannot exceed the ~60s the call lasted.
-		expect(row?.inputAudioSeconds).toBeGreaterThanOrEqual(60)
-		expect(row?.inputAudioSeconds).toBeLessThanOrEqual(61)
-		// Output: nothing reported, so the channel's 10s stands.
-		expect(row?.outputAudioSeconds).toBe(10)
+		// Input: 20s was recorded, so the client's 50s is ignored.
+		expect(row?.inputAudioSeconds).toBe(20)
+		// Output: nothing recorded, so the client report is used, clamped to the ~60s the call lasted.
+		expect(row?.outputAudioSeconds).toBeGreaterThanOrEqual(60)
+		expect(row?.outputAudioSeconds).toBeLessThanOrEqual(61)
 	})
 })
 
@@ -192,19 +239,6 @@ describe('endAllLiveVoiceSessions', () => {
 })
 
 describe('daily minute cap + hangup route against real Postgres', () => {
-	beforeEach(() => {
-		process.env.FF_TESTER_ACTOR_IDS = getTestActorId()
-		process.env.FF_TESTER_FEATURES = 'voice-mode-v1'
-		_resetFeatureFlagConfig()
-	})
-	afterEach(() => {
-		// biome-ignore lint/performance/noDelete: process.env coerces undefined to the string "undefined"
-		delete process.env.FF_TESTER_ACTOR_IDS
-		// biome-ignore lint/performance/noDelete: same
-		delete process.env.FF_TESTER_FEATURES
-		_resetFeatureFlagConfig()
-	})
-
 	const app = () =>
 		createIntegrationApp({ path: '/api/voice-sessions', module: voiceSessionsRoutes })
 	const post = (path: string, body: unknown) =>
@@ -319,6 +353,7 @@ describe('daily minute cap + hangup route against real Postgres', () => {
 			setVoiceInvokeToolFactory(async () => ({
 				tools: [],
 				invokeTool: async () => ({ content: [] }),
+				readOnlyTools: new Set<string>(),
 				unreachableServers: [],
 				close: async () => {},
 			}))

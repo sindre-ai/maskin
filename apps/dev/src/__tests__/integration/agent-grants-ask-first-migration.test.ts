@@ -91,7 +91,7 @@ describe('migration 0100_agent_grants_ask_first (Integration)', () => {
 		await expect(
 			sql`UPDATE agent_grants SET access = 'ask_first' WHERE actor_id = ${s.writer.id}`,
 		).rejects.toThrow(/agent_grants_access_enum/)
-		// Leave the schema as the other tests expect it.
-		await runSqlFile(UP)
+		// Leave the schema as the other tests expect it: 0107 is the later migration, so ask_first is gone.
+		await runSqlFile('0107_agent_grants_drop_ask_first.sql')
 	})
 })

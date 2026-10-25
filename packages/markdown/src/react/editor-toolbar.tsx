@@ -6,6 +6,7 @@ import {
 	Italic as ItalicIcon,
 	Link as LinkIcon,
 	type LucideIcon,
+	MessageSquare,
 	Slash as SlashIcon,
 	Strikethrough,
 	Trash2,
@@ -18,9 +19,27 @@ import {
 	useRef,
 	useState,
 } from 'react'
+import { type TextAnchor, captureTextAnchor, isCommentableSelection } from '../text-anchor'
 import type { EditorVariant } from './editor'
 
-export type ToolbarAction = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'unlink' | 'slash'
+/** What the Comment action hands the host: the passage, a rough position, and where it sits on screen. */
+export interface CommentRequest {
+	anchor: TextAnchor
+	/** Rough x and y fractions (0 to 1) of the selection inside the document, a placeholder pin position. */
+	position: { x: number; y: number }
+	/** The selection's box in viewport pixels, read live so a popover can follow a scroll. */
+	getRect: () => { left: number; top: number; width: number; height: number }
+}
+
+export type ToolbarAction =
+	| 'bold'
+	| 'italic'
+	| 'strike'
+	| 'code'
+	| 'link'
+	| 'unlink'
+	| 'comment'
+	| 'slash'
 
 const MOBILE_BREAKPOINT_PX = 640
 
@@ -138,6 +157,11 @@ export interface EditorToolbarProps {
 	 * focuses the first toolbar button.
 	 */
 	focusPulse?: number
+	/**
+	 * Opt-in: shows the Comment action, after a divider, while the selection sits
+	 * inside one paragraph or heading. Fires with the passage and where it is.
+	 */
+	onComment?: (request: CommentRequest) => void
 }
 
 interface ToolbarButtonProps {
@@ -145,10 +169,19 @@ interface ToolbarButtonProps {
 	label: string
 	shortcut?: string
 	isActive?: boolean
+	/** Visible text next to the icon; the button is icon-only without it. */
+	text?: string
 	onClick: () => void
 }
 
-function ToolbarButton({ icon: Icon, label, shortcut, isActive, onClick }: ToolbarButtonProps) {
+function ToolbarButton({
+	icon: Icon,
+	label,
+	shortcut,
+	isActive,
+	text,
+	onClick,
+}: ToolbarButtonProps) {
 	const title = shortcut ? `${label} (${shortcut})` : label
 	return (
 		<button
@@ -157,7 +190,9 @@ function ToolbarButton({ icon: Icon, label, shortcut, isActive, onClick }: Toolb
 			aria-pressed={isActive ? true : undefined}
 			title={title}
 			className={
-				'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 aria-pressed:bg-accent aria-pressed:text-accent-foreground'
+				text
+					? 'inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1'
+					: 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 aria-pressed:bg-accent aria-pressed:text-accent-foreground'
 			}
 			// Prevents the editor from losing selection when the button is
 			// pointer-pressed — Tiptap collapses to caret on blur, which would
@@ -166,8 +201,54 @@ function ToolbarButton({ icon: Icon, label, shortcut, isActive, onClick }: Toolb
 			onClick={onClick}
 		>
 			<Icon className="h-4 w-4" aria-hidden="true" />
+			{text}
 		</button>
 	)
+}
+
+/** The 1px rule between the marks and the Comment action. */
+function ToolbarDivider() {
+	return <div aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />
+}
+
+/** Clamp to the 0 to 1 range the pin position takes, rounded to four places. */
+function fraction(value: number): number {
+	if (!Number.isFinite(value)) return 0
+	return Math.round(Math.min(1, Math.max(0, value)) * 10000) / 10000
+}
+
+/**
+ * The Comment request for the current selection, or null when the selection
+ * cannot carry a comment (it spans blocks, or sits in a list, table or code
+ * block). The pin position is a placeholder: the selection's top-left as a
+ * fraction of the document box.
+ */
+function commentRequestFor(editor: Editor): CommentRequest | null {
+	const { from, to } = editor.state.selection
+	const anchor = captureTextAnchor(editor.state.doc, from, to)
+	if (!anchor) return null
+	const rect = () => {
+		const start = editor.view.coordsAtPos(from)
+		const end = editor.view.coordsAtPos(to)
+		const left = Math.min(start.left, end.left)
+		const top = Math.min(start.top, end.top)
+		return {
+			left,
+			top,
+			width: Math.max(1, Math.max(start.right, end.right) - left),
+			height: Math.max(1, Math.max(start.bottom, end.bottom) - top),
+		}
+	}
+	const box = editor.view.dom.getBoundingClientRect()
+	const at = rect()
+	return {
+		anchor,
+		position: {
+			x: fraction(box.width > 0 ? (at.left - box.left) / box.width : 0),
+			y: fraction(box.height > 0 ? (at.top - box.top) / box.height : 0),
+		},
+		getRect: rect,
+	}
 }
 
 interface LinkPopoverProps {
@@ -304,6 +385,7 @@ export function EditorToolbar({
 	className,
 	openPulse,
 	focusPulse,
+	onComment,
 }: EditorToolbarProps) {
 	const isMobile = useIsMobileToolbar()
 	const keyboardInset = useKeyboardInset(isMobile)
@@ -315,6 +397,16 @@ export function EditorToolbar({
 	// bubble menu's shouldShow, the state re-renders the mobile bar.
 	const [toolbarFocused, setToolbarFocused] = useState(false)
 	const toolbarFocusedRef = useRef(false)
+	// The selection Comment was chosen on. While it is still the selection the
+	// menu stays hidden: the bubble menu skips the first blur after a press on
+	// it, so it would otherwise stay up over the compose box and come back when
+	// the box closes. A new selection brings the menu back.
+	const [, setCommentTick] = useState(0)
+	const commentedRangeRef = useRef<{ from: number; to: number } | null>(null)
+	const isCommentedSelection = (from: number, to: number) => {
+		const range = commentedRangeRef.current
+		return range !== null && range.from === from && range.to === to
+	}
 	const setToolbarFocus = (focused: boolean) => {
 		toolbarFocusedRef.current = focused
 		setToolbarFocused(focused)
@@ -349,7 +441,14 @@ export function EditorToolbar({
 		if (!editor) return
 		setEditorFocused(editor.isFocused)
 		const onSelection = () => {
-			if (editor.state.selection.empty) setLinkOpen(false)
+			const { from, to, empty } = editor.state.selection
+			if (empty) setLinkOpen(false)
+			// Any move off the commented range forgets it, so selecting the same
+			// passage again later brings the menu back.
+			const commented = commentedRangeRef.current
+			if (commented && (commented.from !== from || commented.to !== to)) {
+				commentedRangeRef.current = null
+			}
 		}
 		const onFocus = () => setEditorFocused(true)
 		const onBlur = ({ event }: { event: FocusEvent }) => {
@@ -409,9 +508,12 @@ export function EditorToolbar({
 	useEffect(() => {
 		if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr)
 	}, [editor, isMobile])
+	const isCommentedSelectionRef = useRef(isCommentedSelection)
+	isCommentedSelectionRef.current = isCommentedSelection
 	const shouldShow = useCallback(
 		({ editor: e, from, to }: { editor: Editor; from: number; to: number }) => {
 			if (isMobileRef.current) return false
+			if (isCommentedSelectionRef.current(from, to)) return false
 			if (from === to) return false
 			if (e.isDestroyed) return false
 			if (!e.isEditable) return false
@@ -424,6 +526,25 @@ export function EditorToolbar({
 	)
 
 	if (!editor || variant !== 'document') return null
+
+	// Comment only where a text comment can anchor: inside one paragraph or
+	// heading. Lists, tables, code blocks and selections across blocks get none.
+	const canComment =
+		onComment !== undefined &&
+		isCommentableSelection(editor.state.doc, editor.state.selection.from, editor.state.selection.to)
+
+	const startComment = () => {
+		if (!onComment) return
+		const request = commentRequestFor(editor)
+		if (!request) return
+		emit('comment')
+		commentedRangeRef.current = {
+			from: editor.state.selection.from,
+			to: editor.state.selection.to,
+		}
+		setCommentTick((n) => n + 1)
+		onComment(request)
+	}
 
 	const buttons = (
 		<>
@@ -465,6 +586,17 @@ export function EditorToolbar({
 					setLinkOpen((open) => !open)
 				}}
 			/>
+			{canComment && (
+				<>
+					<ToolbarDivider />
+					<ToolbarButton
+						icon={MessageSquare}
+						label="Comment"
+						text="Comment"
+						onClick={startComment}
+					/>
+				</>
+			)}
 		</>
 	)
 
@@ -542,29 +674,30 @@ export function EditorToolbar({
 					},
 				}}
 			>
-				{!isMobile && (
-					<div
-						ref={toolbarRef}
-						data-editor-toolbar="floating"
-						className={
-							className ??
-							'relative flex flex-col rounded-md border border-border bg-popover shadow-md'
-						}
-						role="toolbar"
-						aria-label="Editor formatting"
-						{...toolbarFocusHandlers}
-					>
-						<div className="flex items-center gap-0.5 p-1">{buttons}</div>
-						<LinkPopover
-							editor={editor}
-							open={linkOpen}
-							initialUrl={linkInitialUrl}
-							onCommit={commitLink}
-							onRemove={removeLink}
-							onClose={() => setLinkOpen(false)}
-						/>
-					</div>
-				)}
+				{!isMobile &&
+					!isCommentedSelection(editor.state.selection.from, editor.state.selection.to) && (
+						<div
+							ref={toolbarRef}
+							data-editor-toolbar="floating"
+							className={
+								className ??
+								'relative flex flex-col rounded-md border border-border bg-popover shadow-md'
+							}
+							role="toolbar"
+							aria-label="Editor formatting"
+							{...toolbarFocusHandlers}
+						>
+							<div className="flex items-center gap-0.5 p-1">{buttons}</div>
+							<LinkPopover
+								editor={editor}
+								open={linkOpen}
+								initialUrl={linkInitialUrl}
+								onCommit={commitLink}
+								onRemove={removeLink}
+								onClose={() => setLinkOpen(false)}
+							/>
+						</div>
+					)}
 			</BubbleMenu>
 			{mobileVisible && (
 				<div

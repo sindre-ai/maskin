@@ -97,18 +97,6 @@ function unreadRow(idx: number) {
 		latest_activity_at: ts(idx),
 	}
 }
-function eventRow(idx: number) {
-	return {
-		id: 1000 + idx,
-		workspaceId: wsId,
-		actorId: uuid('99999999', 0),
-		action: 'created',
-		entityType: 'object',
-		entityId: uuid('66666666', idx),
-		data: {},
-		createdAt: ts(idx),
-	}
-}
 
 // list_extensions is derived from `/api/workspaces` (settings) + registered
 // modules. Each distinct id in `custom_extensions` becomes its own extension
@@ -194,9 +182,8 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 		getId: (row: unknown) => string
 		/**
 		 * Extract the row array from `JSON.parse(content[0].text)`. Defaults to
-		 * reading the same `rowsField` key structuredContent uses; only
-		 * `get_events` ships content as a bare array instead of a wrapped
-		 * object, so it overrides this.
+		 * reading the same `rowsField` key structuredContent uses; a tool that
+		 * ships content as a bare array instead of a wrapped object overrides this.
 		 */
 		contentRowsOf?: (parsed: unknown) => unknown[]
 	}
@@ -229,14 +216,6 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			wrapApiResponse: (rows) => ({ items: rows }),
 			rowsField: 'items',
 			getId: (row) => (row as { entity_id: string }).entity_id,
-		},
-		{
-			tool: 'get_events',
-			buildRow: eventRow,
-			wrapApiResponse: (rows) => rows,
-			rowsField: 'events',
-			getId: (row) => String((row as { id: number }).id).padStart(20, '0'),
-			contentRowsOf: (parsed) => parsed as unknown[],
 		},
 	]
 

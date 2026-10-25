@@ -297,11 +297,16 @@ test.describe('Chats v2 — light and dark', () => {
 			await expect(bubble).toBeVisible({ timeout: 15_000 })
 			// `bg-primary`/`text-primary-foreground` — the pair that inverts
 			// correctly in both schemes, unlike `bg-accent` (known-pitfalls).
-			const plate = await bubble.evaluate((el: HTMLElement) => {
-				const parent = el.parentElement as HTMLElement
-				const style = window.getComputedStyle(parent)
-				return { background: style.backgroundColor, color: style.color }
-			})
+			const readPlate = () =>
+				bubble.evaluate((el: HTMLElement) => {
+					const parent = el.parentElement as HTMLElement
+					const style = window.getComputedStyle(parent)
+					return { background: style.backgroundColor, color: style.color }
+				})
+			// The optimistic bubble is swapped for the saved one; a read taken mid-swap sees a
+			// detached element with no computed style, so wait for a real colour.
+			await expect.poll(async () => (await readPlate()).background).not.toBe('')
+			const plate = await readPlate()
 			expect(plate.background).not.toBe('rgba(0, 0, 0, 0)')
 			expect(plate.background).not.toBe(plate.color)
 		})

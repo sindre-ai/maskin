@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
 } from '@maskin/shared'
@@ -72,6 +73,9 @@ export const objectResponseSchema = z.object({
 	// caller just mutated — can omit it without lying about the schema; the
 	// star toggle endpoints carry their own scalar in the response body.
 	is_starred_by_me: z.boolean().optional(),
+	// Present only on the detail endpoint, and only for an object whose
+	// `metadata.kind` an integration declares as deliverable (see lib/object-preview.ts).
+	preview: objectPreviewSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({
@@ -232,7 +236,10 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
-export const agentGrantAccessSchema = z.enum(['none', 'read', 'ask_first', 'read_write'])
+export const agentGrantAccessSchema = z.enum(['none', 'read', 'read_write'])
+
+/** What an agent with no grant row of its own gets. */
+export const defaultAgentAccessSchema = z.enum(['read', 'read_write', 'none'])
 
 export const agentGrantSchema = z.object({
 	actorId: z.string().uuid(),
@@ -272,7 +279,7 @@ export const integrationResponseSchema = z.object({
 	displayName: z.string().nullable().optional(),
 	// Agent grants. defaultAgentAccess is what an agent with no row of its own gets;
 	// agentGrants are the explicit rows. Keychain credentials are explicit-only.
-	defaultAgentAccess: z.enum(['read', 'none']).optional(),
+	defaultAgentAccess: defaultAgentAccessSchema.optional(),
 	agentGrants: z.array(agentGrantSchema).optional(),
 	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
 	chatGrants: z
@@ -363,11 +370,18 @@ export const conversationListItemResponseSchema = z.object({
 	// the viewer said it.
 	snippet_actor_id: z.string().uuid().nullable(),
 	snippet_actor_name: z.string().nullable(),
+	// True when the caller wrote the snippet.
+	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
+	.omit({
+		snippet: true,
+		snippet_actor_id: true,
+		snippet_actor_name: true,
+		snippet_is_caller: true,
+	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})

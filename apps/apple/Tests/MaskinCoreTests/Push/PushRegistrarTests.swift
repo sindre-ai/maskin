@@ -160,6 +160,64 @@ struct PushRegistrarTests {
 		#expect(await devices.registered.count == 1)
 	}
 
+	@Test("accepting the in-app sheet: prompt, then the OS token, then the upload")
+	func sheetAcceptedSequence() async {
+		let system = FakeSystem(permission: .notDetermined, grants: true)
+		let devices = FakeDevices()
+		let r = makeRegistrar(system, devices)
+		await r.actorChanged("a1")
+		#expect(system.registerCalls == 0)
+		await r.requestAuthorization()
+		#expect(system.registerCalls == 1)
+		#expect(await devices.registered.isEmpty, "no token yet: nothing to upload")
+		await r.didReceive(deviceToken: tokenA)
+		#expect(await devices.registered.map(\.token) == [hexA])
+		#expect(r.registration == .registered)
+	}
+
+	@Test("a failed upload is retried when the app returns to the foreground")
+	func foregroundRetriesFailedUpload() async {
+		let system = FakeSystem(permission: .authorized)
+		let devices = FakeDevices()
+		await devices.setFailRegister(true)
+		let r = makeRegistrar(system, devices)
+		await r.actorChanged("a1")
+		await r.didReceive(deviceToken: tokenA)
+		#expect(r.registration == .failed("boom"))
+		await devices.setFailRegister(false)
+		await r.foregrounded()
+		#expect(await devices.registered.map(\.token) == [hexA])
+		#expect(r.registration == .registered)
+		await r.foregrounded()
+		#expect(await devices.registered.count == 1, "already registered: free")
+	}
+
+	@Test("permission switched on in iOS Settings is picked up at the next foreground")
+	func foregroundPicksUpSettingsGrant() async {
+		let system = FakeSystem(permission: .denied)
+		let devices = FakeDevices()
+		let r = makeRegistrar(system, devices)
+		await r.actorChanged("a1")
+		await r.didReceive(deviceToken: tokenA)
+		#expect(await devices.registered.isEmpty)
+		system.permission = .authorized
+		await r.foregrounded()
+		#expect(system.registerCalls == 1)
+		#expect(await devices.registered.map(\.token) == [hexA])
+	}
+
+	@Test("foregrounding while signed out registers nothing")
+	func foregroundSignedOut() async {
+		let system = FakeSystem(permission: .authorized)
+		let devices = FakeDevices()
+		let r = makeRegistrar(system, devices)
+		await r.actorChanged(nil)
+		await r.didReceive(deviceToken: tokenA)
+		await r.foregrounded()
+		#expect(system.registerCalls == 0)
+		#expect(await devices.registered.isEmpty)
+	}
+
 	@Test("sign-out unregisters the token before credentials are cleared")
 	func signOutOrder() async {
 		let system = FakeSystem(permission: .authorized)

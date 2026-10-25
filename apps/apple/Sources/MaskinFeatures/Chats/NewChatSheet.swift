@@ -79,22 +79,13 @@ struct NewChatSheet: View {
 
 	// MARK: Composer
 
-	/// Live needs exactly one agent to talk to.
+	/// Live needs exactly one agent to talk to; the composer shows its waveform button while the field is empty.
 	private var liveLead: ChatParticipant? {
 		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
 	}
 
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
-			if liveLead != nil {
-				Button {
-					Task { await send(live: true) }
-				} label: {
-					Label("Live", systemImage: "waveform").labelStyle(.titleAndIcon)
-				}
-				.buttonStyle(.bordered)
-				.accessibilityLabel("Start live")
-			}
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
@@ -105,6 +96,8 @@ struct NewChatSheet: View {
 				model: composer,
 				config: MaskinComposerConfig(
 					variant: .floating, placeholder: NewConversationCopy.placeholder(for: recipients),
+					// Live is the composer's own waveform button, as in every other chat.
+					goLive: liveLead == nil ? nil : { Task { await send(live: true) } },
 					suggestions: { query in
 						MentionTrigger.candidates(
 							query: query, participants: recipients, workspace: store.actors,

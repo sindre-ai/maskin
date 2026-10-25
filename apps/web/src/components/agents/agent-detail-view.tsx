@@ -8,6 +8,7 @@ import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
 import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
+import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
@@ -127,10 +128,13 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			{/* Order is what the agent *is*, then what it did, then how it is
 			    configured: identity → usage → sessions → loops → instructions →
 			    skills → tools and access (mockup 2442–2490). */}
-			<div className="mx-auto flex max-w-3xl flex-col gap-6">
+			{/* w-full: mx-auto stops a flex item stretching, so without it this shrink-wraps to its
+			    widest no-wrap text (an agent's description) and overflows a phone screen. */}
+			<div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
+				<AgentTriggersSection agent={agent} />
 				<AgentComputerSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />

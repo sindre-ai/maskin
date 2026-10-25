@@ -3,6 +3,11 @@ import { hashPassword } from '@maskin/auth'
 import {
 	events,
 	actors,
+	deviceAuthCodes,
+	deviceTokens,
+	liveActivityCards,
+	liveActivityTokens,
+	notificationPreferences,
 	notifications,
 	objects,
 	readState,
@@ -63,6 +68,7 @@ describe('account deletion (integration)', () => {
 			status: 'active',
 		})
 
+		await db.insert(notificationPreferences).values({ actorId: me.id, timezone: 'Europe/Oslo' })
 		await db.insert(readState).values({
 			workspaceId: ws.id,
 			actorId: me.id,
@@ -107,6 +113,89 @@ describe('account deletion (integration)', () => {
 		expect(
 			await db.select().from(notifications).where(eq(notifications.targetActorId, me.id)),
 		).toEqual([])
+		expect(
+			await db
+				.select()
+				.from(notificationPreferences)
+				.where(eq(notificationPreferences.actorId, me.id)),
+		).toEqual([])
+	})
+
+	async function pushRowsFor(actorId: string, workspaceId: string, tag: string) {
+		const [device] = await db
+			.insert(deviceTokens)
+			.values({ actorId, platform: 'ios', apnsToken: `apns-${tag}`, environment: 'production' })
+			.returning()
+		await db.insert(liveActivityTokens).values([
+			{ actorId, deviceId: device.id, kind: 'push_to_start', token: `start-${tag}` },
+			{
+				actorId,
+				deviceId: device.id,
+				kind: 'update',
+				token: `update-${tag}`,
+				workspaceId,
+			},
+		])
+		await db.insert(liveActivityCards).values({ actorId, workspaceId })
+		await db.insert(notificationPreferences).values({ actorId, timezone: 'Europe/Copenhagen' })
+		await db.insert(deviceAuthCodes).values({
+			deviceCodeHash: `device-${tag}`,
+			userCodeHash: `user-${tag}`,
+			clientSource: 'tvos',
+			status: 'approved',
+			actorId,
+			expiresAt: new Date(Date.now() + 60_000),
+		})
+	}
+
+	const pushRowCounts = async (actorId: string) => ({
+		devices: (await db.select().from(deviceTokens).where(eq(deviceTokens.actorId, actorId))).length,
+		activityTokens: (
+			await db.select().from(liveActivityTokens).where(eq(liveActivityTokens.actorId, actorId))
+		).length,
+		cards: (await db.select().from(liveActivityCards).where(eq(liveActivityCards.actorId, actorId)))
+			.length,
+		authCodes: (await db.select().from(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId)))
+			.length,
+		preferences: (
+			await db
+				.select()
+				.from(notificationPreferences)
+				.where(eq(notificationPreferences.actorId, actorId))
+		).length,
+	})
+
+	it('removes the push tokens and device sign-ins of the person, and only theirs', async () => {
+		const other = await insertActor(db, { type: 'human' })
+		const ws = await insertWorkspace(db, me.id)
+		const otherWs = await insertWorkspace(db, other.id)
+		await pushRowsFor(me.id, ws.id, `me-${me.id}`)
+		await pushRowsFor(other.id, otherWs.id, `other-${other.id}`)
+		expect(await pushRowCounts(me.id)).toEqual({
+			devices: 1,
+			activityTokens: 2,
+			cards: 1,
+			authCodes: 1,
+			preferences: 1,
+		})
+
+		const res = await del()
+		expect(res.status).toBe(200)
+
+		expect(await pushRowCounts(me.id)).toEqual({
+			devices: 0,
+			activityTokens: 0,
+			cards: 0,
+			authCodes: 0,
+			preferences: 0,
+		})
+		expect(await pushRowCounts(other.id)).toEqual({
+			devices: 1,
+			activityTokens: 2,
+			cards: 1,
+			authCodes: 1,
+			preferences: 1,
+		})
 	})
 
 	it('lets a viewer delete their own account', async () => {

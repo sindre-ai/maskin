@@ -172,8 +172,7 @@ describe('FeedCard — draft on the card', () => {
 		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
 	})
 
-	it('folds a long draft and opens it with Read all', async () => {
-		const user = userEvent.setup()
+	it('shows a long draft in full, with nothing to open', () => {
 		renderCard({
 			item: buildItem({
 				latest_mention: buildMention({
@@ -182,22 +181,10 @@ describe('FeedCard — draft on the card', () => {
 			}),
 		})
 
-		await user.click(screen.getByRole('button', { name: 'Read all' }))
-
-		expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
-	})
-
-	it('has no Read all for a short draft', () => {
-		renderCard({
-			item: buildItem({
-				latest_mention: buildMention({
-					decision: buildDecision({ draft: { body: 'Short note.' } }),
-				}),
-			}),
-		})
-
-		expect(screen.getByRole('region', { name: 'Draft' })).toBeInTheDocument()
+		const region = screen.getByRole('region', { name: 'Email to Hans' })
+		expect(region.textContent).toContain(LONG.trim())
 		expect(screen.queryByRole('button', { name: 'Read all' })).not.toBeInTheDocument()
+		expect(region.querySelector('.line-clamp-4')).toBeNull()
 	})
 
 	it('shows nothing for a draft the feed could not fill', () => {
@@ -272,10 +259,15 @@ describe('FeedCard — full state', () => {
 		expect(
 			screen.queryByText('A page people use every day was rewritten, and no human has opened it.'),
 		).not.toBeInTheDocument()
-		// The buttons are the agent's own labels, each carrying its consequences.
+		// The buttons are the agent's own labels; the recommended one's reasons sit
+		// beneath them as one line, not as a box of bullets per option.
 		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(screen.getByText('No rollback once migrations run')).toBeInTheDocument()
+		expect(
+			screen.getByText(
+				'Suggested: Merge now. Ships with tonight deploy. No rollback once migrations run.',
+			),
+		).toBeInTheDocument()
 		// The composer renders stacked with its default placeholder until the
 		// Object detail split lands `variant`/`placeholder` on the v2 composer —
 		// see the TODO in feed-card.tsx. Assert it is wired to the object, not

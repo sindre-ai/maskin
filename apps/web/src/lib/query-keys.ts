@@ -3,6 +3,9 @@ export const queryKeys = {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
 	},
+	webPush: {
+		config: () => ['web-push', 'config'] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -64,8 +67,6 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['loops', workspaceId] as const,
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
-		steps: (workspaceId: string, loopId: string) =>
-			['loops', workspaceId, 'steps', loopId] as const,
 	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,

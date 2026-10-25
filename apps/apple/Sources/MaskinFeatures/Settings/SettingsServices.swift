@@ -5,7 +5,7 @@ import SwiftUI
 /// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -45,6 +45,12 @@ struct SettingsServices {
 			return url
 		}
 		return apiBaseURL
+	}
+
+	/// The web app's workspace settings page, where Privacy & data lives. Nil without a workspace.
+	var webSettingsURL: URL? {
+		guard let workspaceId else { return nil }
+		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
 	}
 
 	func webURL(_ path: String) -> URL? {

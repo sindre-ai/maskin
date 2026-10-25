@@ -132,6 +132,20 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes a draft card when it is approved or sent, whatever its object type', () => {
+		for (const action of ['approved', 'delivered']) {
+			const qc = createMockQueryClient()
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'content',
+				entity_id: entityId,
+				action,
+			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: queryKeys.objects.detail(entityId),
+			})
+		}
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -439,6 +453,18 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.list)).toBe(false)
 		expect(invalidated(keys.paged)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
+	})
+
+	it('leaves another session’s detail and logs alone', () => {
+		const { qc, keys, invalidated } = seededClient()
+		const other = queryKeys.sessions.detail('sess-2')
+		const otherLogs = queryKeys.sessions.logs('sess-2')
+		qc.setQueryData(other, {})
+		qc.setQueryData(otherLogs, [])
+		invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		expect(invalidated(keys.detail)).toBe(true)
+		expect(invalidated(other)).toBe(false)
+		expect(invalidated(otherLogs)).toBe(false)
 	})
 
 	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {

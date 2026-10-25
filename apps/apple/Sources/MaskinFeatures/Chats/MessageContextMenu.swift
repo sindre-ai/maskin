@@ -6,9 +6,14 @@ import SwiftUI
 /// Spec 7 §5 long-press actions, built on the system context menu (blur, haptic, a preview of the
 /// bubble clamped to six lines, 44pt rows). All messages: Reply · Copy · Pin/Unpin. Your newest:
 /// Edit. Agent messages: Try again · Make it shorter · Good answer · Not right. No reaction strip:
-/// the API carries no reactions. No "Open in thread": conversations have no threads yet.
+/// the API carries no reactions. A top-level message also offers Reply in thread.
 struct MessageMenuActions {
 	var onReply: (() -> Void)?
+	/// Opens (or starts) the thread under this message.
+	var onThread: (() -> Void)?
+	/// Add or take back one of the quick emoji; `reacted` are the ones you already used.
+	var onReact: ((String) -> Void)?
+	var reacted: Set<String> = []
 	var onCopy: (() -> Void)?
 	var onPin: (() -> Void)?
 	var isPinned = false
@@ -27,6 +32,7 @@ struct MessageMenuActions {
 	var titles: [String] {
 		var out: [String] = []
 		if onReply != nil { out.append("Reply") }
+		if onThread != nil { out.append("Reply in thread") }
 		if onCopy != nil { out.append("Copy") }
 		if onPin != nil { out.append(isPinned ? "Unpin" : "Pin") }
 		if onEdit != nil { out.append("Edit") }
@@ -47,6 +53,20 @@ struct MessageMenuItems: View {
 	var body: some View {
 		if let onReply = actions.onReply {
 			Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+		}
+		if let onReact = actions.onReact {
+			Menu {
+				ForEach(MessageReaction.quick, id: \.self) { emoji in
+					Button { onReact(emoji) } label: {
+						Text(actions.reacted.contains(emoji) ? "\(emoji)  ✓" : emoji)
+					}
+				}
+			} label: {
+				Label("React", systemImage: "face.smiling")
+			}
+		}
+		if let onThread = actions.onThread {
+			Button(action: onThread) { Label("Reply in thread", systemImage: "bubble.left.and.text.bubble.right") }
 		}
 		if let onCopy = actions.onCopy {
 			Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }

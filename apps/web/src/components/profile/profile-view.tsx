@@ -1,9 +1,11 @@
+import { BrowserNotificationsToggle } from '@/components/profile/browser-notifications-row'
 import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
+import { useWebPush } from '@/hooks/use-web-push'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
@@ -51,6 +53,7 @@ export function ProfileView({
 		<div className="mx-auto flex max-w-[560px] flex-col">
 			<IdentityHeader actor={actor} workspaceId={workspaceId} workspaceName={workspaceName} />
 			<WorkingPreferences actor={actor} workspaceId={workspaceId} />
+			<NotificationsSection />
 			<AccountSection actor={actor} workspaceId={workspaceId} workspaceName={workspaceName} />
 		</div>
 	)
@@ -239,6 +242,23 @@ function WorkingPreferences({ actor, workspaceId }: { actor: ActorResponse; work
 					never do without you.
 				</p>
 			)}
+		</>
+	)
+}
+
+// Hidden unless the server has VAPID keys and this browser has the Push API, so the toggle never
+// shows where it cannot work.
+function NotificationsSection() {
+	const { state } = useWebPush()
+	if (state === 'unavailable') return null
+	return (
+		<>
+			<SectionHeading title="Notifications" note="this browser" />
+			<div className="flex flex-col">
+				<AccountRow label="Browser notifications" first>
+					<BrowserNotificationsToggle />
+				</AccountRow>
+			</div>
 		</>
 	)
 }

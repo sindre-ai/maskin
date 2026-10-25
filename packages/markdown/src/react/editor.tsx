@@ -11,6 +11,13 @@ import {
 	useRef,
 	useState,
 } from 'react'
+import {
+	type CommentHighlightHandlers,
+	type TextCommentHighlight,
+	createCommentHighlights,
+	setTextComments,
+	textCommentRange,
+} from '../comment-highlights'
 import { editorMarkdownIt, nodeFeatures, serializeTopLevelBlocks } from '../editor-blocks'
 import { type EditorDisallowedNode, type EditorVariant, buildExtensions } from '../extensions'
 import {
@@ -21,11 +28,13 @@ import {
 	createSourceSession,
 	findReadOnlyCause,
 } from '../source-blocks'
-import { EditorToolbar, type ToolbarAction } from './editor-toolbar'
+import { type CommentRequest, EditorToolbar, type ToolbarAction } from './editor-toolbar'
 import { MARKDOWN_PROSE_CLASS } from './prose'
 import { MarkdownRenderer } from './renderer'
 
 export type { EditorDisallowedNode, EditorVariant }
+export type { CommentRequest, TextCommentHighlight }
+export type { TextAnchor } from '../text-anchor'
 
 export interface MentionSuggestionItem {
 	id: string
@@ -153,6 +162,25 @@ export interface MarkdownEditorProps {
 	 * PostHog's `editor_saved` event (spec §11).
 	 */
 	onSaved?: (info: SavedInfo) => void
+	/**
+	 * Comments on selected text to draw as highlights. The highlights are editor
+	 * decorations only: nothing is written into the document or the markdown.
+	 * Pass a stable (memoised) array; the editor redraws when it changes.
+	 */
+	textComments?: TextCommentHighlight[]
+	/** The comment whose card is open; its highlight gets the active ring. */
+	activeTextCommentId?: string | null
+	/**
+	 * Fires when the Comment action is chosen in the selection toolbar or the
+	 * mobile format bar. Without it no Comment action is shown.
+	 */
+	onTextCommentRequest?: (request: CommentRequest) => void
+	/** A highlight was clicked (its id), or the click landed elsewhere in the text (null). */
+	onTextCommentClick?: (id: string | null) => void
+	/** The comments whose quote no longer matches the text changed. */
+	onTextCommentsOrphaned?: (orphanedIds: string[]) => void
+	/** Element id of the panel card a highlight points at (aria-describedby). */
+	textCommentDescribedBy?: (id: string) => string | undefined
 }
 
 export interface MarkdownEditorRef {
@@ -161,6 +189,11 @@ export interface MarkdownEditorRef {
 	insertContent(markdown: string): void
 	getMarkdown(): string
 	clear(): void
+	/**
+	 * Bring a comment's highlight into view. With focus, the caret also moves to
+	 * the start of the highlight. Does nothing for an orphaned comment.
+	 */
+	scrollToTextComment(id: string, options?: { focus?: boolean }): void
 }
 
 const MAX_ERROR_MESSAGE_LENGTH = 500
@@ -203,7 +236,7 @@ function buildShortcutExtension(
 	return Extension.create({
 		name: 'maskinEditorShortcuts',
 		// Higher than the default 100 so this extension's key handlers run
-		// before StarterKit's (Bold/Italic/Strike/etc.) — we need to see the
+		// before the base extensions' (Bold/Italic/Strike/etc.) — we need to see the
 		// shortcut firing to emit the PostHog event. If the default handler
 		// consumed the key first, the emit never fires.
 		priority: 1000,
@@ -302,6 +335,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			onToolbarAction,
 			onShortcutUsed,
 			onSaved,
+			textComments,
+			activeTextCommentId = null,
+			onTextCommentRequest,
+			onTextCommentClick,
+			onTextCommentsOrphaned,
+			textCommentDescribedBy,
 		},
 		ref,
 	) {
@@ -356,14 +395,31 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			setToolbarFocusPulse((n) => n + 1)
 		}, [])
 
+		// The highlight layer reads its callbacks through a ref, so the extension
+		// (and the editor built from it) stays the same across renders.
+		const commentHandlersRef = useRef<CommentHighlightHandlers>({})
+		commentHandlersRef.current = {
+			onHighlightClick: onTextCommentClick,
+			onOrphansChange: onTextCommentsOrphaned,
+			describedBy: textCommentDescribedBy,
+		}
+		const commentExtension = useMemo(() => createCommentHighlights(commentHandlersRef), [])
+
 		const shortcutExtension = useMemo(
 			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar),
 			[emitShortcut, openLinkPopover, focusToolbar],
 		)
 
 		const tiptapExtensions = useMemo(
-			() => buildExtensions(variant, disallowedNodes, placeholder, extensions, shortcutExtension),
-			[variant, disallowedNodes, placeholder, extensions, shortcutExtension],
+			() =>
+				buildExtensions(
+					variant,
+					disallowedNodes,
+					placeholder,
+					[...(extensions ?? []), commentExtension],
+					shortcutExtension,
+				),
+			[variant, disallowedNodes, placeholder, extensions, commentExtension, shortcutExtension],
 		)
 
 		const reportParseError = useCallback(
@@ -462,6 +518,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			[tiptapExtensions],
 		)
 
+		// Hand the editor the comments to draw. A transaction with no document
+		// change, so it never reaches onUpdate, autosave or the markdown.
+		useEffect(() => {
+			if (!editor || editor.isDestroyed) return
+			setTextComments(editor.view, textComments ?? [], activeTextCommentId)
+		}, [editor, textComments, activeTextCommentId])
+
 		// preserveSource: check the text against the read-only list once the
 		// editor has parsed it. Whole file, never half. A read-only open is one
 		// event, and nothing is ever sent to the server from it.
@@ -541,6 +604,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				},
 				getMarkdown,
 				clear: () => editor?.commands.clearContent(),
+				scrollToTextComment: (id, options) => {
+					if (!editor || editor.isDestroyed) return
+					const range = textCommentRange(editor.state, id)
+					if (!range) return
+					if (options?.focus) {
+						editor.chain().focus().setTextSelection(range.from).scrollIntoView().run()
+						return
+					}
+					editor.view.dom
+						.querySelector(`[data-comment-id="${id}"]`)
+						?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+				},
 			}),
 			[editor, getMarkdown],
 		)
@@ -580,6 +655,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					onToolbarAction={handleToolbarAction}
 					openPulse={linkPopoverPulse}
 					focusPulse={toolbarFocusPulse}
+					onComment={readOnly ? undefined : onTextCommentRequest}
 				/>
 			</div>
 		)

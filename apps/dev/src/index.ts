@@ -17,6 +17,7 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -29,16 +30,17 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
-import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingPushScheduler } from './services/briefing-push-scheduler'
+import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
-import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
@@ -57,14 +59,10 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
-
-// Voice v1: fail fast when the flag is enabled for testers but the operator
-// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
-// deploy is caught at boot rather than 500-ing the first tester click.
-assertVoiceOperatorEnv()
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -76,6 +74,8 @@ const db = createDb(databaseUrl)
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -211,7 +211,8 @@ const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager
 commentDispatcher.start()
 
 const apnsSender = new ApnsSender(db)
-const notificationPush = new NotificationPushFanout(db, notifyBridge, apnsSender)
+const webPushSender = new WebPushSender(db)
+const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
 notificationPush.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
@@ -254,6 +255,14 @@ logger.info('Brief cache cleaner started')
 const sessionRetryScheduler = new SessionRetryScheduler(db)
 sessionRetryScheduler.start()
 logger.info('Session retry scheduler started')
+
+// Scheduled pushes. Both only create `notifications` rows; the push fan-out (policy: quiet
+// hours, category toggles, rate limits) delivers them. Briefing: killswitch
+// FEATURE_BRIEFING_PUSH=0. Lifecycle: off unless PUSH_LIFECYCLE_ENABLED=1.
+const briefingPushScheduler = new BriefingPushScheduler(db)
+briefingPushScheduler.start()
+const lifecyclePushScheduler = new LifecyclePushScheduler(db)
+lifecyclePushScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
@@ -312,23 +321,24 @@ const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
-// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
-// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
-// unsetting the sub-flag from the env + restarting is the rollback path.
-const loopEscalationReconciler = new LoopEscalationReconciler(db)
-loopEscalationReconciler.start()
-logger.info('Loop escalation reconciler started')
-
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
 // Voice v1: ends calls whose timeout_at has passed (tab closed with no
-// hangup). A no-op until a voice_sessions row exists, so it is safe for every
-// deployment whether or not voice-mode-v1 is enabled.
+// hangup). A no-op until a voice_sessions row exists.
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
 voiceSessionTimeoutSweeper.start()
 logger.info('Voice session timeout sweeper started')
+if (!process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()) {
+	logger.warn('MASKIN_VOICE_OPENAI_API_KEY is unset: voice calls will fail at call start')
+}
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -440,6 +450,8 @@ const shutdown = async (signal: string) => {
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
 	notificationPush.stop()
+	briefingPushScheduler.stop()
+	lifecyclePushScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.

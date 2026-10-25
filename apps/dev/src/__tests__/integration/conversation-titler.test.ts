@@ -327,9 +327,9 @@ describe('Conversation auto-titler Integration', () => {
 		}
 
 		expect(chat).not.toHaveBeenCalled()
-		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
+		// The derived title is cut on a word boundary at the 48-character cap.
 		expect(await readConversation()).toEqual({
-			title: 'Draft the note to Acme about the retry window before Thursday 0',
+			title: 'Draft the note to Acme about the retry window…',
 			titleAutoState: 'initial',
 		})
 	})

@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database, Transaction } from '@maskin/db'
 import { agentChatGrants, agentGrants, integrations, sessions } from '@maskin/db/schema'
-import { supportsAskFirst } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -18,6 +17,7 @@ import { logger } from '../lib/logger'
 import {
 	agentGrantAccessSchema,
 	agentGrantSchema,
+	defaultAgentAccessSchema,
 	errorSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
@@ -51,7 +51,7 @@ const grantsResponseSchema = z.object({
 	integrationId: z.string().uuid(),
 	// 'keychain': explicit-grant, on/off. 'standard': default plus overrides.
 	mode: z.enum(['keychain', 'standard']),
-	defaultAgentAccess: z.enum(['read', 'none']),
+	defaultAgentAccess: defaultAgentAccessSchema,
 	grants: z.array(agentGrantSchema),
 })
 
@@ -154,12 +154,10 @@ async function loadEditable(
 function levelNotAllowed(
 	target: { provider: string; providerMode: string; gated: boolean },
 	access: string,
-): 'keychain_access' | 'custom_access' | 'ask_first_unsupported' | null {
+): 'keychain_access' | 'custom_access' | null {
 	if (isKeychainMode(target.providerMode as never)) {
-		return access !== 'read_write' ? 'keychain_access' : null
+		return access !== 'read_write' && access !== 'none' ? 'keychain_access' : null
 	}
-	// "Ask first" is a promise that the tool can wait for a person; only some providers can.
-	if (access === 'ask_first' && !supportsAskFirst(target.provider)) return 'ask_first_unsupported'
 	if (target.provider === CUSTOM_MCP_PROVIDER && !target.gated && access === 'read') {
 		return 'custom_access'
 	}
@@ -191,14 +189,6 @@ function failure(reason: string): {
 				error: createApiError('BAD_REQUEST', 'That actor is not an agent in this workspace'),
 				status: 400,
 			}
-		case 'ask_first_unsupported':
-			return {
-				error: createApiError(
-					'BAD_REQUEST',
-					'"Ask first" is only available for integrations that can wait for a person to approve an action (today: Gmail). Use read or read_write.',
-				),
-				status: 400,
-			}
 		case 'custom_access':
 			return {
 				error: createApiError(
@@ -211,7 +201,15 @@ function failure(reason: string): {
 			return {
 				error: createApiError(
 					'BAD_REQUEST',
-					'A saved key or login is on or off for an agent: use read_write',
+					'A saved key or login is on or off for an agent: use read_write or none',
+				),
+				status: 400,
+			}
+		case 'keychain_default':
+			return {
+				error: createApiError(
+					'BAD_REQUEST',
+					'A saved key is on or off for all other agents: use read or none',
 				),
 				status: 400,
 			}
@@ -503,7 +501,7 @@ const putDefaultRoute = createRoute({
 		body: {
 			content: {
 				'application/json': {
-					schema: z.object({ defaultAgentAccess: z.enum(['read', 'none']) }).strict(),
+					schema: z.object({ defaultAgentAccess: defaultAgentAccessSchema }).strict(),
 				},
 			},
 			required: true,
@@ -514,7 +512,7 @@ const putDefaultRoute = createRoute({
 			description: 'Saved. Applies to sessions started after this call',
 			content: {
 				'application/json': {
-					schema: z.object({ defaultAgentAccess: z.enum(['read', 'none']) }),
+					schema: z.object({ defaultAgentAccess: defaultAgentAccessSchema }),
 				},
 			},
 		},
@@ -537,12 +535,27 @@ app.openapi(putDefaultRoute, (async (c) => {
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
 		if (!target.ok) return target.reason
-		// A saved key or login has no default: it is always explicit-grant.
-		if (isKeychainMode(target.providerMode as never)) return 'keychain_default' as const
+		// A saved key's default is on ('read') or off ('none'). read_write would show as set but
+		// be off at the server (see effectiveAccess), so it is refused rather than stored.
+		if (isKeychainMode(target.providerMode as never) && defaultAgentAccess === 'read_write') {
+			return 'keychain_default' as const
+		}
 		await tx
 			.update(integrations)
 			.set({ defaultAgentAccess, updatedAt: new Date() })
 			.where(eq(integrations.id, id))
+		// A saved key's default decides which agents may read the secret, so it is audited
+		// the same way a per-agent change is.
+		if (isKeychainMode(target.providerMode as never)) {
+			await insertCredentialAccessLog(tx, {
+				workspaceId,
+				integrationId: id,
+				actorId: callerId,
+				action: 'scope_changed',
+				source: 'admin_ui',
+				requestId: `grant-change:${id}:${randomUUID()}`,
+			})
+		}
 		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
@@ -559,12 +572,6 @@ app.openapi(putDefaultRoute, (async (c) => {
 		return 'saved' as const
 	})
 
-	if (outcome === 'keychain_default') {
-		return c.json(
-			createApiError('BAD_REQUEST', 'A saved key or login has no default: grant agents one by one'),
-			400,
-		)
-	}
 	if (outcome !== 'saved') {
 		const f = failure(outcome)
 		return c.json(f.error, f.status)

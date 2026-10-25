@@ -119,7 +119,7 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	// The release note moved into the For You feed (`foryou/release-card.tsx`),
+	// The release note is gone from the sidebar (and from For You),
 	// so the footer is the working-agents row and the profile only.
 	it('renders SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
