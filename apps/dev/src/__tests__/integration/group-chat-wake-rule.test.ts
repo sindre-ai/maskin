@@ -179,7 +179,10 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 		// a chat-callable key. The rule must give the same answers, and never touch the model.
 		describe.each([
 			['agents with no chat-callable key', {}],
-			['agents with a chat-callable key', { llmProvider: 'anthropic', llmConfig: { api_key: 'sk-test' } }],
+			[
+				'agents with a chat-callable key',
+				{ llmProvider: 'anthropic', llmConfig: { api_key: 'sk-test' } },
+			],
 		])('with %s', (_mode, agentOverrides) => {
 			it('answers every row of the scripted chat and never calls the model', async () => {
 				const { a, b, h2, sessionManager, conversationId } = await scripted(agentOverrides)
@@ -319,7 +322,10 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 			const e = await respond(sessionManager, conversationId, messageId, failing)
 
 			expect(e).toMatchObject({ flagOn: true, rule: 'resolver_error' })
-			expect(e.outcomes.map((o) => o.reason)).toEqual(['skip_resolver_error', 'skip_resolver_error'])
+			expect(e.outcomes.map((o) => o.reason)).toEqual([
+				'skip_resolver_error',
+				'skip_resolver_error',
+			])
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 			expect(errorLog).toHaveBeenCalledWith(
 				expect.stringContaining('waking nobody'),

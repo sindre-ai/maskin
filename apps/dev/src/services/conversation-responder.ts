@@ -643,7 +643,11 @@ async function routeByWakeRule(ctx: {
 
 /** The prompt wording for a wake from the rule. A redo keeps today's wording unless the agent was tagged. */
 function wakeReasonForRule(
-	reason: 'rule_tagged' | 'rule_retry_target' | 'rule_last_speaker' | 'rule_first_message_lone_agent',
+	reason:
+		| 'rule_tagged'
+		| 'rule_retry_target'
+		| 'rule_last_speaker'
+		| 'rule_first_message_lone_agent',
 	wasTagged: boolean,
 ): ConversationWakeReason {
 	switch (reason) {

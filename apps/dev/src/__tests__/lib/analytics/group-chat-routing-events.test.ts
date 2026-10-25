@@ -86,10 +86,7 @@ describe('trackGroupChatMessageRouted', () => {
 			rule: 'tagged',
 			woken_agent_ids: ['a'],
 			skipped_agent_ids: ['b'],
-			agent_outcomes: [
-				'a|wake|rule_tagged|started_new_session',
-				'b|skip|skip_not_addressed|none',
-			],
+			agent_outcomes: ['a|wake|rule_tagged|started_new_session', 'b|skip|skip_not_addressed|none'],
 			defaulted_open_count: 0,
 		})
 	})

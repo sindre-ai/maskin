@@ -87,7 +87,10 @@ describe('decideWakes truth table', () => {
 		const r = decide({ previousOther: { authorId: H2.id, authorType: 'human' } })
 		expect(r.rule).toBe('last_speaker')
 		expect(r.wakes).toEqual([])
-		expect(r.skips.map((s) => s.reason)).toEqual(['skip_last_writer_person', 'skip_last_writer_person'])
+		expect(r.skips.map((s) => s.reason)).toEqual([
+			'skip_last_writer_person',
+			'skip_last_writer_person',
+		])
 	})
 
 	it('wakes nobody when the last speaker has left the chat', () => {
@@ -142,7 +145,10 @@ describe('decideWakes truth table', () => {
 	})
 
 	it('wakes the chosen agent on a redo', () => {
-		const r = decide({ retryTargetId: A.id, previousOther: { authorId: B.id, authorType: 'agent' } })
+		const r = decide({
+			retryTargetId: A.id,
+			previousOther: { authorId: B.id, authorType: 'agent' },
+		})
 		expect(r.rule).toBe('retry_target')
 		expect(r.wakes).toEqual([{ agentId: A.id, reason: 'rule_retry_target' }])
 		expect(r.skips).toEqual([{ agentId: B.id, reason: 'skip_not_addressed' }])
