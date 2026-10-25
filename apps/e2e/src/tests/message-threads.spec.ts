@@ -226,6 +226,29 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			}
 		})
 
+		test('the Threads filter lists a thread with unread replies and opens it', async ({
+			page,
+			account,
+		}) => {
+			const other = await createSecondPerson(account)
+			const { conversationId, rootId } = await seedChat(account, [other.id])
+			const replyText = `Unread reply ${Date.now()}`
+			await other.api.postConversationMessage(conversationId, account.workspaceId, {
+				content: replyText,
+				thread_root_id: rootId,
+			})
+
+			await page.goto(`/${account.workspaceId}/chats?filter=threads`)
+			const row = page.getByTestId('reply-thread-list').getByRole('link', { name: /E2E threads/ })
+			await expect(row).toBeVisible({ timeout: 10_000 })
+			await expect(row.getByLabel('1 unread')).toBeVisible()
+			await expect(row).toContainText('1 reply')
+
+			await row.click()
+			await expect(paneReply(page, replyText)).toBeVisible({ timeout: 10_000 })
+			expect(page.url()).toContain(`thread=${rootId}`)
+		})
+
 		test('the pill and the pane render in light and dark', async ({ page, account }) => {
 			const other = await createSecondPerson(account)
 			const { conversationId, rootId } = await seedChat(account, [other.id])
