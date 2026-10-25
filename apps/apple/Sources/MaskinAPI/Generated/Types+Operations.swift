@@ -32875,8 +32875,8 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/missingScopes`.
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/needsReconnect`.
-                        /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/grantedScopes`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/grantedScopes`.
                         public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/source`.
                         public var source: Swift.String?
@@ -33951,8 +33951,8 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/missingScopes`.
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/needsReconnect`.
-                        /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/grantedScopes`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/grantedScopes`.
                         public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/source`.
                         public var source: Swift.String?
@@ -35242,8 +35242,8 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/missingScopes`.
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/needsReconnect`.
-                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/grantedScopes`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/grantedScopes`.
                         public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/source`.
                         public var source: Swift.String?
