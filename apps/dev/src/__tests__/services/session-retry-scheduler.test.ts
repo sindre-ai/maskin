@@ -116,6 +116,8 @@ describe('SessionRetryScheduler', () => {
 		const call = vi.mocked(startSession).mock.calls[0][0]
 		expect(call.retryOf).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.attemptNumber).toBe(2)
+		// Workspace-restore source: the retry starts from the failed session's /agent files
+		expect(call.parentSessionId).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.callerKind).toBe('internal')
 
 		// CAS-clear retry_at + link retried_session_id both happened
