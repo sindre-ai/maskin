@@ -8,6 +8,7 @@ import { Link } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
+import { ReplyThreadList } from './replies/reply-thread-list'
 
 interface ConversationListProps {
 	workspaceId: string
@@ -35,9 +36,26 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 		title: 'Nothing archived yet',
 		description: 'Archived chats stay searchable — they just leave the main list.',
 	},
+	// Threads has its own list (`ReplyThreadList`); this entry only satisfies the record.
+	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
 }
 
-export function ConversationList({
+export function ConversationList(props: ConversationListProps) {
+	// Threads are not conversations: they list from another endpoint, so they get their own list.
+	// Split here, above the hooks, so the hook order never changes within one mounted list.
+	if (props.filter === 'threads') {
+		return (
+			<ReplyThreadList
+				workspaceId={props.workspaceId}
+				className={props.className}
+				expanded={props.expanded}
+			/>
+		)
+	}
+	return <ChatConversationList {...props} />
+}
+
+function ChatConversationList({
 	workspaceId,
 	filter = 'all',
 	className,
