@@ -7,6 +7,7 @@ import { logger } from '../../../logger'
 import { TokenManager } from '../../oauth/token-manager'
 import { runIntegrationSync } from '../../sync/runner'
 import type { PostInstallContext } from '../../types'
+import { inspectIndexStatus } from './index-status'
 import { writeSearchDemand } from './search-demand'
 
 export const GSC_PROVIDER = 'google-search-console'
@@ -383,6 +384,8 @@ export interface SyncDeps {
 	getAccessToken?: (db: Database, integrationId: string) => Promise<string>
 	/** Replaces the search_demand writeback that follows a completed sync. */
 	writeSearchDemand?: typeof writeSearchDemand
+	/** Replaces the index-status inspection that follows each integration's sync. */
+	inspectIndexStatus?: typeof inspectIndexStatus
 }
 
 function gscState(row: GscIntegrationRow): GscIntegrationState {
@@ -655,7 +658,33 @@ export async function syncAllGscIntegrations(db: Database, deps: SyncDeps = {}):
 			await syncGscIntegration(db, row, deps)
 		} catch {
 			// Already logged and recorded per property / in recordFailure; next tick retries.
+			// No inspection after a failed sync: the token or the connection may be bad.
+			continue
 		}
+		await inspectIndex(db, row, deps)
+	}
+}
+
+/**
+ * Per-page index status for the integration's tracked pages. Runs after the
+ * sync in the same loop, not inside syncGscIntegration (which returns early once
+ * the day is synced) and not inside runIntegrationSync (a second
+ * integration_sync_completed per run would distort its count). It never changes
+ * last_synced_date or the integration status; a failure is logged and the next
+ * tick tries again.
+ */
+async function inspectIndex(db: Database, row: GscIntegrationRow, deps: SyncDeps): Promise<void> {
+	try {
+		await (deps.inspectIndexStatus ?? inspectIndexStatus)(db, row, {
+			now: (deps.now ?? (() => new Date()))(),
+			sleep: deps.sleep,
+			getAccessToken: () => (deps.getAccessToken ?? defaultAccessToken)(db, row.id),
+		})
+	} catch (err) {
+		logger.error('GSC index inspection failed', {
+			integrationId: row.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
 	}
 }
 
