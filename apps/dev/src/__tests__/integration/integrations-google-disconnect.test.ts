@@ -141,22 +141,34 @@ describe('POST /api/integrations/google/disconnect', () => {
 		for (const call of calls) expect(call.refreshToken).toBe(`rt-${call.provider}-${ws.id}`)
 	})
 
-	it('runs the real Drive revoke against Google with that row refresh token', async () => {
-		const ws = await insertWorkspace(db, getTestActorId())
-		await seedGoogleRows(ws.id)
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response('{}', { status: 200 }))
+	it.each(['drive', 'drive-meet', 'google'] as const)(
+		'%s: never calls Google to revoke, so another workspace keeps its working grant',
+		async (scope) => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			const other = await insertWorkspace(db, getTestActorId())
+			await seedGoogleRows(ws.id)
+			await seedGoogleRows(other.id)
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('{}', { status: 200 }))
 
-		const res = await buildApp().request(post(ws.id, { email: EMAIL, scope: 'drive' }))
+			const res = await buildApp().request(post(ws.id, { email: EMAIL, scope }))
 
-		expect(res.status).toBe(200)
-		const revokeCalls = fetchSpy.mock.calls.filter(([url]) =>
-			String(url).includes('oauth2.googleapis.com/revoke'),
-		)
-		expect(revokeCalls).toHaveLength(1)
-		expect(String(revokeCalls[0]?.[1]?.body)).toContain(`token=rt-google-drive-${ws.id}`)
-	})
+			expect(res.status).toBe(200)
+			// A Google revoke takes the grant from every workspace that shares this user and
+			// OAuth client, so disconnect must only flip Maskin's own rows.
+			const revokeCalls = fetchSpy.mock.calls.filter(([url]) =>
+				String(url).includes('oauth2.googleapis.com/revoke'),
+			)
+			expect(revokeCalls).toEqual([])
+			expect(Object.values(await statusByProvider(other.id))).toEqual([
+				'active',
+				'active',
+				'active',
+				'active',
+			])
+		},
+	)
 
 	it('skips a provider the human has no row for without erroring', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())

@@ -4,13 +4,6 @@ vi.mock('../../../../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-const revokeToken = vi.fn()
-vi.mock('../../../../../lib/integrations/oauth/handler', () => ({
-	OAuth2Handler: class {
-		revokeToken = revokeToken
-	},
-}))
-
 const setupDriveWatch = vi.fn()
 const stopDriveChannel = vi.fn()
 vi.mock('../../../../../lib/integrations/providers/google-drive/watch', () => ({
@@ -18,7 +11,6 @@ vi.mock('../../../../../lib/integrations/providers/google-drive/watch', () => ({
 	stopDriveChannel: (...args: unknown[]) => stopDriveChannel(...args),
 }))
 
-import { revokeDriveGrant } from '../../../../../lib/integrations/providers/google-drive/disconnect'
 import { setupDriveInstall } from '../../../../../lib/integrations/providers/google-drive/install'
 
 function fakeDb() {
@@ -120,50 +112,5 @@ describe('setupDriveInstall (postInstall)', () => {
 				credentials: { accessToken: 'ya29.test' },
 			}),
 		).rejects.toThrow(/missing metadata.sources/)
-	})
-})
-
-describe('revokeDriveGrant (preDisconnect)', () => {
-	beforeEach(() => {
-		revokeToken.mockReset()
-		stopDriveChannel.mockReset().mockResolvedValue(undefined)
-	})
-
-	const ctx = (credentials: Record<string, string>) =>
-		({
-			db: {},
-			integrationId: 'int-1',
-			workspaceId: 'ws-1',
-			credentials,
-			externalId: 'a@b.c',
-		}) as never
-
-	it('stops the notification channel before it revokes the grant', async () => {
-		const context = ctx({ accessToken: 'at', refreshToken: 'rt' })
-		await revokeDriveGrant(context)
-		expect(stopDriveChannel).toHaveBeenCalledWith(context)
-		expect(stopDriveChannel.mock.invocationCallOrder[0]).toBeLessThan(
-			revokeToken.mock.invocationCallOrder[0] as number,
-		)
-	})
-
-	it('revokes the refresh token when one is stored', async () => {
-		await revokeDriveGrant(ctx({ accessToken: 'at', refreshToken: 'rt' }))
-		expect(revokeToken).toHaveBeenCalledWith('rt')
-	})
-
-	it('falls back to the access token', async () => {
-		await revokeDriveGrant(ctx({ accessToken: 'at' }))
-		expect(revokeToken).toHaveBeenCalledWith('at')
-	})
-
-	it('does nothing when there is no token', async () => {
-		await revokeDriveGrant(ctx({}))
-		expect(revokeToken).not.toHaveBeenCalled()
-	})
-
-	it('swallows a revoke failure so disconnect still succeeds', async () => {
-		revokeToken.mockRejectedValueOnce(new Error('boom'))
-		await expect(revokeDriveGrant(ctx({ accessToken: 'at' }))).resolves.toBeUndefined()
 	})
 })

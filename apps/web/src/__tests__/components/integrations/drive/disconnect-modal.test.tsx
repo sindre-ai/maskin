@@ -34,6 +34,15 @@ describe('DisconnectDriveModal', () => {
 		show.mockRestore()
 	})
 
+	it('says disconnect only removes the Maskin connection, for every option', async () => {
+		setup()
+		const note = screen.getByTestId('disconnect-maskin-only-note')
+		expect(note).toHaveTextContent('This removes the connection from Maskin only.')
+		expect(note).toHaveTextContent("Google account's permissions settings")
+		await userEvent.click(screen.getByRole('radio', { name: /whole Google account/ }))
+		expect(screen.getByTestId('disconnect-maskin-only-note')).toBe(note)
+	})
+
 	it('has three radios in a named radiogroup, Drive only preselected', () => {
 		setup()
 		const group = screen.getByRole('radiogroup', { name: 'Choose how much to disconnect' })
@@ -77,7 +86,7 @@ describe('DisconnectDriveModal', () => {
 		expect(props.onCancel).toHaveBeenCalledTimes(1)
 	})
 
-	it('while the revoke runs: loading state on the button, Escape and Cancel are held', () => {
+	it('while the disconnect runs: loading state on the button, Escape and Cancel are held', () => {
 		const props = setup({ pending: true })
 		expect(screen.getByRole('button', { name: /Disconnect Drive/ })).toBeDisabled()
 		expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()

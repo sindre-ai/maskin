@@ -255,9 +255,10 @@ export function hasLiveChannel(drive: DriveConfigBlock | undefined, withinMs = 0
 }
 
 /**
- * preDisconnect step: stop the row's channel so Google stops delivering. Best
- * effort like the grant revoke: any failure is logged and disconnect continues.
- * Runs before the grant is revoked, since channels.stop needs a live token.
+ * preDisconnect: stop the row's channel so Google stops delivering. Best effort:
+ * any failure is logged and disconnect continues. It runs while the row's token
+ * is still readable, since channels.stop needs a live token. The Google grant
+ * itself is left alone: other workspaces and Google providers share it.
  */
 export async function stopDriveChannel(
 	ctx: PreDisconnectContext,

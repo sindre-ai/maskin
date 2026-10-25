@@ -34,6 +34,9 @@ export const DRIVE_DISCONNECT_COPY = {
 				`Removes Gmail, Calendar, Meet and Drive. Agents lose all Google-backed access for ${name} until they reconnect.`,
 		},
 	},
+	// Disconnect only removes Maskin's stored connection. The Google grant is shared with other
+	// workspaces and Google providers, so it is never revoked here.
+	note: "This removes the connection from Maskin only. To remove Maskin's access on Google's side, use the Google account's permissions settings.",
 	// No spec line for the in-modal callout; written for this task.
 	stays: (remaining: readonly string[]) =>
 		remaining.length > 0
