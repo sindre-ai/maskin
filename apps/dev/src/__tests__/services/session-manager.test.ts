@@ -63,6 +63,24 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
+// A launch mints a session key (an insert) and revokes the session's older ones (an update), and
+// every settle revokes again. These tests queue insert and update results by position, so the
+// two helpers are stubbed to keep those queues as written; their own queries are covered in
+// packages/auth and against real Postgres.
+const { mockIssueApiKey, mockRevokeSessionKeys } = vi.hoisted(() => ({
+	mockIssueApiKey: vi.fn(async (_db: unknown, _input: unknown) => ({
+		key: 'ank_minted_session_key',
+		keyHash: 'hash_of_minted_session_key',
+	})),
+	mockRevokeSessionKeys: vi.fn(async (_db: unknown, _sessionId: string, _except?: string) => []),
+}))
+
+vi.mock('@maskin/auth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@maskin/auth')>()),
+	issueApiKey: mockIssueApiKey,
+	revokeSessionKeys: mockRevokeSessionKeys,
+}))
+
 // The launch reads the agent's integration access with a query of its own. These tests queue
 // db.select() results by position, so the lookup is stubbed here and covered against real
 // Postgres in integration/agent-access-launch.test.ts.
@@ -817,7 +835,7 @@ describe('SessionManager', () => {
 			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
-		it('refuses to launch when the agent has no apiKey', async () => {
+		it('launches an agent that has no stored apiKey on a key minted for the session', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -826,7 +844,7 @@ describe('SessionManager', () => {
 			})
 			const agent = {
 				id: session.actorId,
-				name: 'Orphaned Agent',
+				name: 'Keyless Agent',
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
@@ -846,15 +864,66 @@ describe('SessionManager', () => {
 				failures: [],
 			})
 
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			expect(mockIssueApiKey).toHaveBeenCalledTimes(1)
+			expect(mockIssueApiKey).toHaveBeenCalledWith(expect.anything(), {
+				actorId: agent.id,
+				kind: 'session',
+				sessionId: session.id,
+			})
+			// Older keys of this session go, the one just minted stays.
+			expect(mockRevokeSessionKeys).toHaveBeenCalledWith(
+				expect.anything(),
+				session.id,
+				'hash_of_minted_session_key',
+			)
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_API_KEY).toBe('ank_minted_session_key')
+		})
+
+		it('does not launch when the session key cannot be minted', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				name: 'Keyless Agent',
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockIssueApiKey.mockRejectedValueOnce(new Error('api_keys insert failed'))
+
 			mockResults.selectQueue = [
 				[session], // startSession: load session
 				[workspace], // hasCapacity: workspace lookup
 				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup (apiKey is null)
+				[agent], // launchContainer: agent lookup
 				[workspace], // launchContainer: workspace lookup (llm keys)
 			]
 
-			await expect(manager.startSession(session.id)).rejects.toThrow(/apiKey is null/)
+			await expect(manager.startSession(session.id)).rejects.toThrow(/api_keys insert failed/)
 			expect(mockContainerManager.create).not.toHaveBeenCalled()
 		})
 

@@ -1,3 +1,4 @@
+import { hashApiKey } from '@maskin/auth'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -208,7 +209,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	const offerAgent = () => ({
 		name: 'Chief of Staff',
 		systemPrompt: 'You are the Chief of Staff.',
-		apiKey: 'ank_agent',
+		tools: null,
 	})
 	const post = (app: { request: (r: Request) => Response | Promise<Response> }) =>
 		app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, OFFER))
@@ -252,6 +253,70 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		mockResults.update = [] // the claim UPDATE matched no row
 		expect((await post(app)).status).toBe(409)
 		expect(createCall).not.toHaveBeenCalled()
+	})
+
+	it('500s and mints no key when the voice agent row is gone', async () => {
+		const createCall = vi.fn()
+		setCreateRealtimeCallFn(createCall)
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [[sessionRow()], [memberRow()], []]
+
+		expect((await post(app)).status).toBe(500)
+		expect(createCall).not.toHaveBeenCalled()
+		expect(calls.inserts).toHaveLength(0)
+		expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'errored' }))
+	})
+
+	it("runs the agent's tools on a short-lived key minted for the call, stored only as a hash", async () => {
+		openSocketImmediately()
+		setCreateRealtimeCallFn(async () => ({
+			kind: 'ok',
+			callId: 'rtc_abc',
+			answerSdp: 'v=0 answer',
+		}))
+		const factory = vi.fn(async (_args: { apiKey: string }) => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		setVoiceInvokeToolFactory(factory as never)
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[], // agentSkills
+			[{ settings: null }], // transcript persistence
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const before = Date.now()
+		const res = await post(app)
+		expect(res.status).toBe(200)
+
+		const agentKey = factory.mock.calls[0]?.[0].apiKey ?? ''
+		expect(agentKey).toMatch(/^ank_/)
+		const keyInsert = calls.inserts.find((v) => (v as { kind?: string }).kind === 'session') as {
+			actorId: string
+			keyHash: string
+			expiresAt: Date
+		}
+		expect(keyInsert).toMatchObject({ actorId: AGENT, keyHash: hashApiKey(agentKey) })
+		// Two hours, give or take the time the request took.
+		const ttlMs = keyInsert.expiresAt.getTime() - before
+		expect(ttlMs).toBeGreaterThan(2 * 60 * 60 * 1000 - 60_000)
+		expect(ttlMs).toBeLessThanOrEqual(2 * 60 * 60 * 1000 + 60_000)
+		expect(JSON.stringify(calls.inserts)).not.toContain(agentKey)
 	})
 
 	it('sends the offer to the GA calls endpoint with the pinned model and the full MCP tool list', async () => {

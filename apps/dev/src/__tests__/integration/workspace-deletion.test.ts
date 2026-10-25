@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { validateApiKey } from '@maskin/auth'
 import {
 	events,
 	actors,
@@ -416,7 +417,10 @@ describe('workspace deletion (integration)', () => {
 		const [scrubbed] = await db.select().from(actors).where(eq(actors.id, target.agent.id))
 		expect(scrubbed?.name).toBe('Deleted agent')
 		expect(scrubbed?.systemPrompt).toBeNull()
-		expect(scrubbed?.apiKey).not.toBe(soleKey)
+		expect(scrubbed?.apiKey).toBeNull()
+		// The scrubbed agent's key no longer authenticates; the human's still does.
+		expect(await validateApiKey(db, soleKey)).toBeNull()
+		expect(await validateApiKey(db, me.apiKey)).toEqual({ actorId: me.id, type: 'human' })
 
 		const [shared] = await db.select().from(actors).where(eq(actors.id, sharedAgent.id))
 		expect(shared?.systemPrompt).toBe('keep me')

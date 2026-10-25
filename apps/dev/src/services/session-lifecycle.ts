@@ -17,6 +17,7 @@
  */
 import { and, eq, ne, notInArray, sql } from 'drizzle-orm'
 
+import { revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
@@ -1073,6 +1074,17 @@ export async function settleSession(
 				})
 			})
 	}
+
+	// The key minted for this session's container dies with the session (also on a pause: resume
+	// mints a new one). Runs for an already-terminal row too, so a key a late launch minted
+	// after the settle is still closed. Best-effort: the session is already settled, and a key
+	// that survives a failed revoke is cascaded away with the session row.
+	await revokeSessionKeys(deps.db, sessionId).catch((err) => {
+		logger.warn('settleSession: failed to revoke session API keys', {
+			sessionId,
+			error: String(err),
+		})
+	})
 
 	// The eviction inside `recordEvent` runs before the settle transaction
 	// commits, so a usage read landing in between could re-cache the pre-settle
