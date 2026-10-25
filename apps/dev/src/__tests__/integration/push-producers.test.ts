@@ -301,6 +301,81 @@ describe('push producers', () => {
 			}
 		})
 	})
+	describe('chat mentions', () => {
+		const mentionRows = () =>
+			db
+				.select()
+				.from(notifications)
+				.where(eq(notifications.workspaceId, workspaceId))
+				.then((rows) => rows.filter((r) => r.title.endsWith('mentioned you')))
+
+		beforeEach(async () => {
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId, actorId: secondHumanId, role: 'member' })
+		})
+
+		function post(actorId: string, mentions: string[], over: Record<string, unknown> = {}) {
+			return insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId,
+				content: 'Can you take a look?',
+				metadata: { mentions },
+				...over,
+			})
+		}
+
+		it('creates one push row for a mentioned person, none for the author or a mentioned agent', async () => {
+			const created = await post(humanId, [secondHumanId, humanId, agentId])
+
+			const rows = await mentionRows()
+			expect(rows).toHaveLength(1)
+			expect(rows[0]).toMatchObject({
+				targetActorId: secondHumanId,
+				sourceActorId: humanId,
+				type: 'good_news',
+				status: 'seen',
+			})
+			expect(rows[0]?.metadata).toMatchObject({
+				push_category: 'conversation',
+				push_collapse_key: `chat-mention:${conversationId}:${created?.id}`,
+				push_only: true,
+				conversation_id: conversationId,
+				message_id: created?.id,
+			})
+			expect(rows[0]?.metadata).not.toHaveProperty('push_delay_seconds')
+		})
+
+		it('notifies a person an agent mentions mid-turn, naming the agent', async () => {
+			await post(agentId, [humanId])
+
+			const rows = await mentionRows()
+			expect(rows.map((r) => r.targetActorId)).toEqual([humanId])
+			expect(rows[0]?.title).toBe('Ada mentioned you')
+		})
+
+		it('does not notify a person who is not a member of the workspace', async () => {
+			const outsider = await insertActor(db, { type: 'human' })
+
+			await post(humanId, [outsider.id])
+
+			expect(await mentionRows()).toHaveLength(0)
+		})
+
+		it('leaves an auto-posted final output to the reply push, with no extra mention row', async () => {
+			await finalReply('turn-1', {
+				metadata: {
+					source: 'final_output',
+					final_output: { dedupe_key: 'turn-1' },
+					mentions: [humanId],
+				},
+			})
+
+			expect(await mentionRows()).toHaveLength(0)
+		})
+	})
+
 	describe('answering an agent question in the chat', () => {
 		async function ask(sessionId: string) {
 			const res = await createSessionsApp(agentId).request(

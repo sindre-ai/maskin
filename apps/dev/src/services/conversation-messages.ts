@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { notifyChatReply, resolveAnsweredQuestions } from './chat-notifications'
+import { notifyChatMention, notifyChatReply, resolveAnsweredQuestions } from './chat-notifications'
 
 export type InsertConversationMessageArgs = {
 	conversationId: string
@@ -98,6 +98,19 @@ export async function insertConversationMessage(
 	// (both InteractiveTurnFinalizer paths) lands here, and only a fresh insert
 	// reaches this line, so a replayed log line cannot notify twice.
 	await notifyChatReply(db, {
+		workspaceId: args.workspaceId,
+		authorId: args.actorId,
+		conversationId: args.conversationId,
+		messageId: created.id,
+		content: args.content,
+		kind: args.kind,
+		metadata: args.metadata,
+		sessionId: args.sessionId,
+	})
+
+	// A person @mentioned in the message gets a push. Same fresh-insert guarantee
+	// as above; auto-posted final outputs are left to notifyChatReply.
+	await notifyChatMention(db, {
 		workspaceId: args.workspaceId,
 		authorId: args.actorId,
 		conversationId: args.conversationId,
