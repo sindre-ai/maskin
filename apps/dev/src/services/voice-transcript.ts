@@ -99,8 +99,8 @@ export interface WriteVoiceTranscriptLineArgs {
  *
  * Returns null and writes no message when the workspace has opted out or the line
  * is blank. A non-blank line pushes the idle deadline out either way. Goes
- * through insertConversationMessage, not the POST /messages route, so a spoken line cannot wake an agent through @mention auto-join or
- * the conversation responder — the call itself is the live exchange.
+ * through insertConversationMessage, not the POST /messages route, so a spoken
+ * line cannot wake an agent through @mention auto-join or the conversation responder — the call itself is the live exchange.
  */
 export async function writeVoiceTranscriptLine(
 	db: Database,
