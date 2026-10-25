@@ -44,7 +44,7 @@ export async function listFolder(
 	ctx: DriveToolContext,
 	input: ListFolderInput,
 ): Promise<ListFolderOutput> {
-	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)
+	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId, ctx.actorId)
 	const client = ctx.client ?? createDefaultDriveClient()
 	const pageSize = clampPageSize(input.pageSize, LIST_PAGE_SIZE_DEFAULT, LIST_PAGE_SIZE_MAX)
 	const recursive = input.recursive ?? false

@@ -1,11 +1,15 @@
 import type { Database } from '@maskin/db'
-import { IntegrationAuthRevokedError } from '../../errors'
+import { IntegrationAuthRevokedError, ScopeDeniedError } from '../../errors'
 import { getIntegrationCredential } from '../../lookup'
 import { TokenManager } from '../../oauth/token-manager'
+import { readContextFor } from '../../read-context'
 import { getProvider } from '../../registry'
 import { DriveError } from './errors'
 
 export const GOOGLE_DRIVE_PROVIDER = 'google-drive'
+
+/** Host recorded on the credential audit row for every Drive read. */
+const DRIVE_OUTBOUND_TARGET = 'www.googleapis.com'
 
 /**
  * Resolve a live Google Drive access token for the caller's workspace.
@@ -16,11 +20,14 @@ export const GOOGLE_DRIVE_PROVIDER = 'google-drive'
  * actor_id NULL in that workspace. A caller in workspace B cannot resolve
  * workspace A's row.
  *
- * Every Drive call gets its token from the generic TokenManager, so refresh,
- * rotation and the invalid_grant -> revoked flip (which drives the
- * needs-reconnect banner) are the shared path, not a copy.
+ * The read is gated and audited first (agent grant check, one credential
+ * access log row, attributed to the authenticated caller). The token itself
+ * still comes from the generic TokenManager, so refresh, rotation and the
+ * invalid_grant -> revoked flip (which drives the needs-reconnect banner) are
+ * the shared path, not a copy.
  *
  *   - No active row -> INTEGRATION_MISSING.
+ *   - Caller holds no grant on the credential -> PERMISSION_DENIED.
  *   - invalid_grant on refresh -> RECONSENT_REQUIRED (TokenManager has already
  *     flipped the row).
  *   - Provider not registered -> thrown as-is so a registry gap is loud.
@@ -28,8 +35,20 @@ export const GOOGLE_DRIVE_PROVIDER = 'google-drive'
 export async function getGoogleDriveAccessToken(
 	db: Database,
 	workspaceId: string,
+	requestingActorId: string,
 ): Promise<{ accessToken: string; integrationId: string }> {
-	const integration = await getIntegrationCredential(db, workspaceId, GOOGLE_DRIVE_PROVIDER, null)
+	const integration = await getIntegrationCredential(db, workspaceId, GOOGLE_DRIVE_PROVIDER, null, {
+		ctx: readContextFor(requestingActorId, DRIVE_OUTBOUND_TARGET),
+	}).catch((err: unknown) => {
+		if (err instanceof ScopeDeniedError) {
+			throw new DriveError({
+				code: 'PERMISSION_DENIED',
+				message: 'This agent has not been granted access to the connected Google Drive.',
+				hint: 'A workspace admin can grant access under Settings → Integrations.',
+			})
+		}
+		throw err
+	})
 	if (!integration) {
 		throw new DriveError({
 			code: 'INTEGRATION_MISSING',

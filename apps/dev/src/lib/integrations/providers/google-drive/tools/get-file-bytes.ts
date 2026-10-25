@@ -82,7 +82,7 @@ export async function getFileBytes(
 		})
 	}
 
-	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)
+	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId, ctx.actorId)
 	const client = ctx.downloadClient ?? createDefaultDriveDownloadClient()
 
 	const meta = await client.getFileMetadata(accessToken, input.fileId)

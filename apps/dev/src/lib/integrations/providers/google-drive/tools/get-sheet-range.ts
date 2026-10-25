@@ -70,7 +70,7 @@ export async function getSheetRange(
 	const pageSize = clampPageSize(input.pageSize, SHEET_PAGE_SIZE_DEFAULT, SHEET_PAGE_SIZE_MAX)
 	const limiter = ctx.rateLimiter ?? sheetsReadBucket
 
-	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)
+	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId, ctx.actorId)
 	const client = ctx.docsSheetsClient ?? createDefaultDocsSheetsClient()
 
 	let cursor: Cursor

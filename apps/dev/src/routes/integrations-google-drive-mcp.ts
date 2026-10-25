@@ -7,14 +7,14 @@ import { normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { createGoogleDriveMcpServer } from '../lib/integrations/providers/google-drive/mcp-server'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
  * Streamable-HTTP MCP endpoint for the Google Drive integration, mounted at
  * /api/integrations/google-drive/mcp. Sibling of the Meet / Slack / LinkedIn MCP
  * routes: the caller authenticates with the Maskin API key (so the Google token
  * never enters the agent container), names the workspace in X-Workspace-Id, and
- * must be a member of it. The Drive token is resolved server-side from that
+ * must be able to write in it. The Drive token is resolved server-side from that
  * workspace's own integrations row, so workspace B can never reach workspace A's
  * credential.
  *
@@ -51,7 +51,7 @@ app.post('/', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

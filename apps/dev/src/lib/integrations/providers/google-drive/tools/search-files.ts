@@ -39,7 +39,7 @@ export async function searchFiles(
 	ctx: DriveToolContext,
 	input: SearchFilesInput,
 ): Promise<SearchFilesOutput> {
-	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)
+	const { accessToken } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId, ctx.actorId)
 	const client = ctx.client ?? createDefaultDriveClient()
 
 	const userQuery = input.query.trim()

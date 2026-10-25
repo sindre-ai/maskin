@@ -7,6 +7,7 @@ import {
 	stopDriveWatch,
 } from '../lib/integrations/providers/google-drive/watched-folders'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
  * Google Drive folder watches, as shown in the Folder watches section of the
@@ -23,6 +24,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		workspaceRole?: string
 	}
 }
 
@@ -75,6 +77,7 @@ app.openapi(listWatchedFoldersRoute, (async (c) => {
 const stopWatchedFolderRoute = createRoute({
 	method: 'delete',
 	path: '/watched-folders/{folderId}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Stop watching a Drive folder',
 	request: { params: folderIdParamSchema, headers: workspaceIdHeader },
@@ -93,6 +96,7 @@ const stopWatchedFolderRoute = createRoute({
 })
 
 app.openapi(stopWatchedFolderRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { folderId } = c.req.valid('param')

@@ -79,7 +79,11 @@ export async function watchFolder(
 	ctx: DriveToolContext,
 	input: WatchFolderInput,
 ): Promise<WatchFolderOutput> {
-	const { accessToken, integrationId } = await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)
+	const { accessToken, integrationId } = await getGoogleDriveAccessToken(
+		ctx.db,
+		ctx.workspaceId,
+		ctx.actorId,
+	)
 	const client = ctx.client ?? createDefaultDriveClient()
 
 	const rows = await loadWorkspaceDriveRows(ctx)

@@ -99,10 +99,10 @@ describe('searchFiles (cassette)', () => {
 		expect(new URL(String(fetchSpy.mock.calls[1]?.[0])).searchParams.get('pageSize')).toBe('7')
 	})
 
-	it('resolves the token for the caller workspace only', async () => {
+	it('resolves the token for the caller workspace and actor only', async () => {
 		replayCassette(searchCassette)
 		await searchFiles(ctx, { query: "fullText contains 'invoice'" })
-		expect(getToken).toHaveBeenCalledWith(db, 'ws-1')
+		expect(getToken).toHaveBeenCalledWith(db, 'ws-1', 'actor-1')
 	})
 
 	it('emits drive_search_ran with counts and flags, never the query text', async () => {

@@ -6,14 +6,14 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 vi.mock('../../lib/workspace-auth', () => ({
-	isWorkspaceMember: vi.fn(async () => true),
+	isWorkspaceWriter: vi.fn(async () => true),
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 	StreamableHTTPServerTransport: class {
 		async handleRequest() {
 			// no-op: this file asserts the route mounts and gates on workspace
-			// membership; the JSON-RPC surface is covered by the server contract test.
+			// write access; the JSON-RPC surface is covered by the server contract test.
 		}
 	},
 }))
@@ -23,7 +23,7 @@ vi.mock('../../lib/integrations/providers/google-drive/mcp-server', () => ({
 }))
 
 import { createGoogleDriveMcpServer } from '../../lib/integrations/providers/google-drive/mcp-server'
-import { isWorkspaceMember } from '../../lib/workspace-auth'
+import { isWorkspaceWriter } from '../../lib/workspace-auth'
 import googleDriveMcpRoutes from '../../routes/integrations-google-drive-mcp'
 
 const PATH = '/api/integrations/google-drive/mcp'
@@ -44,7 +44,7 @@ function mountedApp() {
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	;(isWorkspaceMember as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true)
+	;(isWorkspaceWriter as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true)
 })
 
 describe('POST /api/integrations/google-drive/mcp', () => {
@@ -58,8 +58,8 @@ describe('POST /api/integrations/google-drive/mcp', () => {
 		expect((await res.json()).error?.code).toBe('BAD_REQUEST')
 	})
 
-	it('403s when the actor is not a member of the workspace, and builds no server', async () => {
-		;(isWorkspaceMember as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+	it('403s when the actor is not a writer in the workspace, and builds no server', async () => {
+		;(isWorkspaceWriter as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
 		const res = await mountedApp().request(PATH, {
 			method: 'POST',
 			headers: {
@@ -92,6 +92,8 @@ describe('POST /api/integrations/google-drive/mcp', () => {
 			workspaceId: '22222222-2222-2222-2222-222222222222',
 			actorId: '11111111-1111-1111-1111-111111111111',
 			sessionId: 'sess-1',
+			client: 'other',
+			actorType: null,
 			storage,
 		})
 	})

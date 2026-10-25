@@ -5,11 +5,13 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		workspaceRole?: string
 	}
 }
 
@@ -23,6 +25,7 @@ export const GOOGLE_DISCONNECT_SCOPES = {
 const disconnectGoogleRoute = createRoute({
 	method: 'post',
 	path: '/disconnect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Disconnect a human Google rows (Drive, Drive + Meet, or the whole account)',
 	request: {
@@ -71,6 +74,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 // workspace's id, so another workspace's rows cannot be reached. A provider the
 // human has no row for is skipped, not an error.
 app.openapi(disconnectGoogleRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')

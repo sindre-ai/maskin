@@ -232,7 +232,7 @@ export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
 		workspaceId: ctx.workspaceId,
 		actorId: ctx.actorId,
 		getAccessToken: async () =>
-			(await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId)).accessToken,
+			(await getGoogleDriveAccessToken(ctx.db, ctx.workspaceId, ctx.actorId)).accessToken,
 		openStorageObject: ctx.storage && openStorageSource(ctx.storage),
 	}
 

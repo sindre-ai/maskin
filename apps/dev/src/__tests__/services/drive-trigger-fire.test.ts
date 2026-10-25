@@ -18,6 +18,12 @@ vi.mock('../../services/trigger-event-queue', async (importOriginal) => ({
 	sweepQueueRetention: vi.fn().mockResolvedValue(undefined),
 }))
 
+// startSession() checks that the agent is a member of the workspace. This test scripts the mock
+// DB's selects one by one, so the check is stubbed; it is covered in lib/workspace-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
 }))
