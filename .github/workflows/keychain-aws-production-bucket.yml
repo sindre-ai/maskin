@@ -1,0 +1,119 @@
+# Keychain AWS production WORM bucket. Compliance mode, 24 months. THIS CANNOT BE UNDONE, even by root.
+# Created LAST, as its own workflow with its own approval. Hard gates, checked before approval is requested:
+#   1. the staging bootstrap (including the delete-refused lock test) has a successful run on main,
+#   2. the production bootstrap has a successful run on main,
+#   3. the approver confirms the bucket name and region were agreed with the CTO.
+# Bucket name is fixed in this file: maskin-keychain-worm-production-<account id>. Region is eu-central-1.
+# Writes no objects. Retention comes from the bucket default (the runtime user is denied PutObjectRetention).
+# Design and rules: ADR-010 and infra/keychain-aws/README.md.
+name: Keychain AWS production bucket
+
+run-name: Keychain AWS production bucket (${{ inputs.confirm }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Compliance mode cannot be undone. Choose yes only after the CTO confirmed the bucket name and region.
+        type: choice
+        required: true
+        default: 'no'
+        options:
+          - 'no'
+          - yes-cto-confirmed-name-and-region
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keychain-aws-production
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Check the prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRM" = "yes-cto-confirmed-name-and-region" || { echo "::error::Not confirmed. Nothing was requested."; exit 1; }
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "::error::Run this from main only."; exit 1; }
+          RUNS=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow keychain-aws-bootstrap.yml --branch main \
+            --status success --limit 100 --json displayTitle)
+          for t in staging production; do
+            jq -e --arg t "Keychain AWS bootstrap ($t)" 'map(select(.displayTitle == $t)) | length > 0' <<<"$RUNS" >/dev/null \
+              || { echo "::error::No successful bootstrap run for $t on main. Run it first."; exit 1; }
+          done
+          echo "gates passed: staging bootstrap with lock test and production bootstrap both succeeded on main"
+
+  create:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: keychain-aws-production
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_PAGER: ''
+    steps:
+      - name: Assume the production bootstrap role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/maskin-keychain-bootstrap-production
+          role-session-name: keychain-prod-bucket-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: eu-central-1
+          mask-aws-account-id: true
+
+      - name: Create the Compliance bucket and verify it
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          WORM="maskin-keychain-worm-production-$ACCT"
+          if ! aws s3api head-bucket --bucket "$WORM" 2>/dev/null; then
+            # Object Lock can only be switched on at creation. This also turns versioning on.
+            aws s3api create-bucket --bucket "$WORM" --region eu-central-1 \
+              --create-bucket-configuration LocationConstraint=eu-central-1 \
+              --object-lock-enabled-for-bucket >/dev/null
+          fi
+          aws s3api put-public-access-block --bucket "$WORM" --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          aws s3api put-bucket-encryption --bucket "$WORM" --server-side-encryption-configuration \
+            '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          aws s3api put-bucket-tagging --bucket "$WORM" --tagging 'TagSet=[{Key=maskin-keychain,Value=true}]'
+          # Set the default retention only if it is not already Compliance with 2 years. Re-runs never touch it.
+          MODE=$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Mode' --output text 2>/dev/null || true)
+          YEARS=$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Years' --output text 2>/dev/null || true)
+          if [ "$MODE" != "COMPLIANCE" ] || [ "$YEARS" != "2" ]; then
+            aws s3api put-object-lock-configuration --bucket "$WORM" --object-lock-configuration \
+              '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Years":2}}}'
+          fi
+          # Bucket policy: TLS only, and nobody can change the Object Lock configuration afterwards.
+          # Root or the break-glass admin can still edit this policy, a deliberate two-step to shorten retention.
+          jq -n --arg b "$WORM" '{
+            Version: "2012-10-17",
+            Statement: [
+              {Sid: "DenyInsecureTransport", Effect: "Deny", Principal: "*", Action: "s3:*",
+               Resource: [("arn:aws:s3:::" + $b), ("arn:aws:s3:::" + $b + "/*")],
+               Condition: {Bool: {"aws:SecureTransport": "false"}}},
+              {Sid: "FreezeObjectLockConfiguration", Effect: "Deny", Principal: "*",
+               Action: "s3:PutBucketObjectLockConfiguration", Resource: ("arn:aws:s3:::" + $b)}
+            ]}' > "$RUNNER_TEMP/worm-bucket-policy.json"
+          aws s3api put-bucket-policy --bucket "$WORM" --policy "file://$RUNNER_TEMP/worm-bucket-policy.json"
+          test "$(aws s3api get-bucket-versioning --bucket "$WORM" --query Status --output text)" = "Enabled"
+          test "$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.ObjectLockEnabled' --output text)" = "Enabled"
+          test "$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Mode' --output text)" = "COMPLIANCE"
+          test "$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Years' --output text)" = "2"
+          echo "production bucket: Object Lock Compliance, default retention 2 years, versioning on, region eu-central-1"
+          echo "- Production WORM bucket: Compliance, 2 years default, versioning on, eu-central-1, no objects written" >> "$GITHUB_STEP_SUMMARY"
