@@ -1812,6 +1812,44 @@ describe('Subscriptions Integration', () => {
 				expect((await cardDrafts(obj.id))?.map((d) => d.id)).toEqual(['dan'])
 			})
 
+			describe('once the messages have gone', () => {
+				async function draftTask(status: string) {
+					return insertObject(db, workspaceId, aId, { type: 'task', status, content: 'Hej' })
+				}
+
+				async function inFeed(entityId: string) {
+					const res = await appAs(aId).request(
+						jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }),
+					)
+					const body = (await res.json()) as { items: Array<{ entity_id: string }> }
+					return body.items.some((i) => i.entity_id === entityId)
+				}
+
+				it('leaves the feed when every message points at a finished task', async () => {
+					const obj = await seedObject()
+					const sent = await draftTask('done')
+					const skipped = await draftTask('discarded')
+					await askMany(obj.id, [
+						{ id: 'a', object_id: sent.id },
+						{ id: 'b', object_id: skipped.id },
+					])
+
+					expect(await inFeed(obj.id)).toBe(false)
+				})
+
+				it('stays while one message still has an open task', async () => {
+					const obj = await seedObject()
+					const sent = await draftTask('done')
+					const waiting = await draftTask('in_review')
+					await askMany(obj.id, [
+						{ id: 'a', object_id: sent.id },
+						{ id: 'b', object_id: waiting.id },
+					])
+
+					expect(await inFeed(obj.id)).toBe(true)
+				})
+			})
+
 			it('rejects more messages than the card can hold', async () => {
 				const obj = await seedObject()
 				const res = await askMany(
