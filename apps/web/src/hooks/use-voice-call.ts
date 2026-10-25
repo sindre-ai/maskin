@@ -263,8 +263,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 
 		setState('connecting')
 
-		// Session mint. A failure here (route not deployed, agent not
-		// voice-enabled, 429) returns the dialog to Permission with a notice.
+		// Session mint. A failure here (route not deployed, agent not found in
+		// this workspace, 429) returns the dialog to Permission with a notice.
 		let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
 		try {
 			session = await api.voiceSessions.create(workspaceId, { agent_actor_id: agentActorId })
@@ -272,9 +272,10 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			teardown()
 			if (err instanceof ApiError && err.status === 429) {
 				// Vendor rate limit or the workspace's daily minutes: every Call
-				// button disables until the server says to retry.
+				// button disables until the server says to retry. The server's
+				// message names the wait, so show that rather than a generic line.
 				markVoiceUnavailable(err.retryAfterSeconds ?? 30)
-				setNotice(VOICE_UNAVAILABLE_TOOLTIP)
+				setNotice(err.message || VOICE_UNAVAILABLE_TOOLTIP)
 			} else {
 				setNotice(err instanceof Error ? err.message : 'Could not start the voice session.')
 			}

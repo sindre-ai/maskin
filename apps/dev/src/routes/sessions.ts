@@ -6,6 +6,7 @@ import {
 	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatComputerRequestAsMarkdown,
+	formatIntegrationAccessRequestAsMarkdown,
 	formatIntegrationConnectAsMarkdown,
 	formatKeychainAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
@@ -17,6 +18,7 @@ import {
 	sessionComputerCardSchema,
 	sessionConnectCardSchema,
 	sessionInputSchema,
+	sessionIntegrationAccessCardSchema,
 	sessionKeychainAccessCardSchema,
 	sessionKeychainCardSchema,
 	sessionLeanRowSchema,
@@ -24,6 +26,7 @@ import {
 	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
@@ -31,8 +34,11 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { resolveAgentAccess } from '../lib/integrations/agent-access'
+import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
+import { providerLabel } from '../lib/integrations/access-preamble'
+import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
+import { isGatedRow } from '../lib/integrations/custom-mcp'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -281,12 +287,8 @@ function synthesizeSessionTitle(row: {
 	actionPrompt: string | null
 }): string {
 	if (row.triggerName && row.triggerName.trim().length > 0) return row.triggerName
-	const prompt = row.actionPrompt?.trim()
-	if (prompt && prompt.length > 0) {
-		return prompt.length > SESSION_TITLE_MAX_CHARS
-			? `${prompt.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`
-			: prompt
-	}
+	const title = sessionTitleFromPrompt(row.actionPrompt, SESSION_TITLE_MAX_CHARS)
+	if (title) return title
 	return `Session ${row.id.slice(0, 8)}`
 }
 
@@ -2112,6 +2114,177 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 	})
 	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
 }) as RouteHandler<typeof keychainAccessCardRoute, Env>)
+
+// POST /:id/integration-access-card - Ask the human to let this agent use a connected integration
+//
+// Called by the `request_integration_access` MCP tool. Posts a card with Allow / Not now for
+// an integration that is connected but not allowed for this agent (or not at this level). The
+// card only names the integration and the level: allowing it is a person's own call to
+// /integrations/:id/allow-access, so an agent can never widen its own access from here.
+const integrationAccessCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/integration-access-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a card in the session chat asking the person to allow a connected integration',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionIntegrationAccessCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						posted: z.boolean(),
+						already_granted: z.boolean(),
+						message_id: z.number().nullable(),
+					}),
+				},
+			},
+			description: 'Card posted, or the agent already has that much access',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not an integration with levels (a saved key or login), or a level it lacks',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session or active integration not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(integrationAccessCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { integration_id: integrationId, level, reason } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
+
+	const [integration] = await db
+		.select({
+			id: integrations.id,
+			provider: integrations.provider,
+			providerMode: integrations.providerMode,
+			displayName: integrations.displayName,
+			config: integrations.config,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, integrationId),
+				eq(integrations.workspaceId, session.workspaceId),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No connected integration with that id. Use list_integrations for the ids, or connect_integration if it is not connected.',
+			),
+			404,
+		)
+	}
+	if (isKeychainMode(integration.providerMode)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'That is a saved key or login. Use list_keychain_credentials and request_keychain_access for it.',
+			),
+			400,
+		)
+	}
+	if (
+		levelNotAllowed(
+			{
+				provider: integration.provider,
+				providerMode: integration.providerMode,
+				gated: isGatedRow(integration.config),
+			},
+			level,
+		)
+	) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'This tool server runs inside the agent, so it cannot be limited to reading. Ask for read_write.',
+			),
+			400,
+		)
+	}
+
+	const current = await resolveAgentAccess(db, session.workspaceId, integration.id, session.actorId)
+	if (current && accessCovers(current, level)) {
+		return c.json({ posted: false, already_granted: true, message_id: null }, 200)
+	}
+
+	const displayName = integration.displayName ?? providerLabel(integration.provider)
+	const created = await insertConversationMessage(db, {
+		conversationId: target.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatIntegrationAccessRequestAsMarkdown(displayName, level, reason),
+		metadata: {
+			integration_access_request: {
+				session_id: session.id,
+				integration_id: integration.id,
+				provider: integration.provider,
+				display_name: displayName,
+				level,
+				...(reason ? { reason } : {}),
+				...(target.helper ? { reply_to_session: true } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+	if (!created) {
+		logger.error('Integration access card insert returned no row', {
+			sessionId: session.id,
+			conversationId: target.conversationId,
+		})
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Integration access card could not be posted'),
+			500,
+		)
+	}
+	if (target.helper) {
+		await markHelperAwaitingCard(db, session.id, created.id, `use ${displayName}`)
+	}
+	logger.info('Posted integration access card into conversation', {
+		sessionId: session.id,
+		conversationId: target.conversationId,
+		messageId: created.id,
+		integrationId: integration.id,
+		level,
+	})
+	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
+}) as RouteHandler<typeof integrationAccessCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

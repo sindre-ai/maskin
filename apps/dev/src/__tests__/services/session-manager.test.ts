@@ -63,6 +63,24 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
+// A launch mints a session key (an insert) and revokes the session's older ones (an update), and
+// every settle revokes again. These tests queue insert and update results by position, so the
+// two helpers are stubbed to keep those queues as written; their own queries are covered in
+// packages/auth and against real Postgres.
+const { mockIssueApiKey, mockRevokeSessionKeys } = vi.hoisted(() => ({
+	mockIssueApiKey: vi.fn(async (_db: unknown, _input: unknown) => ({
+		key: 'ank_minted_session_key',
+		keyHash: 'hash_of_minted_session_key',
+	})),
+	mockRevokeSessionKeys: vi.fn(async (_db: unknown, _sessionId: string, _except?: string) => []),
+}))
+
+vi.mock('@maskin/auth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@maskin/auth')>()),
+	issueApiKey: mockIssueApiKey,
+	revokeSessionKeys: mockRevokeSessionKeys,
+}))
+
 // The launch reads the agent's integration access with a query of its own. These tests queue
 // db.select() results by position, so the lookup is stubbed here and covered against real
 // Postgres in integration/agent-access-launch.test.ts.
@@ -817,7 +835,7 @@ describe('SessionManager', () => {
 			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
-		it('refuses to launch when the agent has no apiKey', async () => {
+		it('launches an agent that has no stored apiKey on a key minted for the session', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -826,7 +844,7 @@ describe('SessionManager', () => {
 			})
 			const agent = {
 				id: session.actorId,
-				name: 'Orphaned Agent',
+				name: 'Keyless Agent',
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
@@ -846,15 +864,66 @@ describe('SessionManager', () => {
 				failures: [],
 			})
 
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			expect(mockIssueApiKey).toHaveBeenCalledTimes(1)
+			expect(mockIssueApiKey).toHaveBeenCalledWith(expect.anything(), {
+				actorId: agent.id,
+				kind: 'session',
+				sessionId: session.id,
+			})
+			// Older keys of this session go, the one just minted stays.
+			expect(mockRevokeSessionKeys).toHaveBeenCalledWith(
+				expect.anything(),
+				session.id,
+				'hash_of_minted_session_key',
+			)
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_API_KEY).toBe('ank_minted_session_key')
+		})
+
+		it('does not launch when the session key cannot be minted', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				name: 'Keyless Agent',
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockIssueApiKey.mockRejectedValueOnce(new Error('api_keys insert failed'))
+
 			mockResults.selectQueue = [
 				[session], // startSession: load session
 				[workspace], // hasCapacity: workspace lookup
 				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup (apiKey is null)
+				[agent], // launchContainer: agent lookup
 				[workspace], // launchContainer: workspace lookup (llm keys)
 			]
 
-			await expect(manager.startSession(session.id)).rejects.toThrow(/apiKey is null/)
+			await expect(manager.startSession(session.id)).rejects.toThrow(/api_keys insert failed/)
 			expect(mockContainerManager.create).not.toHaveBeenCalled()
 		})
 
@@ -1694,6 +1763,134 @@ describe('SessionManager', () => {
 					type: 'stdio',
 					...officialSpec,
 					env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
+				})
+			})
+
+			describe('MASKIN_GITHUB_MCP_REFRESH host switch', () => {
+				const supervisedArgs = [
+					'-c',
+					'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+					'github-mcp-server',
+					...officialSpec.args,
+				]
+
+				afterEach(() => {
+					vi.unstubAllEnvs()
+				})
+
+				async function launchTwoInstalls() {
+					const wsId = randomUUID()
+					const integrationA = buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-aaa',
+						config: { owner_login: 'sindre-ai' },
+					})
+					const integrationB = buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-bbb',
+						config: { owner_login: 'vaerksted-ai' },
+					})
+					const fixtures = buildLaunchFixtures([integrationA, integrationB])
+					fixtures.session.workspaceId = wsId
+					fixtures.workspace.id = wsId
+					vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+					mockGetValidToken
+						.mockResolvedValueOnce('ghs_token_sindre_ai')
+						.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+					setupLaunchMocks(fixtures)
+					await manager.startSession(fixtures.session.id)
+					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+						env: Record<string, string>
+					}
+					const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+						mcpServers: Record<string, unknown>
+					}
+					return { integrationA, integrationB, servers: parsed.mcpServers, fixtures }
+				}
+
+				it.each([
+					['unset', undefined],
+					['empty', ''],
+					['"0"', '0'],
+					['"false"', 'false'],
+				])('keeps the entries byte-identical to today when the switch is %s', async (_, value) => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', value as unknown as string)
+					const { servers } = await launchTwoInstalls()
+					expect(JSON.stringify(servers['github-sindre-ai'])).toBe(
+						JSON.stringify({
+							type: 'stdio',
+							command: officialSpec.command,
+							args: officialSpec.args,
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
+						}),
+					)
+					expect(JSON.stringify(servers['github-vaerksted-ai'])).toBe(
+						JSON.stringify({
+							type: 'stdio',
+							command: officialSpec.command,
+							args: officialSpec.args,
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_vaerksted_ai' },
+						}),
+					)
+				})
+
+				it("runs each install's entry through the guarded supervisor with its own integration id", async () => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+					const { integrationA, integrationB, servers } = await launchTwoInstalls()
+					expect(servers['github-sindre-ai']).toEqual({
+						type: 'stdio',
+						command: 'sh',
+						args: supervisedArgs,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+							GITHUB_MCP_INTEGRATION_ID: integrationA.id,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					})
+					expect(servers['github-vaerksted-ai']).toEqual({
+						type: 'stdio',
+						command: 'sh',
+						args: supervisedArgs,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_vaerksted_ai',
+							GITHUB_MCP_INTEGRATION_ID: integrationB.id,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					})
+					// The agent's own key stays out of the session's MCP config.
+					const serialized = JSON.stringify(servers)
+					expect(serialized).not.toContain('ank_test_agent_key')
+				})
+
+				it('registers both installs with the log classifier unchanged when the switch is on', async () => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+					const { sessionGithubLogClassifier } = await import(
+						'../../lib/integrations/providers/github/log-classifier'
+					)
+					const register = vi.spyOn(sessionGithubLogClassifier, 'registerSession')
+					try {
+						const { integrationA, integrationB, fixtures } = await launchTwoInstalls()
+						// mcp__github-<owner>__ tool names resolve through ownerLoginLower, so the
+						// mapping to each install is the same as with the switch off.
+						expect(register).toHaveBeenCalledWith(fixtures.session.id, [
+							expect.objectContaining({
+								ownerLoginLower: 'sindre-ai',
+								installationId: integrationA.externalId,
+							}),
+							expect.objectContaining({
+								ownerLoginLower: 'vaerksted-ai',
+								installationId: integrationB.externalId,
+							}),
+						])
+					} finally {
+						register.mockRestore()
+					}
 				})
 			})
 		})
@@ -2750,6 +2947,96 @@ describe('SessionManager', () => {
 			expect(slackBody.text).toContain(brokenIntegration.externalId)
 			expect(slackBody.text).not.toContain(healthyIntegration.externalId)
 			expect(slackBody.text).toContain('github-vaerksted-ai')
+		})
+
+		it('still probes both owners and gates the failing one when the entries run through the supervisor', async () => {
+			vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+			try {
+				const wsId = randomUUID()
+				const healthyIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					externalId: 'install-healthy-org',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const brokenIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					externalId: 'install-broken-org',
+					config: { owner_login: 'vaerksted-ai' },
+				})
+				const slackIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'slack',
+					externalId: 'T-supervised',
+				})
+				const fixtures = launchFixtures({
+					integrationRows: [healthyIntegration, brokenIntegration, slackIntegration],
+				})
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+
+				vi.mocked(getProvider).mockImplementation(
+					(provider: string) =>
+						(provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
+				)
+				mockGetValidToken
+					.mockResolvedValueOnce('ghs_token_sindre_ai')
+					.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+					.mockResolvedValueOnce('xoxb-supervised-bot')
+
+				const probedTokens = new Set<string>()
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(async (url: string | URL, init?: RequestInit) => {
+						const u = url.toString()
+						const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+						if (u === 'https://api.github.com/installation/repositories?per_page=1') {
+							if (auth) probedTokens.add(auth)
+							if (auth === 'Bearer ghs_token_vaerksted_ai')
+								return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x' }] })
+							return jsonRes({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+						}
+						if (u === 'https://api.github.com/repos/sindre-ai/maskin/git/blobs')
+							return jsonRes({ sha: 'abc123' }, 201)
+						if (u === 'https://api.github.com/repos/vaerksted-ai/x/git/blobs')
+							return new Response('Resource not accessible by integration', { status: 403 })
+						if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+						throw new Error(`unexpected fetch: ${u}`)
+					}),
+				)
+
+				loadLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				// Preflight read the launch token from both supervised entries.
+				expect(probedTokens).toEqual(
+					new Set(['Bearer ghs_token_sindre_ai', 'Bearer ghs_token_vaerksted_ai']),
+				)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { command?: string; env?: Record<string, string> }>
+				}
+				expect(mcp.mcpServers['github-sindre-ai']?.command).toBe('sh')
+				expect(mcp.mcpServers['github-sindre-ai']?.env?.GITHUB_MCP_INTEGRATION_ID).toBe(
+					healthyIntegration.id,
+				)
+				expect(mcp.mcpServers['github-vaerksted-ai']).toBeUndefined()
+
+				const fetchMock = vi.mocked(fetch)
+				const slackPost = fetchMock.mock.calls.find(
+					(args) => args[0]?.toString() === 'https://slack.com/api/chat.postMessage',
+				)
+				const slackBody = JSON.parse((slackPost?.[1]?.body as string) ?? '{}') as { text: string }
+				// installationIdByMcpName still names the broken org's installation.
+				expect(slackBody.text).toContain(brokenIntegration.externalId)
+				expect(slackBody.text).not.toContain(healthyIntegration.externalId)
+				expect(slackBody.text).toContain('github-vaerksted-ai')
+			} finally {
+				vi.unstubAllEnvs()
+			}
 		})
 	})
 

@@ -202,13 +202,51 @@ describe('buildObjectPreview, other channels', () => {
 		expect(preview?.missing).toEqual(['To'])
 	})
 
-	it('warns when a connection note is over the 200 character invite limit', () => {
+	it('warns when a connection note is over the 300 character invite limit', () => {
 		const preview = buildObjectPreview({
-			content: 'x'.repeat(205),
+			content: 'x'.repeat(305),
 			metadata: { kind: 'linkedin_connection_request', to: 'Dan Jensen' },
 		})
 		expect(preview?.label).toBe('LinkedIn connection request')
-		expect(preview?.warnings).toEqual(['The text is 5 characters over the 200 limit.'])
+		expect(preview?.warnings).toEqual(['The text is 5 characters over the 300 limit.'])
+	})
+
+	it('previews a LinkedIn InMail with the LinkedIn id as a detail line and no subject', () => {
+		const preview = buildObjectPreview({
+			content: 'Hi Dan, a short note.',
+			metadata: { kind: 'linkedin_inmail', to: 'Dan Jensen', recipient_provider_id: 'ACoAAAdan' },
+		})
+		expect(preview).toMatchObject({
+			kind: 'linkedin_inmail',
+			label: 'LinkedIn InMail',
+			details: [{ label: 'LinkedIn id', value: 'ACoAAAdan' }],
+			missing: [],
+		})
+		expect(preview?.subject).toBeFalsy()
+	})
+
+	it('needs a recipient and a LinkedIn id before an InMail can be approved', () => {
+		const preview = buildObjectPreview({ content: 'Hi', metadata: { kind: 'linkedin_inmail' } })
+		expect(preview?.missing).toEqual(['To', 'LinkedIn id'])
+	})
+
+	it('warns when an InMail is over the 1900 character limit', () => {
+		const preview = buildObjectPreview({
+			content: 'x'.repeat(1905),
+			metadata: { kind: 'linkedin_inmail', to: 'Dan Jensen', recipient_provider_id: 'ACoAAAdan' },
+		})
+		expect(preview?.warnings).toEqual(['The text is 5 characters over the 1900 limit.'])
+	})
+
+	// The approval is bound to this hash, so a changed LinkedIn id must withdraw it.
+	it('changes the InMail content hash when the LinkedIn id is edited', () => {
+		const of = (id: string) =>
+			buildObjectPreview({
+				content: 'Hi',
+				metadata: { kind: 'linkedin_inmail', to: 'Dan Jensen', recipient_provider_id: id },
+			})?.content_hash
+		expect(of('ACoAAAdan')).toBeTruthy()
+		expect(of('ACoAAAdan')).not.toBe(of('ACoAAAother'))
 	})
 
 	it('previews a Slack message with its channel as a detail line', () => {
@@ -362,6 +400,7 @@ describe('deliverables declarations, matching', () => {
 		).toEqual([
 			'email',
 			'linkedin_connection_request',
+			'linkedin_inmail',
 			'linkedin_message',
 			'linkedin_post',
 			'slack_message',

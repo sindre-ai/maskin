@@ -168,7 +168,7 @@ describe('New chat', () => {
 		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
 	})
 
-	it('renders a RECENT eyebrow with recently-collaborated actors on empty query', () => {
+	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {
 		mockConversationsInfinite.mockReturnValue(
 			conversationsPage([
 				{
@@ -181,7 +181,10 @@ describe('New chat', () => {
 				},
 			]),
 		)
+		const user = userEvent.setup()
 		render(<NewChatPage />)
+		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
+		await user.click(screen.getByLabelText('Add recipients'))
 		expect(screen.getByText('RECENT')).toBeInTheDocument()
 		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
 	})
@@ -205,6 +208,7 @@ describe('New chat', () => {
 		)
 		const user = userEvent.setup()
 		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
 		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
 		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
 		await user.type(screen.getByLabelText('Add recipients'), 'sl')
@@ -212,9 +216,11 @@ describe('New chat', () => {
 		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
 	})
 
-	it('omits the RECENT section entirely when the derivation returns zero candidates', () => {
+	it('omits the RECENT section entirely when the derivation returns zero candidates', async () => {
 		mockConversationsInfinite.mockReturnValue({ pages: [] })
+		const user = userEvent.setup()
 		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
 		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
 	})
 
@@ -222,7 +228,7 @@ describe('New chat', () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await user.type(screen.getByLabelText('Add recipients'), 'f')
-		expect(screen.getByText('ADD SOMEONE \u2014 PERSON OR AGENT')).toBeInTheDocument()
+		expect(screen.getByText('ADD SOMEONE — PERSON OR AGENT')).toBeInTheDocument()
 	})
 
 	it('renders the muted empty-match line when the typed query has no matches', async () => {

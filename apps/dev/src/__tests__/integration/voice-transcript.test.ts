@@ -101,6 +101,17 @@ describe('voice transcript writer — persist mode (default)', () => {
 		expect(after).toBeGreaterThanOrEqual(before + VOICE_IDLE_TIMEOUT_MS - 1_000)
 	})
 
+	it('does not move the idle deadline for a blank line', async () => {
+		const { session } = await seedCall()
+		await writeVoiceTranscriptLine(db, {
+			session,
+			agentName: 'Chief of Staff',
+			role: 'user',
+			text: '   ',
+		})
+		expect((await reload(session.id))?.timeoutAt.toISOString()).toBe('2026-01-01T00:00:00.000Z')
+	})
+
 	it('does not revive a session that has already ended', async () => {
 		const { session } = await seedCall({ status: 'ended' })
 		await writeVoiceTranscriptLine(db, {
@@ -188,6 +199,30 @@ describe('voice transcript writer — workspace opt-out', () => {
 		const after = await reload(session.id)
 		expect(after?.conversationId).toBeNull()
 		expect(after?.transcriptStorageKey).toBeNull()
+	})
+
+	it('still pushes the idle deadline out from now, so the call is not ended as idle', async () => {
+		const { session } = await seedCall({ settings: optOut })
+		const before = Date.now()
+		await writeVoiceTranscriptLine(db, {
+			session,
+			agentName: 'Chief of Staff',
+			role: 'user',
+			text: 'still talking',
+		})
+		const after = (await reload(session.id))?.timeoutAt.getTime() ?? 0
+		expect(after).toBeGreaterThanOrEqual(before + VOICE_IDLE_TIMEOUT_MS - 1_000)
+	})
+
+	it('does not move the idle deadline for a blank line', async () => {
+		const { session } = await seedCall({ settings: optOut })
+		await writeVoiceTranscriptLine(db, {
+			session,
+			agentName: 'Chief of Staff',
+			role: 'user',
+			text: '  ',
+		})
+		expect((await reload(session.id))?.timeoutAt.toISOString()).toBe('2026-01-01T00:00:00.000Z')
 	})
 
 	it('is read live: flipping the setting mid-call stops the next line', async () => {

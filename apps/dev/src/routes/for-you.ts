@@ -3,7 +3,11 @@ import type { Database } from '@maskin/db'
 import { events, objects, readState } from '@maskin/db/schema'
 import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
-import { CLOSED_OBJECT_STATUSES, loadVisibleForYou } from '../lib/for-you-visibility'
+import {
+	CLOSED_OBJECT_STATUSES,
+	findFinishedDraftCards,
+	loadVisibleForYou,
+} from '../lib/for-you-visibility'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { feedDecisionSchema, fillDraftBodies, toLatestMention } from './subscriptions'
@@ -175,10 +179,15 @@ app.openapi(listForYouRoute, async (c) => {
 		: [[], []]
 	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
 
+	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
+		...latestDecisionByEntity.values(),
+	])
 	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
 		const obj = decisionObjectById.get(event.entityId)
 		// Gone or closed (done, discarded, shipped…): the card would only ask about finished work.
 		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
+		// Every message it offered has been sent or skipped.
+		if (finishedDraftCards.has(Number(event.id))) return false
 		// The person already answered on this thread.
 		return !decisionReplies.some((r) => r.entityId === event.entityId && r.id > event.id)
 	})

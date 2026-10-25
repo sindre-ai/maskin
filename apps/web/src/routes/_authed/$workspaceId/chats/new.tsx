@@ -86,6 +86,7 @@ function NewChatRoute() {
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
+	const [toFocused, setToFocused] = useState(false)
 	const inputRef = useRef<HTMLInputElement>(null)
 
 	// Objects handed over by "Ask an agent". Resolved so the chips read as
@@ -215,8 +216,9 @@ function NewChatRoute() {
 	const dropdownRows = typedMode ? typedMatches : recentCandidates
 	// The whole dropdown block hides on the empty-RECENT case (no empty header).
 	// It stays visible in typed mode so the "No agent by that name" line has a
-	// place to render.
-	const showDropdown = typedMode || dropdownRows.length > 0
+	// place to render. It only shows while the To input has focus, so moving to
+	// the message box clears the list off the composer.
+	const showDropdown = toFocused && (typedMode || dropdownRows.length > 0)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: dropdownRows.length and typedMode ARE the reset triggers — a shorter row set or a mode switch should snap the active row back to the top; setActiveIndex is a stable React setter, so it is deliberately absent.
 	useEffect(() => {
@@ -421,6 +423,8 @@ function NewChatRoute() {
 						type="text"
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
+						onFocus={() => setToFocused(true)}
+						onBlur={() => setToFocused(false)}
 						onKeyDown={handleInputKeyDown}
 						placeholder={recipients.length === 0 ? chatToPh : ''}
 						aria-label="Add recipients"
@@ -435,7 +439,12 @@ function NewChatRoute() {
 				</div>
 
 				{showDropdown ? (
-					<div className="mt-1 rounded-[11px] border border-border bg-card p-1.5">
+					<div
+						// Keep focus in the To input while a row is pressed. Otherwise the
+						// blur hides the list before the click lands and nothing is picked.
+						onMouseDown={(e) => e.preventDefault()}
+						className="mt-1 rounded-[11px] border border-border bg-card p-1.5"
+					>
 						<div className="eyebrow px-1.5 pt-1 pb-1.5">
 							{typedMode ? 'ADD SOMEONE — PERSON OR AGENT' : 'RECENT'}
 						</div>

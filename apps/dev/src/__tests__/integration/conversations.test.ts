@@ -23,6 +23,24 @@ import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
+// The routes start evaluateAndRespond fire-and-forget, and startSession reads the
+// module-wide session manager that the next test's createConversationsApp overwrites.
+// Track every run so afterEach can wait for it: a responder must never outlive its test.
+const inFlightResponders = vi.hoisted(() => new Set<Promise<unknown>>())
+vi.mock('../../services/conversation-responder', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/conversation-responder')>()
+	return {
+		...actual,
+		evaluateAndRespond: (...args: Parameters<typeof actual.evaluateAndRespond>) => {
+			const run = actual.evaluateAndRespond(...args)
+			inFlightResponders.add(run)
+			const done = () => inFlightResponders.delete(run)
+			run.then(done, done)
+			return run
+		},
+	}
+})
+
 const { default: conversationsRoutes } = await import('../../routes/conversations')
 
 type Env = {
@@ -78,6 +96,18 @@ function createConversationsApp(actorId: string, actorType: 'human' | 'agent' = 
 	return { app, sessionManager }
 }
 
+// The routes start the responder fire-and-forget, so how long a session takes to be created depends
+// on the runner. Poll for it rather than sleeping a fixed 50 ms and asserting.
+async function waitForSessions(
+	sessionManager: { createSession: ReturnType<typeof vi.fn> },
+	count: number,
+) {
+	await vi.waitFor(
+		() => expect(sessionManager.createSession.mock.calls.length).toBeGreaterThanOrEqual(count),
+		{ timeout: 5_000 },
+	)
+}
+
 async function addMember(workspaceId: string, actorId: string, role = 'member') {
 	await db.insert(workspaceMembers).values({ workspaceId, actorId, role })
 }
@@ -90,6 +120,10 @@ describe('Conversations Integration', () => {
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
+	})
+
+	afterEach(async () => {
+		await Promise.allSettled([...inFlightResponders])
 	})
 
 	describe('create + list + detail', () => {
@@ -754,7 +788,7 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route (not awaited)
 			// — give the microtask queue a turn before asserting.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
@@ -868,13 +902,10 @@ describe('Conversations Integration', () => {
 			)
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
-			await new Promise((resolve) => setTimeout(resolve, 50))
-			// Count only this test's agents. startSession reads the module-wide session
-			// manager, so a responder still running from an earlier test in this file can
-			// land its createSession on this test's mock.
+			await waitForSessions(sessionManager, 2)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
-				.filter((actorId) => actorId === agentA.id || actorId === agentB.id)
 				.sort()
 			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
 
@@ -1631,7 +1662,7 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route (not awaited)
 			// — give the microtask queue a turn before asserting.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
@@ -2454,7 +2485,7 @@ describe('Conversations Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			// Fire-and-forget responder — let the microtask queue drain.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			const [, params] = sessionManager.createSession.mock.calls[0] as [
 				string,
@@ -2556,7 +2587,7 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(202)
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			const [, params] = sessionManager.createSession.mock.calls[0] as [
 				string,
@@ -2595,6 +2626,8 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(202)
+			await waitForSessions(sessionManager, 1)
+			// Give a wrongly started second reply a moment to show up before asserting there is none.
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			// Only the targeted agent re-runs — B must not post a duplicate reply.
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)

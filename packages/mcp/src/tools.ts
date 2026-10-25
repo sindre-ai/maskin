@@ -782,7 +782,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row is short: id, type, `title` (the actor's name), status, role, the actor's one-line `description` and a link. Call `get_actor` for the full `system_prompt` (instructions) and for one agent's triggers and loops, which is also how to pick up context on a human teammate @mentioned in a comment. To get `connectedTriggers`/`connectedLoops` for many agents at once, pass `include=triggers,loops` together with a `workspace_id`: each is then a list of `{ name, url }` (omitted when there are none; never returned for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row is short: id, type, `title` (the actor's name), status, role, the actor's one-line `description` and a link. Agent rows in a workspace listing also carry `skills`: the names of the agent's valid workspace skills, sorted (omitted for humans and when the agent has none; names only, call `get_actor` for the rest). Call `get_actor` for the full `system_prompt` (instructions) and for one agent's triggers and loops, which is also how to pick up context on a human teammate @mentioned in a comment. To get `connectedTriggers`/`connectedLoops` for many agents at once, pass `include=triggers,loops` together with a `workspace_id`: each is then a list of `{ name, url }` (omitted when there are none; never returned for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). To find one agent without paging, pass `name` (exact match, case-insensitive) or `name_prefix` (case-insensitive prefix), not both: they are workspace-scoped, use `workspace_id` (or the default workspace when it is omitted), return an empty list when nothing matches, and return every agent that shares an exact name. The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -820,6 +820,22 @@ export const tools = {
 				.optional()
 				.describe(
 					'Comma-separated extra fields to add to each row: `triggers` (connectedTriggers), `loops` (connectedLoops) or `triggers,loops`. Omit for the short default row. Only used when `workspace_id` is set; ignored for the cross-workspace listing.',
+				),
+			name: z
+				.string()
+				.min(1)
+				.max(128)
+				.optional()
+				.describe(
+					'Return only actors whose name equals this, case-insensitive (1-128 characters). Not combinable with `name_prefix`. Scoped to `workspace_id`, or to the default workspace when `workspace_id` is omitted.',
+				),
+			name_prefix: z
+				.string()
+				.min(1)
+				.max(64)
+				.optional()
+				.describe(
+					'Return only actors whose name starts with this, case-insensitive (1-64 characters). Not combinable with `name`. Scoped to `workspace_id`, or to the default workspace when `workspace_id` is omitted.',
 				),
 		}),
 	},
@@ -1490,7 +1506,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished (up to about 11 minutes), then give you the session and its output. The wait also ends early if the agent is waiting for input or was stopped. If the response says `settled: false` the agent is not finished (still going, or waiting for input); check it later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
+			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished, however long that takes, then give you the session and its output. The wait also ends early if the agent is waiting for input, is paused, or was stopped. If the response says `settled: false` the agent is not finished (waiting for input, or paused); check it later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. To talk to the agent while it works, use send_session_message; to carry on with it after it has ended, failed or been paused, use resume_session. Do not @mention it in a chat for this: a mention reaches a different session of that agent, not this one. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 			actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -1521,7 +1537,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Wait for the agent to finish and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input or was stopped; settled false means the agent is not finished.',
+					'Wait for the agent to finish, however long that takes, and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input, is paused or was stopped; settled false means the agent is not finished.',
 				),
 		}),
 	},
@@ -1583,7 +1599,7 @@ export const tools = {
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead.',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, however long that takes, and get back the session with the first 500 lines of its output; the wait ends early if the session is waiting for input or is paused (`settled: false`). To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -1600,6 +1616,12 @@ export const tools = {
 				.max(500)
 				.default(100)
 				.describe('Max log lines to return (only used when include_logs is true)'),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until the session has finished, however long that takes, then return the session with the first 500 lines of its output (oldest first) and `settled`. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
+				),
 		}),
 	},
 	get_session_logs: {
@@ -1711,10 +1733,39 @@ export const tools = {
 		}),
 	},
 	resume_session: {
-		description: 'Resume a previously paused session from its snapshot',
+		description:
+			"Carry on with a session that is not running: one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished, however long that takes, and get its output; the wait ends early if it is waiting for input or paused (`settled: false`). For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid(),
+			id: z.string().uuid().describe('The session to carry on with'),
+			message: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					'What you want the agent to do next. Optional: left out, an ended session is told to carry on where it left off and a paused one simply continues.',
+				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Wait for the agent to finish, however long that takes, and return the session with the first 500 lines of its output. Ends early, with settled false, if it is waiting for input or paused.',
+				),
+		}),
+	},
+	send_session_message: {
+		description:
+			"Send a message to an agent session that is running right now, as if you typed it into its chat. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('The running session to talk to'),
+			content: z.string().min(1).describe('The message to send'),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until the session has finished, however long that takes, and return the session with the first 500 lines of its output. Ignored, with a note in the response, if the session stays open after replying.',
+				),
 		}),
 	},
 
@@ -1734,7 +1785,7 @@ export const tools = {
 			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags, due_at. Other keys pass through. Set due_at (ISO 8601 time, e.g. 2026-10-26T08:00:00Z) when the human must decide before a time: their push then starts with "Before <time>". Leave it out when nothing expires.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z
@@ -1991,6 +2042,28 @@ export const tools = {
 				.optional()
 				.describe(
 					'One line shown on the card on what you need it for, e.g. "To read the latest invoices."',
+				),
+		}),
+	},
+	request_integration_access: {
+		description:
+			'Ask the user to let you use an integration that is already connected but that you are not allowed to use (or not at the level you need), by showing an Allow / Not now card in the chat. Use it when a call to a connected integration was refused for access, or `list_integrations` shows you have no access or only read when you need to write. Use `connect_integration` when it is not connected at all, and `request_keychain_access` for a saved key or login. You cannot change your own access: only the person can allow it, and `update_integration_access` refuses agents. If they allow it you are restarted with the new access. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			integration_id: z
+				.string()
+				.uuid()
+				.describe('The id of the connected integration, as listed by list_integrations.'),
+			level: z
+				.enum(['read', 'read_write'])
+				.describe('What you need: "read" to look things up, "read_write" to also change things.'),
+			reason: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To post the weekly summary in Slack."',
 				),
 		}),
 	},

@@ -1834,6 +1834,77 @@ describe('Integrations Routes', () => {
 			fetchSpy.mockRestore()
 		})
 
+		describe('re-mint reason (?reason=)', () => {
+			const callWithReason = async (query: string) => {
+				const { encrypt } = await import('../../lib/crypto')
+				const { logger } = await import('../../lib/logger')
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {})
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValue(
+						new Response(JSON.stringify({ token: 'ghs_fresh_token' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token${query}`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+				const body = await res.json()
+				const remintLogs = infoSpy.mock.calls.filter(
+					([msg]) => msg === 'GitHub token re-mint requested',
+				)
+				const everythingLogged = JSON.stringify(infoSpy.mock.calls)
+				infoSpy.mockRestore()
+				fetchSpy.mockRestore()
+				return { integration, res, body, remintLogs, everythingLogged }
+			}
+
+			it.each(['mcp_age', 'mcp_401'])(
+				'logs one line with the reason and integration id for reason=%s',
+				async (reason) => {
+					const { integration, res, body, remintLogs, everythingLogged } = await callWithReason(
+						`?reason=${reason}`,
+					)
+
+					expect(res.status).toBe(200)
+					expect(body).toEqual({ token: 'ghs_fresh_token' })
+					expect(remintLogs).toHaveLength(1)
+					expect(remintLogs[0][1]).toEqual({ integrationId: integration.id, reason })
+					expect(everythingLogged).not.toContain('ghs_fresh_token')
+				},
+			)
+
+			it('ignores an unknown reason: same response, nothing logged, raw value not written', async () => {
+				const { res, body, remintLogs, everythingLogged } = await callWithReason(
+					'?reason=totally_unknown_value',
+				)
+
+				expect(res.status).toBe(200)
+				expect(body).toEqual({ token: 'ghs_fresh_token' })
+				expect(remintLogs).toHaveLength(0)
+				expect(everythingLogged).not.toContain('totally_unknown_value')
+			})
+
+			it('behaves as before and logs nothing when no reason is given', async () => {
+				const { res, body, remintLogs } = await callWithReason('')
+
+				expect(res.status).toBe(200)
+				expect(body).toEqual({ token: 'ghs_fresh_token' })
+				expect(remintLogs).toHaveLength(0)
+			})
+		})
+
 		describe('installation-id recovery (?repo= + GITHUB_APP_INSTALLATION_RECOVERY_ENABLED)', () => {
 			const originalFlag = process.env.GITHUB_APP_INSTALLATION_RECOVERY_ENABLED
 

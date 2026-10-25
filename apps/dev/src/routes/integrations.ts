@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	type AgentGrantAccess,
@@ -334,7 +333,6 @@ async function bindGithubInstallation(opts: {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()
@@ -1035,7 +1033,6 @@ app.openapi(connectRoute, (async (c) => {
 				.values({
 					type: 'system',
 					name: systemActorName,
-					apiKey: generateApiKey().key,
 					createdBy: actorId,
 				})
 				.returning()
@@ -1843,7 +1840,6 @@ app.openapi(callbackRoute, (async (c) => {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: stateData.actorId,
 			})
 			.returning()
@@ -2503,6 +2499,10 @@ app.openapi(dnsPrecheckRoute, (async (c) => {
 
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 
+// Why a caller is re-minting, so re-mints can be counted per week. Only these
+// two values are ever logged; anything else is ignored and never written out.
+const GITHUB_TOKEN_REMINT_REASONS = ['mcp_age', 'mcp_401'] as const
+
 const githubTokenRoute = createRoute({
 	method: 'get',
 	path: '/{id}/github-token',
@@ -2521,6 +2521,15 @@ const githubTokenRoute = createRoute({
 						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
 						'Ignored when the flag is off — behavior is identical to the legacy path.',
 					example: 'sindre-ai/maskin',
+				}),
+			reason: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; ' +
+						'any other value is ignored and the response is unchanged.',
+					example: 'mcp_age',
 				}),
 		}),
 		headers: workspaceIdHeader,
@@ -2549,7 +2558,7 @@ app.openapi(githubTokenRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { repo } = c.req.valid('query')
+	const { repo, reason } = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [integration] = await db
@@ -2565,6 +2574,14 @@ app.openapi(githubTokenRoute, (async (c) => {
 		)
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	const remintReason = GITHUB_TOKEN_REMINT_REASONS.find((r) => r === reason)
+	if (remintReason) {
+		logger.info('GitHub token re-mint requested', {
+			integrationId: integration.id,
+			reason: remintReason,
+		})
+	}
 
 	// Recovery path: on stale-cache 404 we re-discover the current install for
 	// the target repo and mint against it, so an App reinstalled mid-session

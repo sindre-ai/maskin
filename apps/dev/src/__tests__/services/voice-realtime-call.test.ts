@@ -26,7 +26,7 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 
 vi.mock('../../lib/sentry-voice', () => ({ captureVoiceException: vi.fn() }))
 
-const { attachVoiceCall, closeVoiceCall, realtimeSocketUrl } = await import(
+const { attachVoiceCall, closeVoiceCall, createRealtimeCall, realtimeSocketUrl } = await import(
 	'../../services/voice-realtime-call'
 )
 
@@ -383,5 +383,62 @@ describe('closeVoiceCall', () => {
 		await closeVoiceCall({ voiceSessionId: 'x', vendorSessionId: null })
 		await closeVoiceCall({ voiceSessionId: 'x', vendorSessionId: 'offer-in-flight' })
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('createRealtimeCall — vendor 429', () => {
+	const input = {
+		apiKey: 'sk-test',
+		callsUrl: 'https://api.openai.com/v1/realtime/calls',
+		offerSdp: 'v=0',
+		instructions: '',
+		voice: 'marin',
+		model: 'gpt-realtime',
+		tools: [],
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('reports a plain rate limit with the Retry-After value and keeps the vendor body', async () => {
+		const body = '{"error":{"code":"rate_limit_exceeded"}}'
+		const res = new Response(body, { status: 429, headers: { 'retry-after': '12' } })
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res))
+		expect(await createRealtimeCall(input)).toEqual({
+			kind: 'rate_limited',
+			retryAfterSeconds: 12,
+			vendorBody: body,
+		})
+	})
+
+	it('falls back to 30 seconds when the vendor sends no Retry-After', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 429 })))
+		expect(await createRealtimeCall(input)).toMatchObject({
+			kind: 'rate_limited',
+			retryAfterSeconds: 30,
+		})
+	})
+
+	it('keeps a plain rate limit that only links to the billing page as rate_limited', async () => {
+		const body =
+			'{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached. You can increase your rate limit by adding a payment method at https://platform.openai.com/account/billing."}}'
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(new Response(body, { status: 429, headers: { 'retry-after': '9' } })),
+		)
+		expect(await createRealtimeCall(input)).toMatchObject({
+			kind: 'rate_limited',
+			retryAfterSeconds: 9,
+		})
+	})
+
+	it('reports an out-of-quota 429 as quota_exhausted, not a rate limit', async () => {
+		const body =
+			'{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 429 })))
+		expect(await createRealtimeCall(input)).toEqual({ kind: 'quota_exhausted', vendorBody: body })
 	})
 })
