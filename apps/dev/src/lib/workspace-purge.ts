@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import { evictApiKey, evictMembership } from '@maskin/auth'
+import { evictActor, evictMembership, revokeActorKeys } from '@maskin/auth'
 import type { Transaction } from '@maskin/db'
 import {
 	events,
@@ -105,6 +104,7 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 /** Tables with ON DELETE CASCADE from a purged table; the database removes them. */
 export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
+	'api_keys',
 	'conversation_participants',
 	'conversation_pending_turns',
 	'credential_access_log',
@@ -137,8 +137,8 @@ export interface WorkspacePurgeResult {
 	storageKeys: string[]
 	/** Everyone who was a member, so their cached membership can be evicted after commit. */
 	memberActorIds: string[]
-	/** API keys of agents that were scrubbed, to evict from the auth cache after commit. */
-	scrubbedAgentApiKeys: string[]
+	/** Agents that were scrubbed, so their revoked keys leave the auth cache after commit. */
+	scrubbedAgentIds: string[]
 	/** Unfinished sessions that own a sandbox, to stop after commit. */
 	liveSessions: LivePurgedSession[]
 }
@@ -285,24 +285,25 @@ export async function purgeWorkspace(
 	// Agents with no workspace left are scrubbed. Done after the memberships are gone so "no
 	// membership anywhere" is a plain NOT IN over what remains.
 	const agentIds = members.filter((m) => m.type === 'agent').map((m) => m.actorId)
-	const scrubbedAgentApiKeys: string[] = []
+	const scrubbedAgentIds: string[] = []
 	if (agentIds.length > 0) {
 		const stillMembers = tx
 			.select({ id: workspaceMembers.actorId })
 			.from(workspaceMembers)
 			.where(inArray(workspaceMembers.actorId, agentIds))
 		const orphaned = await tx
-			.select({ id: actors.id, apiKey: actors.apiKey })
+			.select({ id: actors.id })
 			.from(actors)
 			.where(and(inArray(actors.id, agentIds), notInArray(actors.id, stillMembers)))
 		for (const a of orphaned) {
-			scrubbedAgentApiKeys.push(a.apiKey)
+			scrubbedAgentIds.push(a.id)
+			await revokeActorKeys(tx, a.id)
 			await tx.delete(agentSkills).where(eq(agentSkills.actorId, a.id))
 			await tx
 				.update(actors)
 				.set({
 					name: DELETED_AGENT_NAME,
-					apiKey: `deleted_${randomUUID().replaceAll('-', '')}`,
+					apiKey: null,
 					description: null,
 					systemPrompt: null,
 					tools: null,
@@ -323,7 +324,7 @@ export async function purgeWorkspace(
 	return {
 		storageKeys: [...storageKeys],
 		memberActorIds: members.map((m) => m.actorId),
-		scrubbedAgentApiKeys,
+		scrubbedAgentIds,
 		liveSessions: liveSessions.filter((x) => x.containerId || x.agentServerId),
 	}
 }
@@ -331,7 +332,7 @@ export async function purgeWorkspace(
 /** Drops cached lookups so the workspace stops resolving immediately. Call after commit. */
 export function evictPurgedWorkspace(workspaceId: string, result: WorkspacePurgeResult): void {
 	for (const actorId of result.memberActorIds) evictMembership(actorId, workspaceId)
-	for (const key of result.scrubbedAgentApiKeys) evictApiKey(key)
+	for (const agentId of result.scrubbedAgentIds) evictActor(agentId)
 	evictBillingUsage(workspaceId)
 }
 

@@ -24,6 +24,7 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -2340,6 +2341,13 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
 		}
+		// Rollback for agent-run.sh's stdio tool-server environment scrub
+		// (docker/agent-base/mcp-scrub-env.jq): set MASKIN_MCP_ENV_SCRUB=off on this
+		// service and the next session launches its tool servers with the full
+		// environment again. No image rebuild.
+		if (process.env.MASKIN_MCP_ENV_SCRUB === 'off') {
+			envVars.MASKIN_MCP_ENV_SCRUB = 'off'
+		}
 
 		// Resolve the workspace-skill manifest here so both the emitted
 		// `agent_session_started_with_prompt` signal AND the dispatch payload
@@ -2592,16 +2600,19 @@ ${cont.continues_prompt}
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access. Refuse to launch without
-		// one — an empty Bearer token causes MCP writes to either fail outright
-		// or, when a fallback key is present in the env, get attributed to the
-		// wrong actor (the original "agent comments posted as a human" bug).
-		if (!agent.apiKey) {
-			throw new Error(
-				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
-			)
-		}
-		envVars.MASKIN_API_KEY = agent.apiKey
+		// Mint a key for this launch. Keys are stored hashed, so the agent's own key can't be
+		// read back; each launch, resume and relaunch gets a fresh one tied to the session, the
+		// previous one for the session is revoked, and settleSession revokes the last. An empty
+		// Bearer token would make MCP writes fail outright or, when a fallback key is present in
+		// the env, get attributed to the wrong actor (the original "agent comments posted as a
+		// human" bug), so a mint that throws aborts the launch.
+		const sessionKey = await issueApiKey(this.db, {
+			actorId: agent.id,
+			kind: 'session',
+			sessionId: session.id,
+		})
+		await revokeSessionKeys(this.db, session.id, sessionKey.keyHash)
+		envVars.MASKIN_API_KEY = sessionKey.key
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub
@@ -3045,6 +3056,7 @@ ${cont.continues_prompt}
 			'MCP_SERVERS_JSON',
 			'AGENT_MCP_JSON',
 			'MASKIN_API_KEY',
+			'MASKIN_MCP_ENV_SCRUB',
 			'CLAUDE_OAUTH_ACCESS_TOKEN',
 			'CLAUDE_OAUTH_REFRESH_TOKEN',
 			'CLAUDE_OAUTH_EXPIRES_AT',

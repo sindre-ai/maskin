@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { classifyCreditExhaustion, classifySessionExit } from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
@@ -346,5 +346,36 @@ describe('classifySessionExit', () => {
 
 		// Only a sub-agent result: no top-level result, so the whole tail counts.
 		expect(classifySessionExit(tail, 0)).toMatchObject({ reason_code: 'session_limit' })
+	})
+})
+
+describe('classifyCreditExhaustion reset time', () => {
+	afterEach(() => vi.useRealTimers())
+
+	const rejectedEvent = (resetsAt: number) =>
+		JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt } })
+
+	it('schedules a retry from a Copenhagen banner, which the UTC-only parser dropped', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-22T09:07:00Z') })
+		const result = classifyCreditExhaustion(
+			"You've hit your session limit · resets 2pm (Europe/Copenhagen)",
+		)
+		expect(result).toMatchObject({
+			reason_code: 'session_limit',
+			reset_at: '2026-10-22T12:00:00.000Z',
+			reset_confidence: 'advisory',
+		})
+	})
+
+	it('prefers the rate_limit_event epoch over the banner text', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-22T09:07:00Z') })
+		const result = classifyCreditExhaustion(
+			`${rejectedEvent(1792670400)}\nYou've hit your session limit · resets 2pm (Somewhere/Unreadable)`,
+		)
+		expect(result).toMatchObject({
+			reset_at: '2026-10-22T12:00:00.000Z',
+			reset_source: 'cli-banner',
+			reset_confidence: 'authoritative',
+		})
 	})
 })

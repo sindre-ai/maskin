@@ -7,9 +7,12 @@ FROM ghcr.io/github/github-mcp-server:v1.13.0@sha256:15b28878c7d46edf07e16c373e4
 
 FROM node:22-slim
 
-# System tools
+# System tools. fontconfig + DejaVu + Liberation give headless Chromium glyphs
+# to paint when it rasterises inside the session sandbox (qa-deck.sh); without
+# them text renders blank. Add fonts-noto-color-emoji only if emoji are needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ca-certificates openssh-client gettext-base \
+    fontconfig fonts-dejavu-core fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
@@ -40,6 +43,7 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY mcp-scrub-env.jq /mcp-scrub-env.jq
 COPY github-mcp-supervisor.cjs /github-mcp-supervisor.cjs
 COPY strip-images-proxy.js /strip-images-proxy.js
 COPY input-stream.js /input-stream.js

@@ -265,6 +265,34 @@ describe('Search Console sync against real Postgres', () => {
 		expect(other?.metadata).not.toHaveProperty('last_error')
 	})
 
+	it('fills in a day that came back empty because Google had no final data for it yet', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const integration = await insertGscIntegration(ws.id)
+		const deps = (iso: string) => ({ now: () => new Date(iso), getAccessToken: async () => 't' })
+
+		// Day 1: only 2026-10-08 is final, 2026-10-09 (the sync end date) is still empty.
+		stubSearchConsole([{ keys: ['2026-10-08', '/a', 'q', 'usa', 'DESKTOP'] }])
+		await syncGscIntegration(db, integration, deps('2026-10-11T10:00:00Z'))
+
+		// Day 2: the day being fetched (2026-10-10) is again empty, but 2026-10-09 has become
+		// final since. The old watermark-plus-one range would never ask for it again.
+		const source: SourceRow[] = [
+			{ keys: ['2026-10-08', '/a', 'q', 'usa', 'DESKTOP'] },
+			{ keys: ['2026-10-09', '/a', 'q', 'usa', 'DESKTOP'] },
+		]
+		stubSearchConsole(source)
+		const fresh = await reloadIntegration(integration.id)
+		await syncGscIntegration(db, fresh, deps('2026-10-12T10:00:00Z'))
+
+		const [property] = await propertyObjects(ws.id)
+		expect(parseRows(property.content).map((r) => r[0])).toEqual(['2026-10-08', '2026-10-09'])
+		expect(property.metadata).toMatchObject({
+			last_synced_date: '2026-10-10',
+			latest_row_date: '2026-10-09',
+			row_count: 2,
+		})
+	})
+
 	it('overwrites a stored row when the same key is fetched again', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const integration = await insertGscIntegration(ws.id)

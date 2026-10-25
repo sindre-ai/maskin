@@ -31,7 +31,7 @@ export function createMockDb(queue: unknown[][]) {
 					selectCallCount++
 					const rows = remaining.shift() ?? []
 					const chain: Record<string, unknown> = {}
-					const methods = ['select', 'from', 'where', 'limit']
+					const methods = ['select', 'from', 'innerJoin', 'where', 'limit']
 					for (const m of methods) {
 						chain[m] = () => chain
 					}
