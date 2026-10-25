@@ -7935,6 +7935,12 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/actors/GET/query/order`.
                 public var order: Operations.get_sol_api_sol_actors.Input.Query.orderPayload?
+                /// - Remark: Generated from `#/paths/api/actors/GET/query/include`.
+                public var include: Swift.String?
+                /// - Remark: Generated from `#/paths/api/actors/GET/query/name`.
+                public var name: Swift.String?
+                /// - Remark: Generated from `#/paths/api/actors/GET/query/name_prefix`.
+                public var name_prefix: Swift.String?
                 /// - Remark: Generated from `#/paths/api/actors/GET/query/snapshot_at`.
                 public var snapshot_at: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/actors/GET/query/cursor_created_at`.
@@ -7948,6 +7954,9 @@ public enum Operations {
                 ///   - offset:
                 ///   - ids:
                 ///   - order:
+                ///   - include:
+                ///   - name:
+                ///   - name_prefix:
                 ///   - snapshot_at:
                 ///   - cursor_created_at:
                 ///   - cursor_id:
@@ -7956,6 +7965,9 @@ public enum Operations {
                     offset: Swift.Int? = nil,
                     ids: Swift.String? = nil,
                     order: Operations.get_sol_api_sol_actors.Input.Query.orderPayload? = nil,
+                    include: Swift.String? = nil,
+                    name: Swift.String? = nil,
+                    name_prefix: Swift.String? = nil,
                     snapshot_at: Foundation.Date? = nil,
                     cursor_created_at: Foundation.Date? = nil,
                     cursor_id: Swift.String? = nil
@@ -7964,6 +7976,9 @@ public enum Operations {
                     self.offset = offset
                     self.ids = ids
                     self.order = order
+                    self.include = include
+                    self.name = name
+                    self.name_prefix = name_prefix
                     self.snapshot_at = snapshot_at
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
@@ -8084,6 +8099,8 @@ public enum Operations {
                         public typealias workspacesPayload = [Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspaces`.
                         public var workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/skills`.
+                        public var skills: [Swift.String]?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -8098,6 +8115,7 @@ public enum Operations {
                         ///   - role:
                         ///   - voice_enabled:
                         ///   - workspaces:
+                        ///   - skills:
                         public init(
                             id: Swift.String,
                             _type: Swift.String,
@@ -8109,7 +8127,8 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             role: Swift.String? = nil,
                             voice_enabled: Swift.Bool? = nil,
-                            workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil
+                            workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
+                            skills: [Swift.String]? = nil
                         ) {
                             self.id = id
                             self._type = _type
@@ -8122,6 +8141,7 @@ public enum Operations {
                             self.role = role
                             self.voice_enabled = voice_enabled
                             self.workspaces = workspaces
+                            self.skills = skills
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -8135,6 +8155,7 @@ public enum Operations {
                             case role
                             case voice_enabled
                             case workspaces
+                            case skills
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/json`.

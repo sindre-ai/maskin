@@ -6698,6 +6698,7 @@ describe('tool handlers', () => {
 			// Shaped like the measured roster (mean description about 50 characters,
 			// a row url) and deliberately fat on skills: 8 names of 28 characters.
 			const agentId = '3d5d1d46-38a8-45ef-be58-6118dd8b944f'
+			const workspaceId = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 			const rows = Array.from({ length: 25 }, (_, i) => ({
 				id: agentId,
 				type: 'agent',
@@ -6705,11 +6706,12 @@ describe('tool handlers', () => {
 				role: 'member',
 				description: 'd'.repeat(50),
 				skills: Array.from({ length: 8 }, (_, k) => `skill-${k}-`.padEnd(28, 'x')),
+				// The suite's server has no web base URL, so the row carries its own url.
+				url: `https://maskin.io/${workspaceId}/agents/${agentId}`,
 			}))
-			createMcpServer({ ...config, webAppBaseUrl: 'https://maskin.io' })
 			mockActorsApi(rows, 64)
 			const result = (await getHandler('list_actors')({
-				workspace_id: 'e2877e32-2c11-489e-96c8-a76200908ed4',
+				workspace_id: workspaceId,
 			})) as DirectoryResult
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
