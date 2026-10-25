@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
 		  }>
 		| undefined,
 	hasNextPage: false,
+	actors: [] as Array<Record<string, unknown>>,
 }))
 const mockMutateAsync = vi.hoisted(() => vi.fn())
 
@@ -48,7 +49,7 @@ vi.mock('@/hooks/use-sessions', async () => {
 })
 vi.mock('@/hooks/use-actors', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
-	return { ...actual, useActors: () => ({ data: [] }) }
+	return { ...actual, useActors: () => ({ data: state.actors }) }
 })
 vi.mock('@/lib/auth', async () => {
 	const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')
@@ -82,6 +83,7 @@ beforeEach(() => {
 	state.conversation = { participants: [ME, SAM, FORGE, SENTINEL] }
 	state.messages = []
 	state.hasNextPage = false
+	state.actors = []
 })
 
 describe('ThreadComposer — group-chat cue', () => {
@@ -141,6 +143,61 @@ describe('ThreadComposer — group-chat cue', () => {
 
 		await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
 		expect(screen.queryByText('No agent will reply. Tag one with @.')).not.toBeInTheDocument()
+	})
+
+	it('puts a decorative info icon before the hint, and none while the hint is empty', async () => {
+		state.messages = [said(2, 'sam', 'human')]
+		const user = userEvent.setup()
+		renderComposer()
+
+		const region = document.getElementById(box().getAttribute('aria-describedby') ?? '')
+		expect(region).toBeEmptyDOMElement()
+		expect(region).not.toHaveClass('mb-2')
+
+		await user.click(box())
+		const icon = (await screen.findByText('No agent will reply. Tag one with @.')).querySelector(
+			'svg',
+		)
+		expect(icon).toHaveAttribute('aria-hidden', 'true')
+		expect(region).toHaveClass('mb-2')
+	})
+
+	describe('picking a tag from the @ picker', () => {
+		beforeEach(() => {
+			state.actors = [
+				{
+					id: 'forge',
+					name: 'Forge',
+					type: 'agent',
+					description: null,
+					email: null,
+					isSystem: false,
+				},
+			]
+			state.messages = [said(2, 'sam', 'human')]
+		})
+
+		it('leaves the box empty so the cue placeholder shows, and keeps focus there', async () => {
+			const user = userEvent.setup()
+			renderComposer()
+
+			await user.type(box(), '@For')
+			await user.keyboard('{Enter}')
+
+			await waitFor(() => expect(box()).toHaveValue(''))
+			expect(box()).toHaveAttribute('placeholder')
+			await waitFor(() => expect(box()).toHaveFocus())
+		})
+
+		it('still keeps the text around the tag', async () => {
+			const user = userEvent.setup()
+			renderComposer()
+
+			await user.type(box(), 'hello @For')
+			await user.keyboard('{Enter}')
+
+			await waitFor(() => expect(box()).toHaveValue('hello '))
+		})
 	})
 
 	it('leaves 1-1 chats as they are', () => {
