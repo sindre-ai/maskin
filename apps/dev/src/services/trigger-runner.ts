@@ -2533,7 +2533,8 @@ export class CommentDispatcher {
 						type: 'needs_input' as const,
 						title: '@mentioned by comment',
 						content: ctx.content,
-						metadata: { comment_event_id: ctx.eventId },
+						// Lets the push policy tell a plain mention from a card that needs a decision.
+						metadata: { comment_event_id: ctx.eventId, source: 'comment_mention' },
 						sourceActorId: ctx.commenterId,
 						targetActorId: ctx.actor.id,
 						objectId: ctx.objectId,

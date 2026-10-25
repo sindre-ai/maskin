@@ -8,6 +8,7 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import {
 	DEFAULT_PUSH_PREFS,
@@ -18,10 +19,12 @@ import {
 	type RecentPush,
 	collapseKeyOf,
 	delaySecondsOf,
+	dueAtOf,
 	evaluatePush,
 	isCriticalCard,
 	isForYouCard,
 	pushCategoryOf,
+	withDeadline,
 } from './push-policy'
 import type { PushChannel, PushDecision, PushMessage } from './push-types'
 
@@ -112,6 +115,10 @@ export class NotificationPushFanout {
 
 		const prefs = await this.loadPrefs(targetActorId)
 		const recentPushes = await this.recentPushes(n, meta, nowMs)
+		const gate = isFlagEnabled(targetActorId, FLAGS.PUSH_HUMAN_DECISIONS_ONLY)
+		// Only a mention needs the decision lookup before the verdict; reuse it for the message.
+		const lookedUp = gate && meta.source === 'comment_mention'
+		const earlyDecision = lookedUp ? await this.findDecision(n) : null
 		const verdict = evaluatePush({
 			notification: {
 				id: n.id,
@@ -120,11 +127,14 @@ export class NotificationPushFanout {
 				targetActorId,
 				createdAt,
 				metadata: meta,
+				objectId: n.objectId,
 			},
 			category,
 			prefs,
 			now,
 			recentPushes,
+			gate,
+			hasDecision: earlyDecision !== null,
 		})
 
 		if (verdict.action === 'skip') {
@@ -157,11 +167,13 @@ export class NotificationPushFanout {
 				collapseKey: verdict.collapseKey,
 			}
 		} else {
-			const decision = await this.findDecision(n)
+			const decision = lookedUp ? earlyDecision : await this.findDecision(n)
 			const badge = await this.pendingCount(targetActorId)
+			const due = gate && category === 'needs_you' ? dueAtOf(meta) : null
+			const body = decision?.ask ?? n.content
 			message = {
 				title: decision?.title ?? n.title,
-				body: decision?.ask ?? n.content,
+				body: due ? withDeadline(body, due, now, prefs.timezone) : body,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
 				objectId: n.objectId,
@@ -366,7 +378,7 @@ export class NotificationPushFanout {
 
 	/**
 	 * A `needs_input` notification created by an @mention of the human on an agent's decision
-	 * comment carries no pointer to that comment (the row's metadata is empty), so find it: the
+	 * comment carries no pointer to that comment (its metadata only says `source: comment_mention`), so find it: the
 	 * newest `commented` event on the same object by the same author whose text is the row's
 	 * content, that mentions this target and parses as a decision. Best effort — any failure
 	 * just means a plain push, never a lost one.

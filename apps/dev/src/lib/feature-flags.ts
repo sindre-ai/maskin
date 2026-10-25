@@ -95,6 +95,18 @@ export const FLAGS = {
 	 */
 	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
 	/**
+	 * Makes a "needs you" push rarer and clearer for the flagged person. Read per
+	 * RECIPIENT in `services/notification-push.ts`. Off is today's behaviour. On:
+	 *  - a plain @mention comment (no decision block) stays in the app, no push
+	 *  - a push about an object replaces the earlier push about that object
+	 *  - `metadata.due_at` puts "Before <time>" at the start of the push text
+	 * The rules live in `evaluatePush` (`services/push-policy.ts`). Rollout: the
+	 * tester's actor id in `FF_TESTER_ACTOR_IDS` and this id in
+	 * `FF_TESTER_FEATURES`, then restart. Backend only. Retire once it is on for
+	 * everyone: drop the `gate` input and keep the rules.
+	 */
+	PUSH_HUMAN_DECISIONS_ONLY: 'push-human-decisions-only',
+	/**
 	 * Gates the LinkedIn outreach writes: withdraw_invitation, react_to_post, send_inmail and
 	 * any send whose approved object carries a file (`attachment_file_id`). Read per call on
 	 * the workspace, with the calling actor as fallback. Off means a send with a file is

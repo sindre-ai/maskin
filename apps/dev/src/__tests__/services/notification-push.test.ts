@@ -4,6 +4,12 @@ import { NotificationPushFanout } from '../../services/notification-push'
 import type { PushChannel } from '../../services/push-types'
 import { createTestContext } from '../setup'
 
+const flagOn = vi.hoisted(() => ({ value: false }))
+vi.mock('../../lib/feature-flags', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/feature-flags')>()),
+	isFlagEnabled: () => flagOn.value,
+}))
+
 const event = {
 	workspace_id: 'ws',
 	actor_id: 'a',
@@ -36,6 +42,52 @@ function setup(rows: unknown[], enabled = true, queue?: unknown[][]) {
 	const fanout = new NotificationPushFanout(db, bridge as never, [sender as unknown as PushChannel])
 	return { fanout, sender, bridge }
 }
+
+describe('NotificationPushFanout with push-human-decisions-only', () => {
+	afterEach(() => {
+		flagOn.value = false
+	})
+
+	it('keeps a plain @mention in the app', async () => {
+		flagOn.value = true
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input', metadata: { source: 'comment_mention' } })],
+			[], // preferences
+			[], // decision lookup: no decision block
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).not.toHaveBeenCalled()
+	})
+
+	it('still pushes the same @mention when the flag is off', async () => {
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input', metadata: { source: 'comment_mention' } })],
+			[], // preferences
+			[], // decision lookup
+			[{ value: 1 }],
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledTimes(1)
+	})
+
+	it('leads the push text with the deadline and collapses on the object', async () => {
+		flagOn.value = true
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input', metadata: { due_at: '2099-10-26T08:00:00Z' } })],
+			[], // preferences
+			[], // decision lookup
+			[{ value: 2 }],
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({
+				body: 'Before Mon 26 Oct 08:00 UTC · World',
+				collapseKey: 'object:obj',
+			}),
+		)
+	})
+})
 
 describe('NotificationPushFanout', () => {
 	it('pushes to the target actor of a created notification', async () => {

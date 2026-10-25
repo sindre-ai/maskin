@@ -5,10 +5,13 @@ import {
 	PushLedger,
 	type PushPrefs,
 	type RecentPush,
+	dueAtOf,
 	evaluatePush,
+	formatDeadline,
 	inQuietHours,
 	localMinuteOfDay,
 	pushCategoryOf,
+	withDeadline,
 } from '../../services/push-policy'
 
 const NOW = new Date('2026-06-01T12:00:00Z')
@@ -330,5 +333,85 @@ describe('PushLedger', () => {
 		expect(ledger.hasSent(ACTOR, 'zzz')).toBe(false)
 		for (const id of ['c', 'd', 'e']) ledger.record(recent({ notificationId: id, at }))
 		expect(ledger.recent(ACTOR, at)).toHaveLength(3)
+	})
+})
+
+describe('evaluatePush with the human-decisions gate', () => {
+	const mention = (over: Partial<PolicyNotification> = {}) =>
+		note({
+			type: 'needs_input',
+			objectId: 'obj-1',
+			metadata: { source: 'comment_mention' },
+			...over,
+		})
+	const gated = (n: PolicyNotification, extra: { hasDecision?: boolean; gate?: boolean } = {}) =>
+		evaluatePush({
+			notification: n,
+			category: pushCategoryOf(n),
+			prefs: DEFAULT_PUSH_PREFS,
+			now: NOW,
+			recentPushes: [],
+			gate: true,
+			...extra,
+		})
+
+	it('skips a plain @mention', () => {
+		expect(gated(mention())).toMatchObject({ action: 'skip', reason: 'mention-without-decision' })
+	})
+
+	it('still pushes an @mention that carries a decision block', () => {
+		expect(gated(mention(), { hasDecision: true }).action).toBe('send')
+	})
+
+	it('still pushes a card or question that is not a mention', () => {
+		expect(gated(note({ type: 'needs_input', metadata: {} })).action).toBe('send')
+		expect(
+			gated(note({ type: 'needs_input', metadata: { push_category: 'needs_you' } })).action,
+		).toBe('send')
+	})
+
+	it("keeps today's behaviour when the gate is off", () => {
+		expect(gated(mention(), { gate: false }).action).toBe('send')
+		expect(gated(mention(), { gate: false }).collapseKey).toBeUndefined()
+	})
+
+	it('collapses on the object when the producer gave no key', () => {
+		const v = gated(note({ type: 'needs_input', objectId: 'obj-9', metadata: {} }))
+		expect(v.collapseKey).toBe('object:obj-9')
+	})
+
+	it('keeps a key the producer chose', () => {
+		const v = gated(
+			note({ type: 'needs_input', objectId: 'obj-9', metadata: { push_collapse_key: 'mine' } }),
+		)
+		expect(v.collapseKey).toBe('mine')
+	})
+})
+
+describe('deadline text', () => {
+	it('reads a valid due_at and ignores anything else', () => {
+		expect(dueAtOf({ due_at: '2026-10-26T08:00:00Z' })?.toISOString()).toBe(
+			'2026-10-26T08:00:00.000Z',
+		)
+		expect(dueAtOf({ due_at: 'soon' })).toBeNull()
+		expect(dueAtOf({ due_at: 12 })).toBeNull()
+		expect(dueAtOf({})).toBeNull()
+	})
+
+	it("formats in the person's timezone and falls back to UTC", () => {
+		const at = new Date('2026-10-26T08:00:00Z')
+		expect(formatDeadline(at, null)).toBe('Mon 26 Oct 08:00 UTC')
+		expect(formatDeadline(at, 'Not/AZone')).toBe('Mon 26 Oct 08:00 UTC')
+		expect(formatDeadline(at, 'Europe/Copenhagen')).toContain('09:00')
+	})
+
+	it('leads the body with the deadline, or says overdue', () => {
+		const due = new Date('2026-10-26T08:00:00Z')
+		expect(withDeadline('Flip the bet', due, new Date('2026-10-25T08:00:00Z'), null)).toBe(
+			'Before Mon 26 Oct 08:00 UTC · Flip the bet',
+		)
+		expect(withDeadline(null, due, new Date('2026-10-27T08:00:00Z'), null)).toBe(
+			'Overdue since Mon 26 Oct 08:00 UTC',
+		)
 	})
 })
