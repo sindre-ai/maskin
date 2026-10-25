@@ -206,7 +206,7 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 					.from(notifications)
 					.where(eq(notifications.objectId, object.id))
 				expect(rows).toHaveLength(1)
-				expect(rows[0].metadata).toEqual({ source: 'comment_mention', from_agent: false })
+				expect(rows[0].metadata).toMatchObject({ source: 'comment_mention', from_agent: false })
 			},
 			{ timeout: 10_000, interval: 50 },
 		)

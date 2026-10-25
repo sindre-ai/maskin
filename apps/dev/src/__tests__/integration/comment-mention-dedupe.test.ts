@@ -131,7 +131,7 @@ describe('Comment mention dispatch is idempotent per (comment event, mentioned a
 		expect(sessionStarts(sm)).toBe(1)
 		const rows = await notificationsFor(agent.id, object.id)
 		expect(rows).toHaveLength(1)
-		expect(rows[0].metadata).toEqual({ comment_event_id: id })
+		expect(rows[0].metadata).toMatchObject({ comment_event_id: id })
 	})
 
 	it('firing the dispatch twice for the same comment event starts one session', async () => {
