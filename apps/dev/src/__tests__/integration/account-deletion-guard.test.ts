@@ -41,10 +41,6 @@ const KEPT: Record<string, string> = {
 	files: 'content authored by the person is kept',
 	file_comments: 'content authored by the person is kept',
 	workspace_skills: 'created_by on workspace content',
-	extensions:
-		'created_by on workspace configuration; it holds no personal data, the secrets are in integrations',
-	blocked_tool_calls:
-		'denial record of an agent actor in a kept workspace (agent_id is an agent, not the person)',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',
