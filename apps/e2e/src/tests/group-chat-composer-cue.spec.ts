@@ -78,6 +78,18 @@ test.describe('Group chat composer cue', () => {
 			// At most two lines of text-xs (16px line height).
 			const hintBox = await hint.boundingBox()
 			expect(hintBox?.height ?? 0).toBeLessThanOrEqual(34)
+
+			// A decorative info glyph leads the text, and 8 px separate it from the control row.
+			await expect(hint.locator('svg')).toHaveAttribute('aria-hidden', 'true')
+			const sendBox = await page.getByRole('button', { name: 'Send message' }).boundingBox()
+			const hintBottom = (hintBox?.y ?? 0) + (hintBox?.height ?? 0)
+			expect(Math.round((sendBox?.y ?? 0) - hintBottom)).toBe(8)
+
+			// Picking a tag leaves the box empty, so the cue placeholder shows behind the chip.
+			await box.press('@')
+			await page.getByRole('option', { name: /Cue Agent 0/ }).click()
+			await expect(box).toHaveValue('')
+			await expect(box).toHaveAttribute('placeholder', /^Reply to Cue Agent 0/)
 		})
 	}
 
