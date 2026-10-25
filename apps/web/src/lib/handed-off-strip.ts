@@ -1,3 +1,4 @@
+import { sessionTitleFromPrompt } from '@maskin/shared'
 import type { SpawnedSession } from './api'
 
 /**
@@ -139,17 +140,9 @@ export function threadPill(
 	return { label: pill, className: STRIP_PILL_CLASSES[pill] }
 }
 
-/**
- * One-line title for a handoff: the first line of the prompt, trimmed. Older sessions
- * stored a "Sent by …" line above the prompt; it says who asked, not what the work is.
- */
+/** One-line title for a handoff, from what it was asked to do (see sessionTitleFromPrompt). */
 export function handoffTitle(actionPrompt: string, actorName: string): string {
-	const firstLine = actionPrompt
-		.split('\n')
-		.find((l) => l.trim().length > 0 && !l.trim().startsWith('Sent by '))
-		?.trim()
-	if (!firstLine) return actorName
-	return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine
+	return sessionTitleFromPrompt(actionPrompt) ?? actorName
 }
 
 /**
