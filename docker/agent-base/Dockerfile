@@ -7,10 +7,13 @@ FROM ghcr.io/github/github-mcp-server:v1.13.0@sha256:15b28878c7d46edf07e16c373e4
 
 FROM node:22-slim
 
-# System tools
+# System tools. ffmpeg (with ffprobe) is for the Video Producer's cut/subtitle/
+# end-card pipeline; it comes from the Debian repo, so the version follows the
+# node:22-slim base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq ca-certificates openssh-client gettext-base \
-    && rm -rf /var/lib/apt/lists/*
+    git curl jq ca-certificates openssh-client gettext-base ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -1 && ffprobe -version | head -1
 
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
