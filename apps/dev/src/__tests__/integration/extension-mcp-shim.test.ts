@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { extensions, integrations } from '@maskin/db/schema'
 import { MAX_EXTENSION_TOOLS } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
@@ -40,6 +41,7 @@ function mcpConfig(toolCount: number, overrides: Record<string, unknown> = {}) {
 
 describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 	let workspaceId: string
+	const agentId = randomUUID()
 	const readCredential = vi.fn()
 
 	async function addExtension(slug: string, values: Partial<typeof extensions.$inferInsert> = {}) {
@@ -51,6 +53,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 				name: slug,
 				status: 'active',
 				mcpConfig: mcpConfig(2) as never,
+				toolGrants: { [agentId]: { get_item_00: 'allow' } },
 				createdBy: getTestActorId(),
 				...values,
 			})
@@ -110,7 +113,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		await addExtension('example')
 		readCredential.mockResolvedValue('abc123')
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
 
 		expect(Object.keys(servers)).toEqual(['extension-example'])
 		expect(servers['extension-example']).toEqual({
@@ -127,7 +130,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		})
 		readCredential.mockResolvedValue('k')
 
-		const { servers } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+		const { servers } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
 
 		expect(Object.keys(servers)).toEqual(['extension-twenty'])
 		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
@@ -141,7 +144,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		})
 		readCredential.mockResolvedValue('k')
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
 
 		expect(servers).toEqual({})
 		expect(env).toEqual({})
@@ -157,7 +160,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 
 	it('does not attach anything when no key reader is wired', async () => {
 		const row = await addExtension('example')
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, null)
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, null)
 		expect(servers).toEqual({})
 		expect(env).toEqual({})
 		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
@@ -168,12 +171,27 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		const row = await addExtension('example')
 		readCredential.mockResolvedValue(null)
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
 
 		expect(servers).toEqual({})
 		expect(env).toEqual({})
 		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
 		expect(after?.mcpLastError).toBe('key not readable')
+	})
+
+	it('attaches nothing, reads no key and leaves mcp_last_error alone for an agent with no grant', async () => {
+		const row = await addExtension('example', {
+			toolGrants: { [randomUUID()]: { get_item_00: 'allow' } },
+		})
+		readCredential.mockResolvedValue('abc123')
+
+		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
+
+		expect(servers).toEqual({})
+		expect(env).toEqual({})
+		expect(readCredential).not.toHaveBeenCalled()
+		const [after] = await db.select().from(extensions).where(eq(extensions.id, row.id))
+		expect(after?.mcpLastError).toBeNull()
 	})
 
 	it('does not pick up the webhook signing-secret row as the key row', async () => {
@@ -197,7 +215,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 				server: { type: 'http', url: 'https://example.com/mcp' },
 			}) as never,
 		})
-		const { servers } = await buildExtensionMcpServers(db, workspaceId, readCredential)
+		const { servers } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
 		expect(servers).toEqual({})
 	})
 })
