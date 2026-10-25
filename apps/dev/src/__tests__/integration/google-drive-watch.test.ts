@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { events, integrations, webhookDeliveries } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { encrypt } from '../../lib/crypto'
 import { computeChannelToken } from '../../lib/integrations/providers/google-drive/channel-token'
 import type { DriveClient } from '../../lib/integrations/providers/google-drive/client'
 import {
@@ -20,7 +21,8 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 // webhook_deliveries dedup, the cursor compare-and-set, the lastFiredAt write
 // (a single jsonb UPDATE over the row's current array, the shape known-pitfalls.md
 // says mocked-DB tests cannot check) and the watch_folder tool. Google is a fake
-// DriveClient; the token mint is stubbed because the rows carry no real credential.
+// DriveClient; the token mint is stubbed, and the rows carry a sealed placeholder token so the
+// audited credential read the Drive tools make can decrypt them.
 
 vi.mock('../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
@@ -73,7 +75,7 @@ async function insertDriveRow(
 			provider: 'google-drive',
 			status: overrides.status ?? 'active',
 			externalId: overrides.externalId ?? `human${counter}@acme.test`,
-			credentials: 'not-a-real-credential',
+			credentials: encrypt(JSON.stringify({ accessToken: 'ya29.test' })),
 			config: { system_actor_id: getTestActorId(), drive },
 			createdBy: getTestActorId(),
 		})

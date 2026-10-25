@@ -12,6 +12,10 @@ const { default: googleDisconnectRoutes } = await import(
 const { default: integrationsRoutes } = await import('../../routes/integrations')
 
 const GOOGLE_PROVIDERS = ['gmail', 'google-calendar', 'google-meet', 'google-drive'] as const
+
+/** The Google providers that run a preDisconnect hook. Calendar has none: it stopped revoking
+ *  the shared Google grant on disconnect (#2228), so its row flips without a hook call. */
+const hookedProviders = () => GOOGLE_PROVIDERS.filter((name) => getProvider(name).preDisconnect)
 const EMAIL = 'kai@example.com'
 
 function buildApp() {
@@ -66,7 +70,7 @@ function recordPreDisconnect() {
 		externalId: string | null | undefined
 		refreshToken?: string
 	}[] = []
-	for (const name of GOOGLE_PROVIDERS) {
+	for (const name of hookedProviders()) {
 		const provider = getProvider(name)
 		vi.spyOn(provider, 'preDisconnect').mockImplementation(async (ctx) => {
 			calls.push({
@@ -117,7 +121,7 @@ describe('POST /api/integrations/google/disconnect', () => {
 		expect(calls.map((c) => c.provider).sort()).toEqual(['google-drive', 'google-meet'])
 	})
 
-	it('google: revokes all four rows, each through its own preDisconnect', async () => {
+	it('google: revokes all four rows, each hooked provider through its own preDisconnect', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		await seedGoogleRows(ws.id)
 		const calls = recordPreDisconnect()
@@ -133,7 +137,7 @@ describe('POST /api/integrations/google/disconnect', () => {
 			'revoked',
 			'revoked',
 		])
-		expect(calls.map((c) => c.provider).sort()).toEqual([...GOOGLE_PROVIDERS].sort())
+		expect(calls.map((c) => c.provider).sort()).toEqual([...hookedProviders()].sort())
 		for (const call of calls) expect(call.refreshToken).toBe(`rt-${call.provider}-${ws.id}`)
 	})
 
