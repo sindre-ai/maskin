@@ -1,24 +1,18 @@
 -- Defence in depth for the anon-key incident: turn on row-level security on
--- every table in "public", so "anon" and "authenticated" are denied by default.
--- Migration 0083 already revoked their grants; this adds the second barrier so
--- a future accidental GRANT does not expose rows.
+-- every table in "public", with no policies, so "anon" and "authenticated"
+-- are denied by default. Migration 0083 already revoked their grants; this
+-- adds the second barrier so a future accidental GRANT does not expose rows.
 --
 -- The app is not affected: it connects as the table owner ("postgres" in
 -- prod, which also has BYPASSRLS), and an owner bypasses row security unless
 -- FORCE ROW LEVEL SECURITY is set. This migration never sets FORCE.
 --
--- One policy exists, on purpose: the Keychain writes its audit rows as the
--- non-owner role maskin_keychain_app (0087, SET LOCAL ROLE inside
--- getCredential). A non-owner is subject to row security, so without a policy
--- every credential read would fail on the audit insert. The policy is scoped
--- TO that role only; what the role can do is still limited by its grants
--- (SELECT and INSERT on credential_access_log, nothing else). No other table
--- gets a policy.
---
--- Numbered 0111, after every table that exists today: the runner applies any
--- unapplied file in name order, so a lower number would run before the later
--- migrations that create tables and leave those without row security on a
--- fresh database.
+-- One exception: getCredential drops to the non-owner role
+-- "maskin_keychain_app" (migration 0087) to write "credential_access_log". That
+-- role does not bypass row security, so with no policy its insert, and the
+-- chain trigger's read of the previous row, would be denied. Two narrow
+-- policies at the end of this file let that one role insert and select. They
+-- are the only policies; anon and authenticated still get none.
 --
 -- Locking: ENABLE ROW LEVEL SECURITY takes ACCESS EXCLUSIVE, which is instant
 -- on its own but queues behind any open transaction on the table and then
@@ -32,8 +26,11 @@
 -- that exists when it runs (including "_migrations") and needs no upkeep.
 -- Plain Postgres (local dev, CI, self-hosted) runs it unchanged.
 --
+-- Numbered after every other migration so a fresh database (CI, dev,
+-- self-host) has all its tables before this runs.
+--
 -- Reversible: drizzle/down/0111_enable_rls_public_tables_down.sql.
--- Only table flags and one policy change; no rows, columns or grants are touched.
+-- Only table flags and the two policies change; no rows, columns or grants are touched.
 CREATE OR REPLACE PROCEDURE enable_rls_public_tables()
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -58,7 +55,12 @@ CALL enable_rls_public_tables();
 --> statement-breakpoint
 DROP PROCEDURE enable_rls_public_tables();
 --> statement-breakpoint
-DROP POLICY IF EXISTS "credential_access_log_keychain_app" ON "credential_access_log";
+DROP POLICY IF EXISTS "credential_access_log_keychain_insert" ON "credential_access_log";
 --> statement-breakpoint
-CREATE POLICY "credential_access_log_keychain_app" ON "credential_access_log"
-	FOR ALL TO maskin_keychain_app USING (true) WITH CHECK (true);
+CREATE POLICY "credential_access_log_keychain_insert" ON "credential_access_log"
+	FOR INSERT TO maskin_keychain_app WITH CHECK (true);
+--> statement-breakpoint
+DROP POLICY IF EXISTS "credential_access_log_keychain_select" ON "credential_access_log";
+--> statement-breakpoint
+CREATE POLICY "credential_access_log_keychain_select" ON "credential_access_log"
+	FOR SELECT TO maskin_keychain_app USING (true);

@@ -1,10 +1,13 @@
 -- Rollback for 0111_enable_rls_public_tables.sql.
 -- Lives under drizzle/down/ so the forward migration runner never picks it up.
--- Drops the Keychain audit-log policy, then turns row-level security back off
--- on every table in "public". Grants stay as 0083 left them (anon and
--- authenticated hold none). Same per-table transaction and lock_timeout as the
--- forward migration; re-run if a table was busy.
-DROP POLICY IF EXISTS "credential_access_log_keychain_app" ON "credential_access_log";
+-- Drops the two credential_access_log policies, then turns row-level security
+-- back off on every table in "public". Grants stay as
+-- 0083 left them (anon and authenticated hold none). Same per-table
+-- transaction and lock_timeout as the forward migration; re-run if a table
+-- was busy.
+DROP POLICY IF EXISTS "credential_access_log_keychain_insert" ON "credential_access_log";
+--> statement-breakpoint
+DROP POLICY IF EXISTS "credential_access_log_keychain_select" ON "credential_access_log";
 --> statement-breakpoint
 CREATE OR REPLACE PROCEDURE disable_rls_public_tables()
 LANGUAGE plpgsql AS $$
