@@ -214,6 +214,9 @@ describe('google-drive MCP server: calls, errors, telemetry', () => {
 			errorClass: null,
 			transport: 'http',
 			agentActorId: 'actor-1',
+			authMethod: 'api_key',
+			client: 'other',
+			actorType: null,
 		})
 		expect(typeof trace.durationMs).toBe('number')
 		expect(typeof trace.responseBytes).toBe('number')

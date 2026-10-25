@@ -4,6 +4,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import type { McpClient } from '../../../analytics/mcp-client'
 import {
 	type McpSessionSource,
 	argKeys,
@@ -83,6 +84,10 @@ export interface DriveMcpContext {
 	actorId: string
 	/** X-Maskin-Session-Id of the calling agent session, when the request carried one. */
 	sessionId?: string
+	/** MCP client family from the User-Agent, for the tool-call trace. Absent = other. */
+	client?: McpClient
+	/** Whether the caller is a person or an agent, for the tool-call trace. Absent = unresolved. */
+	actorType?: 'human' | 'agent' | null
 	/** Where get_file_bytes streams downloads and write_file reads storageUrl sources. Absent = those paths answer with a clean error. */
 	storage?: StorageProvider
 }
@@ -343,6 +348,10 @@ async function runTool(
 		responseBytes: result.content[0]?.text.length ?? null,
 		transport: 'http',
 		agentActorId: ctx.actorId,
+		// The route sits behind authMiddleware, so the caller always resolved by API key.
+		authMethod: 'api_key',
+		client: ctx.client ?? 'other',
+		actorType: ctx.actorType ?? null,
 	})
 	if (errorClass === null) void stampFirstToolCall(ctx)
 	return result

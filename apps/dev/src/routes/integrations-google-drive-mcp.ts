@@ -2,6 +2,8 @@ import type { Database } from '@maskin/db'
 import type { StorageProvider } from '@maskin/storage'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { classifyMcpClient } from '../lib/analytics/mcp-client'
+import { normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { createGoogleDriveMcpServer } from '../lib/integrations/providers/google-drive/mcp-server'
 import { logger } from '../lib/logger'
@@ -25,6 +27,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		actorType: string
 		storageProvider: StorageProvider
 	}
 }
@@ -57,6 +60,8 @@ app.post('/', async (c) => {
 		workspaceId,
 		actorId,
 		sessionId: c.req.header('x-maskin-session-id') || undefined,
+		client: classifyMcpClient(c.req.header('user-agent')),
+		actorType: normalizeActorType(c.get('actorType')),
 		storage: c.get('storageProvider'),
 	})
 
