@@ -336,7 +336,7 @@ describe('PushLedger', () => {
 	})
 })
 
-describe('evaluatePush with the human-decisions gate', () => {
+describe('evaluatePush for human decisions only', () => {
 	const mention = (over: Partial<PolicyNotification> = {}) =>
 		note({
 			type: 'needs_input',
@@ -344,14 +344,13 @@ describe('evaluatePush with the human-decisions gate', () => {
 			metadata: { source: 'comment_mention', from_agent: true },
 			...over,
 		})
-	const gated = (n: PolicyNotification, extra: { hasDecision?: boolean; gate?: boolean } = {}) =>
+	const gated = (n: PolicyNotification, extra: { hasDecision?: boolean } = {}) =>
 		evaluatePush({
 			notification: n,
 			category: pushCategoryOf(n),
 			prefs: DEFAULT_PUSH_PREFS,
 			now: NOW,
 			recentPushes: [],
-			gate: true,
 			...extra,
 		})
 
@@ -373,11 +372,6 @@ describe('evaluatePush with the human-decisions gate', () => {
 		expect(
 			gated(note({ type: 'needs_input', metadata: { push_category: 'needs_you' } })).action,
 		).toBe('send')
-	})
-
-	it("keeps today's behaviour when the gate is off", () => {
-		expect(gated(mention(), { gate: false }).action).toBe('send')
-		expect(gated(mention(), { gate: false }).collapseKey).toBeUndefined()
 	})
 
 	it('collapses on the object when the producer gave no key', () => {

@@ -8,7 +8,6 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import {
 	DEFAULT_PUSH_PREFS,
@@ -115,9 +114,8 @@ export class NotificationPushFanout {
 
 		const prefs = await this.loadPrefs(targetActorId)
 		const recentPushes = await this.recentPushes(n, meta, nowMs)
-		const gate = isFlagEnabled(targetActorId, FLAGS.PUSH_HUMAN_DECISIONS_ONLY)
 		// Only a mention needs the decision lookup before the verdict; reuse it for the message.
-		const lookedUp = gate && meta.source === 'comment_mention'
+		const lookedUp = meta.source === 'comment_mention'
 		const earlyDecision = lookedUp ? await this.findDecision(n) : null
 		const verdict = evaluatePush({
 			notification: {
@@ -133,7 +131,6 @@ export class NotificationPushFanout {
 			prefs,
 			now,
 			recentPushes,
-			gate,
 			hasDecision: earlyDecision !== null,
 		})
 
@@ -169,7 +166,7 @@ export class NotificationPushFanout {
 		} else {
 			const decision = lookedUp ? earlyDecision : await this.findDecision(n)
 			const badge = await this.pendingCount(targetActorId)
-			const due = gate && category === 'needs_you' ? dueAtOf(meta) : null
+			const due = category === 'needs_you' ? dueAtOf(meta) : null
 			const body = decision?.ask ?? n.content
 			message = {
 				title: decision?.title ?? n.title,

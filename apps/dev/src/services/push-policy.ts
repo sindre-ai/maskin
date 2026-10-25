@@ -16,8 +16,6 @@
  *                       of a person creates.
  *   due_at              ISO time a needs_you item expires; the push text leads with it.
  *
- * The last two only matter for a person with the PUSH_HUMAN_DECISIONS_ONLY flag (`gate`).
- *
  * ── The "recent pushes" ledger ──────────────────────────────────────────────
  * Rate limits and the For You rollup need to know what was recently pushed. The ledger is an
  * in-process `PushLedger` (bounded, pruned to 24 h) plus, for For You cards, rows read from
@@ -209,8 +207,6 @@ export interface EvaluatePushInput {
 	prefs: PushPrefs
 	now: Date
 	recentPushes: RecentPush[]
-	/** PUSH_HUMAN_DECISIONS_ONLY is on for this person. */
-	gate?: boolean
 	/** The notification is an @mention comment that carries a decision block. */
 	hasDecision?: boolean
 }
@@ -221,7 +217,6 @@ export function evaluatePush({
 	prefs,
 	now,
 	recentPushes,
-	gate = false,
 	hasDecision = false,
 }: EvaluatePushInput): PushVerdict {
 	const nowMs = now.getTime()
@@ -237,7 +232,6 @@ export function evaluatePush({
 	// An agent's plain @mention is context, not a decision: it stays in the app. A mention a
 	// person wrote, one that carries a decision block, and every card or chat question still push.
 	if (
-		gate &&
 		category === 'needs_you' &&
 		meta.push_category === undefined &&
 		meta.source === 'comment_mention' &&
@@ -324,7 +318,7 @@ export function evaluatePush({
 
 	// A second ask about the same object replaces the first banner instead of stacking.
 	const objectKey =
-		gate && category === 'needs_you' && !collapseKey && n.objectId ? `object:${n.objectId}` : null
+		category === 'needs_you' && !collapseKey && n.objectId ? `object:${n.objectId}` : null
 
 	return {
 		action: 'send',
