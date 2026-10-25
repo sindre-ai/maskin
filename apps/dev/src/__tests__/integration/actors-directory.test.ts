@@ -6,12 +6,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { count, eq } from 'drizzle-orm'
-import {
-	buildIntegration,
-	buildWorkspaceSkill,
-	insertActor,
-	insertWorkspace,
-} from '../factories'
+import { buildIntegration, buildWorkspaceSkill, insertActor, insertWorkspace } from '../factories'
 import { jsonGet } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -35,9 +30,7 @@ async function addSkill(
 ) {
 	const [skill] = await db
 		.insert(workspaceSkills)
-		.values(
-			buildWorkspaceSkill({ workspaceId, name, createdBy: getTestActorId(), ...overrides }),
-		)
+		.values(buildWorkspaceSkill({ workspaceId, name, createdBy: getTestActorId(), ...overrides }))
 		.returning()
 	for (const actorId of attachTo) {
 		await db.insert(agentSkills).values({ actorId, workspaceSkillId: skill.id })
@@ -271,29 +264,39 @@ describe('Actors Integration — directory path reads no tool config or credenti
 	it.each([
 		['workspace owner', 'owner'],
 		['plain member', 'member'],
-	])('puts no tool config or credential in the body for a %s, and writes no audit row', async (_label, role) => {
-		const app = createApp()
-		const ws = await insertWorkspace(db, getTestActorId())
-		if (role !== 'owner') {
-			await db
-				.update(workspaceMembers)
-				.set({ role })
-				.where(eq(workspaceMembers.workspaceId, ws.id))
-		}
-		await seedAgentWithSecrets(ws.id)
-		const before = await auditRows(ws.id)
-
-		for (const path of ['/api/actors?include=skills', '/api/actors?name_prefix=secret']) {
-			const res = await app.request(jsonGet(path, { 'X-Workspace-Id': ws.id }))
-			expect(res.status).toBe(200)
-			const text = await res.text()
-			expect(text).toContain('Secret Holder')
-			for (const secret of SECRETS) expect(text).not.toContain(secret)
-			for (const key of ['"tools"', '"mcpServers"', '"args"', '"env"', '"headers"', '"command"']) {
-				expect(text).not.toContain(key)
+	])(
+		'puts no tool config or credential in the body for a %s, and writes no audit row',
+		async (_label, role) => {
+			const app = createApp()
+			const ws = await insertWorkspace(db, getTestActorId())
+			if (role !== 'owner') {
+				await db
+					.update(workspaceMembers)
+					.set({ role })
+					.where(eq(workspaceMembers.workspaceId, ws.id))
 			}
-		}
+			await seedAgentWithSecrets(ws.id)
+			const before = await auditRows(ws.id)
 
-		expect(await auditRows(ws.id)).toBe(before)
-	})
+			for (const path of ['/api/actors?include=skills', '/api/actors?name_prefix=secret']) {
+				const res = await app.request(jsonGet(path, { 'X-Workspace-Id': ws.id }))
+				expect(res.status).toBe(200)
+				const text = await res.text()
+				expect(text).toContain('Secret Holder')
+				for (const secret of SECRETS) expect(text).not.toContain(secret)
+				for (const key of [
+					'"tools"',
+					'"mcpServers"',
+					'"args"',
+					'"env"',
+					'"headers"',
+					'"command"',
+				]) {
+					expect(text).not.toContain(key)
+				}
+			}
+
+			expect(await auditRows(ws.id)).toBe(before)
+		},
+	)
 })

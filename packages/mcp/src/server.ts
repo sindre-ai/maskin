@@ -4071,12 +4071,7 @@ export function createMcpServer(config: McpConfig) {
 				// Read by the registerAppTool wrapper for the size event; a symbol
 				// never serializes onto the wire.
 				[TELEMETRY_VIEW]: view,
-				_meta: uiMeta(
-					'list_actors',
-					config,
-					scopeWorkspaceId,
-					pickCollectionResourceUri(heroCard),
-				),
+				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
 				structuredContent: {
 					heroCard,
 					...(nextCursor

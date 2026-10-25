@@ -604,22 +604,14 @@ const listActorsQuerySchema = z.object({
 			description: `Comma-separated extras for a workspace-scoped list. Allowed: ${LIST_INCLUDE_VALUES.join(', ')}. Requires X-Workspace-Id.`,
 			example: 'skills',
 		}),
-	name: z
-		.string()
-		.min(1)
-		.max(MAX_NAME_FILTER)
-		.optional()
-		.openapi({
-			description: `Exact actor name, case-insensitive. Requires X-Workspace-Id. Not combinable with name_prefix.`,
-		}),
-	name_prefix: z
-		.string()
-		.min(1)
-		.max(MAX_NAME_PREFIX_FILTER)
-		.optional()
-		.openapi({
-			description: `Actor name prefix, case-insensitive. Requires X-Workspace-Id. Not combinable with name.`,
-		}),
+	name: z.string().min(1).max(MAX_NAME_FILTER).optional().openapi({
+		description:
+			'Exact actor name, case-insensitive. Requires X-Workspace-Id. Not combinable with name_prefix.',
+	}),
+	name_prefix: z.string().min(1).max(MAX_NAME_PREFIX_FILTER).optional().openapi({
+		description:
+			'Actor name prefix, case-insensitive. Requires X-Workspace-Id. Not combinable with name.',
+	}),
 	// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
 	// Only the workspace-scoped branch honours these; the cross-workspace
 	// branch uses a two-phase distinct query on `(name, id)` that is
@@ -710,7 +702,9 @@ app.openapi(listActorsRoute, (async (c) => {
 			query.name !== undefined
 				? [sql`lower(${actors.name}) = lower(${query.name})`]
 				: query.name_prefix !== undefined
-					? [sql`lower(${actors.name}) LIKE lower(${`${escapeLike(query.name_prefix)}%`}) ESCAPE '\\'`]
+					? [
+							sql`lower(${actors.name}) LIKE lower(${`${escapeLike(query.name_prefix)}%`}) ESCAPE '\\'`,
+						]
 					: []
 		const wsWhereParts = [
 			eq(workspaceMembers.workspaceId, workspaceId),
@@ -740,9 +734,9 @@ app.openapi(listActorsRoute, (async (c) => {
 
 			c.header('X-Total-Count', String(members.length))
 			return c.json(
-				serializeArray(
-					await withSkillNames(db, workspaceId, members, include.skills),
-				) as z.infer<typeof actorListItemSchema>[],
+				serializeArray(await withSkillNames(db, workspaceId, members, include.skills)) as z.infer<
+					typeof actorListItemSchema
+				>[],
 			)
 		}
 
@@ -803,9 +797,9 @@ app.openapi(listActorsRoute, (async (c) => {
 
 		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 		return c.json(
-			serializeArray(
-				await withSkillNames(db, workspaceId, members, include.skills),
-			) as z.infer<typeof actorListItemSchema>[],
+			serializeArray(await withSkillNames(db, workspaceId, members, include.skills)) as z.infer<
+				typeof actorListItemSchema
+			>[],
 		)
 	}
 
