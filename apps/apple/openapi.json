@@ -7160,6 +7160,38 @@
 					{
 						"schema": {
 							"type": "string",
+							"description": "Comma-separated extras for a workspace-scoped list. Allowed: skills. Requires X-Workspace-Id.",
+							"example": "skills"
+						},
+						"required": false,
+						"name": "include",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 128,
+							"description": "Exact actor name, case-insensitive. Requires X-Workspace-Id. Not combinable with name_prefix."
+						},
+						"required": false,
+						"name": "name",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 64,
+							"description": "Actor name prefix, case-insensitive. Requires X-Workspace-Id. Not combinable with name."
+						},
+						"required": false,
+						"name": "name_prefix",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "date-time"
 						},
 						"required": false,
@@ -7281,6 +7313,12 @@
 														"name",
 														"role"
 													]
+												}
+											},
+											"skills": {
+												"type": "array",
+												"items": {
+													"type": "string"
 												}
 											}
 										},
