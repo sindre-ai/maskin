@@ -75,7 +75,8 @@ function expandHeaders(env: Record<string, string>): Record<string, string> {
 	try {
 		const script = [
 			'set -e',
-			`eval "$(sed -n -e '/^MCP_GUARD_NAME=/p' -e '/^mcp_guard_runs()/,/^}/p' -e '/^drop_unavailable_guarded_servers()/,/^}/p' -e '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
+			// setup_mcps calls the guard helpers, so they are extracted with it.
+			`eval "$(sed -n '/^mcp_guard_runs()/,/^}/p;/^drop_unavailable_guarded_servers()/,/^}/p;/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
 			'setup_mcps',
 			'cat "$MCP_CONFIG_FILE"',
 		].join('\n')
