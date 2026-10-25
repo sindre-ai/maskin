@@ -34,7 +34,7 @@
 		"@maskin/realtime": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"@maskin/storage": "workspace:*",
-		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@modelcontextprotocol/sdk": "^1.32.0",
 		"@sentry/node": "^10.70.0",
 		"adm-zip": "^0.5.17",
 		"bcryptjs": "^3.0.3",
