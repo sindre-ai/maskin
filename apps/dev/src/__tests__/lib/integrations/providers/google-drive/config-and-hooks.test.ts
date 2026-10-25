@@ -3,6 +3,7 @@ import { FLAGS } from '../../../../../lib/feature-flags'
 import { actorScopedProviders } from '../../../../../lib/integrations/lookup'
 import { config } from '../../../../../lib/integrations/providers/google-drive/config'
 import { resolveExternalId } from '../../../../../lib/integrations/providers/google-drive/resolve-id'
+import { stopDriveChannel } from '../../../../../lib/integrations/providers/google-drive/watch'
 import { getProvider, listProviders } from '../../../../../lib/integrations/registry'
 
 vi.mock('../../../../../lib/logger', () => ({
@@ -65,7 +66,7 @@ describe('google-drive registry wiring', () => {
 		expect(p.config.name).toBe('google-drive')
 		expect(p.resolveExternalId).toBe(resolveExternalId)
 		expect(p.postInstall).toBeTypeOf('function')
-		expect(p.preDisconnect).toBeTypeOf('function')
+		expect(p.preDisconnect).toBe(stopDriveChannel)
 		expect(p.customWebhookVerifier).toBeTypeOf('function')
 		expect(listProviders().map((x) => x.config.name)).toContain('google-drive')
 	})

@@ -64,7 +64,7 @@ export function DisconnectDriveModal({
 			className="m-auto w-[min(28rem,92vw)] rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
 			aria-labelledby={titleId}
 			aria-describedby={bodyId}
-			// Escape fires cancel before close; hold it while the revoke is running.
+			// Escape fires cancel before close; hold it while the disconnect is running.
 			onCancel={(e) => {
 				e.preventDefault()
 				if (!pending) onCancel()
@@ -123,6 +123,9 @@ export function DisconnectDriveModal({
 						</label>
 					))}
 				</fieldset>
+				<p className="text-xs text-muted-foreground" data-testid="disconnect-maskin-only-note">
+					{COPY.note}
+				</p>
 				<div
 					className="rounded-md border border-border bg-bg-surface p-3 text-xs text-muted-foreground"
 					data-testid="disconnect-stays-callout"
