@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
@@ -7,11 +8,13 @@ import {
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import type { McpConfig } from '@maskin/shared'
+import { type McpConfig, mcpRemoteUrl } from '@maskin/shared'
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { decrypt, encrypt } from '../crypto'
+import { logger } from '../logger'
 import { MAX_EXTENSION_TOOLS, extensionMcpProvider, extensionProvider } from './extensions'
+import { getIntegrationCredential } from './lookup'
 
 const EXTENSION_SYSTEM_ACTOR_NAME = 'Custom extension'
 
@@ -134,7 +137,7 @@ export async function readExtensionSecret(
 // ── MCP API key row (provider extension-mcp:{slug}) ─────────────────────────
 // Its own row, so saving the MCP key never overwrites the webhook signing
 // secret and hasExtensionSecret stays true only for a real signing secret.
-// The read goes through Keychain (see extensionMcpKeyReader below); there is
+// The read goes through Keychain (see createExtensionMcpKeyReader below); there is
 // deliberately no decrypting counterpart here.
 
 function mcpKeyRowWhere(workspaceId: string, slug: string) {
@@ -248,12 +251,58 @@ export async function resolveMcpFromExtension(
 
 export type ExtensionMcpKeyReader = (entry: ExtensionMcpEntry) => Promise<string | null>
 
+/** The MCP server's host, for the audit row. Null for a shape with no URL we can parse. */
+function mcpHost(server: McpConfig['server']): string | null {
+	const url = mcpRemoteUrl(server)
+	if (!url) return null
+	try {
+		return new URL(url).host
+	} catch {
+		return null
+	}
+}
+
 /**
- * The Keychain-backed read of an extension's MCP key (row extension-mcp:{slug}).
- * Stays null until Keychain getCredential is on main; while it is null no
- * extension MCP server attaches to any session.
+ * The Keychain-backed read of an extension's MCP key (row extension-mcp:{slug}),
+ * for one session launch. Every read goes through getCredential: the agent's
+ * access is checked, the value decrypted, and one audit row written (actor, session,
+ * the MCP host as outbound target). A missing row, a denied read or any other
+ * failure returns null, so the server is not attached; the reason is logged
+ * without the value. Nothing here decrypts the row itself.
  */
-export const extensionMcpKeyReader: ExtensionMcpKeyReader | null = null
+export function createExtensionMcpKeyReader(
+	db: Database,
+	launch: { workspaceId: string; actorId: string; sessionId: string },
+): ExtensionMcpKeyReader {
+	return async (entry) => {
+		const outboundTarget = mcpHost(entry.config.server)
+		try {
+			const credential = await getIntegrationCredential(
+				db,
+				launch.workspaceId,
+				extensionMcpProvider(entry.slug),
+				null,
+				{
+					ctx: {
+						requestingActorId: launch.actorId,
+						sessionId: launch.sessionId,
+						requestId: randomUUID(),
+						...(outboundTarget ? { outboundTarget } : {}),
+					},
+				},
+			)
+			return credential?.value || null
+		} catch (err) {
+			logger.warn('Extension MCP key not readable', {
+				workspaceId: launch.workspaceId,
+				sessionId: launch.sessionId,
+				slug: entry.slug,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return null
+		}
+	}
+}
 
 /**
  * Turn a workspace's extension MCPs into session entries, keyed extension-{slug}
@@ -262,7 +311,8 @@ export const extensionMcpKeyReader: ExtensionMcpKeyReader | null = null
  * Only stdio attaches in V1. readKey is the injected Keychain read for the
  * extension's key row; its value is passed as a Bearer value through the env
  * var the config names. If the key cannot be read the server does not attach
- * and mcp_last_error says so. With no reader nothing attaches.
+ * and mcp_last_error says so; a server that attaches clears a stale error.
+ * With no reader nothing attaches.
  */
 export async function buildExtensionMcpServers(
 	db: Database | Transaction,
@@ -303,6 +353,11 @@ export async function buildExtensionMcpServers(
 			command: server.command,
 			args: server.args,
 		}
+		// It attaches now, so an earlier "key not readable" or tool-cap error is stale.
+		await db
+			.update(extensions)
+			.set({ mcpLastError: null })
+			.where(and(eq(extensions.id, entry.extensionId), isNotNull(extensions.mcpLastError)))
 	}
 	return { servers, env }
 }
