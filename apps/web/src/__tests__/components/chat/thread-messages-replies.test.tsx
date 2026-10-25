@@ -24,12 +24,22 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ isSuccess: false }) }
 vi.mock('@/components/chat/needed-tools', () => ({ NeededTools: () => null }))
 
 // Spy on what the activity hook is given; its own behaviour has its own tests.
-const activityInput = vi.hoisted(() => ({ messages: [] as Array<{ id: number }> }))
+const activityInput = vi.hoisted(() => ({
+	messages: [] as Array<{ id: number }>,
+	fallback: [] as Array<{ sessionId: string }>,
+}))
 vi.mock('@/hooks/use-conversation-activity', () => ({
 	useConversationActivity: (_ws: string, _conv: string, messages: Array<{ id: number }>) => {
 		activityInput.messages = messages
-		return { byReplyMessageId: new Map(), byTriggerMessageId: new Map(), fallback: [] }
+		return {
+			byReplyMessageId: new Map(),
+			byTriggerMessageId: new Map(),
+			fallback: activityInput.fallback,
+		}
 	},
+}))
+vi.mock('@/components/chat/message-activity', () => ({
+	MessageActivity: () => <div>waiting for the agent</div>,
 }))
 
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -67,6 +77,7 @@ function mockPage(newestFirst: MessageResponse[], hasMore = false) {
 describe('ThreadMessages — reply threads', () => {
 	beforeEach(() => {
 		activityInput.messages = []
+		activityInput.fallback = []
 		vi.mocked(api.conversations.get).mockReset()
 		vi.mocked(api.conversations.messages).mockReset()
 		vi.mocked(api.conversations.get).mockResolvedValue({
@@ -89,6 +100,23 @@ describe('ThreadMessages — reply threads', () => {
 		expect(screen.getByText('later top-level')).toBeInTheDocument()
 		expect(screen.getByText('also in channel')).toBeInTheDocument()
 		expect(screen.queryByText('only in the thread')).not.toBeInTheDocument()
+	})
+
+	it('keeps an untagged turn out of the main chat when the newest message is a thread reply', async () => {
+		activityInput.fallback = [{ sessionId: 's1' }]
+		mockPage([reply(3, 1), message(1)])
+		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" />, { wrapper: TestWrapper })
+
+		await screen.findByText('message 1')
+		expect(screen.queryByText('waiting for the agent')).not.toBeInTheDocument()
+	})
+
+	it('still shows an untagged turn in the main chat when the newest message is top-level', async () => {
+		activityInput.fallback = [{ sessionId: 's1' }]
+		mockPage([message(2), message(1)])
+		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('waiting for the agent')).toBeInTheDocument()
 	})
 
 	it('hands the activity hook the unfiltered list, replies included', async () => {

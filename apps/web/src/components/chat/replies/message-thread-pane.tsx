@@ -67,11 +67,17 @@ export function MessageThreadPane({
 		for (const m of replyMessages) byId.set(m.id, m)
 		return [...byId.values()].sort((a, b) => a.id - b.id)
 	}, [mainMessages, replyMessages])
-	const { byReplyMessageId, byTriggerMessageId } = useConversationActivity(
+	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
 		everything,
 	)
+
+	// A turn that has no message tag yet (its first moments) hangs under the newest message. When
+	// that message is a reply in this thread, the wait belongs here, not in the main chat.
+	const newest = everything[everything.length - 1]
+	const fallbackHere =
+		newest && newest.threadRootId === rootId && !newest.threadAlsoInChannel ? fallback : []
 
 	const markRead = useMarkThreadRead(conversationId, workspaceId)
 	const markReadMutate = markRead.mutate
@@ -240,6 +246,13 @@ export function MessageThreadPane({
 									/>
 								))}
 							</div>
+						))}
+						{fallbackHere.map((turn, i) => (
+							<MessageActivity
+								key={`${turn.sessionId}-pending-${i}`}
+								workspaceId={workspaceId}
+								turn={turn}
+							/>
 						))}
 						<div ref={bottomRef} />
 					</div>

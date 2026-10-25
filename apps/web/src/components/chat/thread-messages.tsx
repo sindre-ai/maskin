@@ -109,6 +109,10 @@ export function ThreadMessages({
 		conversationId,
 		messages,
 	)
+	// A turn with no message tag yet hangs under the newest message. A reply that stays in its thread
+	// is not drawn here, so that wait is shown by the thread pane instead.
+	const newestMessage = messages[messages.length - 1]
+	const fallbackIsInThread = !!newestMessage && !isTimelineMessage(newestMessage)
 	// Replies copied in from a background run, whose thinking and tool calls live in that run's log.
 	const backfilledActivity = useBackfilledRunActivity(workspaceId, messages)
 	// Every session `useActiveSessionsForConversation` returns already carries
@@ -420,7 +424,8 @@ export function ThreadMessages({
 						message.id,
 						redoneTurns,
 					)
-					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
+					const turnsBelowHere =
+						isLast && !fallbackIsInThread ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
 					const helperQuestion = message.metadata?.question?.reply_to_session
