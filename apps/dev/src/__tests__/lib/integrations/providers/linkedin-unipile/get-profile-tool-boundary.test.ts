@@ -14,6 +14,17 @@ vi.mock('../../../../../lib/crypto', () => ({
 	decrypt: () => JSON.stringify({ account_id: 'acc_1' }),
 	encrypt: (v: string) => v,
 }))
+// The action log and the profile-view cap need a real database (a transaction and inserts), which
+// the fake one below does not have. This test pins the request path and the result shape, so the
+// call goes straight through; the log and the cap are tested against Postgres elsewhere.
+vi.mock('../../../../../lib/integrations/providers/linkedin-unipile/action-log', async (orig) => ({
+	...(await orig<Record<string, unknown>>()),
+	withActionLog: async (
+		_ctx: unknown,
+		_spec: unknown,
+		run: (recorder: { set: () => void; markNoop: () => void }) => Promise<unknown>,
+	) => run({ set: () => {}, markNoop: () => {} }),
+}))
 
 import {
 	type LinkedInMockServer,

@@ -342,10 +342,15 @@ describe('Loops read API integration', () => {
 			title: 'No override loop',
 		})
 
+		// The clock starts at the in_loop edge, so the edge joins when the lead was
+		// created and the lead closes 5s later.
+		const joinedAt = new Date('2026-01-01T00:00:00.000Z')
 		const wonLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
 			status: 'won',
 			title: 'Acme',
+			createdAt: joinedAt,
+			updatedAt: new Date(joinedAt.getTime() + 5000),
 		})
 		const activeLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
@@ -367,6 +372,7 @@ describe('Loops read API integration', () => {
 				targetType: 'object',
 				targetId: target.id,
 				type: 'in_loop',
+				createdAt: joinedAt,
 			})
 		}
 		await insertRelationship(db, actorId, {
@@ -390,7 +396,7 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.inProgressCount).toBe(1)
 		expect(row?.closedCount).toBe(1)
-		expect(row?.medianTimeToCloseMs).not.toBeNull()
+		expect(row?.medianTimeToCloseMs).toBe(5000)
 
 		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(noOverrideRow?.inProgressCount).toBe(1)
@@ -516,7 +522,7 @@ describe('Loops read API integration', () => {
 		expect(row?.closedCount).toBe(1)
 	})
 
-	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
+	it('computes medianTimeToCloseMs from closed children (updated_at − the in_loop edge created_at), null when none are closed', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'learning',
@@ -562,6 +568,7 @@ describe('Loops read API integration', () => {
 				targetType: 'object',
 				targetId: target.id,
 				type: 'in_loop',
+				createdAt,
 			})
 		}
 
@@ -575,6 +582,528 @@ describe('Loops read API integration', () => {
 
 		const emptyRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
+	})
+
+	describe('metadata.closed_when', () => {
+		async function setup(loopMetadata: Record<string, unknown>) {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Candidate loop',
+				metadata: loopMetadata,
+			})
+			const link = (targetId: string, joinedAt?: Date) =>
+				insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId,
+					type: 'in_loop',
+					...(joinedAt ? { createdAt: joinedAt } : {}),
+				})
+			const readRow = async () => {
+				const app = makeApp(actorId)
+				const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+				const body = (await res.json()) as {
+					loops: Array<{
+						id: string
+						inProgressCount: number
+						closedCount: number
+						medianTimeToCloseMs: number | null
+					}>
+				}
+				return body.loops.find((l) => l.id === loop.id)
+			}
+			return { loop, link, readRow }
+		}
+
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+
+		it('counts a parked insight at the rule value as closed, a status-closed one too, and any other as open', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const discarded = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+			})
+			const building = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'building' },
+			})
+			const noStage = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+			})
+			for (const o of [live, discarded, building, noStage]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('counts an object closed by both its status and a rule once', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const both = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(both.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('drops malformed rules instead of failing, and closes nothing when none are left', async () => {
+			const { link, readRow } = await setup({
+				closed_when: {
+					insight: ['loop_stage', '=live', 'loop_stage=', 'bad field=live', 42, null],
+					task: 'loop_stage=live',
+				},
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+			await link(liveTask.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('treats two rules on one field as either value, and ignores a rule for another type', async () => {
+			const { link, readRow } = await setup({
+				closed_when: { insight: ['loop_stage=live', 'loop_stage=retired'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const retired = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'retired' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'in_progress',
+				metadata: { loop_stage: 'live' },
+			})
+			for (const o of [live, retired, liveTask]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('leaves a loop without closed_when unchanged: a live-stage insight stays open', async () => {
+			const { link, readRow } = await setup({})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('measures time to close for a rule-closed member to the update event that set the stage', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			// updated_at is far later than the stage change: a later edit must not
+			// stretch the time to close.
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live', note: 'edited later' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 999_000),
+			})
+			await link(insight.id, createdAt)
+			await db.insert(events).values([
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{ field: 'metadata', old: { loop_stage: 'building' }, new: { loop_stage: 'live' } },
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 5000),
+				},
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{
+								field: 'metadata',
+								old: { loop_stage: 'live' },
+								new: { loop_stage: 'live', note: 'edited later' },
+							},
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 999_000),
+				},
+			])
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.medianTimeToCloseMs).toBe(5000)
+		})
+
+		it('falls back to updated_at for time to close when no event shows the stage change', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 7000),
+			})
+			await link(insight.id, createdAt)
+
+			const row = await readRow()
+			expect(row?.medianTimeToCloseMs).toBe(7000)
+		})
+	})
+
+	describe('closed members keep their in_loop edge and close time comes from the status event', () => {
+		const statusChange = (entityId: string, to: string, at: Date, from = 'in_progress') => ({
+			workspaceId,
+			actorId,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId,
+			data: { changes: [{ field: 'status', old: from, new: to }] },
+			createdAt: at,
+		})
+
+		async function linkTask(loopId: string, overrides: Record<string, unknown>) {
+			const task = await insertObject(db, workspaceId, actorId, { type: 'task', ...overrides })
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loopId,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'in_loop',
+				// The clock starts at the edge: join when the task was created.
+				...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+			})
+			return task
+		}
+
+		it('moving a member to a closed status through the API keeps its edge and counts it as closed', async () => {
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+			app.route('/api/objects', objectsRoutes)
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Keeps links',
+			})
+			const task = await linkTask(loop.id, { status: 'in_progress', title: 'Closes' })
+
+			const patchRes = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/objects/${task.id}`,
+					{ status: 'done' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(patchRes.status).toBe(200)
+
+			const statusEvents = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, task.id), eq(events.action, 'status_changed')))
+			expect(statusEvents).toHaveLength(1)
+
+			const edges = await sql`
+				SELECT 1 FROM relationships
+				WHERE source_id = ${loop.id} AND target_id = ${task.id} AND type = 'in_loop'
+			`
+			expect(edges).toHaveLength(1)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; inProgressCount: number }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('uses the first event into the closed set, not later edits to the member', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Event-based close time',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			const closedAt = new Date(createdAt.getTime() + 2000)
+			// updated_at is a day after the close, as if the closed item was edited later.
+			const task = await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed then edited',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 86_400_000),
+			})
+			await db
+				.insert(events)
+				.values([
+					statusChange(task.id, 'in_progress', new Date(createdAt.getTime() + 500), 'todo'),
+					statusChange(task.id, 'done', closedAt),
+				])
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(2000)
+		})
+
+		it('falls back to updated_at for a closed member with no status event', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'No events',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed without an event',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 4000),
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(4000)
+		})
+
+		it('measures time to close from when the member joined the loop, not from when the object was created', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Joins on day 1, converts on day 10',
+			})
+			const day = 86_400_000
+			const joinedAt = new Date('2026-01-01T00:00:00.000Z')
+			const closedAt = new Date(joinedAt.getTime() + 9 * day)
+			// The object itself is months older than its place in the loop, and is
+			// edited again long after it closed: neither may move the result.
+			const task = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'done',
+				title: 'Converts on day 10',
+				createdAt: new Date('2025-06-01T00:00:00.000Z'),
+				updatedAt: new Date(joinedAt.getTime() + 30 * day),
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'in_loop',
+				createdAt: joinedAt,
+			})
+			await db.insert(events).values([
+				statusChange(task.id, 'done', closedAt),
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'task',
+					entityId: task.id,
+					data: { changes: [{ field: 'title', old: 'Converts', new: 'Converts on day 10' }] },
+					createdAt: new Date(joinedAt.getTime() + 30 * day),
+				},
+			])
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(9 * day)
+		})
+
+		it('leaves a member that was already closed when it joined out of the median, but still counts it as closed', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Closed before joining',
+			})
+			const day = 86_400_000
+			const joinedAt = new Date('2026-01-10T00:00:00.000Z')
+			const joinTask = async (title: string, closedAt: Date) => {
+				const task = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'done',
+					title,
+					createdAt: new Date('2026-01-01T00:00:00.000Z'),
+				})
+				await insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId: task.id,
+					type: 'in_loop',
+					createdAt: joinedAt,
+				})
+				await db.insert(events).values(statusChange(task.id, 'done', closedAt))
+			}
+			// Closed on day 1, nine days before it joined the loop, next to a normal member.
+			await joinTask('Closed before joining', new Date('2026-01-01T00:00:00.000Z'))
+			await joinTask('Closed two days after joining', new Date(joinedAt.getTime() + 2 * day))
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.medianTimeToCloseMs).toBe(2 * day)
+			expect(row?.closedCount).toBe(2)
+		})
+
+		it('counts each loop with its own closed statuses and ignores members of other loops', async () => {
+			const lenient = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Counts review as closed',
+				metadata: { closed_statuses: { task: ['done', 'in_review'] } },
+			})
+			const strict = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Default closed statuses',
+			})
+			// The same two statuses in both loops: only the override changes the split.
+			for (const loopId of [lenient.id, strict.id]) {
+				await linkTask(loopId, { status: 'done', title: 'Done' })
+				await linkTask(loopId, { status: 'in_review', title: 'In review' })
+				await linkTask(loopId, { status: 'in_progress', title: 'In progress' })
+			}
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; inProgressCount: number }>
+			}
+			const split = (id: string) => {
+				const row = body.loops.find((l) => l.id === id)
+				return [row?.closedCount, row?.inProgressCount]
+			}
+			expect(split(lenient.id)).toEqual([2, 1])
+			expect(split(strict.id)).toEqual([1, 2])
+		})
+
+		it('reads status events with one batched query for many closed members', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Batched',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			for (let i = 0; i < 5; i++) {
+				const task = await linkTask(loop.id, {
+					status: 'done',
+					title: `Closed ${i}`,
+					createdAt,
+					updatedAt: createdAt,
+				})
+				await db
+					.insert(events)
+					.values(statusChange(task.id, 'done', new Date(createdAt.getTime() + 1000 * (i + 1))))
+			}
+
+			// Count selects issued against the events table during one request.
+			let eventSelects = 0
+			const countingDb = new Proxy(db, {
+				get(target, prop) {
+					const value = Reflect.get(target, prop, target)
+					if (prop !== 'select' || typeof value !== 'function') {
+						return typeof value === 'function' ? value.bind(target) : value
+					}
+					return (...args: unknown[]) => {
+						const builder = value.apply(target, args)
+						return new Proxy(builder, {
+							get(b, bProp) {
+								const member = Reflect.get(b, bProp, b)
+								if (bProp === 'from') {
+									return (table: unknown) => {
+										if (table === events) eventSelects += 1
+										return member.call(b, table)
+									}
+								}
+								return typeof member === 'function' ? member.bind(b) : member
+							},
+						})
+					}
+				},
+			}) as Database
+
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', countingDb)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(5)
+			expect(row?.medianTimeToCloseMs).toBe(3000)
+			expect(eventSelects).toBe(1)
+		})
 	})
 
 	it('ignores relationships of a different type when computing loop membership', async () => {

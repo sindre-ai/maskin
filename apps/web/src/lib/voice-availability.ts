@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from 'react'
 
 // Voice is temporarily unavailable after a 429 from POST /api/voice-sessions
-// (vendor rate limit, or the workspace's daily minutes). Every Call button
-// reads this so they disable together, with one tooltip, until the server's
-// retry_after_seconds has passed. Module-level on purpose: the buttons live on
-// different surfaces (agent rows, detail header, thread header) with no shared
-// parent, and the state is per browser tab.
+// (vendor rate limit). Every Call button reads this so they disable together,
+// with one tooltip, until the server's retry_after_seconds has passed.
+// Module-level on purpose: the buttons live on different surfaces (agent rows,
+// detail header, thread header) with no shared parent, and the state is per
+// browser tab.
 
 export const VOICE_UNAVAILABLE_TOOLTIP = 'Voice temporarily unavailable — try again in a moment.'
 

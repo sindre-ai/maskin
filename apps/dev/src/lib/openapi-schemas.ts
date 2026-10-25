@@ -370,11 +370,18 @@ export const conversationListItemResponseSchema = z.object({
 	// the viewer said it.
 	snippet_actor_id: z.string().uuid().nullable(),
 	snippet_actor_name: z.string().nullable(),
+	// True when the caller wrote the snippet.
+	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
+	.omit({
+		snippet: true,
+		snippet_actor_id: true,
+		snippet_actor_name: true,
+		snippet_is_caller: true,
+	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})

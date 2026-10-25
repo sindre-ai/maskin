@@ -2,10 +2,12 @@ import {
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
 	showsObjectCard,
+	splitOwnLinks,
 	targetOfHref,
 } from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
+const WS = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const B = '4aee24db-5d54-476a-8399-9586516e7de1'
 const C = '3ecab143-9e98-4474-9e52-779a55d95952'
@@ -101,5 +103,43 @@ describe('extractLinkedObjectIds / extractLinkedFileIds in code and with boundar
 		expect(
 			extractLinkedObjectIds(`(/ws/objects/${A}), /ws/objects/${B}?x=1 /ws/objects/${C}/`),
 		).toEqual([A, B, C])
+	})
+})
+
+describe('splitOwnLinks', () => {
+	const url = (kind: string, id: string) => `https://maskin.io/${WS}/${kind}/${id}`
+
+	it('keeps the words and the link in the order they were written', () => {
+		expect(splitOwnLinks(`is this done? ${url('objects', A)} thanks`, WS)).toEqual([
+			{ kind: 'text', text: 'is this done? ' },
+			{ kind: 'object', id: A },
+			{ kind: 'text', text: ' thanks' },
+		])
+	})
+
+	it('finds a link to a file and leaves the sentence punctuation in the words', () => {
+		expect(splitOwnLinks(`see ${url('files', B)}.`, WS)).toEqual([
+			{ kind: 'text', text: 'see ' },
+			{ kind: 'file', id: B },
+			{ kind: 'text', text: '.' },
+		])
+	})
+
+	it('is just the link when the message is only the link', () => {
+		expect(splitOwnLinks(url('objects', A), WS)).toEqual([{ kind: 'object', id: A }])
+	})
+
+	it('keeps every link, including a repeated one', () => {
+		const link = url('objects', A)
+		expect(splitOwnLinks(`${link} ${link}`, WS).filter((s) => s.kind === 'object')).toHaveLength(2)
+	})
+
+	it('leaves links to another workspace, another site or a non-object page as words', () => {
+		const other = `https://maskin.io/${A}/objects/${B}`
+		const elsewhere = `https://example.com/${WS}/objects/${A}`
+		const page = url('agents', A)
+		for (const text of [other, elsewhere, page, 'no links here']) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
 	})
 })

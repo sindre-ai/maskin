@@ -1,14 +1,14 @@
+import { ComputersPane } from '@/components/chat/computers-pane'
 import { type LinkedFocus, LinkedPane } from '@/components/chat/linked-pane'
 import { ThreadsPane } from '@/components/chat/threads-pane'
-import { ProducedPane } from '@/components/objects/produced-pane'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { LinkedItem } from '@/hooks/use-conversation-linked'
 import type { ProducedFileItem, ProducedObjectItem } from '@/hooks/use-conversation-produced'
 import { cn } from '@/lib/cn'
-import { Hand, Layers, Link2, X } from 'lucide-react'
+import { Hand, Layers, Monitor, X } from 'lucide-react'
 
-export type OverviewTab = 'threads' | 'produced' | 'linked'
+export type OverviewTab = 'threads' | 'produced' | 'computers'
 
 interface OverviewPaneProps {
 	workspaceId: string
@@ -16,7 +16,8 @@ interface OverviewPaneProps {
 	tab: OverviewTab
 	onTabChange: (tab: OverviewTab) => void
 	threadsCount: number
-	producedCount: number
+	/** How many agents in the chat have a computer to show. */
+	computersCount: number
 	/** Session open in the Threads tab; null shows the list. */
 	openSessionId: string | null
 	onOpenSession: (sessionId: string | null) => void
@@ -24,9 +25,7 @@ interface OverviewPaneProps {
 	producedFiles: ProducedFileItem[]
 	producedLoading: boolean
 	linkedItems: LinkedItem[]
-	/** How many of them resolve to something the tab shows. */
-	linkedCount: number
-	/** The item a card asked the drawer to show; highlighted and expanded in the Linked tab. */
+	/** The item a card asked the drawer to show; highlighted and expanded in the Items tab. */
 	linkedFocus: LinkedFocus | null
 	onFocusConsumed: () => void
 	onJumpToMessage: (messageId: number) => void
@@ -44,9 +43,9 @@ function CountPill({ n }: { n: number }) {
 
 /**
  * The chat's right rail: one pane, three tabs. Threads lists what the chat handed
- * off to other agents (and opens any of them as a thread); Produced lists the
- * objects and files those sessions made; Linked lists what the chat's messages link to. A thread open in the Threads tab takes
- * over the whole pane with its own back / close header.
+ * off to other agents (and opens any of them as a thread); Items lists what the
+ * chat's messages link to plus the objects and files its sessions made. A thread
+ * open in the Threads tab takes over the whole pane with its own back / close header.
  */
 export function OverviewPane({
 	workspaceId,
@@ -54,14 +53,13 @@ export function OverviewPane({
 	tab,
 	onTabChange,
 	threadsCount,
-	producedCount,
+	computersCount,
 	openSessionId,
 	onOpenSession,
 	producedObjects,
 	producedFiles,
 	producedLoading,
 	linkedItems,
-	linkedCount,
 	linkedFocus,
 	onFocusConsumed,
 	onJumpToMessage,
@@ -69,6 +67,12 @@ export function OverviewPane({
 	className,
 }: OverviewPaneProps) {
 	const threadOpen = tab === 'threads' && openSessionId !== null
+	// A produced item that a message also links to is one item, not two.
+	const linkedKeys = new Set(linkedItems.map((i) => `${i.kind}:${i.id}`))
+	const itemsCount =
+		linkedItems.length +
+		producedObjects.filter((o) => !linkedKeys.has(`object:${o.entityId}`)).length +
+		producedFiles.filter((f) => !linkedKeys.has(`file:${f.fileId}`)).length
 
 	return (
 		<div
@@ -77,7 +81,11 @@ export function OverviewPane({
 		>
 			{threadOpen ? null : (
 				<div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<Tabs value={tab} onValueChange={(v) => onTabChange(v as OverviewTab)}>
+					<Tabs
+						value={tab}
+						onValueChange={(v) => onTabChange(v as OverviewTab)}
+						className="min-w-0 overflow-x-auto"
+					>
 						<TabsList>
 							<TabsTrigger value="threads" className="gap-1">
 								<Hand size={13} aria-hidden />
@@ -86,13 +94,13 @@ export function OverviewPane({
 							</TabsTrigger>
 							<TabsTrigger value="produced" className="gap-1">
 								<Layers size={13} aria-hidden />
-								Produced
-								<CountPill n={producedCount} />
+								Items
+								<CountPill n={itemsCount} />
 							</TabsTrigger>
-							<TabsTrigger value="linked" className="gap-1">
-								<Link2 size={13} aria-hidden />
-								Linked
-								<CountPill n={linkedCount} />
+							<TabsTrigger value="computers" className="gap-1">
+								<Monitor size={13} aria-hidden />
+								Computers
+								<CountPill n={computersCount} />
 							</TabsTrigger>
 						</TabsList>
 					</Tabs>
@@ -117,23 +125,23 @@ export function OverviewPane({
 					onClose={onClose}
 					className="min-h-0 flex-1"
 				/>
-			) : tab === 'linked' ? (
+			) : tab === 'computers' ? (
+				<ComputersPane
+					workspaceId={workspaceId}
+					conversationId={conversationId}
+					className="min-h-0 flex-1"
+				/>
+			) : (
 				<LinkedPane
 					workspaceId={workspaceId}
 					conversationId={conversationId}
 					items={linkedItems}
+					producedObjects={producedObjects}
+					producedFiles={producedFiles}
+					producedLoading={producedLoading}
 					focus={linkedFocus}
 					onFocusConsumed={onFocusConsumed}
 					onJumpToMessage={onJumpToMessage}
-					className="min-h-0 flex-1"
-				/>
-			) : (
-				<ProducedPane
-					workspaceId={workspaceId}
-					producedObjects={producedObjects}
-					producedFiles={producedFiles}
-					isLoading={producedLoading}
-					hideHeader
 					className="min-h-0 flex-1"
 				/>
 			)}

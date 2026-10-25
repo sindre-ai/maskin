@@ -228,3 +228,19 @@ export function useRemoveConversationParticipant(id: string, workspaceId: string
 		},
 	})
 }
+
+/**
+ * How the person answered the card in message `messageId`, read from the chat itself so
+ * it holds after a reload. Null while it is unanswered (or the messages are not loaded).
+ */
+export function useCardAnswer(
+	conversationId: string,
+	workspaceId: string,
+	messageId: number,
+): 'declined' | 'done' | null {
+	const { data } = useConversationMessages(conversationId, workspaceId)
+	for (const m of flattenMessagesOldestFirst(data)) {
+		if (m.metadata?.card_answer?.message_id === messageId) return m.metadata.card_answer.outcome
+	}
+	return null
+}

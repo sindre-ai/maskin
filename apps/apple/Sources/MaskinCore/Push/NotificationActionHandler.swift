@@ -19,10 +19,9 @@ import MaskinAPI
 // and the answer, so a double tap, an OS retry, or this attempt timing out on the wire and then
 // being replayed from the outbox cannot post the answer twice.
 //
-// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app is running in the
-// foreground at the same moment AND offline, its own in-memory queue could overwrite that file;
-// the window is a few milliseconds on a device that just lost the network, and the worst case
-// is the answer is lost (the notification stays, the user retries) rather than sent twice.
+// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app process is still alive
+// (suspended or running), its own outbox adopts entries it did not write the next time it saves or
+// drains, so the answer is neither overwritten nor left unsent until the process dies.
 
 public enum NotificationActionOutcome: Sendable, Equatable {
 	/// The answer was posted and the thread marked read.

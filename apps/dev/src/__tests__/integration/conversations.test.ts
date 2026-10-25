@@ -23,6 +23,24 @@ import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
+// The routes start evaluateAndRespond fire-and-forget, and startSession reads the
+// module-wide session manager that the next test's createConversationsApp overwrites.
+// Track every run so afterEach can wait for it: a responder must never outlive its test.
+const inFlightResponders = vi.hoisted(() => new Set<Promise<unknown>>())
+vi.mock('../../services/conversation-responder', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/conversation-responder')>()
+	return {
+		...actual,
+		evaluateAndRespond: (...args: Parameters<typeof actual.evaluateAndRespond>) => {
+			const run = actual.evaluateAndRespond(...args)
+			inFlightResponders.add(run)
+			const done = () => inFlightResponders.delete(run)
+			run.then(done, done)
+			return run
+		},
+	}
+})
+
 const { default: conversationsRoutes } = await import('../../routes/conversations')
 
 type Env = {
@@ -90,6 +108,10 @@ describe('Conversations Integration', () => {
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
+	})
+
+	afterEach(async () => {
+		await Promise.allSettled([...inFlightResponders])
 	})
 
 	describe('create + list + detail', () => {
@@ -613,6 +635,105 @@ describe('Conversations Integration', () => {
 		})
 	})
 
+	describe('list for an agent finding chats to follow up', () => {
+		type ListBody = {
+			conversations: Array<{ id: string; snippet_is_caller: boolean; lastMessageAt: string }>
+			has_more: boolean
+		}
+
+		async function createChat(
+			creatorId: string,
+			creatorType: 'human' | 'agent',
+			participantIds: string[],
+			message: string,
+		) {
+			const { app } = createConversationsApp(creatorId, creatorType)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: message, participant_actor_ids: participantIds, initial_message: message },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			return ((await res.json()) as { id: string }).id
+		}
+
+		async function listAs(agentId: string, query: string) {
+			const { app } = createConversationsApp(agentId, 'agent')
+			const res = await app.request(
+				jsonGet(`/api/conversations?${query}`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			return (await res.json()) as ListBody
+		}
+
+		it('filters by human participants and recent activity, newest first, and flags the callers own message', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const otherAgent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			await addMember(workspaceId, otherAgent.id)
+
+			const withHumanOld = await createChat(ownerId, 'human', [agent.id], 'older person chat')
+			const agentsOnly = await createChat(agent.id, 'agent', [otherAgent.id], 'agents only')
+			const withHumanNew = await createChat(ownerId, 'human', [agent.id], 'newer person chat')
+			// Make the order explicit rather than relying on insert timing.
+			const at = (iso: string) => new Date(iso)
+			await db
+				.update(conversations)
+				.set({ lastMessageAt: at('2026-10-20T10:00:00Z') })
+				.where(eq(conversations.id, withHumanOld))
+			await db
+				.update(conversations)
+				.set({ lastMessageAt: at('2026-10-22T10:00:00Z') })
+				.where(eq(conversations.id, agentsOnly))
+			await db
+				.update(conversations)
+				.set({ lastMessageAt: at('2026-10-23T10:00:00Z') })
+				.where(eq(conversations.id, withHumanNew))
+
+			const all = await listAs(agent.id, 'sort=activity')
+			expect(all.conversations.map((c) => c.id)).toEqual([withHumanNew, agentsOnly, withHumanOld])
+
+			const withPeople = await listAs(agent.id, 'sort=activity&has_human=true')
+			expect(withPeople.conversations.map((c) => c.id)).toEqual([withHumanNew, withHumanOld])
+
+			const recent = await listAs(agent.id, 'sort=activity&updated_after=2026-10-21T00:00:00Z')
+			expect(recent.conversations.map((c) => c.id)).toEqual([withHumanNew, agentsOnly])
+
+			const recentWithPeople = await listAs(
+				agent.id,
+				'sort=activity&has_human=true&updated_after=2026-10-21T00:00:00Z',
+			)
+			expect(recentWithPeople.conversations.map((c) => c.id)).toEqual([withHumanNew])
+
+			// The agent wrote the agents-only chat's last message; a person wrote the others.
+			const byId = new Map(all.conversations.map((c) => [c.id, c.snippet_is_caller]))
+			expect(byId.get(agentsOnly)).toBe(true)
+			expect(byId.get(withHumanNew)).toBe(false)
+		})
+
+		it('does not list chats the caller is not in', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const outsider = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			await addMember(workspaceId, outsider.id)
+			await createChat(ownerId, 'human', [agent.id], 'not for the outsider')
+
+			const list = await listAs(outsider.id, 'sort=activity&has_human=true')
+			expect(list.conversations).toEqual([])
+		})
+
+		it('rejects an updated_after that is not a time', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonGet('/api/conversations?updated_after=yesterday', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(400)
+		})
+	})
+
 	describe('participants', () => {
 		it('auto-joins an @mentioned agent who is not yet a participant, so they become a responder candidate', async () => {
 			// Regression: @mentioning an agent via the composer used to be a
@@ -770,12 +891,9 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
 			await new Promise((resolve) => setTimeout(resolve, 50))
-			// Count only this test's agents. startSession reads the module-wide session
-			// manager, so a responder still running from an earlier test in this file can
-			// land its createSession on this test's mock.
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
-				.filter((actorId) => actorId === agentA.id || actorId === agentB.id)
 				.sort()
 			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
 

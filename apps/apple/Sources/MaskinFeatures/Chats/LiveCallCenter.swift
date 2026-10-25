@@ -53,7 +53,8 @@ final class LiveCallCenter {
 				await chat.start()
 				let session = LiveMeetingSession(
 					kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
-					realtime: Self.realtimeCall(with: lead, environment: environment))
+					realtime: Self.realtimeCall(
+						with: lead, conversationID: request.startedFromConversationID, environment: environment))
 				current = session
 				session.begin()
 				startTicker()
@@ -79,10 +80,12 @@ final class LiveCallCenter {
 
 	/// The OpenAI Realtime call with the lead agent. Nil when the lead isn't an agent; the call
 	/// then runs as a dictated conversation.
-	private static func realtimeCall(with lead: ChatParticipant, environment: AppEnvironment) -> RealtimeVoiceCall? {
+	private static func realtimeCall(
+		with lead: ChatParticipant, conversationID: String?, environment: AppEnvironment
+	) -> RealtimeVoiceCall? {
 		guard lead.kind == .agent else { return nil }
 		return RealtimeVoiceCall(
-			agentID: lead.id, agentName: lead.name,
+			agentID: lead.id, agentName: lead.name, conversationID: conversationID,
 			calls: URLSessionVoiceCalls(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),

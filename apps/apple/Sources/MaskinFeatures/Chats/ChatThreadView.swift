@@ -448,7 +448,7 @@ struct ChatThreadView: View {
 			PinnedMessageStrip(message: pinned, onOpen: { scroll(to: pinned.id, proxy: proxy) }, onUnpin: { store.unpin() })
 				.padding(.bottom, MaskinSpace.s9)
 		}
-		if store.messages.isEmpty {
+		if store.messages.isEmpty, call?.lines.isEmpty ?? true {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
@@ -908,6 +908,12 @@ struct ThreadTranscript: View {
 	static let listGap: CGFloat = MaskinSpace.s9
 	static let groupedGap: CGFloat = MaskinSpace.s9 - MaskinSpace.s6
 
+	/// What you are saying now, for the card's "speaking…" line. A voice call only has your words once
+	/// they are final, and by then they are a line of the card: showing them again would repeat them.
+	static func partialWords(_ call: LiveMeetingSession) -> String {
+		call.voice.capturesOwnTranscript ? "" : call.voice.transcript
+	}
+
 	var body: some View {
 		if lazy {
 			// Flattened into the thread's own LazyVStack: a second lazy stack nested inside it
@@ -924,6 +930,9 @@ struct ThreadTranscript: View {
 		let messages = store.messages
 		let anchors =
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
+		// A voice call keeps its lines in the call log, which is not observable: reading the running
+		// call's lines here is what redraws the card as each one is transcribed.
+		let _ = call?.lines.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
 			calls: LiveCallLog.shared.records(for: store.conversationID))
@@ -1041,7 +1050,7 @@ struct ThreadTranscript: View {
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
 		case .liveCall(let card):
-			LiveCallCardView(card: card, partial: call?.voice.transcript ?? "")
+			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):

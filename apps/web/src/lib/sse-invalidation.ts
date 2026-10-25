@@ -126,6 +126,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, { queryKey: queryKeys.objects.references(event.entity_id) })
 	}
 
+	// A draft approved or sent changes its card (Approved, sending, then Sent). The draft can
+	// be any object type, including ones the entity-type switch below does not list.
+	if (event.action === 'approved' || event.action === 'delivered') {
+		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).

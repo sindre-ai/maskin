@@ -38,12 +38,17 @@ import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -65,7 +70,9 @@ import {
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
+import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { addDefaultHeartbeat } from '../services/default-heartbeat'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -87,6 +94,11 @@ type Env = {
 const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
+
+/** Whether two tools.envFrom values are the same list (a missing value counts as empty). */
+function sameEnvFrom(next: unknown, stored: unknown): boolean {
+	return JSON.stringify(next ?? []) === JSON.stringify(stored ?? [])
+}
 
 /**
  * Event data for an actor mutation. Events are readable by every workspace
@@ -352,6 +364,9 @@ app.openapi(createActorRoute, async (c) => {
 					entityId: inserted.id,
 					data: { role: 'member', added_actor_id: inserted.id },
 				})
+				if (inserted.type === 'agent') {
+					await addDefaultHeartbeat(tx, { workspaceId, actorId: inserted.id })
+				}
 				return inserted
 			})
 		} else {
@@ -397,6 +412,7 @@ app.openapi(createActorRoute, async (c) => {
 	// The new agent says hello to the person it was made for. Fire and forget,
 	// after the commit: the service never throws, so creation is unaffected.
 	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		const sessionManager = c.get('sessionManager')
 		void introduceAgentToRecipient({
 			db,
 			actor,
@@ -405,6 +421,12 @@ app.openapi(createActorRoute, async (c) => {
 			claimedSessionId: c.get('maskinSessionId'),
 			clientSource,
 			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+			// The agent looks around the workspace before suggesting first steps. Not in an
+			// E2E stack, where every workspace lacks credentials and the session would only churn.
+			scan:
+				sessionManager && !shouldSkipOnboardingKickoff()
+					? createIntroScanRunner({ db, sessionManager })
+					: undefined,
 		})
 	}
 
@@ -626,8 +648,8 @@ app.openapi(listActorsRoute, (async (c) => {
 		const cursorOn = Boolean(query.snapshot_at)
 		const orderBy = cursorOn
 			? query.order === 'asc'
-				? [asc(actors.createdAt), asc(actors.id)]
-				: [desc(actors.createdAt), asc(actors.id)]
+				? [asc(msCreatedAt(actors.createdAt)), asc(actors.id)]
+				: [desc(msCreatedAt(actors.createdAt)), asc(actors.id)]
 			: [asc(actors.name), asc(actors.id)]
 
 		// X-Total-Count reflects the workspace's total under the snapshot upper
@@ -1084,6 +1106,20 @@ app.openapi(updateActorRoute, (async (c) => {
 				'FORBIDDEN',
 				"Only workspace admins can change another actor's tools or llm_config",
 			),
+			403,
+		)
+	}
+
+	// envFrom names which API-service variables get copied into the agent's
+	// sessions, so only a human admin or owner may change it, even on the actor's
+	// own record. Sending the stored list back unchanged stays open.
+	if (
+		body.tools !== undefined &&
+		!sameEnvFrom(body.tools.envFrom, (existing.tools as { envFrom?: unknown } | null)?.envFrom) &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human workspace admin can change tools.envFrom'),
 			403,
 		)
 	}
