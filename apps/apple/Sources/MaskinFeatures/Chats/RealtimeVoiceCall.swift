@@ -69,6 +69,12 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private var startTask: Task<Void, Never>?
 	@ObservationIgnored private var reconnectTask: Task<Void, Never>?
 	@ObservationIgnored private var restartedIce = false
+	/// Messages already in the thread when the call began, or already looked at.
+	@ObservationIgnored private var knownMessageIDs: Set<String> = []
+	/// The data channel is open once the edge's first event has arrived.
+	@ObservationIgnored private var channelOpen = false
+	/// Typed lines waiting for the data channel to open.
+	@ObservationIgnored private var queuedChatItems: [String] = []
 
 	/// `conversationID` is the chat the call is started from; the server gives the agent its recent
 	/// messages. Nil when the call isn't tied to a chat.
@@ -94,6 +100,9 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	func begin(existing: [ChatMessage]) {
 		guard !isActive else { return }
 		isActive = true
+		knownMessageIDs = Set(existing.map(\.id))
+		channelOpen = false
+		queuedChatItems = []
 		failure = nil
 		startTask = Task { [weak self] in await self?.connect() }
 	}
@@ -113,8 +122,24 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	/// Stop the agent talking and listen at once.
 	func interrupt() { run(machine.interrupted(at: now())) }
 
-	/// The conversation is by voice; chat messages are not part of it.
-	func messagesChanged(_ messages: [ChatMessage]) {}
+	/// The conversation is by voice, but a line typed in the chat during the call (yours, or another
+	/// person's in a group chat) is handed to the agent as a conversation item. The call's own spoken
+	/// lines are not in the thread while it runs (the server saves them when it ends) and agent
+	/// messages are skipped, so nothing the call said comes back to it.
+	func messagesChanged(_ messages: [ChatMessage]) {
+		guard isActive else { return }
+		for message in messages where !knownMessageIDs.contains(message.id) {
+			// A line that hasn't reached the thread yet is looked at again when it has.
+			if message.isFailed { continue }
+			if case .waiting = message.status { continue }
+			knownMessageIDs.insert(message.id)
+			guard message.author != .agent, message.showsInTimeline, !message.isSystem,
+				!message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			else { continue }
+			let item = RealtimeCallMachine.chatMessageItem(from: message.actorName, text: message.content)
+			if channelOpen { transport?.send(item) } else { queuedChatItems.append(item) }
+		}
+	}
 
 	// MARK: Connecting
 
@@ -187,6 +212,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		run(machine.handle(event, at: now()))
 		for line in machine.lines.dropFirst(seen) where line.kind != .tool {
 			onLine?(line.kind == .user, line.text)
+		}
+		if !channelOpen {
+			channelOpen = true
+			for item in queuedChatItems { transport?.send(item) }
+			queuedChatItems = []
 		}
 	}
 
