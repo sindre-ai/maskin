@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	conversationParticipants,
+	messageThreadReads,
 	notificationPreferences,
 	notifications,
 } from '@maskin/db/schema'
@@ -175,6 +176,7 @@ export class NotificationPushFanout {
 				notificationId: n.id,
 				objectId: n.objectId,
 				conversationId,
+				threadRootId: typeof meta.thread_root_id === 'number' ? meta.thread_root_id : null,
 				decision: decision?.push ?? null,
 				interruption: verdict.interruption,
 				badge,
@@ -261,6 +263,21 @@ export class NotificationPushFanout {
 			return false
 		}
 		try {
+			// A thread reply is read in the thread, not in the chat: the chat's cursor
+			// moving past it says nothing about whether this person opened the thread.
+			if (typeof meta.thread_root_id === 'number') {
+				const [thread] = await this.db
+					.select({ lastRead: messageThreadReads.lastReadMessageId })
+					.from(messageThreadReads)
+					.where(
+						and(
+							eq(messageThreadReads.actorId, actorId),
+							eq(messageThreadReads.rootMessageId, meta.thread_root_id),
+						),
+					)
+					.limit(1)
+				return thread != null && Number(thread.lastRead) >= messageId
+			}
 			const [row] = await this.db
 				.select({ lastRead: conversationParticipants.lastReadMessageId })
 				.from(conversationParticipants)

@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import type { MessageResponse, MessagesListResponse, PostMessageInput } from '../lib/api'
 import { api } from '../lib/api'
 import { getStoredActor } from '../lib/auth'
+import { threadRootOfQueryKey } from '../lib/message-threads'
 import { queryKeys } from '../lib/query-keys'
 
 const MESSAGES_PAGE_SIZE = 50
@@ -27,6 +28,22 @@ export function useConversation(id: string, workspaceId: string, options?: { ena
  * `before_id`. Flatten + reverse (see `flattenMessagesOldestFirst`) to render
  * top(oldest)→bottom(newest) in the thread.
  */
+function fetchMessagesPage(
+	id: string,
+	workspaceId: string,
+	pageParam: number | undefined,
+	extra?: Record<string, string>,
+) {
+	const params: Record<string, string> = { limit: String(MESSAGES_PAGE_SIZE), ...extra }
+	if (pageParam) params.before_id = String(pageParam)
+	return api.conversations.messages(id, workspaceId, params)
+}
+
+function nextMessagesPageParam(lastPage: MessagesListResponse) {
+	if (!lastPage.has_more || lastPage.messages.length === 0) return undefined
+	return lastPage.messages[lastPage.messages.length - 1]?.id
+}
+
 export function useConversationMessages(
 	id: string,
 	workspaceId: string,
@@ -34,17 +51,80 @@ export function useConversationMessages(
 ) {
 	return useInfiniteQuery({
 		queryKey: queryKeys.conversations.messages(id, { limit: MESSAGES_PAGE_SIZE }),
-		queryFn: ({ pageParam }) => {
-			const params: Record<string, string> = { limit: String(MESSAGES_PAGE_SIZE) }
-			if (pageParam) params.before_id = String(pageParam)
-			return api.conversations.messages(id, workspaceId, params)
-		},
+		queryFn: ({ pageParam }) => fetchMessagesPage(id, workspaceId, pageParam),
 		initialPageParam: undefined as number | undefined,
-		getNextPageParam: (lastPage) => {
-			if (!lastPage.has_more || lastPage.messages.length === 0) return undefined
-			return lastPage.messages[lastPage.messages.length - 1]?.id
-		},
+		getNextPageParam: nextMessagesPageParam,
 		enabled: !!id && !!workspaceId && (options?.enabled ?? true),
+	})
+}
+
+/** The replies under one top-level message, paged newest-first like the main list. */
+export function useThreadReplies(
+	id: string,
+	workspaceId: string,
+	rootId: number,
+	options?: { enabled?: boolean },
+) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.conversations.threadMessages(id, rootId),
+		queryFn: ({ pageParam }) =>
+			fetchMessagesPage(id, workspaceId, pageParam, { thread_root_id: String(rootId) }),
+		initialPageParam: undefined as number | undefined,
+		getNextPageParam: nextMessagesPageParam,
+		enabled: !!id && !!workspaceId && rootId > 0 && (options?.enabled ?? true),
+	})
+}
+
+/** Threads the caller is in, across conversations. Used to resolve a deep-linked root. */
+export function useReplyThreads(workspaceId: string, options?: { enabled?: boolean }) {
+	return useQuery({
+		queryKey: queryKeys.conversations.replyThreads(workspaceId),
+		queryFn: () => api.conversations.replyThreads(workspaceId, { limit: 100 }),
+		enabled: !!workspaceId && (options?.enabled ?? true),
+	})
+}
+
+/**
+ * Advances the caller's read cursor for one thread. The pill's unread count is
+ * zeroed on the root in every main-list cache straight away (advance-only, so
+ * there is nothing to roll back). On settle only the reply-thread list and the
+ * main-list message caches refetch, never the open thread query: a main-page
+ * refetch that was issued before the PUT committed could otherwise land after
+ * the zeroing and bring a stale unread pill back.
+ */
+export function useMarkThreadRead(id: string, workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<
+		{ last_read_message_id: number },
+		Error,
+		{ rootId: number; lastReadMessageId: number }
+	>({
+		mutationFn: ({ rootId, lastReadMessageId }) =>
+			api.conversations.markThreadRead(id, workspaceId, rootId, lastReadMessageId),
+		onMutate: ({ rootId }) => {
+			const caches = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
+				queryKey: queryKeys.conversations.messagesPrefix(id),
+			})
+			for (const [key, cache] of caches) {
+				if (!cache || threadRootOfQueryKey(key) !== null) continue
+				queryClient.setQueryData<InfiniteData<MessagesListResponse>>(key, {
+					...cache,
+					pages: cache.pages.map((page) => ({
+						...page,
+						messages: page.messages.map((m) =>
+							m.id === rootId && m.thread ? { ...m, thread: { ...m.thread, unreadCount: 0 } } : m,
+						),
+					})),
+				})
+			}
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.replyThreads(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.conversations.messagesPrefix(id),
+				predicate: (query) => threadRootOfQueryKey(query.queryKey) === null,
+			})
+		},
 	})
 }
 
@@ -72,6 +152,7 @@ export function useSendMessage(id: string, workspaceId: string) {
 		mutationFn: (data) => api.conversations.postMessage(id, workspaceId, data),
 		onMutate: async (data) => {
 			await queryClient.cancelQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
+			const sendRoot = data.thread_root_id ?? null
 			const actor = getStoredActor()
 			const tempId = tempMessageSeq--
 			const optimisticMessage: MessageResponse = {
@@ -86,12 +167,18 @@ export function useSendMessage(id: string, workspaceId: string) {
 				sessionId: data.session_id ?? null,
 				createdAt: new Date().toISOString(),
 				editedAt: null,
+				threadRootId: sendRoot,
+				threadAlsoInChannel: sendRoot !== null && data.also_in_channel === true,
 			}
 			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
 				queryKey: queryKeys.conversations.messagesPrefix(id),
 			})
 			for (const [key, cache] of snapshots) {
 				if (!cache || cache.pages.length === 0) continue
+				// A top-level send belongs only in main-list caches; a reply goes to those and to
+				// its own thread's cache, never to another root's.
+				const cacheRoot = threadRootOfQueryKey(key)
+				if (cacheRoot !== null && cacheRoot !== sendRoot) continue
 				const [first, ...rest] = cache.pages
 				if (!first) continue
 				queryClient.setQueryData<InfiniteData<MessagesListResponse>>(key, {

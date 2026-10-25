@@ -44,6 +44,10 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		// Sits under messagesPrefix, so the conversation SSE invalidation refreshes it too.
+		threadMessages: (id: string, rootId: number) =>
+			['conversations', 'detail', id, 'messages', { thread_root_id: rootId }] as const,
+		replyThreads: (workspaceId: string) => ['conversations', workspaceId, 'replyThreads'] as const,
 		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {

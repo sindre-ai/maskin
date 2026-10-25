@@ -94,6 +94,23 @@ export async function insertConversationMessage(
 		})
 	}
 
+	// A person @mentioned in the message gets a push. Same fresh-insert guarantee
+	// as below; auto-posted final outputs are left to notifyChatReply. This runs
+	// BEFORE notifyChatReply on purpose: createChatNotifications skips a target
+	// that already has a row for the message, so a person who is both mentioned
+	// and in the thread gets the immediate mention push, not the delayed thread one.
+	await notifyChatMention(db, {
+		workspaceId: args.workspaceId,
+		authorId: args.actorId,
+		conversationId: args.conversationId,
+		messageId: created.id,
+		content: args.content,
+		kind: args.kind,
+		metadata: args.metadata,
+		sessionId: args.sessionId,
+		threadRootId: args.threadRootId ?? null,
+	})
+
 	// The single hook for "an agent replied": every auto-posted final output
 	// (both InteractiveTurnFinalizer paths) lands here, and only a fresh insert
 	// reaches this line, so a replayed log line cannot notify twice.
@@ -106,19 +123,7 @@ export async function insertConversationMessage(
 		kind: args.kind,
 		metadata: args.metadata,
 		sessionId: args.sessionId,
-	})
-
-	// A person @mentioned in the message gets a push. Same fresh-insert guarantee
-	// as above; auto-posted final outputs are left to notifyChatReply.
-	await notifyChatMention(db, {
-		workspaceId: args.workspaceId,
-		authorId: args.actorId,
-		conversationId: args.conversationId,
-		messageId: created.id,
-		content: args.content,
-		kind: args.kind,
-		metadata: args.metadata,
-		sessionId: args.sessionId,
+		threadRootId: args.threadRootId ?? null,
 	})
 
 	// The person replying in the chat answers any agent question waiting on them there.

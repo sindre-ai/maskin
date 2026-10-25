@@ -5685,6 +5685,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
