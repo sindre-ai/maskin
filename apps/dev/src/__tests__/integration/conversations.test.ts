@@ -1712,11 +1712,47 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
-		it('fails open in a group chat with no mention and no chat credentials configured', async () => {
-			// The relevance heuristic itself being uncallable (no chat-callable
-			// credential) is not proof the agent has no credentials at all — the
-			// real session launch supports Claude OAuth. So a missing heuristic
-			// credential should default to responding, not silently declining.
+		it('wakes only the @mentioned agent when other agents are in the room', async () => {
+			const mentionedAgent = await insertActor(db, { type: 'agent' })
+			const bystander = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, mentionedAgent.id)
+			await addMember(workspaceId, bystander.id)
+			const { app: ownerApp, sessionManager } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Mention routing', participant_actor_ids: [mentionedAgent.id, bystander.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: `<@${mentionedAgent.id}> what do you think?`,
+						metadata: { mentions: [mentionedAgent.id] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			const sessionActorIds = sessionManager.createSession.mock.calls.map(
+				(call) => (call[1] as { actorId: string }).actorId,
+			)
+			expect(sessionActorIds).toEqual([mentionedAgent.id])
+		})
+
+		it('stays silent in a multi-agent group chat with no mention when the router cannot run', async () => {
+			// With several agents and no @mention, failing open would wake every
+			// one of them at once. The routing call picks a single agent; when it
+			// cannot run (no chat-callable credential) nobody replies and the user
+			// can @mention. A single-agent room still fails open (see above).
 			const agent = await insertActor(db, { type: 'agent' })
 			const otherAgent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1761,7 +1797,7 @@ describe('Conversations Integration', () => {
 				messageId: triggering.id,
 			})
 
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips every agent once the consecutive-agent-reply cap is reached, even a @mentioned one', async () => {

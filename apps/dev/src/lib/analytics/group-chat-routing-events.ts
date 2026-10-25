@@ -14,6 +14,9 @@ export type GroupChatWakeReason =
 	| 'model_no'
 	| 'model_no_decision'
 	| 'dropped_agent_cap'
+	| 'not_tagged'
+	| 'router_pick'
+	| 'router_no_pick'
 
 /** How a wake reached the agent. `start_failed` means nothing was delivered. */
 export type GroupChatDelivery =

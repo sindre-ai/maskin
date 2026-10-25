@@ -248,6 +248,24 @@ export async function evaluateAndRespond(ctx: {
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
 
+	// Several agents and nobody @mentioned: one routing call picks at most one
+	// of them, instead of each agent voting alone (they can't see each other's
+	// votes, so overlapping roles all said yes). `undefined` = not routed here.
+	const taggedCandidates = candidates.filter((a) => mentioned.has(a.id))
+	const routedAgentId =
+		!options?.forceRespond &&
+		!isDirectConversation &&
+		taggedCandidates.length === 0 &&
+		candidates.length > 1
+			? await chooseResponder({
+					candidates,
+					wsSettings,
+					wsEntitlement,
+					conversationHistory,
+					newMessageContent: messageForPrompt.content,
+				})
+			: undefined
+
 	// Recorded before delivery so a delivery that throws still reports the reason.
 	const wokenReasons = new Map<string, GroupChatWakeReason>()
 	const settled = await Promise.allSettled(
@@ -264,14 +282,21 @@ export async function evaluateAndRespond(ctx: {
 					? { respond: true, reason: 'tagged' }
 					: isDirectConversation
 						? { respond: true, reason: 'direct_1to1' }
-						: await checkRelevance({
-								agent,
-								wsSettings,
-								wsEntitlement,
-								conversationHistory,
-								newMessageContent: messageForPrompt.content,
-								isDirectConversation,
-							})
+						: taggedCandidates.length > 0
+							? // Someone else was @mentioned: the message is addressed, not open to the room.
+								{ respond: false, reason: 'not_tagged' }
+							: routedAgentId !== undefined
+								? agent.id === routedAgentId
+									? { respond: true, reason: 'router_pick' }
+									: { respond: false, reason: 'router_no_pick' }
+								: await checkRelevance({
+										agent,
+										wsSettings,
+										wsEntitlement,
+										conversationHistory,
+										newMessageContent: messageForPrompt.content,
+										isDirectConversation,
+									})
 			if (!relevance.respond) {
 				return {
 					agentId: agent.id,
@@ -752,6 +777,105 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 		cur = e.cause
 	}
 	return false
+}
+
+type ResponderCandidate = {
+	id: string
+	name: string
+	description: string | null
+	systemPrompt: string | null
+	llmProvider: string | null
+	llmConfig: unknown
+}
+
+/**
+ * One LLM call that sees every candidate and returns the single best agent to
+ * answer an un-addressed group message, or null. Fails CLOSED (null): unlike
+ * the single-agent check, failing open here would wake every agent at once.
+ */
+export async function chooseResponder(params: {
+	candidates: ResponderCandidate[]
+	wsSettings: WorkspaceSettings
+	wsEntitlement: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
+	conversationHistory: Array<{ actorName: string; content: string }>
+	newMessageContent: string
+}): Promise<string | null> {
+	const { candidates, wsSettings, wsEntitlement, conversationHistory, newMessageContent } = params
+	let credentials: ReturnType<typeof resolveChatCredentials> = null
+	for (const agent of candidates) {
+		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
+		credentials = resolveChatCredentials({
+			wsSettings,
+			workspace: wsEntitlement,
+			agent: {
+				provider: agent.llmProvider,
+				apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				model: (llmConfig.model as string | undefined)?.trim() || null,
+			},
+		})
+		if (credentials) break
+	}
+	if (!credentials) {
+		logger.warn(
+			'Conversation responder routing has no chat-callable credentials — staying silent',
+			{
+				agentIds: candidates.map((a) => a.id),
+			},
+		)
+		return null
+	}
+
+	const ids = candidates.map((a) => a.id)
+	const tool: LLMTool = {
+		name: 'choose_responder',
+		description: 'Pick the one agent that should reply to the latest message, or nobody.',
+		parameters: {
+			type: 'object',
+			properties: {
+				agent_id: {
+					type: ['string', 'null'],
+					enum: [...ids, null],
+					description: 'The id of the single best agent to reply, or null if nobody should.',
+				},
+				reason: { type: 'string', description: 'One sentence explaining the choice.' },
+			},
+			required: ['agent_id'],
+		},
+	}
+	try {
+		const adapter = createLLMAdapter(credentials.provider, {
+			api_key: credentials.apiKey,
+			base_url: credentials.baseUrl,
+			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
+		})
+		const roster = candidates
+			.map((a) => `- id: ${a.id} | ${a.name}${a.description ? ` — ${a.description}` : ''}`)
+			.join('\n')
+		const response = await adapter.chat({
+			model: credentials.model,
+			temperature: 0,
+			tools: [tool],
+			messages: [
+				{
+					role: 'system',
+					content: `You route messages in a group chat that has several AI agents. A new message arrived that is not addressed to anyone by @mention. Choose the ONE agent whose role fits it best, so the others stay quiet. Choose nobody (null) when it is small talk between humans, directed at a person, or already answered. Never choose more than one. Call choose_responder.\n\nAgents:\n${roster}`,
+				},
+				{
+					role: 'user',
+					content: `Recent conversation:\n${formatConversationTranscript(conversationHistory) || '(no prior messages)'}\n\nNew message:\n${newMessageContent}`,
+				},
+			],
+		})
+		const call = response.tool_calls.find((tc) => tc.name === 'choose_responder')
+		const picked = call?.arguments.agent_id
+		return typeof picked === 'string' && ids.includes(picked) ? picked : null
+	} catch (err) {
+		logger.error('Conversation responder routing call failed — staying silent', {
+			agentIds: ids,
+			error: String(err),
+		})
+		return null
+	}
 }
 
 export type RelevanceReason = Extract<
