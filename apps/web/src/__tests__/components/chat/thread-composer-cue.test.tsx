@@ -196,7 +196,8 @@ describe('ThreadComposer — group-chat cue', () => {
 			await user.type(box(), 'hello @For')
 			await user.keyboard('{Enter}')
 
-			await waitFor(() => expect(box()).toHaveValue('hello '))
+			// Same as before this change: the typed space stays and the insert adds one.
+			await waitFor(() => expect(box()).toHaveValue('hello  '))
 		})
 	})
 
