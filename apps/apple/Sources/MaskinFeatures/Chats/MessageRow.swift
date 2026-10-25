@@ -176,6 +176,10 @@ struct MessageRow: View {
 	/// Tap on an emoji chip under the bubble (add or take back).
 	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
+	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
+	var onKeychainReply: (String) -> Void = { _ in }
+	/// The agents in this chat, who may use a credential saved from a Keychain card.
+	var chatAgents: [ChatParticipant] = []
 	var onSelectVersion: (Int) -> Void = { _ in }
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
@@ -386,6 +390,16 @@ struct MessageRow: View {
 			if !message.questions.isEmpty {
 				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}
+			if let access = KeychainAccessRequest(message: message) {
+				KeychainAccessCard(
+					request: access, agentID: message.actorID, conversationID: message.conversationID,
+					onReply: onKeychainReply)
+			}
+			if let credential = KeychainCredentialRequest(message: message) {
+				KeychainRequestCard(
+					request: credential, messageCreatedAt: message.createdAt,
+					agents: agentsAsking(message), onReply: onKeychainReply)
+			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
 		}
@@ -395,6 +409,12 @@ struct MessageRow: View {
 			guard let linked, !targets.isEmpty else { return }
 			await linked.resolveWithRetries(Array(targets.prefix(12)))
 		}
+	}
+
+	/// The chat's agents, with the one that asked always among them.
+	private func agentsAsking(_ message: ChatMessage) -> [ChatParticipant] {
+		if chatAgents.contains(where: { $0.id == message.actorID }) { return chatAgents }
+		return [ChatParticipant(id: message.actorID, name: message.actorName, kind: .agent)] + chatAgents
 	}
 
 	/// Versions pager and local feedback under an agent bubble.
