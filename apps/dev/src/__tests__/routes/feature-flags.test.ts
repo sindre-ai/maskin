@@ -11,7 +11,10 @@ const TESTER = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const NON_TESTER = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
-const ENV_KEYS = ['FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES'] as const
+const ENV_KEYS = ['FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES', 'FF_WORKSPACE_FEATURES'] as const
+
+const WORKSPACE_A = 'e2877e32-2c11-489e-96c8-a76200908ed4'
+const WORKSPACE_B = 'f79e3751-c680-47e0-9a9a-824a4a2a7908'
 
 function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 	for (const key of ENV_KEYS) {
@@ -88,6 +91,76 @@ describe('GET /api/feature-flags', () => {
 		expect(raw).not.toContain(NON_TESTER)
 		expect(raw).not.toContain('FF_')
 		expect(raw).not.toContain('testerActorIds')
+	})
+
+	describe('with an X-Workspace-Id header', () => {
+		const FLAG = FLAGS.GROUP_CHAT_WAKE_RULE
+		const memberRow = { actorId: TESTER }
+
+		// Flag on for workspace A only. TESTER is neither a tester nor listed anywhere else.
+		beforeEach(() => setEnv({ FF_WORKSPACE_FEATURES: `${WORKSPACE_A}:${FLAG}` }))
+
+		it('covers the workspace flags when the caller is a member of it', async () => {
+			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+			mockResults.select = [memberRow]
+
+			const res = await app.request(
+				jsonGet('/api/feature-flags', { 'X-Workspace-Id': WORKSPACE_A }),
+			)
+			expect(await res.json()).toEqual({ flags: { ...ALL_OFF, [FLAG]: true } })
+		})
+
+		it('says false for a workspace the flag is not on for, even to a member of both', async () => {
+			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+			mockResults.select = [memberRow]
+
+			const forA = await app.request(
+				jsonGet('/api/feature-flags', { 'X-Workspace-Id': WORKSPACE_A }),
+			)
+			const forB = await app.request(
+				jsonGet('/api/feature-flags', { 'X-Workspace-Id': WORKSPACE_B }),
+			)
+			expect(((await forA.json()) as { flags: Record<string, boolean> }).flags[FLAG]).toBe(true)
+			expect(((await forB.json()) as { flags: Record<string, boolean> }).flags[FLAG]).toBe(false)
+		})
+
+		it('gives a non-member the actor-only answer, never the workspace flags', async () => {
+			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonGet('/api/feature-flags', { 'X-Workspace-Id': WORKSPACE_A }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({ flags: ALL_OFF })
+		})
+
+		it('ignores a header that is not a workspace id', async () => {
+			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+			mockResults.select = [memberRow]
+
+			const res = await app.request(
+				jsonGet('/api/feature-flags', { 'X-Workspace-Id': 'not-a-uuid' }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({ flags: ALL_OFF })
+		})
+
+		it("returns today's answer unchanged when no header is sent", async () => {
+			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+			mockResults.select = [memberRow]
+
+			const res = await app.request(jsonGet('/api/feature-flags'))
+			expect(await res.json()).toEqual({ flags: ALL_OFF })
+		})
+
+		it('does not turn the flag on for a tester listed for it', async () => {
+			setEnv({ FF_TESTER_ACTOR_IDS: TESTER, FF_TESTER_FEATURES: FLAG })
+			const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+
+			const res = await app.request(jsonGet('/api/feature-flags'))
+			expect(await res.json()).toEqual({ flags: ALL_OFF })
+		})
 	})
 
 	it('returns 401 when the request is unauthenticated', async () => {

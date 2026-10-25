@@ -120,3 +120,23 @@ describe('resolveFlags', () => {
 		expect(resolveFlags('   ', c, REGISTRY)[FLAG]).toBe(false)
 	})
 })
+
+describe('workspace-only flags', () => {
+	// The wake-rule flag is read per workspace by the responder and by the composer cue. A
+	// tester-list entry would switch the cue on for a person while the responder says no, so
+	// the tester path must never carry it, whatever the environment says.
+	it('drops the group-chat wake rule from the tester list', () => {
+		const c = config({
+			FF_TESTER_FEATURES: `${FLAGS.GROUP_CHAT_WAKE_RULE},other-flag`,
+			FF_TESTER_ACTOR_IDS: TESTER,
+		})
+		expect(c.testerFlags.has(FLAGS.GROUP_CHAT_WAKE_RULE)).toBe(false)
+		expect(c.testerFlags.has('other-flag')).toBe(true)
+		expect(resolveFlags(TESTER, c)[FLAGS.GROUP_CHAT_WAKE_RULE]).toBe(false)
+	})
+
+	it('still turns the group-chat wake rule on from a workspace entry', () => {
+		const c = config({ FF_WORKSPACE_FEATURES: `${TESTER}:${FLAGS.GROUP_CHAT_WAKE_RULE}` })
+		expect(c.workspaceFeatures.has(`${TESTER}:${FLAGS.GROUP_CHAT_WAKE_RULE}`)).toBe(true)
+	})
+})

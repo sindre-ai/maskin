@@ -1133,9 +1133,11 @@ export const api = {
 	},
 
 	featureFlags: {
-		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
-		// booleans; the tester actor id list never reaches the browser.
-		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+		// Per-actor. With a workspaceId the backend also answers for that workspace's
+		// workspace-scoped flags, when the caller is a member of it. The backend
+		// resolves the booleans; the tester actor id list never reaches the browser.
+		get: (workspaceId?: string) =>
+			request<{ flags: Record<string, boolean> }>('/feature-flags', { workspaceId }),
 	},
 
 	transcriptions: {

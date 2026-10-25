@@ -11,7 +11,13 @@ import { api } from '@/lib/api'
 
 // Versioned — bump the suffix to invalidate every client's cache if the
 // response shape changes. Versioned the way every persisted client cache here is.
-const STORAGE_KEY = 'maskin-feature-flags:1'
+// The answer depends on the workspace (workspace-scoped flags), so the cache is
+// keyed by workspace id; with no workspace selected it is the actor-only answer.
+const STORAGE_KEY_BASE = 'maskin-feature-flags:2'
+
+function storageKey(workspaceId: string | null): string {
+	return workspaceId ? `${STORAGE_KEY_BASE}:${workspaceId}` : STORAGE_KEY_BASE
+}
 
 // TEST-ONLY override. `localStorage['ff:<flagId>'] = 'on' | 'off'` beats the
 // server response, so Playwright can drive both sides of a flag boundary in one
@@ -22,9 +28,9 @@ const OVERRIDE_PREFIX = 'ff:'
 
 type Flags = Record<string, boolean>
 
-function readCache(): Flags | null {
+function readCache(workspaceId: string | null): Flags | null {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY)
+		const raw = localStorage.getItem(storageKey(workspaceId))
 		if (!raw) return null
 		const parsed = JSON.parse(raw)
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
@@ -39,9 +45,9 @@ function readCache(): Flags | null {
 	}
 }
 
-function writeCache(flags: Flags): void {
+function writeCache(workspaceId: string | null, flags: Flags): void {
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(flags))
+		localStorage.setItem(storageKey(workspaceId), JSON.stringify(flags))
 	} catch {
 		// Caching is best-effort; a full or privacy-mode storage must never throw.
 	}
@@ -58,12 +64,26 @@ function readOverride(flagId: string): boolean | null {
 	}
 }
 
-let cachedFlags: Flags = readCache() ?? {}
-let hasCache = readCache() !== null
+let currentWorkspaceId: string | null = null
+let cachedFlags: Flags = readCache(null) ?? {}
+let hasCache = readCache(null) !== null
 const listeners = new Set<() => void>()
 
 function notify(): void {
 	for (const listener of listeners) listener()
+}
+
+/** Points the cache at one workspace's answer, seeding synchronously from that
+ *  workspace's stored copy so a repeat visit still renders without a flash. Call
+ *  it before reading flags on a workspace route; a no-op when nothing changes. */
+export function setFlagsWorkspace(workspaceId: string | null | undefined): void {
+	const next = workspaceId ?? null
+	if (next === currentWorkspaceId) return
+	currentWorkspaceId = next
+	const stored = readCache(next)
+	cachedFlags = stored ?? {}
+	hasCache = stored !== null
+	notify()
 }
 
 /** True when a previous successful response is available, so the caller can
@@ -80,29 +100,34 @@ export function getFlag(flagId: string): boolean {
 	return cachedFlags[flagId] === true
 }
 
-let inFlight: Promise<void> | null = null
+let inFlight: { workspaceId: string | null; promise: Promise<void> } | null = null
 
-/** Fetches and caches the resolved flags. Never rejects: on any failure it logs
- *  and leaves the currently seeded values in place. */
+/** Fetches and caches the resolved flags for the selected workspace. Never
+ *  rejects: on any failure it logs and leaves the currently seeded values in
+ *  place. */
 export function loadFeatureFlags(): Promise<void> {
-	if (inFlight) return inFlight
-	inFlight = api.featureFlags
-		.get()
+	const workspaceId = currentWorkspaceId
+	if (inFlight && inFlight.workspaceId === workspaceId) return inFlight.promise
+	const promise: Promise<void> = api.featureFlags
+		.get(workspaceId ?? undefined)
 		.then((res) => {
 			const flags = res?.flags
 			if (!flags || typeof flags !== 'object') return
+			writeCache(workspaceId, flags)
+			// The user may have moved to another workspace while this was in flight.
+			if (workspaceId !== currentWorkspaceId) return
 			cachedFlags = flags
 			hasCache = true
-			writeCache(flags)
 			notify()
 		})
 		.catch((error) => {
 			console.error('[maskin] failed to load feature flags', error)
 		})
 		.finally(() => {
-			inFlight = null
+			if (inFlight?.promise === promise) inFlight = null
 		})
-	return inFlight
+	inFlight = { workspaceId, promise }
+	return promise
 }
 
 /** Subscription for useSyncExternalStore, so a background revalidation that
@@ -116,8 +141,9 @@ export function subscribeToFlags(listener: () => void): () => void {
 
 /** Test-only: reset module state between cases. */
 export function _resetFeatureFlags(): void {
-	cachedFlags = readCache() ?? {}
-	hasCache = readCache() !== null
+	currentWorkspaceId = null
+	cachedFlags = readCache(null) ?? {}
+	hasCache = readCache(null) !== null
 	inFlight = null
 	listeners.clear()
 }

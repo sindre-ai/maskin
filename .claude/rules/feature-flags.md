@@ -79,6 +79,19 @@ un-flagged population, so such changes must be safe for all users on their own.
 If a design needs a breaking backend change, raise it rather than wrapping it in
 a flag.
 
+## Workspace-scoped flags in the browser
+
+A flag read on the backend per workspace (`FF_WORKSPACE_FEATURES=<workspaceId>:<flagId>`) can also be
+read in the browser. `GET /api/feature-flags` accepts an optional `X-Workspace-Id` header and adds
+that workspace's enables to the answer, but only when the caller is a member of it (a non-member gets
+the actor-only answer, and the auth middleware already refuses a non-member's header). No header
+means today's answer. The web cache is keyed by workspace id (`maskin-feature-flags:2:<workspaceId>`)
+and `_authed.tsx` selects the workspace from the URL before it loads.
+
+A flag that must agree with a backend per-workspace read (the group-chat wake rule is the one so far)
+is listed in `WORKSPACE_ONLY_FLAGS` in `apps/dev/src/lib/feature-flags.ts`: a tester-list entry for it
+is dropped, so the browser and the server cannot answer differently.
+
 ## Test-only override
 
 `localStorage['ff:<flagId>'] = 'on' | 'off'` beats the server response. This
