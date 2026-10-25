@@ -109,6 +109,10 @@ export type FileAnnotation = z.infer<typeof fileAnnotationSchema>
 
 export const fileAnnotationsSchema = z.array(fileAnnotationSchema).max(MAX_ANNOTATIONS_PER_FILE)
 
+// sha256 of the stored bytes, lowercase hex. The server computes it; clients
+// only echo it back as if_match.
+export const contentHashSchema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a sha256 hex digest')
+
 export const createFileSchema = z
 	.object({
 		name: fileNameSchema,
@@ -131,9 +135,13 @@ export const updateFileSchema = z
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
 		annotations: fileAnnotationsSchema.optional(),
+		// Optional version check: the content hash the caller last read. A
+		// mismatch with the stored hash is refused with 409 and nothing is
+		// written. Omitted = last write wins (MCP update_file, scripts).
+		if_match: contentHashSchema.optional(),
 	})
 	.refine(
-		(o) => Object.values(o).some((v) => v !== undefined),
+		(o) => Object.entries(o).some(([key, v]) => key !== 'if_match' && v !== undefined),
 		'At least one field must be provided',
 	)
 	.superRefine((data, ctx) => {
@@ -164,6 +172,9 @@ export const fileDetailSchema = fileListItemSchema.extend({
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Current content hash, to be echoed as if_match on the next save. Null only
+	// for a row nobody has hashed yet; GET fills it in on first read.
+	contentHash: contentHashSchema.nullable().optional(),
 	// Set on create/update responses when the save succeeded but the viewer
 	// will not render the content as written (e.g. outside resources in HTML).
 	warning: z.string().optional(),

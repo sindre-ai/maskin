@@ -86,6 +86,7 @@ interface FileDetailResponse {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	contentHash?: string | null
 }
 
 interface RelationshipResponse {
@@ -402,6 +403,29 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`createFile failed: ${res.status}`)
+		return res.json()
+	}
+
+	async getFile(workspaceId: string, id: string): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getFile failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** PATCH a file the way an agent's update_file does: no if_match unless given. */
+	async updateFile(
+		workspaceId: string,
+		id: string,
+		data: { content: string; encoding?: 'base64' | 'utf8'; if_match?: string },
+	): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ encoding: 'utf8', ...data }),
+		})
+		if (!res.ok) throw new Error(`updateFile failed: ${res.status}`)
 		return res.json()
 	}
 
