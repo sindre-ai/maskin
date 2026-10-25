@@ -106,7 +106,7 @@ test.describe('extension agent access flag', () => {
 		})
 		const agent = await account.api.createAgentActor(`Analyst ${Date.now()}`, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
-		await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Access', exact: true })).toBeVisible()
 		await expect(page.getByRole('heading', { name: /Extensions .* can call/ })).toHaveCount(0)
 	})
 })
