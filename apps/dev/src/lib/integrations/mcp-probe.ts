@@ -7,6 +7,10 @@ import { classifyToolKind } from './tool-kind'
 /** The modal gives a slow server this long before it shows the error band. */
 export const MCP_PROBE_TIMEOUT_MS = 10_000
 
+/** A redirect chain longer than this is refused. */
+const MAX_PROBE_REDIRECTS = 3
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
 /** A server exposing more than this is cut off; the modal only ever keeps 20. */
 const MAX_PROBED_TOOLS = 500
 
@@ -72,6 +76,64 @@ async function blockedReason(url: URL): Promise<string | null> {
 	return addresses.some(isPrivateAddress) ? 'That address is not reachable from here.' : null
 }
 
+/** A redirect hop the probe will not follow. The message is shown to the owner as is. */
+export class ProbeRefusedError extends Error {}
+
+/**
+ * fetch for the probe's transport. The default fetch follows redirects, so a
+ * public https server could send the probe on to an internal address that the
+ * check on the typed URL never sees. This one asks for redirect: 'manual' and
+ * follows a 3xx itself, at most 3 times, running the same check on every
+ * target before fetching it. A hop that is not https, has no Location, fails
+ * the check, or comes after the third is refused. The Authorization header is
+ * dropped when a hop changes origin.
+ */
+export function fetchWithCheckedRedirects(
+	fetchImpl: typeof fetch = fetch,
+): (input: string | URL, init?: RequestInit) => Promise<Response> {
+	return async (input, init) => {
+		let target = new URL(input)
+		let method = init?.method ?? 'GET'
+		let body = init?.body
+		const headers = new Headers(init?.headers)
+		for (let followed = 0; ; followed++) {
+			const response = await fetchImpl(target, {
+				...init,
+				method,
+				body,
+				headers,
+				redirect: 'manual',
+			})
+			if (!REDIRECT_STATUSES.has(response.status)) return response
+			await response.body?.cancel().catch(() => {})
+			if (followed >= MAX_PROBE_REDIRECTS) {
+				throw new ProbeRefusedError('The server redirected too many times.')
+			}
+			const location = response.headers.get('location')
+			if (!location) throw new ProbeRefusedError('The server sent a redirect with no address.')
+			let next: URL
+			try {
+				next = new URL(location, target)
+			} catch {
+				throw new ProbeRefusedError('The server sent a redirect to an invalid address.')
+			}
+			const blocked = await blockedReason(next)
+			if (blocked) throw new ProbeRefusedError(blocked)
+			if (next.origin !== target.origin) headers.delete('authorization')
+			// As fetch does: 303, and 301/302 after a POST, continue as a GET with no body.
+			if (
+				response.status === 303 ||
+				(response.status !== 307 && response.status !== 308 && method === 'POST')
+			) {
+				method = 'GET'
+				body = undefined
+				headers.delete('content-type')
+			}
+			target = next
+		}
+	}
+}
+
 function describeFailure(err: unknown): McpProbeResult & { ok: false } {
 	const code = (err as { code?: number }).code
 	const message = err instanceof Error ? err.message : String(err)
@@ -112,6 +174,7 @@ export async function probeMcpTools(serverUrl: string, apiKey?: string): Promise
 
 	const transport = new StreamableHTTPClientTransport(url, {
 		requestInit: apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined,
+		fetch: fetchWithCheckedRedirects(),
 	})
 	const client = new Client(
 		{ name: 'maskin-extension-probe', version: '1.0.0' },
@@ -127,6 +190,9 @@ export async function probeMcpTools(serverUrl: string, apiKey?: string): Promise
 		}))
 		return { ok: true, tools }
 	} catch (err) {
+		if (err instanceof ProbeRefusedError) {
+			return { ok: false, reason: 'blocked', message: err.message }
+		}
 		return describeFailure(err)
 	} finally {
 		await client.close().catch(() => {})
