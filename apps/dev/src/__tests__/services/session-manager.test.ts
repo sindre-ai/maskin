@@ -1932,6 +1932,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildExtensionMcpServers: no extensions in this workspace
+				[],
 				// buildKeychainEnv: no bring-your-own keys in this workspace
 				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly

@@ -120,7 +120,10 @@ import {
 	ScopeDeniedError,
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
-import { buildExtensionMcpServers, extensionMcpKeyReader } from '../lib/integrations/extensions-db'
+import {
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
 import {
 	byoApiKeyEnvName,
 	byoLoginEnvNames,
@@ -2673,12 +2676,16 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
-		// Custom extension MCPs (extension-<slug>). Inert until the Keychain-backed
-		// key reader is wired: with no reader nothing attaches.
+		// Custom extension MCPs (extension-<slug>). Each key is read through Keychain
+		// for this agent and session; one that cannot be read leaves its server off.
 		const extensionMcp = await buildExtensionMcpServers(
 			this.db,
 			session.workspaceId,
-			extensionMcpKeyReader,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
 		)
 		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
 		Object.assign(envVars, extensionMcp.env)
