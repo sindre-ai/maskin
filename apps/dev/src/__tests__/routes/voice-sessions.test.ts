@@ -256,7 +256,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it('500s and mints no key when the voice agent row is gone', async () => {
-		enableFlagFor(HUMAN)
 		const createCall = vi.fn()
 		setCreateRealtimeCallFn(createCall)
 		const { app, mockResults, calls } = createTestApp(
@@ -273,7 +272,6 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 	})
 
 	it("runs the agent's tools on a short-lived key minted for the call, stored only as a hash", async () => {
-		enableFlagFor(HUMAN)
 		openSocketImmediately()
 		setCreateRealtimeCallFn(async () => ({
 			kind: 'ok',

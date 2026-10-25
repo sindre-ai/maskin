@@ -130,8 +130,8 @@ describe('Actors Routes', () => {
 				const res = await app.request(createAgentRequest())
 
 				expect(res.status).toBe(201)
-				// inserts: [actor, workspace member, workspace_member event, Heartbeat trigger, trigger event]
-				expect(calls.inserts[3]).toMatchObject({
+				// inserts: [actor, api key, workspace member, workspace_member event, Heartbeat trigger, trigger event]
+				expect(calls.inserts[4]).toMatchObject({
 					workspaceId: WORKSPACE_ID,
 					name: 'Heartbeat',
 					type: 'cron',
@@ -139,7 +139,7 @@ describe('Actors Routes', () => {
 					enabled: true,
 					config: { expression: heartbeatCronExpression(actor.id) },
 				})
-				expect(calls.inserts[4]).toMatchObject({
+				expect(calls.inserts[5]).toMatchObject({
 					entityType: 'trigger',
 					action: 'created',
 					workspaceId: WORKSPACE_ID,
