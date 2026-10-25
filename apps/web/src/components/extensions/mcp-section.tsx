@@ -39,7 +39,7 @@ export function McpSection({
 							MCP tools
 						</h2>
 						{cfg && (
-							<Badge variant={ext.mcpLastError ? 'outline' : 'default'}>
+							<Badge variant={ext.mcpLastError ? 'outline' : 'live'}>
 								{ext.mcpLastError ? 'Not attached' : `On · ${mcpToolCount(ext)} tools`}
 							</Badge>
 						)}

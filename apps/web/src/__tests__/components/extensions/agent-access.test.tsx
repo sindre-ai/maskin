@@ -77,7 +77,10 @@ describe('GrantAgentDialog', () => {
 		expect(screen.getByRole('checkbox', { name: 'list_transcripts' })).toBeChecked()
 		expect(screen.getByRole('checkbox', { name: 'bookmark_meeting' })).not.toBeChecked()
 		expect(screen.getByRole('button', { name: 'Grant 2 tools' })).toBeEnabled()
-		expect(screen.getByText(/Write tools are opt-in per grant/)).toBeInTheDocument()
+		expect(
+			screen.getByText('Write tools are opt-in. Turn on only the ones this agent needs.'),
+		).toBeInTheDocument()
+		expect(screen.queryByText(/annotations.destructive/)).not.toBeInTheDocument()
 	})
 
 	it('opts a write tool in and submits the selection', () => {
@@ -173,12 +176,9 @@ describe('AgentAccessSection', () => {
 		await vi.waitFor(() => expect(mocks.revoke).toHaveBeenCalledWith('a1'))
 	})
 
-	it('opens the bulk grant placeholder without wiring it', () => {
+	it('has no bulk grant button', () => {
 		render(<AgentAccessSection ext={buildExtension()} workspaceId="ws-1" />)
-		fireEvent.click(screen.getByRole('button', { name: 'Bulk grant…' }))
-		const dialog = screen.getByRole('dialog')
-		expect(within(dialog).getByText(/Not available yet/)).toBeInTheDocument()
-		expect(within(dialog).getByRole('button', { name: 'Grant' })).toBeDisabled()
+		expect(screen.queryByRole('button', { name: /Bulk grant/ })).not.toBeInTheDocument()
 	})
 
 	it('says so when the extension declares no tools', () => {

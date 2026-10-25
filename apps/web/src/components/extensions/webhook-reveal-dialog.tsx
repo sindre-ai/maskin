@@ -40,7 +40,7 @@ export function WebhookRevealDialog({
 				onEscapeKeyDown={(e) => e.preventDefault()}
 				onPointerDownOutside={(e) => e.preventDefault()}
 				onInteractOutside={(e) => e.preventDefault()}
-				className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none [&>button.absolute]:hidden"
+				className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:content-start max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none [&>button.absolute]:hidden"
 			>
 				<DialogHeader>
 					<DialogTitle>Paste these into {vendorName}</DialogTitle>
