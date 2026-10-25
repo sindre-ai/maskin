@@ -103,7 +103,7 @@ test.describe('Chats — SSE log stream reconnect recovery', () => {
 				'mcp__maskin__before_drop',
 				'mcp__maskin__before_drop_b',
 			])
-			await expect(activitySteps.getByText('Using mcp__maskin__before_drop')).toBeVisible({
+			await expect(activitySteps.getByText(/Using mcp__maskin__before_drop(?!_)/)).toBeVisible({
 				timeout: 10_000,
 			})
 
