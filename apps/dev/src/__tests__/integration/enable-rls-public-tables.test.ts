@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -5,17 +6,18 @@ import { splitStatements } from '@maskin/db/migrate-utils'
 import { sql } from './global-setup'
 
 /**
- * Migration 0096 turns on row-level security, with no policies, on every
- * table in "public". global-setup has already applied it by the time these
- * tests run, so each test starts from the down file and re-applies forward.
- * The app role owns the tables, so it keeps full access; anon and
- * authenticated, even with a grant, see no rows.
+ * Migration 0111 turns on row-level security on every table in "public".
+ * global-setup has already applied it by the time these tests run, so each test
+ * starts from the down file and re-applies forward. The app role owns the
+ * tables, so it keeps full access; anon and authenticated, even with a grant,
+ * see no rows. The Keychain role maskin_keychain_app (a non-owner) keeps its
+ * access to the audit log through its one policy.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
-const MIGRATION_FILE = '0096_enable_rls_public_tables.sql'
-const DOWN_FILE = join('down', '0096_enable_rls_public_tables_down.sql')
+const MIGRATION_FILE = '0111_enable_rls_public_tables.sql'
+const DOWN_FILE = join('down', '0111_enable_rls_public_tables_down.sql')
 const ROLES = ['anon', 'authenticated'] as const
 
 async function runSqlFile(relativePath: string) {
@@ -47,7 +49,7 @@ async function rowsVisibleTo(role: string) {
 	})
 }
 
-describe('migration 0096_enable_rls_public_tables (integration)', () => {
+describe('migration 0111_enable_rls_public_tables (integration)', () => {
 	const createdRoles: string[] = []
 
 	beforeAll(async () => {
@@ -57,8 +59,7 @@ describe('migration 0096_enable_rls_public_tables (integration)', () => {
 				await sql.unsafe(`CREATE ROLE ${role} NOLOGIN`)
 				createdRoles.push(role)
 			}
-			// global-setup recreates "public", which leaves it without USAGE for other
-			// roles; without it the role cannot resolve table names at all.
+			// Without USAGE the role cannot resolve table names at all.
 			await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${role}`)
 		}
 	})
@@ -114,6 +115,24 @@ describe('migration 0096_enable_rls_public_tables (integration)', () => {
 		expect(read.n).toBeGreaterThan(0)
 		await sql`INSERT INTO workspaces (name) VALUES ('rls-probe-write')`
 		await sql`DELETE FROM workspaces WHERE name = 'rls-probe-write'`
+	})
+
+	it('keeps the Keychain app role able to write and read the audit log', async () => {
+		await runSqlFile(MIGRATION_FILE)
+		const [ws] = await sql<{ id: string }[]>`SELECT id FROM workspaces WHERE name = 'rls-probe'`
+		const requestId = `rls-probe-${randomUUID()}`
+		const seen = await sql.begin(async (tx) => {
+			await tx.unsafe('SET LOCAL ROLE maskin_keychain_app')
+			await tx`
+				INSERT INTO credential_access_log (workspace_id, integration_id, actor_id, request_id)
+				VALUES (${ws.id}, ${randomUUID()}, ${randomUUID()}, ${requestId})
+			`
+			const [row] = await tx<{ n: number }[]>`
+				SELECT count(*)::int AS n FROM credential_access_log WHERE request_id = ${requestId}
+			`
+			return row.n
+		})
+		expect(seen).toBe(1)
 	})
 
 	it('is idempotent and leaves no helper procedure behind', async () => {
