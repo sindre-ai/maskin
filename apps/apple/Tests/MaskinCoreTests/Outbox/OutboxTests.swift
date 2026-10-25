@@ -182,6 +182,43 @@ struct OutboxTests {
 		#expect(Set(executor.calls.map(\.payload)).count == 5)
 	}
 
+	@Test func entryParkedByAnotherOutboxSurvivesTheLiveOutboxsSaveAndIsReplayed() async throws {
+		let file = temporaryOutboxFile()
+		let offline = ManualNetworkMonitor(isOnline: false)
+		let (live, liveExecutor, liveNetwork, _) = makeOutbox(file: file, network: offline)
+		let first = try live.enqueue(kind: "t", lane: "a", summary: "first", payload: "first")
+
+		// The notification action: a second outbox over the same file, while `live` stays alive.
+		let (parker, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		let parked = try parker.enqueue(kind: "t", lane: "b", summary: "parked", payload: "parked")
+
+		// The live outbox saves again (a new write) and must not drop what it never held.
+		let later = try live.enqueue(kind: "t", lane: "c", summary: "later", payload: "later")
+		let (reread, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		#expect(Set(reread.entries.map(\.id)) == [first.id, parked.id, later.id])
+
+		// Back online: all three go out, the parked one with the key it was parked under.
+		liveNetwork.set(online: true)
+		await live.drain()
+		#expect(Set(liveExecutor.calls.map(\.payload)) == ["first", "parked", "later"])
+		#expect(liveExecutor.calls.first { $0.payload == "parked" }?.key == parked.idempotencyKey)
+		#expect(live.entries.isEmpty)
+	}
+
+	@Test func drainReplaysAnEntryParkedByAnotherOutboxWithoutAnySave() async throws {
+		let file = temporaryOutboxFile()
+		let (live, liveExecutor, liveNetwork, _) = makeOutbox(
+			file: file, network: ManualNetworkMonitor(isOnline: false))
+		let (parker, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		try parker.enqueue(kind: "t", lane: "b", summary: "parked", payload: "parked")
+		#expect(live.entries.isEmpty)
+
+		liveNetwork.set(online: true)
+		await live.drain()
+		#expect(liveExecutor.calls.map(\.payload) == ["parked"])
+		#expect(live.entries.isEmpty)
+	}
+
 	@Test func entriesForAnotherWorkspaceWait() async throws {
 		let file = temporaryOutboxFile()
 		let (writer, _, _, _) = makeOutbox(

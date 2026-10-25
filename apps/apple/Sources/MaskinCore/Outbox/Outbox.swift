@@ -121,6 +121,10 @@ public final class Outbox {
 	@ObservationIgnored nonisolated(unsafe) private var wake: Task<Void, Never>?
 	@ObservationIgnored nonisolated(unsafe) private var tasks: [Task<Void, Never>] = []
 	@ObservationIgnored private var isDiscarded = false
+	/// Every entry id this outbox has held. An id in the file that is not here was written by another
+	/// outbox over the same file (a notification answer parked while the app was alive), so it is
+	/// adopted rather than overwritten or mistaken for an entry this outbox already sent.
+	@ObservationIgnored private var knownIDs: Set<UUID> = []
 	/// While `isAuthBlocked`, the only entry allowed out: the one that was refused, retried after
 	/// its back-off as a probe. Everything else waits for it to get through.
 	@ObservationIgnored private var authProbe: UUID?
@@ -248,6 +252,7 @@ public final class Outbox {
 			summary: summary, createdAt: t, notBefore: t.addingTimeInterval(hold), attempts: 0,
 			nextAttemptAt: t)
 		entries.append(entry)
+		knownIDs.insert(entry.id)
 		save()
 		Task { await drain() }
 		return entry
@@ -330,6 +335,7 @@ public final class Outbox {
 	}
 
 	private func drainPass() async {
+		adoptEntriesFromFile()
 		var blocked: Set<String> = []
 		while true {
 			isOnline = network.isOnline
@@ -479,10 +485,25 @@ public final class Outbox {
 		guard let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
 		entries = snapshot.entries
 		failures = snapshot.failures
+		knownIDs = Set(snapshot.entries.map(\.id))
+	}
+
+	/// Picks up entries another outbox wrote to the file since this one last looked. The notification
+	/// action builds its own outbox over this file when an answer cannot be sent, and this one reads
+	/// the file only at start-up, so without this the next `save()` would overwrite that answer.
+	private func adoptEntriesFromFile() {
+		guard !isDiscarded, let data = try? Data(contentsOf: fileURL),
+			let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
+		else { return }
+		let foreign = snapshot.entries.filter { !knownIDs.contains($0.id) }
+		guard !foreign.isEmpty else { return }
+		knownIDs.formUnion(foreign.map(\.id))
+		entries.append(contentsOf: foreign)
 	}
 
 	private func save() {
 		guard !isDiscarded else { return }
+		adoptEntriesFromFile()
 		do {
 			try fileManager.createDirectory(
 				at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
