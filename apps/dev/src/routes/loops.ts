@@ -265,31 +265,6 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// pointing at unknown ids).
 	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
-	// Per-loop child-object rows in a single scan. Whether a member counts as
-	// "closed" depends on the loop's own `metadata.closed_statuses` override
-	// (falling back to TERMINAL_STATUSES_BY_TYPE), so the terminal test is
-	// per-loop and computed here rather than in a shared SQL literal list.
-	// Loops hold at most tens of members, so row-level fetch + JS aggregation
-	// stays cheap.
-	const childRows = await db.execute<{
-		loop_id: string
-		id: string
-		type: string
-		status: string
-		metadata: unknown
-		created_at: string | Date
-		updated_at: string | Date
-	}>(
-		sql`
-			SELECT r.source_id AS loop_id, o.id, o.type, o.status, o.metadata, o.created_at, o.updated_at
-			FROM ${relationships} r
-			JOIN ${objects} o ON o.id = r.target_id
-			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
-				AND r.source_id = ANY(${loopIdArray})
-				AND o.workspace_id = ${workspaceId}
-		`,
-	)
-
 	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
 	const closedWhenByLoop = new Map<string, Record<string, ClosedWhenRule[]>>()
 	for (const l of loopRows) {
@@ -300,15 +275,86 @@ app.openapi(listLoopsRoute, (async (c) => {
 		if (closedWhen) closedWhenByLoop.set(l.id, closedWhen)
 	}
 
-	const isClosedByStatus = (loopId: string, type: string, status: string): boolean => {
-		const override = closedStatusOverridesByLoop.get(loopId)?.[type]
-		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
-		return terminal.includes(status)
+	const closedStatusesFor = (loopId: string, type: string): string[] =>
+		closedStatusOverridesByLoop.get(loopId)?.[type] ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
+	const isClosedByStatus = (loopId: string, type: string, status: string): boolean =>
+		closedStatusesFor(loopId, type).includes(status)
+
+	// "Is this member closed" as one SQL predicate over the `r` (edge) and `o`
+	// (member) aliases, built from each loop's own closed_statuses / closed_when
+	// (falling back to TERMINAL_STATUSES_BY_TYPE). Both the grouped count and
+	// the closed-member read below use it, so they cannot disagree. Statuses and
+	// rule values are bound parameters; rule field names are already restricted
+	// to SAFE_METADATA_FIELD_NAME_RE by readClosedWhen. A rule matches like
+	// matchesClosedWhen: the metadata value is that exact string.
+	const closedTerms: ReturnType<typeof sql>[] = []
+	for (const l of loopRows) {
+		const types = new Set([
+			...Object.keys(TERMINAL_STATUSES_BY_TYPE),
+			...Object.keys(closedStatusOverridesByLoop.get(l.id) ?? {}),
+			...Object.keys(closedWhenByLoop.get(l.id) ?? {}),
+		])
+		for (const type of types) {
+			const conditions: ReturnType<typeof sql>[] = []
+			const statuses = closedStatusesFor(l.id, type)
+			if (statuses.length > 0) {
+				conditions.push(
+					sql`o.status IN (${sql.join(
+						statuses.map((st) => sql`${st}`),
+						sql`, `,
+					)})`,
+				)
+			}
+			for (const rule of closedWhenByLoop.get(l.id)?.[type] ?? []) {
+				conditions.push(sql`o.metadata -> ${rule.field}::text = to_jsonb(${rule.value}::text)`)
+			}
+			if (conditions.length === 0) continue
+			closedTerms.push(
+				sql`(r.source_id = ${l.id}::uuid AND o.type = ${type} AND (${sql.join(conditions, sql` OR `)}))`,
+			)
+		}
 	}
-	const closedWhenRules = (loopId: string, type: string): ClosedWhenRule[] =>
-		closedWhenByLoop.get(loopId)?.[type] ?? []
-	const isClosedByRule = (row: { loop_id: string; type: string; metadata: unknown }): boolean =>
-		matchesClosedWhen(closedWhenRules(row.loop_id, row.type), row.metadata)
+	const isClosedSql =
+		closedTerms.length > 0 ? sql`(${sql.join(closedTerms, sql` OR `)})` : sql`false`
+
+	// Counts come from one grouped query: members bucketed by loop, closed or not,
+	// never one row per member. Loops can hold thousands of members.
+	const countRows = await db.execute<{ loop_id: string; is_closed: boolean; n: number | string }>(
+		sql`
+			SELECT r.source_id AS loop_id, ${isClosedSql} AS is_closed, count(*) AS n
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ANY(${loopIdArray})
+				AND o.workspace_id = ${workspaceId}
+			GROUP BY r.source_id, is_closed
+		`,
+	)
+
+	// Only closed members are read per row, and only the columns the close time
+	// needs: the median is the middle of per-member durations, which a count
+	// cannot give. In-progress members are never fetched. The clock starts when
+	// the member joined the loop (the in_loop edge), not when the object was
+	// created: an object can exist long before it enters a loop.
+	const childRows = await db.execute<{
+		loop_id: string
+		id: string
+		type: string
+		status: string
+		joined_at: string | Date
+		updated_at: string | Date
+	}>(
+		sql`
+			SELECT r.source_id AS loop_id, o.id, o.type, o.status,
+				COALESCE(r.created_at, o.created_at) AS joined_at, o.updated_at
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ANY(${loopIdArray})
+				AND o.workspace_id = ${workspaceId}
+				AND ${isClosedSql}
+		`,
+	)
 
 	// A member closed only by a `closed_when` rule (a metadata edit, so no status
 	// change) has no close time on its row: updated_at moves on every later edit.
@@ -317,9 +363,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const stageClosedIds = Array.from(
 		new Set(
 			childRows
-				.filter(
-					(row) => !isClosedByStatus(row.loop_id, row.type, row.status) && isClosedByRule(row),
-				)
+				.filter((row) => !isClosedByStatus(row.loop_id, row.type, row.status))
 				.map((row) => row.id),
 		),
 	)
@@ -343,7 +387,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 		}
 	}
 	const stageClosedAt = (row: { loop_id: string; id: string; type: string }): Date | null => {
-		const rules = closedWhenRules(row.loop_id, row.type)
+		const rules = closedWhenByLoop.get(row.loop_id)?.[row.type] ?? []
 		let closedAt: Date | null = null
 		for (const ev of stageEventsByObject.get(row.id) ?? []) {
 			const change = findChange(readChanges(ev.data), 'metadata')
@@ -358,8 +402,8 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// A closed member keeps its in_loop edge, so its close time comes from the
 	// first status-change event that moved it into the loop's closed set, not
 	// from updated_at (any later edit moves that). One batched query for every
-	// closed member across all loops in the request, never one per member; no
-	// closed members, no query.
+	// status-closed member across all loops in the request, never one per member;
+	// no closed members, no query.
 	const closedObjectIds = Array.from(
 		new Set(
 			childRows
@@ -394,8 +438,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// into the closed set, falling back to updated_at when it has none (closed
 	// before events carried a diff, or the status was set directly).
 	const statusClosedAtMs = (row: (typeof childRows)[number]): number => {
-		const override = closedStatusOverridesByLoop.get(row.loop_id)?.[row.type]
-		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[row.type] ?? []
+		const terminal = closedStatusesFor(row.loop_id, row.type)
 		const moved = statusEventsByObject
 			.get(row.id)
 			?.find((ev) => typeof ev.status === 'string' && terminal.includes(ev.status))
@@ -407,26 +450,28 @@ app.openapi(listLoopsRoute, (async (c) => {
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
 	>()
 	{
-		const closeDurationsByLoop = new Map<string, number[]>()
-		for (const row of childRows) {
+		for (const row of countRows) {
 			const stats = childStatsByLoop.get(row.loop_id) ?? {
 				inProgressCount: 0,
 				closedCount: 0,
 				medianCloseMs: null,
 			}
-			const closedByStatus = isClosedByStatus(row.loop_id, row.type, row.status)
-			if (closedByStatus || isClosedByRule(row)) {
-				stats.closedCount += 1
-				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
-				const closedAtMs = closedByStatus
-					? statusClosedAtMs(row)
-					: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
-				durations.push(closedAtMs - new Date(row.created_at).getTime())
-				closeDurationsByLoop.set(row.loop_id, durations)
-			} else {
-				stats.inProgressCount += 1
-			}
+			if (row.is_closed) stats.closedCount += Number(row.n)
+			else stats.inProgressCount += Number(row.n)
 			childStatsByLoop.set(row.loop_id, stats)
+		}
+		const closeDurationsByLoop = new Map<string, number[]>()
+		for (const row of childRows) {
+			const closedAtMs = isClosedByStatus(row.loop_id, row.type, row.status)
+				? statusClosedAtMs(row)
+				: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
+			// Closed before it joined the loop: it never went through this loop, so
+			// it has no time to close and stays out of the median.
+			const durationMs = closedAtMs - new Date(row.joined_at).getTime()
+			if (durationMs < 0) continue
+			const durations = closeDurationsByLoop.get(row.loop_id) ?? []
+			durations.push(durationMs)
+			closeDurationsByLoop.set(row.loop_id, durations)
 		}
 		// Median matches percentile_cont(0.5): linear interpolation — for an
 		// even count, the mean of the two middle values.
