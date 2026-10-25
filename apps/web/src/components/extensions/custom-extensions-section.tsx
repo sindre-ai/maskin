@@ -22,8 +22,7 @@ export function extensionRowStatus(ext: ExtensionResponse): {
 		return { label: `On, ${mcpToolCount(ext)} tools`, variant: 'live' }
 	}
 	if (ext.lastDeliveryAt) return { label: 'Live', variant: 'live' }
-	if (ext.webhookConfig && ext.status === 'active')
-		return { label: 'Listening', variant: 'live' }
+	if (ext.webhookConfig && ext.status === 'active') return { label: 'Listening', variant: 'live' }
 	return { label: 'Not configured', variant: 'outline' }
 }
 
