@@ -88,3 +88,6 @@ filter:
     - /api/invites/preview
     - /api/invites/{token}/accept
     - /api/notification-preferences
+    - /api/voice-sessions
+    - /api/voice-sessions/{id}/offer
+    - /api/voice-sessions/{id}/hangup
