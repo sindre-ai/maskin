@@ -9,7 +9,7 @@
  * gave every one of those sessions the same unreadable heading.
  */
 
-const SENDER_LINE = /^Sent by /
+const SENDER_LINE = /^Sent by .+?, (?:another agent|a person)\./
 /** The quoted comment a comment-started session was woken for. */
 const COMMENT_BLOCK = /(?:Comment content|New comment content):\s*\n"""\n([\s\S]*?)\n"""/
 
@@ -40,9 +40,8 @@ export function sessionTitleFromPrompt(
 	const commentLine = comment ? firstLine(comment) : undefined
 	if (commentLine) return clip(commentLine, max)
 
-	const line = prompt
-		.split('\n')
-		.map((l) => l.trim())
-		.find((l) => l.length > 0 && !SENDER_LINE.test(l))
+	const lines = prompt.split('\n')
+	const body = SENDER_LINE.test(lines[0]?.trim() ?? '') ? lines.slice(1).join('\n') : prompt
+	const line = firstLine(body)
 	return line ? clip(line, max) : null
 }
