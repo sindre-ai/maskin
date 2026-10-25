@@ -22,7 +22,13 @@ export function editorTelemetry(ctx: {
 	// Optional: editor_shortcut_used carries no object id, so its caller has none to pass.
 	objectId?: string | undefined
 }) {
-	return createEditorTelemetry({ capture, getSessionId: currentSessionId, ...ctx })
+	return createEditorTelemetry({
+		capture,
+		getSessionId: currentSessionId,
+		variant: ctx.variant,
+		surface: ctx.surface,
+		objectId: ctx.objectId,
+	})
 }
 
 /**
