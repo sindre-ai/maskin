@@ -13,6 +13,9 @@ vi.mock('@/hooks/use-conversation', () => ({
 	// The composer names who you are answering ("Reply to Forge…"), so it reads
 	// the conversation's participants alongside the send mutation.
 	useConversation: () => ({ data: undefined }),
+	// The cue reads the thread cache; with the wake-rule flag off nothing is fetched.
+	useConversationMessages: () => ({ data: undefined, hasNextPage: false }),
+	flattenMessagesOldestFirst: () => [],
 }))
 
 vi.mock('@/components/chat/unified-slash-picker', async () => {

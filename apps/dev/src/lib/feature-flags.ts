@@ -115,12 +115,22 @@ export const FLAGS = {
 	 * (`<workspaceId>:group-chat-wake-rule` in `FF_WORKSPACE_FEATURES`, then restart), NEVER in
 	 * `FF_TESTER_FEATURES`: the composer cue that reads the same answer in the browser must not
 	 * be able to disagree with the responder. 1-1 chats and object comments never read it.
+	 * The browser reads the same workspace answer from GET /api/feature-flags sent with an
+	 * X-Workspace-Id header (members only), for the composer cue.
 	 * Retire by deleting the legacy branch, `checkRelevance`, `RESPOND_DECISION_TOOL` and this id.
 	 */
 	GROUP_CHAT_WAKE_RULE: 'group-chat-wake-rule',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
+
+/**
+ * Flags that exist per workspace only. Listing one in FF_TESTER_FEATURES has no effect: it is
+ * dropped when the config is parsed. The group-chat wake rule is read by the responder per
+ * workspace and by the composer cue through the same workspace answer; a tester-list entry
+ * would turn it on for a person in the browser while the responder still says no.
+ */
+export const WORKSPACE_ONLY_FLAGS: ReadonlySet<string> = new Set([FLAGS.GROUP_CHAT_WAKE_RULE])
 
 export interface FeatureFlagConfig {
 	/** Lowercased for case-insensitive UUID comparison. */
@@ -167,7 +177,9 @@ function parseWorkspaceFeatures(raw: string | undefined): Set<string> {
 export function parseFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): FeatureFlagConfig {
 	return {
 		testerActorIds: new Set(parseList(env.FF_TESTER_ACTOR_IDS).map((id) => id.toLowerCase())),
-		testerFlags: new Set(parseList(env.FF_TESTER_FEATURES)),
+		testerFlags: new Set(
+			parseList(env.FF_TESTER_FEATURES).filter((flagId) => !WORKSPACE_ONLY_FLAGS.has(flagId)),
+		),
 		workspaceFeatures: parseWorkspaceFeatures(env.FF_WORKSPACE_FEATURES),
 	}
 }

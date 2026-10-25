@@ -8,7 +8,7 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api'
 
-const STORAGE_KEY = 'maskin-feature-flags:1'
+const STORAGE_KEY = 'maskin-feature-flags:2'
 
 // The module seeds itself from localStorage at import time, so each case has to
 // seed storage first and then re-import with a fresh module registry.
@@ -145,5 +145,80 @@ describe('failure policy', () => {
 
 		await Promise.all([ff.loadFeatureFlags(), ff.loadFeatureFlags()])
 		expect(api.featureFlags.get).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('workspace-keyed cache', () => {
+	const WS_A = 'e2877e32-2c11-489e-96c8-a76200908ed4'
+	const WS_B = 'f79e3751-c680-47e0-9a9a-824a4a2a7908'
+
+	it('asks the backend about the selected workspace and stores the answer under its key', async () => {
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'sample-flag': true } })
+		const ff = await loadModule()
+		ff.setFlagsWorkspace(WS_A)
+
+		await ff.loadFeatureFlags()
+
+		expect(api.featureFlags.get).toHaveBeenCalledWith(WS_A)
+		expect(ff.getFlag('sample-flag')).toBe(true)
+		expect(JSON.parse(localStorage.getItem(`${STORAGE_KEY}:${WS_A}`) as string)).toEqual({
+			'sample-flag': true,
+		})
+		expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+	})
+
+	it('asks without a workspace when none is selected', async () => {
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: {} })
+		const ff = await loadModule()
+
+		await ff.loadFeatureFlags()
+
+		expect(api.featureFlags.get).toHaveBeenCalledWith(undefined)
+	})
+
+	it('seeds from the selected workspace and never shows another workspace its flag', async () => {
+		localStorage.setItem(`${STORAGE_KEY}:${WS_A}`, JSON.stringify({ 'sample-flag': true }))
+		const ff = await loadModule()
+
+		ff.setFlagsWorkspace(WS_A)
+		expect(ff.hasCachedFlags()).toBe(true)
+		expect(ff.getFlag('sample-flag')).toBe(true)
+
+		ff.setFlagsWorkspace(WS_B)
+		expect(ff.hasCachedFlags()).toBe(false)
+		expect(ff.getFlag('sample-flag')).toBe(false)
+	})
+
+	it('tells subscribers when the workspace changes', async () => {
+		const ff = await loadModule()
+		const listener = vi.fn()
+		ff.subscribeToFlags(listener)
+
+		ff.setFlagsWorkspace(WS_A)
+		ff.setFlagsWorkspace(WS_A)
+
+		expect(listener).toHaveBeenCalledTimes(1)
+	})
+
+	it('drops an answer that arrives after the user moved to another workspace', async () => {
+		let resolveA: (value: { flags: Record<string, boolean> }) => void = () => {}
+		vi.mocked(api.featureFlags.get).mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveA = resolve
+			}),
+		)
+		const ff = await loadModule()
+		ff.setFlagsWorkspace(WS_A)
+		const loading = ff.loadFeatureFlags()
+
+		ff.setFlagsWorkspace(WS_B)
+		resolveA({ flags: { 'sample-flag': true } })
+		await loading
+
+		expect(ff.getFlag('sample-flag')).toBe(false)
+		// A's answer is still kept for A.
+		expect(JSON.parse(localStorage.getItem(`${STORAGE_KEY}:${WS_A}`) as string)).toEqual({
+			'sample-flag': true,
+		})
 	})
 })

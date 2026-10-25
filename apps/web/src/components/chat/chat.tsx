@@ -45,6 +45,7 @@ import {
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -193,6 +194,13 @@ export interface ComposerProps {
 	externalError?: string | null
 	onDismissExternalError?: () => void
 	/**
+	 * One quiet line under the box, for the group-chat cue ("No agent will reply. Tag one
+	 * with @."). Pass a string, or null when the cue applies but has nothing to say, to
+	 * render the polite live region; leave it undefined for no region at all. The line
+	 * shows once the box has focus, text or a tag, and never next to an error line.
+	 */
+	hint?: string | null
+	/**
 	 * The active conversation's participant actor ids — used to seed the
 	 * `In this conversation` section of the `@` mention picker. Callers wiring
 	 * a brand-new-chat surface pass `[]`; the picker falls through to the
@@ -292,6 +300,7 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	hint,
 	conversationParticipantIds,
 	textareaLabel,
 	value: controlledValue,
@@ -372,6 +381,8 @@ export function Composer({
 	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
+	const hintId = useId()
+	const [textareaFocused, setTextareaFocused] = useState(false)
 	// Unified `/` picker state. `slashStart`
 	// points at the `/` in the textarea; when set, everything after it up to the
 	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
@@ -1136,6 +1147,9 @@ export function Composer({
 					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
 					rows={1}
 					aria-label={textareaLabel}
+					aria-describedby={hint === undefined ? undefined : hintId}
+					onFocus={() => setTextareaFocused(true)}
+					onBlur={() => setTextareaFocused(false)}
 					// Screen readers announce the picker's active row while focus
 					// stays on the textarea (spec §Accessibility). The picker
 					// keeps this in sync via `onActiveDescendantChange`.
@@ -1148,6 +1162,15 @@ export function Composer({
 						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
+				{hint === undefined ? null : (
+					<p id={hintId} role="status" aria-live="polite" className="px-1 text-muted-foreground text-xs">
+						{hint &&
+						!(sendError || externalError) &&
+						(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
+							? hint
+							: null}
+					</p>
+				)}
 				<div className="flex items-center gap-2">
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
