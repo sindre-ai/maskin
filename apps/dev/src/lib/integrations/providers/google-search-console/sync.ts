@@ -23,6 +23,11 @@ export const TOO_LARGE_ERROR = 'too large'
 const BACKFILL_MONTHS = 16
 // Search Console only returns final data up to ~2 days ago.
 const DATA_LAG_DAYS = 2
+// Final data can land later than DATA_LAG_DAYS (the default dataState is final),
+// and a day fetched too early comes back empty. Every sync therefore re-fetches
+// this many trailing days; mergeRows replaces re-fetched rows by key, so the
+// overlap is harmless and a late day is picked up on a later run.
+const REFETCH_DAYS = 14
 const PERSISTENT_FAILURE_MS = 24 * 60 * 60 * 1000
 const MAX_ATTEMPTS = 3
 const BASE_BACKOFF_MS = 1_000
@@ -83,14 +88,18 @@ export function windowStartDate(now: Date): string {
 	return isoDate(d)
 }
 
-/** Date range to fetch for a property, or null when it is already current. */
+/**
+ * Date range to fetch for a property, or null when it is already current.
+ * Starts REFETCH_DAYS back from the last synced date, not the day after it, so
+ * days that were not final yet when first fetched are filled in later.
+ */
 export function nextRange(
 	lastSyncedDate: string | null,
 	now: Date,
 ): { startDate: string; endDate: string } | null {
 	const endDate = syncEndDate(now)
 	const windowStart = windowStartDate(now)
-	const next = lastSyncedDate ? addDays(lastSyncedDate, 1) : windowStart
+	const next = lastSyncedDate ? addDays(lastSyncedDate, 1 - REFETCH_DAYS) : windowStart
 	const startDate = next < windowStart ? windowStart : next
 	return startDate > endDate ? null : { startDate, endDate }
 }
@@ -298,6 +307,10 @@ async function savePropertyObject(db: Database, args: SavePropertyArgs): Promise
 		...(args.lastSyncedDate ? { last_synced_date: args.lastSyncedDate } : {}),
 		window_start: args.windowStart,
 		row_count: rows.length,
+		// Data freshness. last_synced_date only says how far the job ran.
+		...(rows.length
+			? { latest_row_date: rows.reduce((max, r) => (r[0] > max ? r[0] : max), '') }
+			: {}),
 		...(args.failure
 			? { last_error: args.failure.lastError, first_failure_at: args.failure.firstFailureAt }
 			: {}),
