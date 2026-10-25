@@ -529,7 +529,10 @@ const syncRow = (page: string, date = '2026-10-09'): GscRow => [
 ]
 
 const setSyncRows = (id: string, rows: GscRow[]) =>
-	db.update(objects).set({ content: serializeRows(rows) }).where(eq(objects.id, id))
+	db
+		.update(objects)
+		.set({ content: serializeRows(rows) })
+		.where(eq(objects.id, id))
 
 async function addProperty(workspaceId: string, integrationId: string, siteUrl: string) {
 	return insertObject(db, workspaceId, getTestActorId(), {
@@ -623,7 +626,10 @@ describe('seen-only pages and the daily cap', () => {
 		const { ws, integration, propertyObject, piece } = await setup()
 		await piece(HOME)
 		const pages = Array.from({ length: 310 }, (_, i) => `https://gsc-index.test/seen/${i}`)
-		await setSyncRows(propertyObject.id, pages.map((page) => syncRow(page)))
+		await setSyncRows(
+			propertyObject.id,
+			pages.map((page) => syncRow(page)),
+		)
 
 		let calls = stubGoogleBySite(() => undefined)
 		const first = await inspectIndexStatus(db, integration, deps(DAY1))
@@ -650,7 +656,10 @@ describe('seen-only pages and the daily cap', () => {
 		const { ws, integration, propertyObject, piece } = await setup()
 		await piece(HOME)
 		const pages = Array.from({ length: 5001 }, (_, i) => `https://gsc-index.test/seen/${i}`)
-		await setSyncRows(propertyObject.id, pages.map((page) => syncRow(page)))
+		await setSyncRows(
+			propertyObject.id,
+			pages.map((page) => syncRow(page)),
+		)
 		const stored = (url: string): IndexRow => ({
 			url,
 			source: 'seen',
@@ -687,9 +696,7 @@ describe('seen-only pages and the daily cap', () => {
 		// The tracked page is kept; the seen-only pages that did not fit are gone.
 		expect(index.rows.find((r) => r.url === HOME)?.source).toBe('tracked')
 		expect(index.rows.some((r) => r.url === pages[5000])).toBe(false)
-		expect(index.meta.last_error).toBe(
-			'Over the 5000 row limit: dropped 2 pages, seen-only first',
-		)
+		expect(index.meta.last_error).toBe('Over the 5000 row limit: dropped 2 pages, seen-only first')
 		expect(index.meta).not.toHaveProperty('first_failure_at')
 	})
 })
