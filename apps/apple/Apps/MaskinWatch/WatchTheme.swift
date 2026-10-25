@@ -36,6 +36,10 @@ enum WatchMetrics {
 	static let badge: CGFloat = MaskinSpace.s13
 	static let tile: CGFloat = 22
 	static let ringStroke = MaskinSpace.s2
+	static let spinner: CGFloat = 30
+	/// The play and pause button of the briefing player.
+	static let player: CGFloat = 84
+	static let playerStroke = MaskinSpace.s3
 }
 
 /// The small square with initials that stands for an agent: "Co" for the Chief of Staff.
@@ -119,5 +123,27 @@ struct WatchQuietButton: View {
 				.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
+	}
+}
+
+/// The loading spinner: a Patina arc turning on a faint ring. Held still under Reduce Motion.
+struct WatchSpinner: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var turning = false
+
+	var body: some View {
+		Circle()
+			.stroke(MaskinSurface.fillStrong, lineWidth: WatchMetrics.ringStroke)
+			.overlay {
+				Circle().trim(from: 0, to: 0.25)
+					.stroke(MaskinColor.sigHi, style: StrokeStyle(lineWidth: WatchMetrics.ringStroke, lineCap: .round))
+					.rotationEffect(.degrees(turning ? 360 : 0))
+			}
+			.frame(width: WatchMetrics.spinner, height: WatchMetrics.spinner)
+			.onAppear {
+				guard !reduceMotion else { return }
+				withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { turning = true }
+			}
+			.accessibilityLabel("Loading")
 	}
 }

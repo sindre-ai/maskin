@@ -31,7 +31,7 @@ struct WatchHome: View {
 		TabView(selection: $page) {
 			WatchNeedsYou(store: store, watch: watch, workspaceId: environment.workspaceId).tag(Page.needsYou)
 			WatchBriefing(store: store, watch: watch, firstName: firstName).tag(Page.briefing)
-			WatchFlows(flows: flows, loaded: loops?.phase == .loaded || !watch.flows.isEmpty).tag(Page.flows)
+			WatchFlows(flows: flows, loaded: loops?.phase == .loaded || !watch.flows.isEmpty, store: store).tag(Page.flows)
 		}
 		// Whatever the live stores know becomes the snapshot the wrist falls back on offline, and
 		// the complications reload with it.
