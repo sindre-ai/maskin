@@ -1,4 +1,3 @@
-import { BulkGrantDialog } from '@/components/extensions/bulk-grant-dialog'
 import { GrantAgentDialog } from '@/components/extensions/grant-agent-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -38,7 +37,6 @@ export function AgentAccessSection({
 	const setGrant = useSetAgentGrant(workspaceId, ext.id)
 	const revoke = useRevokeAgentGrant(workspaceId, ext.id)
 	const [grantFor, setGrantFor] = useState<ActorListItem | null>(null)
-	const [bulkOpen, setBulkOpen] = useState(false)
 
 	const tools = declaredTools(ext)
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
@@ -81,14 +79,6 @@ export function AgentAccessSection({
 						boundary.
 					</p>
 				</div>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={() => setBulkOpen(true)}
-					disabled={tools.length === 0}
-				>
-					Bulk grant…
-				</Button>
 			</div>
 
 			<div className="mt-4 border-t border-border pt-4">
@@ -208,7 +198,6 @@ export function AgentAccessSection({
 					onSubmit={(selection) => submitGrant(grantFor, selection)}
 				/>
 			)}
-			<BulkGrantDialog open={bulkOpen} onOpenChange={setBulkOpen} extensionName={ext.name} />
 		</section>
 	)
 }

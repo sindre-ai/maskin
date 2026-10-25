@@ -42,7 +42,7 @@ export function GrantAgentDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none">
+			<DialogContent className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:content-start max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none">
 				<DialogHeader>
 					<DialogTitle>
 						Grant {agentName} → {extensionName}
@@ -81,9 +81,7 @@ export function GrantAgentDialog({
 				</ul>
 
 				<p className="rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-					Write tools are opt-in per grant. Any tool an MCP flags{' '}
-					<span className="font-mono">annotations.destructive</span> would be a separate
-					confirmation, deferred to a later bet.
+					Write tools are opt-in. Turn on only the ones this agent needs.
 				</p>
 
 				<DialogFooter className="gap-2 sm:gap-0">
