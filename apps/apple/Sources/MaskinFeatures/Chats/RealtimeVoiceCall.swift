@@ -123,9 +123,9 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	func interrupt() { run(machine.interrupted(at: now())) }
 
 	/// The conversation is by voice, but a line typed in the chat during the call (yours, or another
-	/// person's in a group chat) is handed to the agent as a conversation item. The call's own spoken
-	/// lines are not in the thread while it runs (the server saves them when it ends) and agent
-	/// messages are skipped, so nothing the call said comes back to it.
+	/// person's in a group chat) is handed to the agent as a conversation item. The server saves the
+	/// call's own spoken lines into the thread as the call runs (marked as voice), so those and agent
+	/// messages are skipped: nothing the call said comes back to it.
 	func messagesChanged(_ messages: [ChatMessage]) {
 		guard isActive else { return }
 		for message in messages where !knownMessageIDs.contains(message.id) {
@@ -133,7 +133,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			if message.isFailed { continue }
 			if case .waiting = message.status { continue }
 			knownMessageIDs.insert(message.id)
-			guard message.author != .agent, message.showsInTimeline, !message.isSystem,
+			guard message.author != .agent, !message.isVoiceTranscript, message.showsInTimeline, !message.isSystem,
 				!message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 			else { continue }
 			let item = RealtimeCallMachine.chatMessageItem(from: message.actorName, text: message.content)

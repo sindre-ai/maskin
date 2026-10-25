@@ -280,6 +280,21 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.sent.filter { $0.contains("response.create") } == [RealtimeCallMachine.greetingRequest])
 	}
 
+	@Test("the person's own spoken lines, saved into the chat during the call, are not fed back")
+	func skipsSpokenLines() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		let spoken = ChatMessage.confirmed(
+			serverID: 1, conversationID: "chat-1", actorID: "me", actorName: "Me", author: .human,
+			content: "what I just said aloud", metadata: .object(["source": .string("voice")]))
+		let typed = chatMessage(2, "typed after")
+		call.messagesChanged([spoken])
+		call.messagesChanged([spoken, typed])
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed after"])
+	}
+
 	@Test("a line typed before the connection is open waits for it")
 	func queuesUntilOpen() async {
 		let (call, _, transport) = make()
