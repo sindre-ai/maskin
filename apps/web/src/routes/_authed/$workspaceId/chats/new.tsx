@@ -1,10 +1,8 @@
 import { Composer } from '@/components/chat/chat'
-import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
@@ -70,27 +68,9 @@ interface Recipient {
 	description?: string | null
 }
 
-/**
- * Feature-flag boundary for the Chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
- * Read once at this route per the feature-flags rule
- * (`.claude/rules/feature-flags.md`) — the umbrella AND the `.new_chat` sub-flag.
- * Flag off renders the pre-bet screen vendored in
- * `components/chat/legacy/new-chat-form.tsx`; the v4 rewrite lives in `NewChatV4`
- * below. Retiring the flag means deleting the legacy file, this boundary, and the
- * flag ids in `apps/dev/src/lib/feature-flags.ts`.
- */
 function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
-	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
-	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
-	if (!chatsV4Enabled || !newChatV4Enabled) {
-		return <LegacyNewChatForm search={search} />
-	}
-	return <NewChatV4 search={search} />
-}
-
-function NewChatV4({ search }: { search: NewChatSearch }) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
@@ -103,14 +83,10 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
 	const [activeIndex, setActiveIndex] = useState(0)
-	// Task 6321aecf: promote `/` and `@` in the no-recipient composer placeholder
-	// once the `+` menu collapses. Same flag boundary as the DropdownMenu switch
-	// in `<Composer>` — the two changes ship together. Applied to the
-	// no-recipient case of the v4 new-chat placeholder below.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
+	const [toFocused, setToFocused] = useState(false)
 	const inputRef = useRef<HTMLInputElement>(null)
 
 	// Objects handed over by "Ask an agent". Resolved so the chips read as
@@ -240,8 +216,9 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const dropdownRows = typedMode ? typedMatches : recentCandidates
 	// The whole dropdown block hides on the empty-RECENT case (no empty header).
 	// It stays visible in typed mode so the "No agent by that name" line has a
-	// place to render.
-	const showDropdown = typedMode || dropdownRows.length > 0
+	// place to render. It only shows while the To input has focus, so moving to
+	// the message box clears the list off the composer.
+	const showDropdown = toFocused && (typedMode || dropdownRows.length > 0)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: dropdownRows.length and typedMode ARE the reset triggers — a shorter row set or a mode switch should snap the active row back to the top; setActiveIndex is a stable React setter, so it is deliberately absent.
 	useEffect(() => {
@@ -406,9 +383,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const composerPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
-			: plusMenuAttachOnly
-				? 'Message… / reference or create · @ mention'
-				: 'Message this conversation'
+			: 'Message… / reference or create · @ mention'
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -448,6 +423,8 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 						type="text"
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
+						onFocus={() => setToFocused(true)}
+						onBlur={() => setToFocused(false)}
 						onKeyDown={handleInputKeyDown}
 						placeholder={recipients.length === 0 ? chatToPh : ''}
 						aria-label="Add recipients"
@@ -462,7 +439,12 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 				</div>
 
 				{showDropdown ? (
-					<div className="mt-1 rounded-[11px] border border-border bg-card p-1.5">
+					<div
+						// Keep focus in the To input while a row is pressed. Otherwise the
+						// blur hides the list before the click lands and nothing is picked.
+						onMouseDown={(e) => e.preventDefault()}
+						className="mt-1 rounded-[11px] border border-border bg-card p-1.5"
+					>
 						<div className="eyebrow px-1.5 pt-1 pb-1.5">
 							{typedMode ? 'ADD SOMEONE — PERSON OR AGENT' : 'RECENT'}
 						</div>

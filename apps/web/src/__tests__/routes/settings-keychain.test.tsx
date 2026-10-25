@@ -31,8 +31,6 @@ vi.mock('@/lib/auth', async (importOriginal) => ({
 	getStoredActor: () => mockActor(),
 }))
 
-const mockFlag = vi.fn<() => boolean>(() => true)
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => mockFlag() }))
 vi.mock('@/hooks/use-document-title', () => ({ useDocumentTitle: () => {} }))
 
 const mockUseIntegrations = vi.fn()
@@ -116,7 +114,6 @@ const captured = (over = {}) =>
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mockFlag.mockReturnValue(true)
 	mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'actor-1', type: 'human' })
@@ -132,6 +129,23 @@ describe('Keychain layout route', () => {
 })
 
 describe('KeychainPage', () => {
+	it('sorts credentials A to Z by name, whichever was added last', () => {
+		mockUseIntegrations.mockReturnValue({
+			data: [
+				pasted({ id: 'c-new', displayName: 'Zapier key', createdAt: '2026-10-10T10:00:00.000Z' }),
+				pasted({ id: 'c-old', displayName: 'apple login', createdAt: '2026-10-01T10:00:00.000Z' }),
+				pasted({ id: 'c-mid', displayName: 'Mailgun key', createdAt: '2026-10-05T10:00:00.000Z' }),
+			],
+			isLoading: false,
+		})
+		render(<KeychainPage />)
+
+		const names = screen
+			.getAllByText(/^(Zapier key|apple login|Mailgun key)$/)
+			.map((n) => n.textContent)
+		expect(names).toEqual(['apple login', 'Mailgun key', 'Zapier key'])
+	})
+
 	it('names the three paths and offers the first add when there are no credentials', () => {
 		render(<KeychainPage />)
 		expect(
@@ -146,7 +160,7 @@ describe('KeychainPage', () => {
 		)
 	})
 
-	it('lists held credentials newest first as cards, with the chat caption only where it applies', () => {
+	it('lists held credentials alphabetically as cards, with the chat caption only where it applies', () => {
 		mockUseIntegrations.mockReturnValue({
 			data: [
 				pasted({ agentGrants: [{ actorId: 'agent-2', access: 'read_write' }] }),

@@ -63,6 +63,15 @@ async function latestEvent(
 	}
 }
 
+/** True when any integration has recorded a send on this object, whatever its content. */
+export async function hasDelivered(
+	db: Database,
+	workspaceId: string,
+	objectId: string,
+): Promise<boolean> {
+	return (await latestEvent(db, workspaceId, objectId, DELIVERED_ACTION, false)) !== null
+}
+
 /** The person's approval of exactly this content, or null when there is none. */
 export async function findCurrentApproval(
 	db: Database,

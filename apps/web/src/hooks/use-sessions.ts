@@ -1,9 +1,20 @@
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput, MessageQuestionAnswer, SessionResponse } from '@/lib/api'
+import type {
+	CreateSessionInput,
+	MessageCardAnswer,
+	MessageQuestionAnswer,
+	SessionResponse,
+} from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+	useInfiniteQuery,
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
@@ -249,13 +260,15 @@ export function useSendSessionInput(workspaceId: string) {
 			id,
 			content,
 			question_answer,
+			card_answer,
 		}: {
 			id: string
 			content: string
 			question_answer?: MessageQuestionAnswer
+			card_answer?: MessageCardAnswer
 			/** Chat the answer lands in, so its messages refetch. */
 			conversationId?: string
-		}) => api.sessions.input(id, { content, question_answer }, workspaceId),
+		}) => api.sessions.input(id, { content, question_answer, card_answer }, workspaceId),
 		onSuccess: (_data, { id, conversationId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.logs(id) })
 			if (conversationId) {
@@ -264,5 +277,43 @@ export function useSendSessionInput(workspaceId: string) {
 				})
 			}
 		},
+	})
+}
+
+/**
+ * Carries on with a helper that has already ended: starts a follow-up session for the
+ * same agent from the person's message. Resolves with the new session's id.
+ */
+export function useContinueSession(workspaceId: string, conversationId: string | null) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, content }: { id: string; content: string }) =>
+			api.sessions.continue(id, content, workspaceId),
+		onSuccess: () => {
+			// A thread in a chat shows up through that chat's messages; a background run has
+			// no chat, so its follow-up arrives through the session lists.
+			if (conversationId) {
+				queryClient.invalidateQueries({
+					queryKey: queryKeys.conversations.messagesPrefix(conversationId),
+				})
+			}
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+/** The logs of every session of a thread, in order; same cache entries as `useSessionLogs`. */
+export function useSessionChainLogs(
+	sessionIds: string[],
+	workspaceId: string,
+	{ live = false }: { live?: boolean } = {},
+) {
+	return useQueries({
+		queries: sessionIds.map((id) => ({
+			queryKey: [...queryKeys.sessions.logs(id), 'all'],
+			queryFn: () => api.sessions.logs(id, workspaceId, { limit: '500' }),
+			// Only the newest session can still be writing.
+			refetchInterval: live && id === sessionIds[sessionIds.length - 1] ? 3000 : false,
+		})),
 	})
 }

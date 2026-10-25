@@ -431,6 +431,42 @@ export interface SlackAlertOptions {
 export interface SlackAlertContext {
 	sessionId: string
 	workspaceId: string
+	/** GitHub installs the launch code skipped, named so a `missing-token` verdict
+	 *  says why no token was attached. */
+	skippedInstalls?: GitHubInstallSkip[]
+}
+
+export type GitHubInstallSkipReason =
+	| 'no-access'
+	| 'not-exposed'
+	| 'revoked'
+	| 'token-load-failed'
+	| 'no-install-id'
+	| 'owner-lookup-failed'
+
+/** One GitHub install the launch code left out of the session. */
+export interface GitHubInstallSkip {
+	integrationId: string
+	reason: GitHubInstallSkipReason
+	/** GitHub App installation id (the integration's externalId), when it has one. */
+	installationId?: string
+	ownerLogin?: string
+	/** Short error text for token-load-failed and owner-lookup-failed. */
+	detail?: string
+}
+
+const SKIP_DETAIL_MAX = 120
+
+/** One line for the Slack alert and the stored session log. Carries the skip
+ *  reason, the install id and the integration row, never a token. */
+export function formatGitHubInstallSkip(skip: GitHubInstallSkip): string {
+	const parts = [
+		`installation ${skip.installationId ?? 'none'}`,
+		`integration ${skip.integrationId}`,
+	]
+	if (skip.ownerLogin) parts.push(`owner ${skip.ownerLogin}`)
+	const detail = skip.detail ? `: ${skip.detail.slice(0, SKIP_DETAIL_MAX)}` : ''
+	return `${skip.reason}${detail} (${parts.join(', ')})`
 }
 
 /**
@@ -456,10 +492,12 @@ export async function postGitHubPreflightSlackAlert(params: {
 		const installSuffix = v.installationId ? ` (installation ${v.installationId})` : ''
 		return `• *${v.name}*${installSuffix} — ${v.failureClass ?? 'unknown'} — ${v.statusSnippet ?? ''}`
 	})
+	const skipLines = (context.skippedInstalls ?? []).map((s) => `• ${formatGitHubInstallSkip(s)}`)
 	const text = [
 		`GitHub preflight failed for ${unhealthy.length} identit${unhealthy.length === 1 ? 'y' : 'ies'} at session launch.`,
 		`Session: \`${context.sessionId}\` · Workspace: \`${context.workspaceId}\``,
 		lines.join('\n'),
+		...(skipLines.length > 0 ? ['Installs skipped at launch:', skipLines.join('\n')] : []),
 	].join('\n')
 	try {
 		const res = await fetchImpl('https://slack.com/api/chat.postMessage', {

@@ -3,7 +3,7 @@ import { vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { ApiError } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { isClientErrorLoggingPaused } from '@/lib/client-logging-pause'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
@@ -16,10 +16,6 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
 })
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: () => false,
-}))
-vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
@@ -232,6 +228,21 @@ describe('Composer vault mode (the ! prefix)', () => {
 		await user.paste('!important notice')
 		expect(screen.queryByLabelText('Secret to vault')).not.toBeInTheDocument()
 		expect(screen.getByRole('textbox')).toHaveValue('!important notice')
+	})
+
+	it('a ! paste goes to the vault field even when an image is on the clipboard', () => {
+		renderComposer()
+		const image = new File(['png'], 'image.png', { type: 'image/png' })
+		const notPrevented = fireEvent.paste(screen.getByRole('textbox'), {
+			clipboardData: {
+				getData: (type: string) => (type === 'text' ? `!${FAKE_TOKEN}` : ''),
+				files: [image],
+				types: ['text/plain', 'Files'],
+			},
+		})
+		expect(notPrevented).toBe(false)
+		expect(field().value).toBe(FAKE_TOKEN)
+		expect(screen.queryByLabelText(/Cancel upload/)).not.toBeInTheDocument()
 	})
 
 	it('a ! pasted into a composer that already has text is ordinary text', async () => {

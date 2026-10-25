@@ -58,6 +58,8 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 	/// False when the server could not attach its tool connection; set from the offer's answer.
 	public var toolsAvailable = true
 
+	/// The call has been asked to greet. Once per call: a second `session.created` must not greet again.
+	private var greeted = false
 	private var connectedAt: Date?
 	private var speakingSince: Date?
 	private var outputAudioSeconds: TimeInterval = 0
@@ -84,6 +86,10 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 		case "session.created":
 			if connectedAt == nil { connectedAt = now }
 			phase = .listening
+			if !greeted {
+				greeted = true
+				return [.sendEvent(Self.greetingRequest)]
+			}
 		case "input_audio_buffer.speech_started":
 			phase = .listening
 			heardText = ""
@@ -157,6 +163,19 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 		}
 		return "running \(name)…"
 	}
+
+	/// Asks the model to speak first, so the call does not open in silence. The reply comes back as the
+	/// usual transcript events, so it shows as an agent line; nothing is posted to the chat.
+	public static let greetingRequest: String = {
+		let instructions =
+			"The call has just connected. Greet the user in one short sentence, in their language and in your usual voice and tone, and say you are listening. Do not ask a question that needs data and do not use tools."
+		let event: [String: Any] = [
+			"type": "response.create",
+			"response": ["instructions": instructions, "tool_choice": "none"],
+		]
+		let data = (try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])) ?? Data()
+		return String(decoding: data, as: UTF8.self)
+	}()
 
 	static func toolUnavailableOutput(callId: String) -> String {
 		let output = #"{"error":"Tools are unavailable on this call right now.","error_code":"voice_channel_unavailable"}"#

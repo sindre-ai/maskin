@@ -6,6 +6,7 @@ import { SECRET_PROVIDER_IDS, type SecretProviderId } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
+import { helperAskConversationId } from '../session-access'
 import { actorsAreWorkspaceAgents } from './agent-access'
 import { insertKeychainGrants } from './agent-grants'
 import { BYO_APIKEY_PROVIDER } from './byo-apikey'
@@ -112,20 +113,27 @@ export async function captureChatSecret(
 	else assertValidCredentialValue(input.rawSecret)
 
 	const [session] = await db
-		.select({ id: sessions.id, actorId: sessions.actorId, conversationId: sessions.conversationId })
+		.select({
+			id: sessions.id,
+			actorId: sessions.actorId,
+			conversationId: sessions.conversationId,
+			config: sessions.config,
+		})
 		.from(sessions)
 		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
 		.limit(1)
 	if (!session) throw new ChatCaptureError(404, 'NOT_FOUND', 'Session not found')
 
-	// Only someone in the conversation the key was pasted into can vault it.
-	if (session.conversationId) {
+	// Only someone in the conversation the key was pasted into can vault it. A helper has no
+	// chat of its own: its card is in the one it was started from, so that is the room.
+	const room = session.conversationId ?? helperAskConversationId(session)
+	if (room) {
 		const [participant] = await db
 			.select({ actorId: conversationParticipants.actorId })
 			.from(conversationParticipants)
 			.where(
 				and(
-					eq(conversationParticipants.conversationId, session.conversationId),
+					eq(conversationParticipants.conversationId, room),
 					eq(conversationParticipants.actorId, actorId),
 					isNull(conversationParticipants.leftAt),
 				),

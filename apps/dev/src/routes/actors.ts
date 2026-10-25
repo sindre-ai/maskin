@@ -32,17 +32,23 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -64,7 +70,9 @@ import {
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
+import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { addDefaultHeartbeat } from '../services/default-heartbeat'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -86,6 +94,11 @@ type Env = {
 const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
+
+/** Whether two tools.envFrom values are the same list (a missing value counts as empty). */
+function sameEnvFrom(next: unknown, stored: unknown): boolean {
+	return JSON.stringify(next ?? []) === JSON.stringify(stored ?? [])
+}
 
 /**
  * Event data for an actor mutation. Events are readable by every workspace
@@ -351,6 +364,9 @@ app.openapi(createActorRoute, async (c) => {
 					entityId: inserted.id,
 					data: { role: 'member', added_actor_id: inserted.id },
 				})
+				if (inserted.type === 'agent') {
+					await addDefaultHeartbeat(tx, { workspaceId, actorId: inserted.id })
+				}
 				return inserted
 			})
 		} else {
@@ -396,6 +412,7 @@ app.openapi(createActorRoute, async (c) => {
 	// The new agent says hello to the person it was made for. Fire and forget,
 	// after the commit: the service never throws, so creation is unaffected.
 	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		const sessionManager = c.get('sessionManager')
 		void introduceAgentToRecipient({
 			db,
 			actor,
@@ -404,6 +421,12 @@ app.openapi(createActorRoute, async (c) => {
 			claimedSessionId: c.get('maskinSessionId'),
 			clientSource,
 			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+			// The agent looks around the workspace before suggesting first steps. Not in an
+			// E2E stack, where every workspace lacks credentials and the session would only churn.
+			scan:
+				sessionManager && !shouldSkipOnboardingKickoff()
+					? createIntroScanRunner({ db, sessionManager })
+					: undefined,
 		})
 	}
 
@@ -625,8 +648,8 @@ app.openapi(listActorsRoute, (async (c) => {
 		const cursorOn = Boolean(query.snapshot_at)
 		const orderBy = cursorOn
 			? query.order === 'asc'
-				? [asc(actors.createdAt), asc(actors.id)]
-				: [desc(actors.createdAt), asc(actors.id)]
+				? [asc(msCreatedAt(actors.createdAt)), asc(actors.id)]
+				: [desc(msCreatedAt(actors.createdAt)), asc(actors.id)]
 			: [asc(actors.name), asc(actors.id)]
 
 		// X-Total-Count reflects the workspace's total under the snapshot upper
@@ -911,7 +934,15 @@ app.openapi(getActorRoute, (async (c) => {
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
 	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
-	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...actor,
+			tools,
+			llm_config: maskLlmConfigSecrets(actor.llm_config),
+			skills,
+			role,
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // GET /:id/access - What this actor can use: integrations and saved credentials
@@ -937,9 +968,9 @@ const actorAccessRoute = createRoute({
 								integration_id: z.string().uuid(),
 								provider: z.string(),
 								name: z.string(),
-								access: z.enum(['none', 'read', 'ask_first', 'read_write']),
+								access: z.enum(['none', 'read', 'read_write']),
 								source: z.enum(['grant', 'default']),
-								default_access: z.enum(['read', 'none']),
+								default_access: z.enum(['read', 'read_write', 'none']),
 								server_attached: z.boolean(),
 								created_by: z.string().uuid(),
 							}),
@@ -1027,7 +1058,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type, tools: actors.tools })
+		.select({ type: actors.type, tools: actors.tools, llmConfig: actors.llmConfig })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -1075,6 +1106,20 @@ app.openapi(updateActorRoute, (async (c) => {
 				'FORBIDDEN',
 				"Only workspace admins can change another actor's tools or llm_config",
 			),
+			403,
+		)
+	}
+
+	// envFrom names which API-service variables get copied into the agent's
+	// sessions, so only a human admin or owner may change it, even on the actor's
+	// own record. Sending the stored list back unchanged stays open.
+	if (
+		body.tools !== undefined &&
+		!sameEnvFrom(body.tools.envFrom, (existing.tools as { envFrom?: unknown } | null)?.envFrom) &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human workspace admin can change tools.envFrom'),
 			403,
 		)
 	}
@@ -1127,6 +1172,26 @@ app.openapi(updateActorRoute, (async (c) => {
 		tools = restored.tools as typeof tools
 	}
 
+	// Same for llm_config: its api key is read back masked.
+	let llmConfig = body.llm_config
+	if (llmConfig !== undefined) {
+		const restored = restoreMaskedLlmConfig(llmConfig, existing.llmConfig)
+		if (restored.unresolved.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
+					restored.unresolved.map((field) => ({
+						field,
+						message: 'Masked value cannot be saved',
+					})),
+				),
+				400,
+			)
+		}
+		llmConfig = restored.llmConfig as typeof llmConfig
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1137,7 +1202,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
-			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(llmConfig !== undefined && { llmConfig }),
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
@@ -1169,6 +1234,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	}
 
 	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -1327,6 +1393,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		data: actorEventData(updated),
 	})
 
+	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof resetActorRoute, Env>)
 
@@ -1645,7 +1712,13 @@ app.openapi(pauseAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...updated,
+			tools,
+			llm_config: maskLlmConfigSecrets(updated.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1797,7 +1870,13 @@ app.openapi(runAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	return c.json(
+		serialize({
+			...updated,
+			tools,
+			llm_config: maskLlmConfigSecrets(updated.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app

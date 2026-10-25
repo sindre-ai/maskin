@@ -181,6 +181,19 @@ public struct LiveVoiceMachine: Sendable, Equatable {
 		}
 	}
 
+	/// The call opens with the agent saying `text` (a fixed line, never sent to the chat). It is treated like a
+	/// reply being read, so the agent's own voice through the microphone is not taken for you, and talking
+	/// over it cuts it off as usual. Still speaks when muted.
+	public mutating func greet(messageID: String, text: String) -> [Command] {
+		guard phase == .listening else { return [] }
+		phase = .speaking
+		transcript = ""
+		lastHeardAt = nil
+		transcriptIsFinal = false
+		spokenWords = Set(Self.words(text))
+		return [.resetTranscript, .speak(messageID: messageID)]
+	}
+
 	/// The agent's turn ended in an error: nothing to read, so listen again.
 	public mutating func replyFailed() -> [Command] {
 		guard phase == .thinking else { return [] }

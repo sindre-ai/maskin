@@ -162,6 +162,9 @@ async function seedWorkspace(owner: Actor, opts: { name?: string; settings?: unk
 		externalId: randomUUID(),
 		workspaceId: ws.id,
 	})
+	await sql`
+		INSERT INTO linkedin_actions (workspace_id, integration_id, actor_id, tool, kind, outcome)
+		VALUES (${ws.id}, ${randomUUID()}, ${agent.id}, 'get_profile', 'read', 'ok')`
 	await db.insert(workspaceCreditLedger).values({
 		workspaceId: ws.id,
 		type: 'topup',

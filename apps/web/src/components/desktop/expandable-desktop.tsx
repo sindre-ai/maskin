@@ -2,7 +2,7 @@ import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Minimize2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 
 // The popup zooms and slides in for 200ms (ui/dialog). noVNC fits the picture to
 // its container when it connects, so connecting mid-animation fits a size that is
@@ -22,11 +22,14 @@ export function ExpandableDesktop({
 	agentId,
 	agentName,
 	onOpenAgent,
+	actions,
 }: {
 	workspaceId: string
 	agentId: string
 	agentName: string
 	onOpenAgent?: (agentId: string) => void
+	/** Buttons shown under the view, inline and in the popup (the chat's Done). */
+	actions?: ReactNode
 }) {
 	const [expanded, setExpanded] = useState(false)
 	const [settled, setSettled] = useState(false)
@@ -56,6 +59,7 @@ export function ExpandableDesktop({
 						/>
 					</div>
 					<p className="text-center text-sm text-muted-foreground">{agentName}'s screen</p>
+					{actions ? <div className="flex justify-center">{actions}</div> : null}
 				</div>
 			)}
 
@@ -101,6 +105,7 @@ export function ExpandableDesktop({
 							<div className="aspect-video w-full rounded-lg border bg-muted" aria-hidden />
 						)}
 					</div>
+					{actions ? <div className="flex justify-center pt-2">{actions}</div> : null}
 				</DialogContent>
 			</Dialog>
 		</>

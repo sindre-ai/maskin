@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type AgentGrantAccess, type CustomMcpServerSpec, api } from '../lib/api'
+import {
+	type AgentGrantAccess,
+	type CustomMcpServerSpec,
+	type DefaultAgentAccess,
+	api,
+} from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useIntegrations(workspaceId: string) {
@@ -299,7 +304,7 @@ export function useRemoveAgentGrant(workspaceId: string, integrationId: string) 
 export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
 	return useGrantMutation(
 		workspaceId,
-		(defaultAgentAccess: 'read' | 'none') =>
+		(defaultAgentAccess: DefaultAgentAccess) =>
 			api.integrations.setDefaultAccess(integrationId, workspaceId, defaultAgentAccess),
 		'Default access updated',
 	)

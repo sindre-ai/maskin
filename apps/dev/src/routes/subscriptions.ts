@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, subscriptions } from '@maskin/db/schema'
+import { events, files, objects, subscriptions } from '@maskin/db/schema'
 import {
 	type DecisionDraft,
 	commentDecisionSchema,
@@ -88,10 +88,21 @@ const subscribersResponseSchema = z.object({
 const feedDraftSchema = z.object({
 	id: z.string().optional(),
 	object_id: z.string().optional(),
+	file_id: z.string().optional(),
 	label: z.string().optional(),
 	to: z.string().optional(),
 	body: z.string().optional(),
 	preview: objectPreviewSchema.optional(),
+	// What the card needs to draw a file without a second lookup of its metadata. The
+	// content itself is fetched by the client, so a large file never rides in the feed.
+	file: z
+		.object({
+			id: z.string().uuid(),
+			name: z.string(),
+			mime_type: z.string(),
+			size_bytes: z.number(),
+		})
+		.optional(),
 })
 export const feedDecisionSchema = commentDecisionSchema.extend({
 	draft: feedDraftSchema.optional(),
@@ -207,9 +218,39 @@ export async function fillDraftBodies(
 		for (const row of rows) fetched.set(row.id, row)
 	}
 
+	// Files a card is about: only the metadata, scoped to the workspace, so a card cannot
+	// point at another workspace's file. The client fetches the bytes when it draws it.
+	const fileIds = [...new Set(allDrafts.flatMap((d) => (d.file_id ? [d.file_id] : [])))]
+	const fileById = new Map<string, NonNullable<FeedDraft['file']>>()
+	if (fileIds.length > 0) {
+		const rows = await db
+			.select({
+				id: files.id,
+				name: files.name,
+				mimeType: files.mimeType,
+				sizeBytes: files.sizeBytes,
+			})
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, fileIds)))
+		for (const row of rows) {
+			fileById.set(row.id, {
+				id: row.id,
+				name: row.name,
+				mime_type: row.mimeType,
+				size_bytes: row.sizeBytes,
+			})
+		}
+	}
+
 	// One draft, filled from its object's live text, or null when there is nothing
 	// to show (object gone or empty, and no stored body).
 	const fill = (draft: DecisionDraft): FeedDraft | null => {
+		// A card about a file shows the file. It needs no text of its own, and a file that is
+		// gone or in another workspace falls through to the stored body, if there is one.
+		const file = draft.file_id ? fileById.get(draft.file_id) : undefined
+		if (file) {
+			return { ...draft, label: (draft.label ?? file.name).slice(0, 30), file }
+		}
 		const source = draft.object_id
 			? (loaded.get(draft.object_id) ?? fetched.get(draft.object_id) ?? null)
 			: null

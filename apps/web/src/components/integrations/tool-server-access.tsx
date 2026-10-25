@@ -7,7 +7,7 @@ import {
 	useSetAgentGrant,
 	useSetDefaultAgentAccess,
 } from '@/hooks/use-integrations'
-import type { AgentGrant, IntegrationResponse } from '@/lib/api'
+import type { AgentGrant, DefaultAgentAccess, IntegrationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -16,7 +16,7 @@ import { useState } from 'react'
 
 /** Whether an agent gets the server: its own entry, else what every other agent gets. */
 export function toolServerEnabled(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	grant: Pick<AgentGrant, 'access'> | undefined,
 ): boolean {
 	return (grant?.access ?? defaultAccess) !== 'none'
@@ -24,7 +24,7 @@ export function toolServerEnabled(
 
 /** One line for the collapsed header: who has this server, in words. */
 export function summarizeToolServerAccess(
-	defaultAccess: 'read' | 'none',
+	defaultAccess: DefaultAgentAccess,
 	grants: Pick<AgentGrant, 'actorId' | 'access'>[],
 	agentIds: string[],
 ): string {

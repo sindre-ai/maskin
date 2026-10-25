@@ -53,12 +53,14 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -77,6 +79,7 @@ import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
+import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import voiceSessionsRoutes from './routes/voice-sessions'
@@ -299,6 +302,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
 	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
 	//     DO go through auth).
+	//   - POST /api/devices/unregister: a signed-out phone dropping its own push registration. It has
+	//     no API key after sign-out, so the device secret it registered with is the credential
+	//     (checked and rate limited per IP inside the handler; routes/devices.ts).
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -325,6 +331,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		) {
 			return next()
 		}
+		if (path === '/api/devices/unregister' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -391,8 +398,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// reading the `X-Maskin-Session-Id` header once at the boundary and
 	// stashing it on the context. Any route that then calls `recordEvent`
 	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
-	// gets a `session → object|file` `produced_by` edge for free (gated on
-	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// gets a `session → object|file` `produced_by` edge for free. Non-mutating
 	// requests are unaffected; requests without the header — human writes
 	// direct from the UI — leave the context value undefined and no edge
 	// lands, exactly the intended contract.
@@ -442,8 +448,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
@@ -489,6 +497,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
 	app.route('/api/voice-sessions', voiceSessionsRoutes)
+	app.route('/api/transcriptions', transcriptionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

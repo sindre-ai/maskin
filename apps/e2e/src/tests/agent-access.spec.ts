@@ -16,8 +16,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 const INTEGRATION_ID = '55555555-5555-4555-8555-555555555555'
 
 interface State {
-	defaultAgentAccess: 'read' | 'none'
-	agentGrants: Array<{ actorId: string; access: 'none' | 'read' | 'ask_first' | 'read_write' }>
+	defaultAgentAccess: 'read' | 'read_write' | 'none'
+	agentGrants: Array<{ actorId: string; access: 'none' | 'read' | 'read_write' }>
 }
 
 async function stubIntegrations(
@@ -165,7 +165,7 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 const GMAIL = { name: 'gmail', displayName: 'Gmail' }
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
-	test(`Gmail offers Ask first, and a newly added agent starts there @ ${vp.label}`, async ({
+	test(`Gmail has the same three levels, and says each email still needs approval @ ${vp.label}`, async ({
 		page,
 		account,
 	}) => {
@@ -177,41 +177,23 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.getByRole('button', { name: /Agent access/ }).click()
 
-		// Added to Gmail, an agent can draft but each email waits for a person.
+		// Read & write on Gmail lets an agent draft; each email still waits for a person.
+		await expect(page.getByText(/Each email still waits for your approval/)).toBeVisible()
 		await page.getByRole('combobox', { name: 'Add an agent' }).click()
 		await page.getByRole('option', { name: 'Sales Rep' }).click()
 		const level = page.getByRole('combobox', { name: 'Access for Sales Rep' })
-		await expect(level).toContainText('Ask first')
-		expect(state.agentGrants).toEqual([{ actorId: writer.id, access: 'ask_first' }])
-		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
-			'1 can write after you approve',
-		)
-		await expect(
-			page.getByText(/sends on its own, except to contacts you marked protected/),
-		).toBeVisible()
-
-		// All three modes are there, and "always allow" is a deliberate choice.
-		await level.click()
-		for (const name of ['Read', 'Ask first', 'Read & write', 'No access']) {
-			await expect(page.getByRole('option', { name, exact: true })).toBeVisible()
-		}
-		await page.getByRole('option', { name: 'Read & write' }).click()
 		await expect(level).toContainText('Read & write')
 		expect(state.agentGrants).toEqual([{ actorId: writer.id, access: 'read_write' }])
+
+		// Exactly three levels: there is no separate "Ask first".
+		await level.click()
+		for (const name of ['Read', 'Read & write', 'No access']) {
+			await expect(page.getByRole('option', { name, exact: true })).toBeVisible()
+		}
+		await expect(page.getByRole('option', { name: 'Ask first' })).toHaveCount(0)
+		// Read is the default here, so choosing it drops the agent's own entry.
+		await page.getByRole('option', { name: 'Read', exact: true }).click()
+		await expect(level).toHaveCount(0)
+		expect(state.agentGrants).toEqual([])
 	})
 }
-
-test('an integration that cannot ask first does not offer it', async ({ page, account }) => {
-	await account.api.createAgentActor('Sales Rep', account.workspaceId)
-	const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
-	await stubIntegrations(page, account.workspaceId, account.actorId, state)
-	await page.goto(`/${account.workspaceId}/settings/integrations`)
-	await page.getByRole('button', { name: /Agent access/ }).click()
-	await page.getByRole('combobox', { name: 'Add an agent' }).click()
-	await page.getByRole('option', { name: 'Sales Rep' }).click()
-
-	await page.getByRole('combobox', { name: 'Access for Sales Rep' }).click()
-
-	await expect(page.getByRole('option', { name: 'Read & write' })).toBeVisible()
-	await expect(page.getByRole('option', { name: 'Ask first' })).toHaveCount(0)
-})

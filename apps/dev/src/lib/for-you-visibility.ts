@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
-import { FOR_YOU_KIND, parseForYouMetadata } from '@maskin/shared'
-import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
+import { and, eq, gt, inArray, lte, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
 /**
@@ -9,7 +9,7 @@ import { TERMINAL_STATUSES } from '../services/session-lifecycle'
  * Workspace statuses are configurable, so this is the union of the closed
  * states the built-in object types use.
  */
-const CLOSED_OBJECT_STATUSES = [
+export const CLOSED_OBJECT_STATUSES = [
 	'done',
 	'completed',
 	'succeeded',
@@ -20,7 +20,51 @@ const CLOSED_OBJECT_STATUSES = [
 	'archived',
 	'shipped',
 	'dismissed',
+	// The workspace task status for work that was dropped. An agent that discards the task a
+	// card was about must not leave the card behind.
+	'discarded',
+	'rejected',
 ]
+
+/**
+ * Ids of the decision comments among `comments` whose drafts have all been dealt with: every
+ * draft names an object, and every one of those objects is closed (sent and done, skipped or
+ * discarded). Sending or skipping a draft closes its task, never the card, so without this a
+ * card stays on For You after its last message has gone. A card with no drafts, a draft that is
+ * only text or a file, or one task still open is not finished.
+ */
+export async function findFinishedDraftCards(
+	db: Database,
+	workspaceId: string,
+	comments: Array<typeof events.$inferSelect>,
+): Promise<Set<number>> {
+	const draftIdsByComment = new Map<number, string[] | null>()
+	for (const comment of comments) {
+		const data = (comment.data ?? {}) as Record<string, unknown>
+		const decision = parseCommentDecision(data.decision)
+		const drafts = [...(decision?.draft ? [decision.draft] : []), ...(decision?.drafts ?? [])]
+		if (drafts.length === 0) continue
+		draftIdsByComment.set(
+			Number(comment.id),
+			drafts.every((d) => d.object_id) ? drafts.map((d) => d.object_id as string) : null,
+		)
+	}
+	const draftObjectIds = [...new Set([...draftIdsByComment.values()].flatMap((ids) => ids ?? []))]
+	if (draftObjectIds.length === 0) return new Set()
+
+	const rows = await db
+		.select({ id: objects.id, status: objects.status })
+		.from(objects)
+		.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, draftObjectIds)))
+	const closed = new Set(
+		rows.filter((o) => CLOSED_OBJECT_STATUSES.includes(o.status ?? '')).map((o) => o.id),
+	)
+	const finished = new Set<number>()
+	for (const [commentId, ids] of draftIdsByComment) {
+		if (ids?.every((id) => closed.has(id))) finished.add(commentId)
+	}
+	return finished
+}
 
 export type ForYouCard = {
 	row: typeof notifications.$inferSelect
@@ -32,6 +76,8 @@ export type VisibleForYou = {
 	cards: ForYouCard[]
 	objectById: Map<string, typeof objects.$inferSelect>
 	sourceById: Map<number, typeof events.$inferSelect>
+	/** Newest event on each object a source-less card names; what reading it moves the position to. */
+	newestEventByEntity: Map<string, number>
 }
 
 /**
@@ -63,7 +109,12 @@ export async function loadVisibleForYou(
 		return meta ? [{ row, meta }] : []
 	})
 	if (candidates.length === 0) {
-		return { cards: [], objectById: new Map(), sourceById: new Map() }
+		return {
+			cards: [],
+			objectById: new Map(),
+			sourceById: new Map(),
+			newestEventByEntity: new Map(),
+		}
 	}
 
 	const objectIds = [
@@ -115,6 +166,7 @@ export async function loadVisibleForYou(
 				.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, sourceIds)))
 		: []
 	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
+	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, sourceRows)
 
 	const replyRows = objectIds.length
 		? await db
@@ -131,10 +183,54 @@ export async function loadVisibleForYou(
 				)
 		: []
 
+	// A curated item with no source comment cannot be retired by answering a comment. It
+	// counts as handled once the person has read its object past everything that existed
+	// when the Chief of Staff listed it; later activity does not bring it back.
+	const noSource = candidates.filter(
+		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
+	)
+	const baselineByNotification = new Map<string, number>()
+	await Promise.all(
+		noSource.map(async ({ row }) => {
+			const [found] = await db
+				.select({ id: max(events.id) })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityId, row.objectId as string),
+						row.createdAt ? lte(events.createdAt, row.createdAt) : undefined,
+					),
+				)
+			baselineByNotification.set(row.id, Number(found?.id ?? 0))
+		}),
+	)
+	const newestEventByEntity = new Map<string, number>()
+	if (noSource.length > 0) {
+		const newest = await db
+			.select({ entityId: events.entityId, id: max(events.id) })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					inArray(
+						events.entityId,
+						noSource.map(({ row }) => row.objectId as string),
+					),
+				),
+			)
+			.groupBy(events.entityId)
+		for (const r of newest) newestEventByEntity.set(r.entityId, Number(r.id ?? 0))
+	}
+
 	const cards = candidates
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
+				return false
+			}
+			// Every message the card offered has been sent or skipped: nothing left to approve.
+			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {
 				return false
 			}
 			if (row.objectId) {
@@ -151,6 +247,10 @@ export async function loadVisibleForYou(
 					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
 					if (lastRead >= sourceId) return false
 					if (replyRows.some((r) => r.entityId === row.objectId && r.id > sourceId)) return false
+				} else {
+					const baseline = baselineByNotification.get(row.id) ?? 0
+					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
+					if (baseline > 0 && lastRead >= baseline) return false
 				}
 			}
 			return true
@@ -161,5 +261,5 @@ export async function loadVisibleForYou(
 				(b.row.createdAt?.getTime() ?? 0) - (a.row.createdAt?.getTime() ?? 0),
 		)
 
-	return { cards, objectById, sourceById }
+	return { cards, objectById, sourceById, newestEventByEntity }
 }

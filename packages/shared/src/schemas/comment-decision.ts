@@ -134,13 +134,20 @@ function buildDecisionDraftSchema() {
 				.describe(
 					'The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.',
 				),
+			file_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The workspace file the card is about, when what you are asking about is a file and not text to send: an HTML page, a markdown document, an image, a plain-text file. The card shows the file itself (a rendered page, the formatted text, the picture) above the buttons, live, so a later version shows up. Save the file first (create_file), then give its id. Use object_id instead for a message that would be sent.',
+				),
 			label: z
 				.string()
 				.min(1)
 				.max(30)
 				.optional()
 				.describe(
-					'What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft".',
+					'What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft" (or the file name for a file).',
 				),
 			to: z
 				.string()
@@ -159,9 +166,11 @@ function buildDecisionDraftSchema() {
 					'Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.',
 				),
 		})
-		.refine((draft) => draft.object_id !== undefined || draft.body !== undefined, {
-			message: 'A draft needs object_id (preferred) or body',
-		})
+		.refine(
+			(draft) =>
+				draft.object_id !== undefined || draft.body !== undefined || draft.file_id !== undefined,
+			{ message: 'A draft needs object_id (preferred), file_id or body' },
+		)
 }
 
 export const decisionDraftSchema = buildDecisionDraftSchema()
@@ -204,7 +213,7 @@ export const commentDecisionSchema = z
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
-				"Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. Never put the text in the summary.",
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.",
 			),
 	})
 	.describe(

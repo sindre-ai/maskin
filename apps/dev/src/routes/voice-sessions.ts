@@ -17,12 +17,16 @@ import {
 	captureVoiceSessionStarted,
 } from '../lib/analytics/voice-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
+import {
+	findReadableConversationId,
+	formatVoiceChatHistory,
+	loadVoiceChatHistory,
+} from '../services/voice-chat-history'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
@@ -32,14 +36,9 @@ import {
 	createRealtimeCall,
 	realtimeCallsUrl,
 } from '../services/voice-realtime-call'
-import {
-	VOICE_DAILY_MINUTE_CAP,
-	endVoiceSession,
-	getVoiceMinutesUsedToday,
-	secondsUntilVoiceCapResets,
-	setCloseVendorSessionFn,
-} from '../services/voice-session-lifecycle'
+import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
+import { withConfirmationArg } from '../services/voice-write-gate'
 
 type Env = {
 	Variables: {
@@ -60,6 +59,10 @@ const createVoiceSessionBody = z
 	.object({
 		agent_actor_id: z.string().uuid().openapi({
 			description: 'Actor id of the agent to call. Must be an agent that is a workspace member.',
+		}),
+		conversation_id: z.string().uuid().optional().openapi({
+			description:
+				'The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise.',
 		}),
 	})
 	.openapi('CreateVoiceSessionBody')
@@ -180,7 +183,7 @@ const postVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
-		'Gated by the **voice-mode-v1** feature flag. Returns 404 when the flag is off for the calling actor. Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
+		"Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 	request: {
 		body: {
 			content: { 'application/json': { schema: createVoiceSessionBody } },
@@ -193,7 +196,7 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: createVoiceSessionResponse } },
 		},
 		400: {
-			description: 'Target agent is not voice-enabled',
+			description: 'Target actor is not an agent',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -203,11 +206,6 @@ const postVoiceSessionRoute = createRoute({
 		409: {
 			description: 'Caller already has a live voice session',
 			content: { 'application/json': { schema: errorSchema } },
-		},
-		429: {
-			description:
-				'The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`',
-			content: { 'application/json': { schema: rateLimitedResponse } },
 		},
 		500: {
 			description: 'The reservation row could not be written',
@@ -219,18 +217,6 @@ const postVoiceSessionRoute = createRoute({
 app.openapi(postVoiceSessionRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
-
-	// Rail 3: flag gates the visual + session-mint surface. 404 (not 403) so
-	// a non-tester never even learns the endpoint exists — matches every other
-	// flag-gated route's shape.
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		await captureVoiceSessionDenied(humanActorId, {
-			agent_id: null,
-			workspace_id: null,
-			reason: 'flag_off',
-		})
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
 
 	const body = c.req.valid('json')
 	const agentActorId = body.agent_actor_id
@@ -295,26 +281,22 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Target actor is not an agent'), 400)
 	}
 
-	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,
-	// not the packaging number: Pricing Strategist owns that. Checked before any
-	// row is written or vendor call is made, so a capped workspace costs nothing.
-	const minutesUsed = await getVoiceMinutesUsedToday(db, workspaceId)
-	if (minutesUsed >= VOICE_DAILY_MINUTE_CAP) {
-		await captureVoiceSessionDenied(humanActorId, {
-			agent_id: agentActorId,
-			workspace_id: workspaceId,
-			reason: 'rate_limited',
+	// A call started from a chat carries that chat's history and saves its transcript
+	// there. A chat the caller cannot read is ignored, not an error, so a stale id
+	// never blocks the call.
+	let conversationId: string | null = null
+	if (body.conversation_id) {
+		conversationId = await findReadableConversationId(db, {
+			conversationId: body.conversation_id,
+			workspaceId,
+			humanActorId,
 		})
-		return c.json(
-			{
-				error: {
-					code: 'RATE_LIMITED' as const,
-					message: 'This workspace has used its voice minutes for today',
-				},
-				retry_after_seconds: secondsUntilVoiceCapResets(),
-			},
-			429,
-		)
+		if (!conversationId) {
+			logger.warn('Voice call started from a conversation the caller cannot read; ignoring it', {
+				workspace_id: workspaceId,
+				agent_actor_id: agentActorId,
+			})
+		}
 	}
 
 	// The DB unique index on (human_actor_id) partial to status IN
@@ -328,6 +310,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 				workspaceId,
 				agentActorId,
 				humanActorId,
+				conversationId,
 				status: 'pending',
 				vendor: 'openai_realtime',
 				model: VOICE_REALTIME_MODEL,
@@ -386,7 +369,7 @@ const postOfferRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
-		'Gated by the **voice-mode-v1** feature flag. Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.',
+		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.',
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: offerBody } }, required: true },
@@ -410,7 +393,7 @@ const postOfferRoute = createRoute({
 		},
 		500: {
 			description:
-				'Vendor connect failed — the session row is marked errored so the caller can start again',
+				'Voice is not configured (no operator key), the vendor connect failed, or the vendor refused it over quota or billing (message says the team has been notified) — the session row is released so the caller can start again',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -420,9 +403,6 @@ app.openapi(postOfferRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
 
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
 	const { id } = c.req.valid('param')
 	const { sdp } = c.req.valid('json')
 
@@ -441,6 +421,18 @@ app.openapi(postOfferRoute, async (c) => {
 
 	if (session.status !== 'pending' || session.vendorSessionId !== null) {
 		return c.json(createApiError('CONFLICT', 'This voice session already took an offer'), 409)
+	}
+
+	// Voice is billed to an operator key. Without it every vendor call is a 401
+	// that reads as a vendor outage, so say what is wrong and free the slot.
+	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()
+	if (!apiKey) {
+		logger.error('Voice is not configured: MASKIN_VOICE_OPENAI_API_KEY is unset', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+		})
+		await releasePendingSession(db, session.id)
+		return c.json(createApiError('INTERNAL_ERROR', 'Voice is not configured on this server'), 500)
 	}
 
 	const [agent] = await db
@@ -490,17 +482,31 @@ app.openapi(postOfferRoute, async (c) => {
 		.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
 		.where(eq(agentSkills.actorId, session.agentActorId))
 
+	// The chat the call was started from, re-checked here: the caller may have left it
+	// between the two requests.
+	let chatHistory = ''
+	if (
+		session.conversationId &&
+		(await findReadableConversationId(db, {
+			conversationId: session.conversationId,
+			workspaceId: session.workspaceId,
+			humanActorId,
+		}))
+	) {
+		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
+	}
+
 	const instructions = [
 		agent.systemPrompt ?? '',
 		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
+		// The server holds every write until the person says yes; this only makes the agent ask naturally.
+		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
+		chatHistory ? `\n\n${chatHistory}` : '',
 	]
 		.join('')
 		.trim()
 
-	// Boot guard (voice-boot-guard.ts) ensures the env exists at boot when
-	// the flag is on; a live handler read is safe.
-	const apiKey = process.env.MASKIN_VOICE_OPENAI_API_KEY ?? ''
 	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
 	try {
 		toolkit = await invokeToolFactory({
@@ -516,7 +522,7 @@ app.openapi(postOfferRoute, async (c) => {
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: toolkit.tools,
+			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
@@ -533,8 +539,35 @@ app.openapi(postOfferRoute, async (c) => {
 
 	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 
+	if (outcome.kind === 'quota_exhausted') {
+		await releasePendingSession(db, session.id)
+		logger.error('Voice vendor refused the call: quota or billing', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			vendor_body: outcome.vendorBody.slice(0, 500),
+		})
+		captureVoiceException(
+			session.id,
+			new Error('Voice vendor returned 429 for quota or billing (insufficient_quota)'),
+		)
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Voice is unavailable, the team has been notified'),
+			500,
+		)
+	}
+
 	if (outcome.kind === 'rate_limited') {
 		await releasePendingSession(db, session.id)
+		logger.warn('Voice vendor rate limited the call', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			retry_after_seconds: outcome.retryAfterSeconds,
+			vendor_body: (outcome.vendorBody ?? '').slice(0, 500),
+		})
 		await captureVoiceSessionDenied(humanActorId, {
 			agent_id: session.agentActorId,
 			workspace_id: session.workspaceId,
@@ -544,7 +577,7 @@ app.openapi(postOfferRoute, async (c) => {
 			{
 				error: {
 					code: 'RATE_LIMITED' as const,
-					message: 'Vendor rate limit; retry after retry_after_seconds',
+					message: `Voice is busy at OpenAI, try again in ${outcome.retryAfterSeconds} seconds`,
 				},
 				retry_after_seconds: outcome.retryAfterSeconds,
 			},
@@ -593,6 +626,7 @@ app.openapi(postOfferRoute, async (c) => {
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
+			readOnlyTools: toolkit.readOnlyTools,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
@@ -605,7 +639,7 @@ app.openapi(postOfferRoute, async (c) => {
 		agent_id: session.agentActorId,
 		agent_name: agent.name,
 		workspace_id: session.workspaceId,
-		conversation_id: null,
+		conversation_id: session.conversationId,
 		model: VOICE_REALTIME_MODEL,
 		vendor: 'openai_realtime',
 	})
@@ -667,7 +701,7 @@ const hangupVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'End a voice call',
 	description:
-		"Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+		"Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: hangupBody } }, required: true },
@@ -688,11 +722,7 @@ app.openapi(hangupVoiceSessionRoute, async (c) => {
 	const humanActorId = c.get('actorId')
 	const db = c.get('db')
 
-	// Same 404 shape as the mint route; a session that is not the caller's is a
-	// 404 too, so ids are not probeable.
-	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
-		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
-	}
+	// A session that is not the caller's is a 404, so ids are not probeable.
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 

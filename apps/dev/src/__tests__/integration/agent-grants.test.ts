@@ -4,7 +4,6 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { createApiError } from '../../lib/errors'
 import {
-	canActWithoutAsking,
 	canRead,
 	canWrite,
 	effectiveAccess,
@@ -81,6 +80,14 @@ describe('effectiveAccess (pure)', () => {
 		expect(effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'none' }, null)).toBe(
 			'none',
 		)
+	})
+	it('uses a read_write default for an agent with no grant', () => {
+		expect(
+			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read_write' }, null),
+		).toBe('read_write')
+		expect(
+			effectiveAccess({ providerMode: 'registered', defaultAgentAccess: 'read_write' }, 'none'),
+		).toBe('none')
 	})
 	it('lets an explicit grant override the default in both directions', () => {
 		expect(
@@ -171,7 +178,7 @@ describe('agent_grants table semantics (Integration)', () => {
 		).rejects.toThrow()
 	})
 
-	it('rejects an access value outside none/read/ask_first/read_write, including the retired write', async () => {
+	it('rejects an access value outside none/read/read_write, including the retired write and ask_first', async () => {
 		const s = await setup()
 		const slack = await insertIntegration(s)
 		const err = await db
@@ -311,6 +318,49 @@ describe('grants routes (Integration)', () => {
 		).toBe(200)
 	})
 
+	it('rejects Read & write as the default for a Keychain credential and leaves the stored default alone', async () => {
+		const s = await setup()
+		const key = await insertIntegration(s, {
+			provider: 'custom',
+			providerMode: 'byo_apikey',
+			displayName: 'K',
+			defaultAgentAccess: 'none',
+		})
+		const app = appFor(s.human)
+		const stored = async () =>
+			(await db.select().from(integrations).where(eq(integrations.id, key.id)))[0]
+				?.defaultAgentAccess
+
+		const res = await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, {
+			defaultAgentAccess: 'read_write',
+		})
+
+		expect(res.status).toBe(400)
+		expect(JSON.stringify(await res.json())).toContain('use read or none')
+		expect(await stored()).toBe('none')
+		expect(await resolveAgentAccess(db, s.ws.id, key.id, s.agentB.id)).toBe('none')
+		// On and off still save.
+		expect(
+			(await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'read' }))
+				.status,
+		).toBe(200)
+		expect(await stored()).toBe('read')
+		expect(
+			(await req(app, 'PUT', `/${key.id}/default-access`, s.ws.id, { defaultAgentAccess: 'none' }))
+				.status,
+		).toBe(200)
+		expect(await stored()).toBe('none')
+		// The same level stays allowed as the default for an ordinary integration.
+		const slack = await insertIntegration(s)
+		expect(
+			(
+				await req(app, 'PUT', `/${slack.id}/default-access`, s.ws.id, {
+					defaultAgentAccess: 'read_write',
+				})
+			).status,
+		).toBe(200)
+	})
+
 	it('gives every agent a Keychain credential whose default is Full access, except one set to No access', async () => {
 		const s = await setup()
 		const key = await insertIntegration(s, {
@@ -351,6 +401,51 @@ describe('grants routes (Integration)', () => {
 		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentB.id)).toBe('read')
 	})
 
+	it('lets a person make Read & write the default for every agent, and one agent stay read-only', async () => {
+		const s = await setup()
+		const slack = await insertIntegration(s)
+		const app = appFor(s.human)
+
+		const res = await req(app, 'PUT', `/${slack.id}/default-access`, s.ws.id, {
+			defaultAgentAccess: 'read_write',
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ defaultAgentAccess: 'read_write' })
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentA.id)).toBe('read_write')
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentB.id)).toBe('read_write')
+		await req(app, 'PUT', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id, { access: 'read' })
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentA.id)).toBe('read')
+		expect(await resolveAgentAccess(db, s.ws.id, slack.id, s.agentB.id)).toBe('read_write')
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, slack.id))
+		expect(row.defaultAgentAccess).toBe('read_write')
+		const [event] = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, slack.id), eq(events.action, 'updated')))
+		expect(event.data).toMatchObject({ change: 'default_agent_access', access_after: 'read_write' })
+	})
+
+	it('allows Read & write as the default for Gmail too', async () => {
+		const s = await setup()
+		const gmail = await insertIntegration(s, { provider: 'gmail' })
+		const app = appFor(s.human)
+
+		const res = await req(app, 'PUT', `/${gmail.id}/default-access`, s.ws.id, {
+			defaultAgentAccess: 'read_write',
+		})
+
+		expect(res.status).toBe(200)
+		expect(await resolveAgentAccess(db, s.ws.id, gmail.id, s.agentA.id)).toBe('read_write')
+	})
+
+	it('rejects a default outside read/read_write/none at the database', async () => {
+		const s = await setup()
+		await expect(
+			insertIntegration(s, { defaultAgentAccess: 'ask_first' as never }),
+		).rejects.toThrow()
+	})
+
 	it('lets one agent be set to No access while everyone else keeps the read default', async () => {
 		const s = await setup()
 		const slack = await insertIntegration(s)
@@ -377,56 +472,42 @@ describe('grants routes (Integration)', () => {
 		expect(res.status).toBe(400)
 	})
 
-	it('offers "Ask first" for Gmail only', async () => {
+	it('has no "Ask first" level any more, for Gmail or anything else', async () => {
 		const s = await setup()
 		const gmail = await insertIntegration(s, { provider: 'gmail' })
-		const slack = await insertIntegration(s)
 		const app = appFor(s.human)
 
-		const ok = await req(app, 'PUT', `/${gmail.id}/grants/${s.agentA.id}`, s.ws.id, {
+		const single = await req(app, 'PUT', `/${gmail.id}/grants/${s.agentA.id}`, s.ws.id, {
 			access: 'ask_first',
 		})
-		const refused = await req(app, 'PUT', `/${slack.id}/grants/${s.agentA.id}`, s.ws.id, {
-			access: 'ask_first',
+		const many = await req(app, 'PUT', `/${gmail.id}/grants`, s.ws.id, {
+			grants: [{ actorId: s.agentA.id, access: 'ask_first' }],
+		})
+		const asDefault = await req(app, 'PUT', `/${gmail.id}/default-access`, s.ws.id, {
+			defaultAgentAccess: 'ask_first',
 		})
 
-		expect(ok.status).toBe(200)
-		expect(refused.status).toBe(400)
-		expect(JSON.stringify(await refused.json())).toContain('Ask first')
-		const [row] = await db.select().from(agentGrants).where(eq(agentGrants.integrationId, gmail.id))
-		expect(row.access).toBe('ask_first')
+		expect([single.status, many.status, asDefault.status]).toEqual([400, 400, 400])
 		expect(
-			await db.select().from(agentGrants).where(eq(agentGrants.integrationId, slack.id)),
+			await db.select().from(agentGrants).where(eq(agentGrants.integrationId, gmail.id)),
 		).toEqual([])
 	})
 
-	it('applies the same rule when every grant is replaced at once', async () => {
-		const s = await setup()
-		const gmail = await insertIntegration(s, { provider: 'gmail' })
-		const slack = await insertIntegration(s)
-		const app = appFor(s.human)
-		const body = { grants: [{ actorId: s.agentA.id, access: 'ask_first' }] }
-
-		expect((await req(app, 'PUT', `/${gmail.id}/grants`, s.ws.id, body)).status).toBe(200)
-		expect((await req(app, 'PUT', `/${slack.id}/grants`, s.ws.id, body)).status).toBe(400)
-	})
-
-	it('resolves "Ask first" as an agent that may use write tools but not act on its own', async () => {
+	it('treats Read & write on Gmail as an agent that may use the write tools', async () => {
 		const s = await setup()
 		const gmail = await insertIntegration(s, { provider: 'gmail' })
 		await insertAgentGrant(db, {
 			workspaceId: s.ws.id,
 			integrationId: gmail.id,
 			actorId: s.agentA.id,
-			access: 'ask_first',
+			access: 'read_write',
 		})
 
 		const access = await resolveAgentAccess(db, s.ws.id, gmail.id, s.agentA.id)
 
-		expect(access).toBe('ask_first')
-		expect(canRead(access as 'ask_first')).toBe(true)
-		expect(canWrite(access as 'ask_first')).toBe(true)
-		expect(canActWithoutAsking(access as 'ask_first')).toBe(false)
+		expect(access).toBe('read_write')
+		expect(canRead(access as 'read_write')).toBe(true)
+		expect(canWrite(access as 'read_write')).toBe(true)
 	})
 
 	it('404s for an integration in another workspace', async () => {

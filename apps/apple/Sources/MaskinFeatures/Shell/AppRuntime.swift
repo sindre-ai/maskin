@@ -294,6 +294,7 @@ public final class AppRuntime {
 		syncCoordinator?.scenePhaseChanged(phase)
 		if phase == .active, let session = environment.auth.session {
 			Task { await syncTimezone() }
+			Task { await push?.foregrounded() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
 		}
