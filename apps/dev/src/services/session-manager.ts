@@ -2340,6 +2340,13 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
 		}
+		// Rollback for agent-run.sh's stdio tool-server environment scrub
+		// (docker/agent-base/mcp-scrub-env.jq): set MASKIN_MCP_ENV_SCRUB=off on this
+		// service and the next session launches its tool servers with the full
+		// environment again. No image rebuild.
+		if (process.env.MASKIN_MCP_ENV_SCRUB === 'off') {
+			envVars.MASKIN_MCP_ENV_SCRUB = 'off'
+		}
 
 		// Resolve the workspace-skill manifest here so both the emitted
 		// `agent_session_started_with_prompt` signal AND the dispatch payload
@@ -3045,6 +3052,7 @@ ${cont.continues_prompt}
 			'MCP_SERVERS_JSON',
 			'AGENT_MCP_JSON',
 			'MASKIN_API_KEY',
+			'MASKIN_MCP_ENV_SCRUB',
 			'CLAUDE_OAUTH_ACCESS_TOKEN',
 			'CLAUDE_OAUTH_REFRESH_TOKEN',
 			'CLAUDE_OAUTH_EXPIRES_AT',
