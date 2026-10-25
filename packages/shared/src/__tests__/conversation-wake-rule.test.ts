@@ -181,6 +181,38 @@ describe('decideWakes truth table', () => {
 		expect(r.skips).toEqual([])
 	})
 
+	describe('real chats that woke more agents than they should have', () => {
+		// Who was in each chat is taken from the report of the two messages, not read from the chats.
+		const CTO = { id: 'cto', type: 'agent' as const }
+		const COS = { id: 'cos', type: 'agent' as const }
+		const CPO = { id: 'cpo', type: 'agent' as const }
+		const SDR = { id: 'sdr', type: 'agent' as const }
+
+		it('message 18813 (Chief of Staff / CTO chat): a person tags one agent, the two others stay asleep', () => {
+			const r = decide({
+				participants: [H1, A, CTO, COS],
+				mentions: [A.id],
+				previousOther: { authorId: CTO.id, authorType: 'agent' },
+			})
+			expect(r.rule).toBe('tagged')
+			expect(r.wakes).toEqual([{ agentId: A.id, reason: 'rule_tagged' }])
+			expect(r.skips).toEqual([
+				{ agentId: CTO.id, reason: 'skip_not_addressed' },
+				{ agentId: COS.id, reason: 'skip_not_addressed' },
+			])
+		})
+
+		it('message 19275 (CPO / Sales Development Rep chat): untagged, the Sales Development Rep spoke last, only it wakes', () => {
+			const r = decide({
+				participants: [H1, CPO, SDR],
+				previousOther: { authorId: SDR.id, authorType: 'agent' },
+			})
+			expect(r.rule).toBe('last_speaker')
+			expect(r.wakes).toEqual([{ agentId: SDR.id, reason: 'rule_last_speaker' }])
+			expect(r.skips).toEqual([{ agentId: CPO.id, reason: 'skip_not_addressed' }])
+		})
+	})
+
 	it('does not change its inputs', () => {
 		const mentions = [A.id]
 		const participants = [H1, H2, A, B]

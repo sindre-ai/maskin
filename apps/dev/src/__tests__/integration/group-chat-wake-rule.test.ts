@@ -346,6 +346,51 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 		})
 	})
 
+	describe('the two real chats that woke too many agents', () => {
+		// Who was in each chat is taken from the report of the two messages, not read from the chats.
+		it('message 18813 (Chief of Staff / CTO chat): a person tags one agent, the two others stay asleep', async () => {
+			const [tagged, cto, cos] = [await actor('agent'), await actor('agent'), await actor('agent')]
+			const { sessionManager, conversationId } = await chatWith([tagged, cto, cos])
+			await post(conversationId, cto.id, 'CTO answers')
+
+			const e = await respond(
+				sessionManager,
+				conversationId,
+				await post(conversationId, ownerId, 'over to you', { mentions: [tagged.id] }),
+			)
+
+			expect(e).toMatchObject({ flagOn: true, rule: 'tagged' })
+			expect(wokenIds(e)).toEqual([tagged.id])
+			expect(e.outcomes.filter((o) => o.decision !== 'wake').map((o) => o.reason)).toEqual([
+				'skip_not_addressed',
+				'skip_not_addressed',
+			])
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(chat).not.toHaveBeenCalled()
+		})
+
+		it('message 19275 (CPO / Sales Development Rep chat): untagged, the Sales Development Rep spoke last, only it wakes', async () => {
+			const [cpo, sdr, person] = [await actor('agent'), await actor('agent'), await actor('human')]
+			const { sessionManager, conversationId } = await chatWith([cpo, sdr, person])
+			await post(conversationId, cpo.id, 'CPO answers')
+			await post(conversationId, sdr.id, 'Sales Development Rep answers')
+
+			const e = await respond(
+				sessionManager,
+				conversationId,
+				await post(conversationId, ownerId, 'and the next step?'),
+			)
+
+			expect(e).toMatchObject({ flagOn: true, rule: 'last_speaker' })
+			expect(wokenIds(e)).toEqual([sdr.id])
+			expect(e.outcomes.filter((o) => o.decision !== 'wake')).toEqual([
+				expect.objectContaining({ agentId: cpo.id, reason: 'skip_not_addressed' }),
+			])
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(chat).not.toHaveBeenCalled()
+		})
+	})
+
 	it('one agent and two people: the first untagged message wakes the agent, a later person-to-person one wakes nobody', async () => {
 		const [agent, h2] = [await actor('agent'), await actor('human')]
 		const { sessionManager, conversationId } = await chatWith([agent, h2])
