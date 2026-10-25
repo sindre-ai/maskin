@@ -71,7 +71,10 @@ export function deriveComposerCue(input: ComposerCueInput): ComposerCue | null {
 		for (let i = real.length - 1; i >= 0; i--) {
 			const m = real[i]
 			if (m.actorId === selfId) continue
-			previousOther = { authorId: m.actorId, authorType: m.actorType === 'agent' ? 'agent' : 'human' }
+			previousOther = {
+				authorId: m.actorId,
+				authorType: m.actorType === 'agent' ? 'agent' : 'human',
+			}
 			break
 		}
 		// Older pages might still hold the last other writer, or an earlier message that
@@ -98,7 +101,8 @@ export function deriveComposerCue(input: ComposerCueInput): ComposerCue | null {
 
 	const woken = decision.wakes.map((w) => names.get(w.agentId) ?? 'an agent')
 	if (woken.length === 1) return { placeholder: `Reply to ${woken[0]}…`, hint: null }
-	if (woken.length === 2) return { placeholder: `Reply to ${woken[0]} and ${woken[1]}…`, hint: null }
+	if (woken.length === 2)
+		return { placeholder: `Reply to ${woken[0]} and ${woken[1]}…`, hint: null }
 	if (woken.length > 2) return { placeholder: `Reply to ${woken.length} agents…`, hint: null }
 	return {
 		placeholder: NEUTRAL_PLACEHOLDER,

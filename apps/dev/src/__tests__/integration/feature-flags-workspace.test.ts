@@ -32,13 +32,14 @@ async function flagsFor(workspaceId?: string) {
 			...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
 		}),
 	)
-	const body = res.status === 200 ? ((await res.json()) as { flags: Record<string, boolean> }) : null
+	const body =
+		res.status === 200 ? ((await res.json()) as { flags: Record<string, boolean> }) : null
 	return { status: res.status, flag: body?.flags[FLAG] }
 }
 
 describe('GET /api/feature-flags with a workspace header — real membership', () => {
 	afterEach(() => {
-		delete process.env.FF_WORKSPACE_FEATURES
+		Reflect.deleteProperty(process.env, 'FF_WORKSPACE_FEATURES')
 		_resetFeatureFlagConfig()
 	})
 

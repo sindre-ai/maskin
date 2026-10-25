@@ -15,11 +15,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import {
-	type ComposerCue,
-	GROUP_CHAT_WAKE_RULE_FLAG,
-	deriveComposerCue,
-} from '@/lib/composer-cue'
+import { type ComposerCue, GROUP_CHAT_WAKE_RULE_FLAG, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
 import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -413,7 +409,10 @@ function NewChatRoute() {
 			if (people.has(id)) continue
 			// An id missing from the workspace lists counts as a person.
 			const known = candidates.find((c) => c.id === id)
-			people.set(id, asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }))
+			people.set(
+				id,
+				asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }),
+			)
 		}
 		return deriveComposerCue({
 			selfId: currentActor?.id ?? '',

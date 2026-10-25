@@ -11,7 +11,12 @@ const state = vi.hoisted(() => ({
 		| undefined,
 	// Newest first, the way the server pages them. Undefined while loading.
 	messages: undefined as
-		| Array<{ id: number; actorId: string; actorType: 'human' | 'agent'; kind: 'message' | 'system' }>
+		| Array<{
+				id: number
+				actorId: string
+				actorType: 'human' | 'agent'
+				kind: 'message' | 'system'
+		  }>
 		| undefined,
 	hasNextPage: false,
 }))
@@ -23,8 +28,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => state.flagOn }))
 vi.mock('@/hooks/use-conversation', async () => {
-	const actual =
-		await vi.importActual<typeof import('@/hooks/use-conversation')>('@/hooks/use-conversation')
+	const actual = await vi.importActual<typeof import('@/hooks/use-conversation')>(
+		'@/hooks/use-conversation',
+	)
 	return {
 		...actual,
 		useSendMessage: () => ({ mutateAsync: mockMutateAsync, isPending: false }),

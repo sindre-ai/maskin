@@ -15,18 +15,21 @@ const NEUTRAL = 'Message this conversation'
 const HINT_NOBODY = 'No agent will reply. Tag one with @.'
 
 async function setFlag(page: Page, state: 'on' | 'off') {
-	await page.addInitScript(
-		([flag, value]) => localStorage.setItem(`ff:${flag}`, value),
-		[FLAG, state] as const,
-	)
+	await page.addInitScript(([flag, value]) => localStorage.setItem(`ff:${flag}`, value), [
+		FLAG,
+		state,
+	] as const)
 }
 
 /** Holds the requests the cue depends on for `ms`, so loading states can be observed. */
 async function throttleCueRequests(page: Page, ms: number) {
-	await page.route(/\/api\/(feature-flags|conversations\/[^/?]+(\/messages)?)(\?|$)/, async (route) => {
-		await new Promise((resolve) => setTimeout(resolve, ms))
-		await route.continue()
-	})
+	await page.route(
+		/\/api\/(feature-flags|conversations\/[^/?]+(\/messages)?)(\?|$)/,
+		async (route) => {
+			await new Promise((resolve) => setTimeout(resolve, ms))
+			await route.continue()
+		},
+	)
 }
 
 async function agentsInChat(

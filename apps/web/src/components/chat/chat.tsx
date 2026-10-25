@@ -1163,13 +1163,17 @@ export function Composer({
 					</p>
 				) : null}
 				{hint === undefined ? null : (
-					<p id={hintId} role="status" aria-live="polite" className="px-1 text-muted-foreground text-xs">
+					<output
+						id={hintId}
+						aria-live="polite"
+						className="block px-1 text-muted-foreground text-xs"
+					>
 						{hint &&
 						!(sendError || externalError) &&
 						(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
 							? hint
 							: null}
-					</p>
+					</output>
 				)}
 				<div className="flex items-center gap-2">
 					<DropdownMenu>

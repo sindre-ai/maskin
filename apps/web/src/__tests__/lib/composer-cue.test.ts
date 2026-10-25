@@ -36,12 +36,16 @@ describe('deriveComposerCue', () => {
 	})
 
 	it('names the agent who spoke last when nobody else has written since', () => {
-		const result = cue({ messages: [say('agent-b', 'agent'), say('me', 'human'), say('agent-a', 'agent')] })
+		const result = cue({
+			messages: [say('agent-b', 'agent'), say('me', 'human'), say('agent-a', 'agent')],
+		})
 		expect(result).toEqual({ placeholder: 'Reply to Forge…', hint: null })
 	})
 
 	it('skips the sender’s own messages when finding the last other writer', () => {
-		const result = cue({ messages: [say('agent-b', 'agent'), say('me', 'human'), say('me', 'human')] })
+		const result = cue({
+			messages: [say('agent-b', 'agent'), say('me', 'human'), say('me', 'human')],
+		})
 		expect(result).toEqual({ placeholder: 'Reply to Sentinel…', hint: null })
 	})
 
@@ -68,7 +72,10 @@ describe('deriveComposerCue', () => {
 
 	it('ignores system rows when finding the last writer', () => {
 		const result = cue({
-			messages: [say('agent-a', 'agent'), { actorId: 'agent-b', actorType: 'agent', kind: 'system' }],
+			messages: [
+				say('agent-a', 'agent'),
+				{ actorId: 'agent-b', actorType: 'agent', kind: 'system' },
+			],
 		})
 		expect(result).toEqual({ placeholder: 'Reply to Forge…', hint: null })
 	})
@@ -116,7 +123,10 @@ describe('deriveComposerCue', () => {
 		})
 
 		it('ignores a tagged person next to a tagged agent', () => {
-			const result = cue({ participants: [ME, AGENT_A, PERSON], taggedIds: ['person-1', 'agent-a'] })
+			const result = cue({
+				participants: [ME, AGENT_A, PERSON],
+				taggedIds: ['person-1', 'agent-a'],
+			})
 			expect(result).toEqual({ placeholder: 'Reply to Forge…', hint: null })
 		})
 

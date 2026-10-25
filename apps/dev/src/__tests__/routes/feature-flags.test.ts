@@ -146,7 +146,7 @@ describe('GET /api/feature-flags', () => {
 			expect(await res.json()).toEqual({ flags: ALL_OFF })
 		})
 
-		it('returns today\'s answer unchanged when no header is sent', async () => {
+		it("returns today's answer unchanged when no header is sent", async () => {
 			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 			mockResults.select = [memberRow]
 
