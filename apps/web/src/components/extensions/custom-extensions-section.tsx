@@ -16,14 +16,13 @@ import { useState } from 'react'
  */
 export function extensionRowStatus(ext: ExtensionResponse): {
 	label: string
-	variant: 'default' | 'secondary' | 'outline'
+	variant: 'live' | 'outline'
 } {
 	if (!ext.webhookConfig && ext.mcpConfig && ext.status === 'active' && mcpReady(ext)) {
-		return { label: `On, ${mcpToolCount(ext)} tools`, variant: 'default' }
+		return { label: `On, ${mcpToolCount(ext)} tools`, variant: 'live' }
 	}
-	if (ext.lastDeliveryAt) return { label: 'Live', variant: 'default' }
-	if (ext.webhookConfig && ext.status === 'active')
-		return { label: 'Listening', variant: 'secondary' }
+	if (ext.lastDeliveryAt) return { label: 'Live', variant: 'live' }
+	if (ext.webhookConfig && ext.status === 'active') return { label: 'Listening', variant: 'live' }
 	return { label: 'Not configured', variant: 'outline' }
 }
 
@@ -97,7 +96,7 @@ export function CustomExtensionsSection() {
 							<div className="min-w-0">
 								<span className="block truncate text-[13px] font-semibold">Add an extension</span>
 								<span className="block truncate text-xs text-muted-foreground">
-									Wire a webhook so a vendor can start your agents.
+									Paste an MCP URL, wire a webhook, or both.
 								</span>
 							</div>
 							<Plus size={14} className="shrink-0 text-muted-foreground" aria-hidden />

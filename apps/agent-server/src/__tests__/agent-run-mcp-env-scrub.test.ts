@@ -8,14 +8,12 @@ const script = readFileSync(
 	new URL('../../../../docker/agent-base/agent-run.sh', import.meta.url),
 	'utf8',
 )
-const fn = script.match(/^setup_mcps\(\) \{\n[\s\S]*?^\}$/m)?.[0] ?? ''
-// setup_mcps drops guarded servers whose wrapper is not usable before the scrub runs.
-const guard = [
-	script.match(/^MCP_GUARD_NAME=.*$/m)?.[0] ?? '',
-	...['mcp_guard_runs', 'drop_unavailable_guarded_servers'].map(
-		(name) => script.match(new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm'))?.[0] ?? '',
-	),
-].join('\n')
+const extractFn = (name: string) =>
+	script.match(new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm'))?.[0] ?? ''
+// setup_mcps calls the guard helpers, so the extracted script carries them too.
+const fn = ['mcp_guard_runs', 'drop_unavailable_guarded_servers', 'setup_mcps']
+	.map(extractFn)
+	.join('\n')
 const filter = new URL('../../../../docker/agent-base/mcp-scrub-env.jq', import.meta.url).pathname
 
 // Stand-in values; only the variable names matter to the filter.
@@ -39,7 +37,7 @@ afterEach(() => {
 
 /** Runs the container's real setup_mcps and returns the config file it wrote. */
 function runSetupMcps(servers: Record<string, Server>, env: Record<string, string> = {}) {
-	const body = `set -eo pipefail\n${guard}\n${fn}\nsetup_mcps\ncat "$TMPDIR/mcp-config.json"`
+	const body = `set -eo pipefail\n${fn}\nsetup_mcps\ncat "$TMPDIR/mcp-config.json"`
 	const res = spawnSync('bash', ['-c', body], {
 		env: {
 			PATH: process.env.PATH ?? '',
@@ -205,19 +203,15 @@ describe('agent-run.sh setup_mcps tool-server environment scrub', () => {
 	})
 
 	it('does not abort the script when the filter file is missing', () => {
-		const res = spawnSync(
-			'bash',
-			['-c', `set -eo pipefail\n${guard}\n${fn}\nsetup_mcps\necho survived`],
-			{
-				env: {
-					PATH: process.env.PATH ?? '',
-					TMPDIR: dir,
-					MCP_SCRUB_ENV_FILTER: join(dir, 'missing.jq'),
-					AGENT_MCP_JSON: JSON.stringify({ mcpServers: { a: { command: 'x' } } }),
-				},
-				encoding: 'utf8',
+		const res = spawnSync('bash', ['-c', `set -eo pipefail\n${fn}\nsetup_mcps\necho survived`], {
+			env: {
+				PATH: process.env.PATH ?? '',
+				TMPDIR: dir,
+				MCP_SCRUB_ENV_FILTER: join(dir, 'missing.jq'),
+				AGENT_MCP_JSON: JSON.stringify({ mcpServers: { a: { command: 'x' } } }),
 			},
-		)
+			encoding: 'utf8',
+		})
 		expect(res.stdout).toContain('survived')
 		expect(res.stderr).toContain('missing')
 	})

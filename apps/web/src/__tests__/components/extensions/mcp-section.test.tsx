@@ -198,6 +198,10 @@ describe('McpSection', () => {
 	it('summarises a wired MCP with a masked key and its tools', () => {
 		render(<McpSection ext={wiredExtension()} workspaceId="ws-1" recipes={[]} />)
 		expect(screen.getByText('On · 2 tools')).toBeInTheDocument()
+		expect(screen.getByText('On · 2 tools')).toHaveClass(
+			'bg-status-live-bg',
+			'text-status-live-text',
+		)
 		expect(screen.getByLabelText('API key (hidden)')).toBeInTheDocument()
 		expect(screen.getByText('https://api.fireflies.ai/mcp')).toBeInTheDocument()
 		expect(screen.getByText('bookmark_meeting')).toBeInTheDocument()
@@ -212,6 +216,7 @@ describe('McpSection', () => {
 			/>,
 		)
 		expect(screen.getByRole('alert')).toHaveTextContent('tool cap exceeded: 21/20')
+		expect(screen.getByText('Not attached')).not.toHaveClass('bg-status-live-bg')
 		fireEvent.click(screen.getByRole('button', { name: 'Fix it in the MCP step' }))
 		expect(screen.getByText('Edit Fireflies MCP')).toBeInTheDocument()
 	})
@@ -235,6 +240,7 @@ describe('MCP in the progress card and list row', () => {
 
 	it('reads On, N tools on the list row for an MCP-only extension', () => {
 		expect(extensionRowStatus(wiredExtension()).label).toBe('On, 2 tools')
+		expect(extensionRowStatus(wiredExtension()).variant).toBe('live')
 		expect(extensionRowStatus(wiredExtension({ hasMcpKey: false })).label).toBe('Not configured')
 	})
 })

@@ -134,7 +134,7 @@ export function McpDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none">
+			<DialogContent className="max-h-[100dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:h-[100dvh] max-sm:content-start max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none">
 				<DialogHeader>
 					<DialogTitle>{editing ? `Edit ${ext.name} MCP` : 'Add an MCP'}</DialogTitle>
 					<DialogDescription>

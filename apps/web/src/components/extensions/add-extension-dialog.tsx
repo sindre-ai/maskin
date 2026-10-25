@@ -73,7 +73,9 @@ export function AddExtensionDialog({
 				<form onSubmit={handleSubmit} className="grid gap-4">
 					<DialogHeader>
 						<DialogTitle>Add an extension</DialogTitle>
-						<DialogDescription>Name it, then wire its webhook on the next page.</DialogDescription>
+						<DialogDescription>
+							Name it, then add its MCP, its webhook, or both on the next page.
+						</DialogDescription>
 					</DialogHeader>
 					<div className="grid gap-1.5">
 						<Label htmlFor="extension-name">Name</Label>
