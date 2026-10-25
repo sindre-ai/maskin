@@ -1,9 +1,14 @@
+import type { WakeRuleName, WakeRuleSkipReason, WakeRuleWakeReason } from '@maskin/shared'
 import { logger } from '../logger'
 import { capturePosthogEvent } from './posthog'
 
 export type GroupChatRoutingTrigger = 'new_message' | 'edit' | 'retry' | 'redo'
 
-/** Why one candidate was woken or skipped (legacy path). `direct_1to1` is never emitted. */
+/**
+ * Why one candidate was woken or skipped. The first group is the legacy path (flag off);
+ * `direct_1to1` is never emitted. The rest come from the wake rule (flag on), and
+ * `skip_resolver_error` is its fail-closed path.
+ */
 export type GroupChatWakeReason =
 	| 'tagged'
 	| 'forced_retry'
@@ -14,6 +19,12 @@ export type GroupChatWakeReason =
 	| 'model_no'
 	| 'model_no_decision'
 	| 'dropped_agent_cap'
+	| WakeRuleWakeReason
+	| WakeRuleSkipReason
+	| 'skip_resolver_error'
+
+/** `legacy` with the flag off, else the rule that decided. `resolver_error` is the fail-closed path. */
+export type GroupChatRoutingRule = 'legacy' | WakeRuleName | 'resolver_error'
 
 /** How a wake reached the agent. `start_failed` means nothing was delivered. */
 export type GroupChatDelivery =
@@ -36,6 +47,8 @@ export interface GroupChatMessageRoutedProps {
 	conversationId: string
 	messageId: number
 	trigger: GroupChatRoutingTrigger
+	flagOn: boolean
+	rule: GroupChatRoutingRule
 	authorActorId: string
 	authorType: 'human' | 'agent'
 	participantCount: number
@@ -64,8 +77,8 @@ export async function trackGroupChatMessageRouted(p: GroupChatMessageRoutedProps
 			conversation_id: p.conversationId,
 			message_id: p.messageId,
 			trigger: p.trigger,
-			flag_on: false,
-			rule: 'legacy',
+			flag_on: p.flagOn,
+			rule: p.rule,
 			author_actor_id: p.authorActorId,
 			author_type: p.authorType,
 			participant_count: p.participantCount,

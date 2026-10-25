@@ -103,6 +103,21 @@ export const FLAGS = {
 	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
+	/**
+	 * Who a group-chat message wakes (bet
+	 * [In a group chat, every agent answers a message that was meant for one](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/cceaa50c-40b7-4695-aaab-77de4420d728)).
+	 * Off keeps today's model-based relevance check. On replaces it, in chats with 3 or more
+	 * active participants, with the plain rule in `decideWakes`
+	 * (`packages/shared/src/conversation-wake-rule.ts`): no model call, and any failure wakes
+	 * nobody. Workspace-scoped and read once per `evaluateAndRespond` with
+	 * `isFlagEnabledForWorkspace(workspaceId, ...)` and NO actorId, so there is no actor fallback
+	 * and one chat never runs two rules. Set per workspace only
+	 * (`<workspaceId>:group-chat-wake-rule` in `FF_WORKSPACE_FEATURES`, then restart), NEVER in
+	 * `FF_TESTER_FEATURES`: the composer cue that reads the same answer in the browser must not
+	 * be able to disagree with the responder. 1-1 chats and object comments never read it.
+	 * Retire by deleting the legacy branch, `checkRelevance`, `RESPOND_DECISION_TOOL` and this id.
+	 */
+	GROUP_CHAT_WAKE_RULE: 'group-chat-wake-rule',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -17,6 +17,8 @@ const base: GroupChatMessageRoutedProps = {
 	conversationId: 'conv-1',
 	messageId: 42,
 	trigger: 'new_message',
+	flagOn: false,
+	rule: 'legacy',
 	authorActorId: 'human-1',
 	authorType: 'human',
 	participantCount: 4,
@@ -64,6 +66,28 @@ describe('trackGroupChatMessageRouted', () => {
 			],
 			defaulted_open_count: 1,
 			cap_hit: false,
+		})
+	})
+
+	it('carries the flag state and the rule that decided when the wake rule is on', async () => {
+		await trackGroupChatMessageRouted({
+			...base,
+			flagOn: true,
+			rule: 'tagged',
+			outcomes: [
+				{ agentId: 'a', decision: 'wake', reason: 'rule_tagged', delivery: 'started_new_session' },
+				{ agentId: 'b', decision: 'skip', reason: 'skip_not_addressed', delivery: 'none' },
+			],
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2]
+		expect(props).toMatchObject({
+			flag_on: true,
+			rule: 'tagged',
+			woken_agent_ids: ['a'],
+			skipped_agent_ids: ['b'],
+			agent_outcomes: ['a|wake|rule_tagged|started_new_session', 'b|skip|skip_not_addressed|none'],
+			defaulted_open_count: 0,
 		})
 	})
 
