@@ -17,9 +17,12 @@ import { SourceView, type ViewMode, ViewToggle } from './file-body'
 import { TextCommentCompose } from './text-comment-compose'
 
 // Dynamic-imported so Tiptap never bundles into a read-only route (same split
-// as MarkdownContent; the Vite chunk-name CI assertion enforces it).
+// as MarkdownContent; the Vite chunk-name CI assertion enforces it). The document
+// wrapper adds the slash menu, which the helper line under the file promises.
 const MarkdownEditor = lazy(() =>
-	import('@maskin/markdown/react/editor').then((m) => ({ default: m.MarkdownEditor })),
+	import('@/components/shared/document-markdown-editor').then((m) => ({
+		default: m.DocumentMarkdownEditor,
+	})),
 )
 
 export const FILE_EDITOR_HELPER_LINE =
