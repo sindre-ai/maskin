@@ -173,17 +173,48 @@ export function parseCliResetBanner(stdoutTail: string, nowMs: number = Date.now
 	return parsed === null ? null : new Date(parsed)
 }
 
+/**
+ * The reset time from the CLI's own `rate_limit_event` line, which carries it as
+ * an epoch ("resetsAt") whatever time zone the human-readable banner names. Only
+ * a rejected event counts, and the last one wins. Null when there is none, or
+ * when it falls outside the clamp.
+ */
+export function parseRateLimitEventReset(
+	stdoutTail: string,
+	nowMs: number = Date.now(),
+): Date | null {
+	let resetsAtSeconds: number | null = null
+	for (const line of stdoutTail.split('\n')) {
+		if (!line.includes('rate_limit_event')) continue
+		try {
+			const info = (
+				JSON.parse(line) as { rate_limit_info?: { status?: unknown; resetsAt?: unknown } }
+			).rate_limit_info
+			if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+				resetsAtSeconds = info.resetsAt
+			}
+		} catch {
+			// A line cut off at the start of the tail is not JSON; skip it.
+		}
+	}
+	if (resetsAtSeconds === null) return null
+	const clamped = clamp(resetsAtSeconds * 1000, nowMs)
+	return clamped === null ? null : new Date(clamped)
+}
+
 function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// Two shapes: the "resets <time>" fragment inside the "You've hit your limit"
 	// banner, or a bare "Resets <time>" line. Match either.
-	const bannerMatch = /Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Z]{2,5})\))?(?:$|[.\n])/i.exec(
-		tail,
-	)
+	// The zone is a short code ("UTC") or an IANA name ("Europe/Copenhagen").
+	const bannerMatch =
+		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[.\n])/i.exec(
+			tail,
+		)
 	if (!bannerMatch) return null
 	const rawCapture = bannerMatch[1]
 	if (!rawCapture) return null
 	const raw = rawCapture.trim()
-	const tz = (bannerMatch[2] ?? 'UTC').toUpperCase()
+	const tz = bannerMatch[2] ?? 'UTC'
 
 	const resolved = resolveBannerFragment(raw, tz, nowMs)
 	if (resolved === null) return null
@@ -196,12 +227,54 @@ function parseCliBannerTail(tail: string, nowMs: number): number | null {
  * short forms — so anchor against the current UTC date/week.
  */
 function resolveBannerFragment(fragment: string, tz: string, nowMs: number): number | null {
-	// Only handle UTC anchoring here. A future spec-widening pass can teach the
-	// helper US timezones; for now every non-UTC banner is punted to null so we
-	// don't confidently mis-schedule a retry.
-	if (tz !== 'UTC' && tz !== 'GMT') return null
+	// The anchors below work on UTC fields, so shift `now` into the banner's zone,
+	// anchor there, then shift the result back. The offset is read again at the
+	// result so a reset that lands across a clock change stays right.
+	const nowOffset = tzOffsetMs(tz, nowMs)
+	if (nowOffset === null) return null
+	const wall = anchorFragment(fragment, nowMs + nowOffset)
+	if (wall === null) return null
+	const resultOffset = tzOffsetMs(tz, wall - nowOffset)
+	if (resultOffset === null) return null
+	return wall - resultOffset
+}
 
-	// Try HH:MM(am|pm)? absolute time on today (UTC).
+/**
+ * Milliseconds the zone is ahead of UTC at `atMs`, or null when the name is not
+ * a zone Intl knows (a bare "PST" is not one, and is left unscheduled rather
+ * than guessed).
+ */
+function tzOffsetMs(tz: string, atMs: number): number | null {
+	if (/^(UTC|GMT)$/i.test(tz)) return 0
+	try {
+		const parts = new Intl.DateTimeFormat('en-US', {
+			timeZone: tz,
+			hourCycle: 'h23',
+			year: 'numeric',
+			month: 'numeric',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: 'numeric',
+			second: 'numeric',
+		}).formatToParts(new Date(atMs))
+		const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+		const asUtc = Date.UTC(
+			get('year'),
+			get('month') - 1,
+			get('day'),
+			get('hour'),
+			get('minute'),
+			get('second'),
+		)
+		const offset = asUtc - Math.floor(atMs / 1000) * 1000
+		return Number.isFinite(offset) ? offset : null
+	} catch {
+		return null
+	}
+}
+
+function anchorFragment(fragment: string, nowMs: number): number | null {
+	// Try HH:MM(am|pm)? absolute time today.
 	const timeMatch = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(fragment)
 	if (timeMatch) {
 		return anchorTimeOfDay(timeMatch, nowMs)

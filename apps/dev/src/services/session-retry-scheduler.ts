@@ -44,6 +44,8 @@ type RetryableSession = {
 	attemptNumber: number
 	retryAt: Date | null
 	result: SessionResult | null
+	spawnedBySessionId: string | null
+	spawnedByMessageId: number | null
 }
 
 export class SessionRetryScheduler {
@@ -93,6 +95,8 @@ export class SessionRetryScheduler {
 					attemptNumber: sessions.attemptNumber,
 					retryAt: sessions.retryAt,
 					result: sessions.result,
+					spawnedBySessionId: sessions.spawnedBySessionId,
+					spawnedByMessageId: sessions.spawnedByMessageId,
 				})
 				.from(sessions)
 				.where(and(lte(sessions.retryAt, now), isNull(sessions.retriedSessionId)))
@@ -164,6 +168,10 @@ export class SessionRetryScheduler {
 				initiatedFromObjectId: row.initiatedFromObjectId,
 				retryOf: row.id,
 				attemptNumber: row.attemptNumber + 1,
+				// Whoever handed this work over still wants its result, so the rerun
+				// reports back to them like the first attempt would have.
+				spawnedBySessionId: row.spawnedBySessionId ?? undefined,
+				spawnedByMessageId: row.spawnedByMessageId ?? undefined,
 			})
 			newSessionId = handle.sessionId
 		} catch (err) {
