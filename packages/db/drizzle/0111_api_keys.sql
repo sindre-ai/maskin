@@ -13,7 +13,7 @@
 -- actors is not on the hot-tables list (docs: MIGRATIONS.md) and holds a few thousand rows, so the
 -- backfill is one statement rather than the chunked recipe. Non-ank_ values (the landing guest
 -- placeholder, deleted_ tombstones) never authenticate and are skipped.
--- Down: drizzle/down/0108_api_keys_down.sql.
+-- Down: drizzle/down/0111_api_keys_down.sql.
 
 CREATE TABLE IF NOT EXISTS "api_keys" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

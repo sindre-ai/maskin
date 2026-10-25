@@ -30,7 +30,7 @@ const MIGRATION = join(
 	'packages',
 	'db',
 	'drizzle',
-	'0108_api_keys.sql',
+	'0111_api_keys.sql',
 )
 
 const PASSWORD = 'correct horse battery'
@@ -43,7 +43,7 @@ async function liveKeys(actorId: string, kind: ApiKeyKind) {
 }
 
 describe('API keys stored hashed (real Postgres)', () => {
-	describe('migration 0108 backfill', () => {
+	describe('migration 0111 backfill', () => {
 		const backfill = splitStatements(readFileSync(MIGRATION, 'utf-8')).find((s) =>
 			s.startsWith('INSERT INTO "api_keys"'),
 		)
