@@ -51,6 +51,13 @@ export const ALIASES: readonly AliasRow[] = [
 	{ tool: 'create_session', oldPath: 'target_actor_id', newPath: 'actor_id', kind: 'rename' },
 	{ tool: 'list_sessions', oldPath: 'target_actor_id', newPath: 'actor_id', kind: 'rename' },
 
+	// The key names agents send most often to the four read tools behind most
+	// schema-validation misfires. Each tool keeps its canonical name.
+	{ tool: 'get_comments', oldPath: 'object_id', newPath: 'entity_id', kind: 'rename' },
+	{ tool: 'search_objects', oldPath: 'query', newPath: 'q', kind: 'rename' },
+	{ tool: 'get_session', oldPath: 'session_id', newPath: 'id', kind: 'rename' },
+	{ tool: 'get_actor', oldPath: 'actor_id', newPath: 'id', kind: 'rename' },
+
 	// id sent to a tool that wants a list of ids.
 	{ tool: 'get_objects', oldPath: 'id', newPath: 'ids', kind: 'wrap' },
 

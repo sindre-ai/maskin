@@ -56,8 +56,11 @@ export async function startAliasHarness(
 			}
 			recorded.push({
 				method: req.method ?? '',
-				// snapshot_at is the wall clock, so two otherwise identical calls differ.
-				path: (req.url ?? '').replace(/snapshot_at=[^&]*/, 'snapshot_at=<now>'),
+				// snapshot_at and before are the wall clock, so two otherwise identical
+				// calls differ.
+				path: (req.url ?? '')
+					.replace(/snapshot_at=[^&]*/, 'snapshot_at=<now>')
+					.replace(/([?&])before=[^&]*/, '$1before=<now>'),
 				body,
 				workspace: req.headers['x-workspace-id'] as string | undefined,
 			})
@@ -230,6 +233,34 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		tool: 'get_objects',
 		old: { workspace_id: WS, id: U3 },
 		canonical: { workspace_id: WS, ids: [U3] },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['get_comments object_id'],
+		tool: 'get_comments',
+		old: { workspace_id: WS, object_id: U1 },
+		canonical: { workspace_id: WS, entity_id: U1 },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['search_objects query'],
+		tool: 'search_objects',
+		old: { workspace_id: WS, query: 'roadmap' },
+		canonical: { workspace_id: WS, q: 'roadmap' },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['get_session session_id'],
+		tool: 'get_session',
+		old: { workspace_id: WS, session_id: U1 },
+		canonical: { workspace_id: WS, id: U1 },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['get_actor actor_id'],
+		tool: 'get_actor',
+		old: { workspace_id: WS, actor_id: U1 },
+		canonical: { workspace_id: WS, id: U1 },
 		control: { workspace_id: WS },
 	},
 	{
