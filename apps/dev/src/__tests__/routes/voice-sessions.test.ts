@@ -281,6 +281,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		const factory = vi.fn(async (_args: { apiKey: string }) => ({
 			tools: VOICE_TOOLS,
 			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
 			unreachableServers: [],
 			close: async () => {},
 		}))
