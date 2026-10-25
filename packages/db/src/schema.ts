@@ -28,7 +28,7 @@ export const actors = pgTable('actors', {
 	type: text('type').notNull(),
 	name: text('name').notNull(),
 	email: text('email').unique(),
-	// Legacy plaintext column. Nullable and no longer written (migration 0111); keys live
+	// Legacy plaintext column. Nullable and no longer written (migration 0112); keys live
 	// hashed in api_keys. Emptied and dropped by the contract step.
 	apiKey: text('api_key').unique(),
 	passwordHash: text('password_hash'),

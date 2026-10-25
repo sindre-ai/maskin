@@ -13,7 +13,8 @@
 -- actors is not on the hot-tables list (docs: MIGRATIONS.md) and holds a few thousand rows, so the
 -- backfill is one statement rather than the chunked recipe. Non-ank_ values (the landing guest
 -- placeholder, deleted_ tombstones) never authenticate and are skipped.
--- Down: drizzle/down/0111_api_keys_down.sql.
+-- Row-level security is switched on for api_keys here because 0111_enable_rls_public_tables ran before this table existed.
+-- Down: drizzle/down/0112_api_keys_down.sql.
 
 CREATE TABLE IF NOT EXISTS "api_keys" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS "api_keys" (
 	CONSTRAINT "api_keys_key_hash_unique" UNIQUE ("key_hash"),
 	CONSTRAINT "api_keys_kind_enum" CHECK ("kind" IN ('primary', 'login', 'login_ios', 'session'))
 );
+--> statement-breakpoint
+ALTER TABLE "api_keys" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "api_keys_actor_kind_idx" ON "api_keys" ("actor_id", "kind");
 --> statement-breakpoint

@@ -1,8 +1,8 @@
--- Rollback for 0111. Drops the hashed keys and restores NOT NULL on actors.api_key.
+-- Rollback for 0112. Drops the hashed keys and restores NOT NULL on actors.api_key.
 --
--- Actors created after 0111 have no plaintext key (it was no longer written), so they get an
+-- Actors created after 0112 have no plaintext key (it was no longer written), so they get an
 -- unusable placeholder here: they exist but cannot authenticate until a key is regenerated.
--- Keys minted after 0111 for existing actors (logins, sessions) are lost with the table.
+-- Keys minted after 0112 for existing actors (logins, sessions) are lost with the table.
 --
 -- Lives under drizzle/down/ so the forward runner never sees it.
 
