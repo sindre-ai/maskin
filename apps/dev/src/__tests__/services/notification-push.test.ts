@@ -51,7 +51,7 @@ describe('NotificationPushFanout with push-human-decisions-only', () => {
 	it('keeps a plain @mention in the app', async () => {
 		flagOn.value = true
 		const { fanout, sender } = setup([], true, [
-			[notif({ type: 'needs_input', metadata: { source: 'comment_mention' } })],
+			[notif({ type: 'needs_input', metadata: { source: 'comment_mention', from_agent: true } })],
 			[], // preferences
 			[], // decision lookup: no decision block
 		])
@@ -61,7 +61,7 @@ describe('NotificationPushFanout with push-human-decisions-only', () => {
 
 	it('still pushes the same @mention when the flag is off', async () => {
 		const { fanout, sender } = setup([], true, [
-			[notif({ type: 'needs_input', metadata: { source: 'comment_mention' } })],
+			[notif({ type: 'needs_input', metadata: { source: 'comment_mention', from_agent: true } })],
 			[], // preferences
 			[], // decision lookup
 			[{ value: 1 }],

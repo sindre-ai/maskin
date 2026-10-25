@@ -12,7 +12,8 @@
  *   push_delay_seconds  hold the push this long; the fan-out re-checks read state afterwards.
  *   push_force          true lets a digest/tips notification push individually.
  *   priority 'critical' / blocking true   a For You card that bypasses the rollup.
- *   source              'comment_mention' on the row an @mention of a person creates.
+ *   source, from_agent  'comment_mention' and whether an agent wrote it, on the row an @mention
+ *                       of a person creates.
  *   due_at              ISO time a needs_you item expires; the push text leads with it.
  *
  * The last two only matter for a person with the PUSH_HUMAN_DECISIONS_ONLY flag (`gate`).
@@ -233,13 +234,14 @@ export function evaluatePush({
 
 	if (prefs.categories[category] === false) return skip('category-disabled')
 
-	// A plain @mention is context, not a decision: it stays in the app. A mention that carries
-	// a decision block, and every card or chat question, still pushes.
+	// An agent's plain @mention is context, not a decision: it stays in the app. A mention a
+	// person wrote, one that carries a decision block, and every card or chat question still push.
 	if (
 		gate &&
 		category === 'needs_you' &&
 		meta.push_category === undefined &&
 		meta.source === 'comment_mention' &&
+		meta.from_agent === true &&
 		!hasDecision
 	) {
 		return skip('mention-without-decision')

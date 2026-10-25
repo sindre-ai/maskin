@@ -341,7 +341,7 @@ describe('evaluatePush with the human-decisions gate', () => {
 		note({
 			type: 'needs_input',
 			objectId: 'obj-1',
-			metadata: { source: 'comment_mention' },
+			metadata: { source: 'comment_mention', from_agent: true },
 			...over,
 		})
 	const gated = (n: PolicyNotification, extra: { hasDecision?: boolean; gate?: boolean } = {}) =>
@@ -355,7 +355,12 @@ describe('evaluatePush with the human-decisions gate', () => {
 			...extra,
 		})
 
-	it('skips a plain @mention', () => {
+	it('still pushes an @mention a person wrote', () => {
+		const fromPerson = mention({ metadata: { source: 'comment_mention', from_agent: false } })
+		expect(gated(fromPerson).action).toBe('send')
+	})
+
+	it("skips an agent's plain @mention", () => {
 		expect(gated(mention())).toMatchObject({ action: 'skip', reason: 'mention-without-decision' })
 	})
 

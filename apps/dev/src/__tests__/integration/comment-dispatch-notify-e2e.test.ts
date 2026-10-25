@@ -168,8 +168,45 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 				expect(rows[0]).toMatchObject({
 					type: 'needs_input',
 					targetActorId: human,
-					metadata: { source: 'comment_mention' },
+					metadata: { source: 'comment_mention', from_agent: true },
 				})
+			},
+			{ timeout: 10_000, interval: 50 },
+		)
+	})
+
+	it('records that a person wrote the mention, so it can still push', async () => {
+		const human = getTestActorId()
+		const colleague = await insertActor(db, {
+			type: 'human',
+			name: 'Colleague',
+			email: 'mention-colleague@integration.test',
+			apiKey: 'ank_mention_colleague',
+		})
+		const ws = await insertWorkspace(db, human)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: colleague.id, role: 'member' })
+			.onConflictDoNothing()
+		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'Ask a person' })
+
+		await db.insert(events).values({
+			workspaceId: ws.id,
+			actorId: colleague.id,
+			action: 'commented',
+			entityType: 'object',
+			entityId: object.id,
+			data: { content: 'Can you look at this today?', mentions: [human] },
+		})
+
+		await vi.waitFor(
+			async () => {
+				const rows = await db
+					.select()
+					.from(notifications)
+					.where(eq(notifications.objectId, object.id))
+				expect(rows).toHaveLength(1)
+				expect(rows[0].metadata).toEqual({ source: 'comment_mention', from_agent: false })
 			},
 			{ timeout: 10_000, interval: 50 },
 		)
