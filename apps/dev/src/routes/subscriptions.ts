@@ -15,6 +15,7 @@ import {
 } from '@maskin/shared'
 import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { findFinishedDraftCards } from '../lib/for-you-visibility'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -676,7 +677,17 @@ app.openapi(listUnreadRoute, (async (c) => {
 	for (const [eventId, event] of mentionsByEventId) mentions.set(eventId, toLatestMention(event))
 	await fillDraftBodies(db, workspaceId, [...mentions.values()], objectsById)
 
-	const items = rows.map((r) => {
+	// A decision whose every draft has been sent or skipped has nothing left to approve, so it
+	// leaves the feed. Older app builds read this list, not GET /api/for-you.
+	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
+		...mentionsByEventId.values(),
+	])
+
+	const liveRows = rows.filter(
+		(r) => r.latestEventId == null || !finishedDraftCards.has(Number(r.latestEventId)),
+	)
+
+	const items = liveRows.map((r) => {
 		const obj = r.entityType === 'object' ? objectsById.get(r.entityId) : undefined
 		const mentionEvent =
 			r.latestEventId == null ? undefined : mentionsByEventId.get(Number(r.latestEventId))

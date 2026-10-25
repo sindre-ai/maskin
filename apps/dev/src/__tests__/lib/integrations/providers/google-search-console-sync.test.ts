@@ -46,12 +46,12 @@ describe('date window', () => {
 		expect(nextRange(null, NOW)).toEqual({ startDate: '2025-06-11', endDate: '2026-10-10' })
 	})
 
-	it('starts the day after the last synced date', () => {
-		expect(nextRange('2026-10-08', NOW)).toEqual({ startDate: '2026-10-09', endDate: '2026-10-10' })
+	it('re-fetches the trailing 14 days so a day that was not final yet is filled in', () => {
+		expect(nextRange('2026-10-08', NOW)).toEqual({ startDate: '2026-09-25', endDate: '2026-10-10' })
 	})
 
-	it('returns null when the property is already current', () => {
-		expect(nextRange('2026-10-10', NOW)).toBeNull()
+	it('still re-fetches the trailing days when the property is already current', () => {
+		expect(nextRange('2026-10-10', NOW)).toEqual({ startDate: '2026-09-27', endDate: '2026-10-10' })
 	})
 
 	it('never reaches back past the 16-month window', () => {

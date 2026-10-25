@@ -37,4 +37,27 @@ describe('buildReturnMessage', () => {
 	it('adds nothing about questions when none were asked', () => {
 		expect(buildReturnMessage({ ...base, exchange: [] })).not.toContain('asked the person')
 	})
+
+	describe('a helper that hit its usage limit', () => {
+		const limited = {
+			...base,
+			kind: 'failed' as const,
+			finalMessage: null,
+			reason: 'Claude session limit reached',
+		}
+
+		it('says it starts again by itself, so the sender does not hand the work over again', () => {
+			const text = buildReturnMessage({ ...limited, retryAt: new Date('2026-10-22T12:00:00Z') })
+			expect(text).toContain('has not done the work yet')
+			expect(text).toContain('starts again by itself at 2026-10-22 12:00 UTC')
+			expect(text).toContain('Do not hand the work to it again')
+			expect(text).not.toContain('tends to fail the same way')
+		})
+
+		it('keeps the plain error wording when no rerun is scheduled', () => {
+			const text = buildReturnMessage({ ...limited, retryAt: null })
+			expect(text).toContain('stopped with an error')
+			expect(text).toContain('tends to fail the same way')
+		})
+	})
 })
