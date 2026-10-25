@@ -3,7 +3,6 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
@@ -15,7 +14,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { type ComposerCue, GROUP_CHAT_WAKE_RULE_FLAG, deriveComposerCue } from '@/lib/composer-cue'
+import { type ComposerCue, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
 import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -388,13 +387,11 @@ function NewChatRoute() {
 			: 'Message… / reference or create · @ mention'
 
 	// Group-chat cue: this screen has its own composer wiring (it does not use ThreadComposer),
-	// so it reads the same flag and calls the same shared function. A new chat has no messages,
+	// so it calls the same shared function. A new chat has no messages,
 	// so nobody has spoken yet and the next message is the first one. Participants are you, the
 	// To-row chips and anyone tagged in the box, which is who the server adds when it creates
-	// the chat. Flag off, or fewer than 3 participants: today's placeholder and no hint.
-	const wakeRuleOn = useFeatureFlag(GROUP_CHAT_WAKE_RULE_FLAG)
+	// the chat. Fewer than 3 participants: today's placeholder and no hint.
 	const cue = useMemo<ComposerCue | null>(() => {
-		if (!wakeRuleOn) return null
 		const asParticipant = (r: Recipient) => ({
 			actorId: r.id,
 			actorName: r.name,
@@ -422,7 +419,7 @@ function NewChatRoute() {
 			hasMoreMessages: false,
 			isNewChat: true,
 		})
-	}, [wakeRuleOn, currentActor, recipients, selection.agents, selection.agentNames, candidates])
+	}, [currentActor, recipients, selection.agents, selection.agentNames, candidates])
 	const composerPlaceholder = cue?.placeholder ?? todaysPlaceholder
 
 	return (

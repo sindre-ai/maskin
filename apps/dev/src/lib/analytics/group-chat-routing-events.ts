@@ -5,26 +5,17 @@ import { capturePosthogEvent } from './posthog'
 export type GroupChatRoutingTrigger = 'new_message' | 'edit' | 'retry' | 'redo'
 
 /**
- * Why one candidate was woken or skipped. The first group is the legacy path (flag off);
- * `direct_1to1` is never emitted. The rest come from the wake rule (flag on), and
- * `skip_resolver_error` is its fail-closed path.
+ * Why one candidate was woken or skipped, from the wake rule. `skip_resolver_error` is its
+ * fail-closed path.
  */
 export type GroupChatWakeReason =
-	| 'tagged'
-	| 'forced_retry'
-	| 'direct_1to1'
-	| 'model_yes'
-	| 'default_yes_no_credentials'
-	| 'default_yes_check_error'
-	| 'model_no'
-	| 'model_no_decision'
 	| 'dropped_agent_cap'
 	| WakeRuleWakeReason
 	| WakeRuleSkipReason
 	| 'skip_resolver_error'
 
-/** `legacy` with the flag off, else the rule that decided. `resolver_error` is the fail-closed path. */
-export type GroupChatRoutingRule = 'legacy' | WakeRuleName | 'resolver_error'
+/** The rule that decided. `resolver_error` is the fail-closed path. */
+export type GroupChatRoutingRule = WakeRuleName | 'resolver_error'
 
 /** How a wake reached the agent. `start_failed` means nothing was delivered. */
 export type GroupChatDelivery =
@@ -91,7 +82,6 @@ export async function trackGroupChatMessageRouted(p: GroupChatMessageRoutedProps
 			woken_agent_ids: woken.map((o) => o.agentId),
 			skipped_agent_ids: skipped.map((o) => o.agentId),
 			agent_outcomes: p.outcomes.map((o) => `${o.agentId}|${o.decision}|${o.reason}|${o.delivery}`),
-			defaulted_open_count: woken.filter((o) => o.reason.startsWith('default_yes')).length,
 			cap_hit: p.capHit,
 		})
 	} catch (err) {

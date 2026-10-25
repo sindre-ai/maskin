@@ -1,29 +1,18 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { messages, workspaceMembers } from '@maskin/db/schema'
-import { afterEach, vi } from 'vitest'
+import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-const { track, chat, createAdapter } = vi.hoisted(() => ({
-	track: vi.fn(),
-	chat: vi.fn(),
-	createAdapter: vi.fn(),
-}))
+const { track } = vi.hoisted(() => ({ track: vi.fn() }))
 
 vi.mock('../../lib/analytics/group-chat-routing-events', () => ({
 	trackGroupChatMessageRouted: track,
 }))
-vi.mock('../../lib/llm/index', () => ({
-	createLLMAdapter: (...args: unknown[]) => {
-		createAdapter(...args)
-		return { chat }
-	},
-}))
 
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { logger } from '../../lib/logger'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -56,30 +45,14 @@ function makeSessionManager() {
 const lastRouted = () => track.mock.calls[track.mock.calls.length - 1]?.[0] as Routed
 const flush = () => new Promise((resolve) => setTimeout(resolve, 150))
 
-describe('group chat wake rule (flag group-chat-wake-rule)', () => {
+describe('group chat wake rule', () => {
 	let ownerId: string
 	let workspaceId: string
-
-	function setFlag(on: boolean) {
-		process.env.FF_WORKSPACE_FEATURES = on ? `${workspaceId}:group-chat-wake-rule` : ''
-		// The tester list must never carry this flag: it would not switch the rule on.
-		process.env.FF_TESTER_ACTOR_IDS = ownerId
-		process.env.FF_TESTER_FEATURES = on ? 'group-chat-wake-rule' : ''
-		_resetFeatureFlagConfig()
-	}
 
 	beforeEach(async () => {
 		vi.clearAllMocks()
 		ownerId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, ownerId)).id
-		setFlag(true)
-	})
-
-	afterEach(() => {
-		process.env.FF_WORKSPACE_FEATURES = ''
-		process.env.FF_TESTER_ACTOR_IDS = ''
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
 	})
 
 	async function actor(type: 'agent' | 'human', overrides: Record<string, unknown> = {}) {
@@ -168,83 +141,70 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 	) => app.request(jsonRequest(method, path, body, { 'x-workspace-id': workspaceId }))
 
 	describe('the scripted chat: H1 (owner), H2, agents A and B', () => {
-		async function scripted(agentOverrides: Record<string, unknown> = {}) {
-			const [a, b] = [await actor('agent', agentOverrides), await actor('agent', agentOverrides)]
+		async function scripted() {
+			const [a, b] = [await actor('agent'), await actor('agent')]
 			const h2 = await actor('human')
 			const chatInfo = await chatWith([a, b, h2])
 			return { a, b, h2, ...chatInfo }
 		}
 
-		// Both credential modes: no key (the Claude-sign-in shape that used to default open) and
-		// a chat-callable key. The rule must give the same answers, and never touch the model.
-		describe.each([
-			['agents with no chat-callable key', {}],
-			[
-				'agents with a chat-callable key',
-				{ llmProvider: 'anthropic', llmConfig: { api_key: 'sk-test' } },
-			],
-		])('with %s', (_mode, agentOverrides) => {
-			it('answers every row of the scripted chat and never calls the model', async () => {
-				const { a, b, h2, sessionManager, conversationId } = await scripted(agentOverrides)
-				const asH1 = (content: string, mentions?: string[]) =>
-					post(conversationId, ownerId, content, mentions ? { mentions } : null)
-				const check = async (messageId: number, woken: string[], rule: string) => {
-					const e = await respond(sessionManager, conversationId, messageId)
-					expect(wokenIds(e), `${rule}: who woke`).toEqual(woken.sort())
-					expect(e).toMatchObject({ flagOn: true, rule })
-					return e
-				}
+		it('answers every row of the scripted chat', async () => {
+			const { a, b, h2, sessionManager, conversationId } = await scripted()
+			const asH1 = (content: string, mentions?: string[]) =>
+				post(conversationId, ownerId, content, mentions ? { mentions } : null)
+			const check = async (messageId: number, woken: string[], rule: string) => {
+				const e = await respond(sessionManager, conversationId, messageId)
+				expect(wokenIds(e), `${rule}: who woke`).toEqual(woken.sort())
+				expect(e).toMatchObject({ flagOn: true, rule })
+				return e
+			}
 
-				// First message, untagged, two agents: nobody, and the reason is logged.
-				const first = await check(await asH1('anyone here?'), [], 'no_target')
-				expect(first.outcomes.map((o) => o.reason)).toEqual(['skip_no_target', 'skip_no_target'])
+			// First message, untagged, two agents: nobody, and the reason is logged.
+			const first = await check(await asH1('anyone here?'), [], 'no_target')
+			expect(first.outcomes.map((o) => o.reason)).toEqual(['skip_no_target', 'skip_no_target'])
 
-				// A speaks. H1 untagged after A: A only.
-				await post(conversationId, a.id, 'A answers')
-				await check(await asH1('and then?'), [a.id], 'last_speaker')
-				// H1 tags A, B, A and B, a person, a person and A.
-				await check(await asH1('hey A', [a.id]), [a.id], 'tagged')
-				await check(await asH1('hey B', [b.id]), [b.id], 'tagged')
-				await check(await asH1('both', [a.id, b.id]), [a.id, b.id], 'tagged')
-				await check(await asH1('hey H2', [h2.id]), [], 'human_tag_only')
-				await check(await asH1('H2 and A', [h2.id, a.id]), [a.id], 'tagged')
+			// A speaks. H1 untagged after A: A only.
+			await post(conversationId, a.id, 'A answers')
+			await check(await asH1('and then?'), [a.id], 'last_speaker')
+			// H1 tags A, B, A and B, a person, a person and A.
+			await check(await asH1('hey A', [a.id]), [a.id], 'tagged')
+			await check(await asH1('hey B', [b.id]), [b.id], 'tagged')
+			await check(await asH1('both', [a.id, b.id]), [a.id, b.id], 'tagged')
+			await check(await asH1('hey H2', [h2.id]), [], 'human_tag_only')
+			await check(await asH1('H2 and A', [h2.id, a.id]), [a.id], 'tagged')
 
-				// B speaks. H1 untagged after B: B only.
-				await post(conversationId, b.id, 'B answers')
-				await check(await asH1('thanks'), [b.id], 'last_speaker')
+			// B speaks. H1 untagged after B: B only.
+			await post(conversationId, b.id, 'B answers')
+			await check(await asH1('thanks'), [b.id], 'last_speaker')
 
-				// A second person answers right after A: A only, since A is still the latest other writer.
-				await post(conversationId, a.id, 'A again')
-				const h2Reply = await post(conversationId, h2.id, 'agreed')
-				const e = await respond(sessionManager, conversationId, h2Reply)
-				expect(wokenIds(e)).toEqual([a.id])
+			// A second person answers right after A: A only, since A is still the latest other writer.
+			await post(conversationId, a.id, 'A again')
+			const h2Reply = await post(conversationId, h2.id, 'agreed')
+			const e = await respond(sessionManager, conversationId, h2Reply)
+			expect(wokenIds(e)).toEqual([a.id])
 
-				// H2 spoke after A, so an untagged H1 message wakes nobody.
-				const afterPerson = await respond(sessionManager, conversationId, await asH1('so?'))
-				expect(wokenIds(afterPerson)).toEqual([])
-				expect(afterPerson.outcomes.map((o) => o.reason)).toEqual([
-					'skip_last_writer_person',
-					'skip_last_writer_person',
-				])
+			// H2 spoke after A, so an untagged H1 message wakes nobody.
+			const afterPerson = await respond(sessionManager, conversationId, await asH1('so?'))
+			expect(wokenIds(afterPerson)).toEqual([])
+			expect(afterPerson.outcomes.map((o) => o.reason)).toEqual([
+				'skip_last_writer_person',
+				'skip_last_writer_person',
+			])
 
-				// Agents: untagged wakes nobody, tagging wakes the tagged one.
-				const untagged = await post(conversationId, a.id, 'thinking aloud')
-				expect(wokenIds(await respond(sessionManager, conversationId, untagged))).toEqual([])
-				const tagging = await post(conversationId, a.id, 'over to you B', { mentions: [b.id] })
-				expect(wokenIds(await respond(sessionManager, conversationId, tagging))).toEqual([b.id])
+			// Agents: untagged wakes nobody, tagging wakes the tagged one.
+			const untagged = await post(conversationId, a.id, 'thinking aloud')
+			expect(wokenIds(await respond(sessionManager, conversationId, untagged))).toEqual([])
+			const tagging = await post(conversationId, a.id, 'over to you B', { mentions: [b.id] })
+			expect(wokenIds(await respond(sessionManager, conversationId, tagging))).toEqual([b.id])
 
-				// An attachment-only message that tags an agent wakes that agent.
-				const attachmentOnly = await post(conversationId, ownerId, '', {
-					mentions: [a.id],
-					attachments: [{ file_id: '11111111-1111-1111-1111-111111111111', name: 'report.pdf' }],
-				})
-				expect(wokenIds(await respond(sessionManager, conversationId, attachmentOnly))).toEqual([
-					a.id,
-				])
-
-				expect(chat).not.toHaveBeenCalled()
-				expect(createAdapter).not.toHaveBeenCalled()
+			// An attachment-only message that tags an agent wakes that agent.
+			const attachmentOnly = await post(conversationId, ownerId, '', {
+				mentions: [a.id],
+				attachments: [{ file_id: '11111111-1111-1111-1111-111111111111', name: 'report.pdf' }],
 			})
+			expect(wokenIds(await respond(sessionManager, conversationId, attachmentOnly))).toEqual([
+				a.id,
+			])
 		})
 
 		it('retry with no agent chosen wakes the same set as the original post, never the whole room', async () => {
@@ -334,7 +294,7 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 			errorLog.mockRestore()
 		})
 
-		it('records agent_cap with the flag on and wakes nobody', async () => {
+		it('records agent_cap and wakes nobody', async () => {
 			const { a, b, sessionManager, conversationId } = await scripted()
 			for (let i = 0; i < 5; i++) await post(conversationId, a.id, `agent turn ${i}`)
 			const messageId = await post(conversationId, b.id, 'tagging A', { mentions: [a.id] })
@@ -366,7 +326,6 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 				'skip_not_addressed',
 			])
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-			expect(chat).not.toHaveBeenCalled()
 		})
 
 		it('message 19275 (CPO / Sales Development Rep chat): untagged, the Sales Development Rep spoke last, only it wakes', async () => {
@@ -387,7 +346,6 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 				expect.objectContaining({ agentId: cpo.id, reason: 'skip_not_addressed' }),
 			])
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-			expect(chat).not.toHaveBeenCalled()
 		})
 	})
 
@@ -421,44 +379,8 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 		expect(wokenIds(personToPerson)).toEqual([])
 	})
 
-	describe('what the flag leaves alone', () => {
-		it('flag off: the legacy path runs and the event says legacy', async () => {
-			setFlag(false)
-			const [a, b] = [await actor('agent'), await actor('agent')]
-			const person = await actor('human')
-			const { sessionManager, conversationId } = await chatWith([a, b, person])
-			await post(conversationId, a.id, 'A spoke')
-
-			// Untagged, no chat-callable key: the old check fails open and wakes both.
-			const e = await respond(
-				sessionManager,
-				conversationId,
-				await post(conversationId, ownerId, 'who else?'),
-			)
-
-			expect(e).toMatchObject({ flagOn: false, rule: 'legacy' })
-			expect(e.outcomes.map((o) => o.reason)).toEqual([
-				'default_yes_no_credentials',
-				'default_yes_no_credentials',
-			])
-		})
-
-		it('flag off: the model is still asked in a group chat', async () => {
-			setFlag(false)
-			const keyed = { llmProvider: 'anthropic', llmConfig: { api_key: 'sk-test' } }
-			const [a, b] = [await actor('agent', keyed), await actor('agent', keyed)]
-			const person = await actor('human')
-			chat.mockResolvedValue({
-				tool_calls: [{ name: 'decide_response', arguments: { should_respond: false } }],
-			})
-			const { sessionManager, conversationId } = await chatWith([a, b, person])
-
-			await respond(sessionManager, conversationId, await post(conversationId, ownerId, 'hm'))
-
-			expect(chat).toHaveBeenCalledTimes(2)
-		})
-
-		it('flag on: a 1-1 chat still replies without the rule and emits nothing', async () => {
+	describe('what the rule leaves alone', () => {
+		it('a 1-1 chat still replies without the rule and emits nothing', async () => {
 			const agent = await actor('agent')
 			const { sessionManager, conversationId } = await chatWith([agent])
 			await post(conversationId, agent.id, 'earlier')
@@ -475,23 +397,6 @@ describe('group chat wake rule (flag group-chat-wake-rule)', () => {
 
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(track).not.toHaveBeenCalled()
-			expect(chat).not.toHaveBeenCalled()
-		})
-
-		it('flag on for another workspace: this workspace keeps the legacy path', async () => {
-			process.env.FF_WORKSPACE_FEATURES = `${crypto.randomUUID()}:group-chat-wake-rule`
-			_resetFeatureFlagConfig()
-			const [a, b] = [await actor('agent'), await actor('agent')]
-			const person = await actor('human')
-			const { sessionManager, conversationId } = await chatWith([a, b, person])
-
-			const e = await respond(
-				sessionManager,
-				conversationId,
-				await post(conversationId, ownerId, 'hello'),
-			)
-
-			expect(e).toMatchObject({ flagOn: false, rule: 'legacy' })
 		})
 	})
 })

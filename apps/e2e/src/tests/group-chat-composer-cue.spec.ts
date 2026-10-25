@@ -3,33 +3,19 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * The group-chat composer cue: with the wake-rule flag on, the box under the message names who
- * will answer, or says that nobody will. The flag is per workspace on the server; here the
- * test-only `ff:` override stands in for the server answer so both sides of the boundary run
- * without touching the backend environment (the endpoint itself is covered by the integration
- * test). The composer is never disabled while anything loads.
+ * The group-chat composer cue: the box under the message names who will answer, or says that
+ * nobody will. The composer is never disabled while anything loads.
  */
 
-const FLAG = 'group-chat-wake-rule'
 const NEUTRAL = 'Message this conversation'
 const HINT_NOBODY = 'No agent will reply. Tag one with @.'
 
-async function setFlag(page: Page, state: 'on' | 'off') {
-	await page.addInitScript(([flag, value]) => localStorage.setItem(`ff:${flag}`, value), [
-		FLAG,
-		state,
-	] as const)
-}
-
 /** Holds the requests the cue depends on for `ms`, so loading states can be observed. */
 async function throttleCueRequests(page: Page, ms: number) {
-	await page.route(
-		/\/api\/(feature-flags|conversations\/[^/?]+(\/messages)?)(\?|$)/,
-		async (route) => {
-			await new Promise((resolve) => setTimeout(resolve, ms))
-			await route.continue()
-		},
-	)
+	await page.route(/\/api\/(conversations\/[^/?]+(\/messages)?)(\?|$)/, async (route) => {
+		await new Promise((resolve) => setTimeout(resolve, ms))
+		await route.continue()
+	})
 }
 
 async function agentsInChat(
@@ -57,7 +43,6 @@ test.describe('Group chat composer cue', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const { conversation } = await agentsInChat(account, 3)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -93,28 +78,10 @@ test.describe('Group chat composer cue', () => {
 		})
 	}
 
-	test('keeps today’s placeholder and shows no hint when the flag is off', async ({
+	test('never disables the box while participants and messages load, in a 1-1 and a group chat', async ({
 		page,
 		account,
 	}) => {
-		await setFlag(page, 'off')
-		const { conversation } = await agentsInChat(account, 3)
-
-		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
-		const box = page.getByRole('textbox', { name: NEUTRAL })
-		await expect(box).toBeVisible({ timeout: 15_000 })
-		await expect(box).toHaveAttribute('placeholder', /^Reply to /)
-
-		await box.click()
-		await expect(page.getByText(HINT_NOBODY)).toHaveCount(0)
-		await expect(box).not.toHaveAttribute('aria-describedby', /.+/)
-	})
-
-	test('never disables the box while participants, messages and the flag load, in a 1-1 and a group chat', async ({
-		page,
-		account,
-	}) => {
-		await setFlag(page, 'on')
 		const oneToOne = await agentsInChat(account, 1)
 		const group = await agentsInChat(account, 3)
 		await throttleCueRequests(page, 2_500)
@@ -142,7 +109,6 @@ test.describe('Group chat composer cue', () => {
 		page,
 		account,
 	}) => {
-		await setFlag(page, 'on')
 		const stamp = Date.now()
 		const first = await account.api.createAgentActor(`Cue Pick A ${stamp}`)
 		const second = await account.api.createAgentActor(`Cue Pick B ${stamp}`)

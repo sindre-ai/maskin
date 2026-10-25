@@ -4,7 +4,6 @@ import {
 	conversationParticipants,
 	conversationPendingTurns,
 	messages,
-	workspaces,
 } from '@maskin/db/schema'
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
@@ -13,15 +12,9 @@ import {
 	type GroupChatDelivery,
 	type GroupChatRoutingRule,
 	type GroupChatRoutingTrigger,
-	type GroupChatWakeReason,
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
-import { resolveChatCredentials } from '../lib/llm-routing'
-import type { LLMTool } from '../lib/llm/adapter'
-import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
-import type { WorkspaceSettings } from '../lib/types'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
@@ -35,9 +28,9 @@ const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
 
 /**
- * Why an agent was handed a turn, as the chat prompts word it. `legacy` is today's wording for
- * an untagged wake from the model check (flag off); the other three come from an explicit tag
- * or from the wake rule (flag on).
+ * Why an agent was handed a turn, as the chat prompts word it. `legacy` is the plain wording
+ * for a turn that was not an explicit tag or a wake-rule pick (a direct chat, or a redo of an
+ * untagged reply); the other three come from an explicit tag or from the wake rule.
  */
 export type ConversationWakeReason =
 	| 'tagged'
@@ -45,23 +38,7 @@ export type ConversationWakeReason =
 	| 'first_message_lone_agent'
 	| 'legacy'
 
-const RESPOND_DECISION_TOOL: LLMTool = {
-	name: 'decide_response',
-	description: 'Decide whether to respond to the latest message in this conversation.',
-	parameters: {
-		type: 'object',
-		properties: {
-			should_respond: {
-				type: 'boolean',
-				description: 'Whether a reply from you specifically adds value right now.',
-			},
-			reason: { type: 'string', description: 'One sentence explaining the decision.' },
-		},
-		required: ['should_respond'],
-	},
-}
-
-// Wording for the wake reasons the group-chat wake rule adds (flag on).
+// Wording for the wake reasons the group-chat wake rule adds.
 const LAST_SPEAKER_WAKE_TEXT =
 	'This looks like a follow-up to your last reply, so it was routed to you. Reply unless it clearly was not meant for you.'
 const LONE_AGENT_WAKE_TEXT = 'You are the only agent in this chat and this is its first message.'
@@ -71,14 +48,14 @@ const GROUP_HANDOFF_HINT =
 /**
  * Fire-and-forget entry point called after a message is committed. For every
  * active agent participant (other than the message's own author), decides
- * whether that agent should respond — via a cheap same-process LLM call, not
- * a full container session. Agents that decide to respond reuse their
+ * whether that agent should respond: in a group chat by the plain wake rule
+ * (no model call), in a direct chat always. Agents that respond reuse their
  * existing running interactive session for this conversation if one exists
  * (a stdin write via writeInput), or spawn a fresh interactive session
  * seeded with the recent conversation history otherwise — covers both the
  * first-ever reply and recovery after the previous session died (timeout,
- * crash, manual stop). Never throws; every failure mode degrades to "stay
- * silent" so a broken relevance check can't spam a conversation.
+ * crash, manual stop). Never throws; in a group chat every failure mode
+ * degrades to "stay silent" so a broken rule input can't spam a conversation.
  *
  * Returns 'agent_cap' when the turn is dropped because the conversation already
  * ends in 5 agent messages in a row, so a caller that cannot afford a silent
@@ -92,8 +69,8 @@ export async function evaluateAndRespond(ctx: {
 	messageId: number
 	options?: {
 		/**
-		 * Skip the relevance heuristic and treat every candidate agent as
-		 * responding — set by an explicit human retry, where "should I reply?"
+		 * Treat every candidate agent as responding — set by an explicit human
+		 * retry, where "should I reply?"
 		 * has already been answered by the user clicking the button.
 		 */
 		forceRespond?: boolean
@@ -112,8 +89,6 @@ export async function evaluateAndRespond(ctx: {
 	}
 }): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
-	// Read once, per workspace and with no actor, so one chat never runs two rules.
-	const wakeRuleOn = isFlagEnabledForWorkspace(workspaceId, FLAGS.GROUP_CHAT_WAKE_RULE)
 
 	const [message] = await db
 		.select({
@@ -218,8 +193,8 @@ export async function evaluateAndRespond(ctx: {
 				message,
 				participantCount,
 				trigger,
-				flagOn: wakeRuleOn,
-				rule: wakeRuleOn ? 'agent_cap' : 'legacy',
+				flagOn: true,
+				rule: 'agent_cap',
 				candidateCount: candidates.length,
 				outcomes: candidates.map((a) => ({
 					agentId: a.id,
@@ -252,17 +227,6 @@ export async function evaluateAndRespond(ctx: {
 			: promptContent,
 	}
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
-	// BYO-LLM entitlement, for resolveChatCredentials' fallback gate. Absent
-	// row => treat as entitled, i.e. refuse the Maskin key: declining to spend
-	// on a workspace we can't read is the safe direction, and this heuristic
-	// fails open anyway.
-	const wsEntitlement = {
-		enterpriseGranted: ws ? ws.enterpriseGranted : true,
-		billingOwnerId: ws?.billingOwnerId ?? null,
-	}
-
 	const historyRows = await db
 		.select({ actorName: actors.name, content: messages.content })
 		.from(messages)
@@ -272,9 +236,8 @@ export async function evaluateAndRespond(ctx: {
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
 
-	// Group chat with the wake rule on: a plain rule decides, never the model. Direct chats
-	// (exactly 2 participants) keep today's path whatever the flag says.
-	if (wakeRuleOn && emitsRoutingEvent) {
+	// Group chat (3 or more active participants): a plain rule decides, never the model.
+	if (emitsRoutingEvent) {
 		await routeByWakeRule({
 			db,
 			sessionManager,
@@ -294,86 +257,24 @@ export async function evaluateAndRespond(ctx: {
 		return undefined
 	}
 
-	// Recorded before delivery so a delivery that throws still reports the reason.
-	const wokenReasons = new Map<string, GroupChatWakeReason>()
-	const settled = await Promise.allSettled(
-		candidates.map(async (agent): Promise<AgentRoutingOutcome> => {
-			const wasMentioned = mentioned.has(agent.id)
-			// Direct 1:1 conversations and explicit @mentions are unambiguous
-			// signals to respond — skip the relevance heuristic (and its
-			// narrower, non-OAuth credential resolver) entirely and let the
-			// real session launch, whose resolveLlmRoute is the sole authority
-			// on available credentials, be the final word.
-			const relevance: { respond: boolean; reason: GroupChatWakeReason } = options?.forceRespond
-				? { respond: true, reason: 'forced_retry' }
-				: wasMentioned
-					? { respond: true, reason: 'tagged' }
-					: isDirectConversation
-						? { respond: true, reason: 'direct_1to1' }
-						: await checkRelevance({
-								agent,
-								wsSettings,
-								wsEntitlement,
-								conversationHistory,
-								newMessageContent: messageForPrompt.content,
-								isDirectConversation,
-							})
-			if (!relevance.respond) {
-				return {
-					agentId: agent.id,
-					decision: 'skip',
-					reason: relevance.reason,
-					delivery: 'none',
-				}
-			}
-			wokenReasons.set(agent.id, relevance.reason)
-			const woke = (delivery: GroupChatDelivery): AgentRoutingOutcome => ({
+	// A direct chat: the user has nobody else to expect a reply from, so every candidate
+	// responds. An explicit tag or a retry is unambiguous too.
+	await Promise.allSettled(
+		candidates.map((agent) =>
+			deliverTurnToAgent({
+				db,
+				sessionManager,
+				workspaceId,
+				conversationId,
+				messageId,
 				agentId: agent.id,
-				decision: 'wake',
-				reason: relevance.reason,
-				delivery,
-			})
-
-			return woke(
-				await deliverTurnToAgent({
-					db,
-					sessionManager,
-					workspaceId,
-					conversationId,
-					messageId,
-					agentId: agent.id,
-					message: messageForPrompt,
-					conversationHistory,
-					isDirectConversation,
-					wakeReason: wasMentioned ? 'tagged' : 'legacy',
-				}),
-			)
-		}),
-	)
-
-	if (emitsRoutingEvent) {
-		emitGroupChatRouting({
-			db,
-			workspaceId,
-			conversationId,
-			message,
-			participantCount,
-			trigger,
-			flagOn: false,
-			rule: 'legacy',
-			candidateCount: candidates.length,
-			outcomes: settled.map((result, i): AgentRoutingOutcome => {
-				if (result.status === 'fulfilled') return result.value
-				// The candidate threw: a decided wake reports nothing delivered, else it is a skip.
-				const agentId = candidates[i]?.id ?? ''
-				const woken = wokenReasons.get(agentId)
-				return woken
-					? { agentId, decision: 'wake', reason: woken, delivery: 'start_failed' }
-					: { agentId, decision: 'skip', reason: 'model_no_decision', delivery: 'none' }
+				message: messageForPrompt,
+				conversationHistory,
+				isDirectConversation,
+				wakeReason: mentioned.has(agent.id) ? 'tagged' : 'legacy',
 			}),
-			capHit: false,
-		})
-	}
+		),
+	)
 	return undefined
 }
 
@@ -500,7 +401,7 @@ async function isFirstChatMessage(
 /**
  * Group-chat routing with the wake rule on: decideWakes says who is woken, no model is called,
  * and anything that cannot be worked out wakes nobody (skip_resolver_error, logged at error
- * level). Delivery is the same as the legacy path. Emits the routing event with flag_on true.
+ * level). Emits the routing event.
  */
 async function routeByWakeRule(ctx: {
 	db: Database
@@ -681,7 +582,7 @@ export async function deliverTurnToAgent(params: {
 	conversationHistory: Array<{ actorName: string; content: string }>
 	isDirectConversation: boolean
 	wakeReason: ConversationWakeReason
-	/** The group-chat wake rule is on: the seed prompt explains how to hand off to another agent. */
+	/** A group-chat wake: the seed prompt explains how to hand off to another agent. */
 	groupWakeRule?: boolean
 }): Promise<GroupChatDelivery> {
 	const {
@@ -795,7 +696,7 @@ async function spawnOrJoinConversationSession(params: {
 	agentId: string
 	message: { actorId: string; content: string; authorName: string; authorType: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
-	/** The group-chat wake rule is on: the seed prompt explains how to hand off to another agent. */
+	/** A group-chat wake: the seed prompt explains how to hand off to another agent. */
 	groupWakeRule?: boolean
 	isDirectConversation: boolean
 	wakeReason: ConversationWakeReason
@@ -1012,117 +913,6 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 	return false
 }
 
-export type RelevanceReason = Extract<
-	GroupChatWakeReason,
-	| 'model_yes'
-	| 'model_no'
-	| 'model_no_decision'
-	| 'default_yes_no_credentials'
-	| 'default_yes_check_error'
->
-
-export async function checkRelevance(params: {
-	agent: {
-		id: string
-		name: string
-		description: string | null
-		systemPrompt: string | null
-		llmProvider: string | null
-		llmConfig: unknown
-	}
-	wsSettings: WorkspaceSettings
-	wsEntitlement: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
-	conversationHistory: Array<{ actorName: string; content: string }>
-	newMessageContent: string
-	isDirectConversation: boolean
-}): Promise<{ respond: boolean; reason: RelevanceReason }> {
-	const {
-		agent,
-		wsSettings,
-		wsEntitlement,
-		conversationHistory,
-		newMessageContent,
-		isDirectConversation,
-	} = params
-	const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
-	const credentials = resolveChatCredentials({
-		wsSettings,
-		workspace: wsEntitlement,
-		agent: {
-			provider: agent.llmProvider,
-			apiKey: (llmConfig.api_key as string | undefined) ?? null,
-			model: (llmConfig.model as string | undefined)?.trim() || null,
-		},
-	})
-	// No usable credential for this same-process call (e.g. this agent's only
-	// route is Claude OAuth, which resolveChatCredentials intentionally can't
-	// use — see its doc comment). Fail OPEN rather than silently staying
-	// quiet forever: the real session launch consults the broader
-	// resolveLlmRoute (which does support OAuth) and is the actual authority
-	// on whether this agent can respond. Log so an operator can tell this
-	// heuristic was skipped rather than deliberately declining to reply.
-	if (!credentials) {
-		logger.warn(
-			'Conversation relevance check has no chat-callable credentials — defaulting to respond and letting session launch decide',
-			{ agentId: agent.id },
-		)
-		return { respond: true, reason: 'default_yes_no_credentials' }
-	}
-
-	try {
-		const adapter = createLLMAdapter(credentials.provider, {
-			api_key: credentials.apiKey,
-			base_url: credentials.baseUrl,
-			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
-		})
-		const transcript = formatConversationTranscript(conversationHistory)
-		const response = await adapter.chat({
-			model: credentials.model,
-			temperature: 0,
-			tools: [RESPOND_DECISION_TOOL],
-			messages: [
-				{
-					role: 'system',
-					content: [
-						`You are ${agent.name}${agent.description ? `, ${agent.description}` : ''}.`,
-						agent.systemPrompt ?? '',
-						isDirectConversation
-							? "This is a direct 1:1 chat between you and the user — there's no one else who could reply instead. A new message just arrived. Decide whether it warrants a reply from you. Default to responding; only decide against it if the message clearly needs no response (e.g. a plain acknowledgment). Call decide_response with your answer."
-							: 'You are one of several participants in a group chat. A new message just arrived. Decide whether YOU specifically should reply — not whether someone could reply. Stay silent when the message is directed at someone else, already answered, small talk between humans, or you have nothing useful to add. Call decide_response with your answer.',
-					]
-						.filter(Boolean)
-						.join('\n\n'),
-				},
-				{
-					role: 'user',
-					content: `Recent conversation:\n${transcript || '(no prior messages)'}\n\nNew message:\n${newMessageContent}`,
-				},
-			],
-		})
-		const call = response.tool_calls.find((tc) => tc.name === 'decide_response')
-		if (!call) return { respond: false, reason: 'model_no_decision' }
-		return call.arguments.should_respond === true
-			? { respond: true, reason: 'model_yes' }
-			: { respond: false, reason: 'model_no' }
-	} catch (err) {
-		// Every throw in the block above is a call/infra failure (network error,
-		// non-2xx HTTP, malformed response) — the model's actual "no, don't
-		// reply" decision is returned via tool_calls above, not an exception.
-		// So this catch never represents a legitimate decline; failing closed
-		// here would indistinguishably conflate "the model declined" with "a
-		// credential expired" or "the provider is down" — exactly the silent,
-		// permanent-silence bug this heuristic exists to avoid. Fail OPEN, same
-		// as the no-credentials branch above, and use logger.error (not warn)
-		// so a systemic outage actually creates a Sentry issue instead of a
-		// breadcrumb nobody sees.
-		logger.error(
-			'Conversation relevance check call failed — defaulting to respond and letting session launch decide',
-			{ agentId: agent.id, error: String(err) },
-		)
-		return { respond: true, reason: 'default_yes_check_error' }
-	}
-}
-
 /**
  * Rebuilds the compact "Context objects:" / "Context notifications:" /
  * "Attached files:" block the composer used to inline directly into message
@@ -1172,7 +962,7 @@ function appendContextBlock(
 	return lines.join('\n')
 }
 
-/** Shared `{actorName}: {content}` transcript join, used by the relevance check, the seed prompt, and the auto-titler. */
+/** Shared `{actorName}: {content}` transcript join, used by the seed prompt and the auto-titler. */
 export function formatConversationTranscript(
 	history: Array<{ actorName: string; content: string }>,
 ): string {

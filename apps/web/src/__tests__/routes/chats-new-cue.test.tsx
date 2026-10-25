@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const flag = vi.hoisted(() => ({ on: true }))
 const mockSearch = vi.fn(() => ({}) as Record<string, string | undefined>)
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -17,7 +16,6 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag.on }))
 vi.mock('@/hooks/use-conversations', () => ({
 	useCreateConversation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	useConversationsInfinite: () => ({ data: undefined }),
@@ -72,7 +70,6 @@ async function addRecipient(user: ReturnType<typeof userEvent.setup>, name: stri
 
 describe('New chat — group-chat cue', () => {
 	beforeEach(() => {
-		flag.on = true
 		mockSearch.mockReturnValue({})
 	})
 
@@ -102,17 +99,6 @@ describe('New chat — group-chat cue', () => {
 		await addRecipient(user, 'Forge')
 
 		expect(box()).toHaveAttribute('placeholder', 'Message Forge…')
-		expect(screen.queryByText(/No agent will reply/)).not.toBeInTheDocument()
-	})
-
-	it('keeps today’s placeholder and adds no hint when the flag is off', async () => {
-		flag.on = false
-		const user = userEvent.setup()
-		render(<NewChatPage />)
-		await addRecipient(user, 'Forge')
-		await addRecipient(user, 'Sentinel')
-
-		expect(box()).toHaveAttribute('placeholder', 'Message… / reference or create · @ mention')
 		expect(screen.queryByText(/No agent will reply/)).not.toBeInTheDocument()
 	})
 })

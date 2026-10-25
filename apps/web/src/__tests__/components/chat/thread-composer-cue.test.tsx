@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
 const state = vi.hoisted(() => ({
-	flagOn: true,
 	conversation: undefined as
 		| { participants: Array<{ actorId: string; actorName: string; actorType: string }> }
 		| undefined,
@@ -27,7 +26,6 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
 })
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => state.flagOn }))
 vi.mock('@/hooks/use-conversation', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-conversation')>(
 		'@/hooks/use-conversation',
@@ -79,7 +77,6 @@ const box = () => screen.getByLabelText('Message this conversation')
 beforeEach(() => {
 	sessionStorage.clear()
 	mockMutateAsync.mockReset()
-	state.flagOn = true
 	state.conversation = { participants: [ME, SAM, FORGE, SENTINEL] }
 	state.messages = []
 	state.hasNextPage = false
@@ -87,16 +84,6 @@ beforeEach(() => {
 })
 
 describe('ThreadComposer — group-chat cue', () => {
-	it('keeps today’s placeholder and adds nothing when the flag is off', () => {
-		state.flagOn = false
-		state.messages = [said(2, 'sam', 'human'), said(1, 'forge', 'agent')]
-		renderComposer()
-
-		// Today: the first participant who is not you.
-		expect(box()).toHaveAttribute('placeholder', 'Reply to Sam…')
-		expect(box()).not.toHaveAttribute('aria-describedby')
-	})
-
 	it('names the agent who spoke last', () => {
 		state.messages = [said(2, 'forge', 'agent'), said(1, 'me', 'human')]
 		renderComposer()
