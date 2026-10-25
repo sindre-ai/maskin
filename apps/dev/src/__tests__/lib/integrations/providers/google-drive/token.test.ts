@@ -21,7 +21,10 @@ vi.mock('../../../../../lib/integrations/registry', () => ({
 	getProvider: (...args: unknown[]) => getProvider(...(args as [])),
 }))
 
-import { IntegrationAuthRevokedError, ScopeDeniedError } from '../../../../../lib/integrations/errors'
+import {
+	IntegrationAuthRevokedError,
+	ScopeDeniedError,
+} from '../../../../../lib/integrations/errors'
 import { getGoogleDriveAccessToken } from '../../../../../lib/integrations/providers/google-drive/token'
 
 const db = {} as never
