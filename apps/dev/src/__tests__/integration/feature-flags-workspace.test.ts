@@ -8,7 +8,7 @@ import { db, getTestActorId } from './global-setup'
 
 // The actor seeded in global-setup's beforeAll.
 const TEST_API_KEY = 'ank_testintegration'
-const FLAG = FLAGS.GROUP_CHAT_WAKE_RULE
+const FLAG = FLAGS.CAPABILITY_SCAN
 
 type Env = { Variables: { db: typeof db; actorId: string; actorType: string } }
 

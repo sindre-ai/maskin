@@ -5,9 +5,6 @@ import { MESSAGE_MAX_MENTIONS, decideWakes } from '@maskin/shared'
 // group-chat message, or that nobody will. The words are formatting only. Who is
 // woken comes from the same decideWakes the server runs, so the two cannot drift.
 
-/** Registry id of the workspace flag that turns the cue on (see FLAGS on the backend). */
-export const GROUP_CHAT_WAKE_RULE_FLAG = 'group-chat-wake-rule'
-
 /** Placeholder while nothing can be said yet, and when nobody will answer. */
 export const NEUTRAL_PLACEHOLDER = 'Message this conversation'
 export const HINT_PEOPLE_ONLY = 'Only people are tagged, so no agent will reply.'

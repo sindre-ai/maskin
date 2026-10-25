@@ -6,17 +6,11 @@ import {
 	useConversationMessages,
 	useSendMessage,
 } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
-import {
-	type ComposerCue,
-	GROUP_CHAT_WAKE_RULE_FLAG,
-	NEUTRAL_PLACEHOLDER,
-	deriveComposerCue,
-} from '@/lib/composer-cue'
+import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useMemo, useReducer, useState } from 'react'
 
@@ -45,14 +39,8 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
-	// The one read of the wake-rule flag for the thread cue. This is the workspace answer,
-	// the same flag the responder reads, so the cue and the wake cannot disagree. Off, or not
-	// answered yet, behaves as off: today's placeholder below, and nothing else is fetched.
-	const wakeRuleOn = useFeatureFlag(GROUP_CHAT_WAKE_RULE_FLAG)
-	const messagesQuery = useConversationMessages(conversationId, workspaceId, {
-		enabled: wakeRuleOn,
-	})
-	const { data: workspaceActors } = useActors(workspaceId, { enabled: wakeRuleOn })
+	const messagesQuery = useConversationMessages(conversationId, workspaceId)
+	const { data: workspaceActors } = useActors(workspaceId)
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and
@@ -145,11 +133,10 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		? `Reply to ${counterpart}…`
 		: 'Message… / reference or create · @ mention'
 
-	// Group-chat cue (flag on, 3 or more active participants). While a needed answer is still
+	// Group-chat cue (3 or more active participants). While a needed answer is still
 	// loading it is the neutral placeholder with no hint; the box itself is never disabled.
-	// With the flag off, or in a small chat, the cue is null and today's text stays.
+	// In a small chat the cue is null and today's text stays.
 	const cue = useMemo<ComposerCue | null>(() => {
-		if (!wakeRuleOn) return null
 		if (!conversation) return { placeholder: NEUTRAL_PLACEHOLDER, hint: null }
 		const joiningAgents: ConversationParticipantResponse[] = []
 		for (const id of selection.agents) {
@@ -175,7 +162,6 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 			hasMoreMessages: messagesQuery.hasNextPage,
 		})
 	}, [
-		wakeRuleOn,
 		conversation,
 		selection.agents,
 		workspaceActors,

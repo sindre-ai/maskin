@@ -1,7 +1,7 @@
-// Who a group-chat message wakes, as one pure function. The responder calls it behind the
-// group-chat-wake-rule workspace flag; it replaces the model "should I reply?" check in chats
-// with 3 or more active participants. No database, no model call, no side effects: every input
-// is passed in, so the same table drives the server and the tests.
+// Who a group-chat message wakes, as one pure function. The responder calls it for chats with
+// 3 or more active participants, in place of a model "should I reply?" check. No database, no
+// model call, no side effects: every input is passed in, so the same table drives the server and
+// the tests.
 
 export type WakeRuleName =
 	| 'agent_cap'

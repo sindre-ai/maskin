@@ -9,13 +9,7 @@
 //   MASKIN_TEST_GRANT_TOKEN=x POSTHOG_API_KEY=x POSTHOG_HOST=http://127.0.0.1:8999 \
 //     pnpm dev:no-docker
 //   MASKIN_TEST_GRANT_TOKEN=x node scripts/group-chat-routing-scripted-chat.mjs \
-//     --flag off --credentials oauth-only [--api-url http://localhost:3000] \
-//     [--capture-port 8999] [--out payloads.json]
-//
-// --credentials oauth-only  A and B have no chat-callable key: the relevance check fails open.
-// --credentials chat-key    A and B carry CHAT_KEY_API_KEY (provider CHAT_KEY_PROVIDER).
-// --flag off|on             The state the backend runs in (only "off" exists today). The script
-//                           cannot switch it; it fails if flag_on on the events disagrees.
+//     [--api-url http://localhost:3000] [--capture-port 8999] [--out payloads.json]
 import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 
@@ -26,20 +20,13 @@ const args = Object.fromEntries(
 		.filter(Boolean),
 )
 const apiUrl = (args['api-url'] ?? 'http://localhost:3000').replace(/\/$/, '')
-const flag = args.flag ?? 'off'
-const credentials = args.credentials ?? 'oauth-only'
 const grantToken = process.env.MASKIN_TEST_GRANT_TOKEN
-const chatKey = process.env.CHAT_KEY_API_KEY
 
 function fail(message) {
 	console.error(`error: ${message}`)
 	process.exit(1)
 }
-if (!['off', 'on'].includes(flag)) fail('--flag must be off or on')
-if (!['oauth-only', 'chat-key'].includes(credentials))
-	fail('--credentials is oauth-only or chat-key')
 if (!grantToken) fail('MASKIN_TEST_GRANT_TOKEN must be set here and on the backend')
-if (credentials === 'chat-key' && !chatKey) fail('--credentials chat-key needs CHAT_KEY_API_KEY')
 
 const captured = []
 const sink = createServer((req, res) => {
@@ -115,12 +102,6 @@ const agent = (name) =>
 			type: 'agent',
 			name,
 			workspace_id: workspaceId,
-			...(credentials === 'chat-key'
-				? {
-						llm_provider: process.env.CHAT_KEY_PROVIDER ?? 'anthropic',
-						llm_config: { api_key: chatKey },
-					}
-				: {}),
 		},
 	})
 const [agentA, agentB] = [await agent('Agent A'), await agent('Agent B')]
@@ -163,12 +144,10 @@ await say(chat.id, agentB, 'B speaks (B is now the last speaker)', 'Here is mine
 await say(chat.id, h1, 'S5 H1 untagged after B spoke last', 'thanks, one more thing')
 sink.close()
 
-const json = `${JSON.stringify({ flag, credentials, results }, null, 2)}\n`
+const json = `${JSON.stringify({ results }, null, 2)}\n`
 if (args.out) writeFileSync(args.out, json)
 else console.log(json)
 
 const missing = results.filter((r) => !r.payload).length
-const wrongFlag = results.filter((r) => r.payload && r.payload.flag_on !== (flag === 'on')).length
 if (missing) fail(`${missing} step(s) produced no event`)
-if (wrongFlag) fail(`--flag ${flag} does not match flag_on on ${wrongFlag} event(s)`)
-console.log(`ok: ${results.length} events, flag=${flag}, credentials=${credentials}`)
+console.log(`ok: ${results.length} events`)

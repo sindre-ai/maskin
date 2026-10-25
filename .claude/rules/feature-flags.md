@@ -88,10 +88,6 @@ the actor-only answer, and the auth middleware already refuses a non-member's he
 means today's answer. The web cache is keyed by workspace id (`maskin-feature-flags:2:<workspaceId>`)
 and `_authed.tsx` selects the workspace from the URL before it loads.
 
-A flag that must agree with a backend per-workspace read (the group-chat wake rule is the one so far)
-is listed in `WORKSPACE_ONLY_FLAGS` in `apps/dev/src/lib/feature-flags.ts`: a tester-list entry for it
-is dropped, so the browser and the server cannot answer differently.
-
 ## Test-only override
 
 `localStorage['ff:<flagId>'] = 'on' | 'off'` beats the server response. This

@@ -17,8 +17,8 @@ const base: GroupChatMessageRoutedProps = {
 	conversationId: 'conv-1',
 	messageId: 42,
 	trigger: 'new_message',
-	flagOn: false,
-	rule: 'legacy',
+	flagOn: true,
+	rule: 'tagged',
 	authorActorId: 'human-1',
 	authorType: 'human',
 	participantCount: 4,
@@ -29,9 +29,9 @@ const base: GroupChatMessageRoutedProps = {
 	taggedHumanCount: 0,
 	previousOtherActorId: 'agent-b',
 	outcomes: [
-		{ agentId: 'a', decision: 'wake', reason: 'tagged', delivery: 'wrote_to_running_session' },
-		{ agentId: 'b', decision: 'wake', reason: 'default_yes_check_error', delivery: 'start_failed' },
-		{ agentId: 'c', decision: 'skip', reason: 'model_no', delivery: 'none' },
+		{ agentId: 'a', decision: 'wake', reason: 'rule_tagged', delivery: 'wrote_to_running_session' },
+		{ agentId: 'b', decision: 'wake', reason: 'rule_tagged', delivery: 'start_failed' },
+		{ agentId: 'c', decision: 'skip', reason: 'skip_not_addressed', delivery: 'none' },
 	],
 	capHit: false,
 }
@@ -51,8 +51,8 @@ describe('trackGroupChatMessageRouted', () => {
 		expect(props).toMatchObject({
 			message_id: 42,
 			trigger: 'new_message',
-			flag_on: false,
-			rule: 'legacy',
+			flag_on: true,
+			rule: 'tagged',
 			participant_count: 4,
 			candidate_count: 3,
 			tagged_agent_ids: ['agent-a'],
@@ -60,34 +60,11 @@ describe('trackGroupChatMessageRouted', () => {
 			woken_agent_ids: ['a', 'b'],
 			skipped_agent_ids: ['c'],
 			agent_outcomes: [
-				'a|wake|tagged|wrote_to_running_session',
-				'b|wake|default_yes_check_error|start_failed',
-				'c|skip|model_no|none',
+				'a|wake|rule_tagged|wrote_to_running_session',
+				'b|wake|rule_tagged|start_failed',
+				'c|skip|skip_not_addressed|none',
 			],
-			defaulted_open_count: 1,
 			cap_hit: false,
-		})
-	})
-
-	it('carries the flag state and the rule that decided when the wake rule is on', async () => {
-		await trackGroupChatMessageRouted({
-			...base,
-			flagOn: true,
-			rule: 'tagged',
-			outcomes: [
-				{ agentId: 'a', decision: 'wake', reason: 'rule_tagged', delivery: 'started_new_session' },
-				{ agentId: 'b', decision: 'skip', reason: 'skip_not_addressed', delivery: 'none' },
-			],
-		})
-
-		const props = capturePosthogEventMock.mock.calls[0]?.[2]
-		expect(props).toMatchObject({
-			flag_on: true,
-			rule: 'tagged',
-			woken_agent_ids: ['a'],
-			skipped_agent_ids: ['b'],
-			agent_outcomes: ['a|wake|rule_tagged|started_new_session', 'b|skip|skip_not_addressed|none'],
-			defaulted_open_count: 0,
 		})
 	})
 

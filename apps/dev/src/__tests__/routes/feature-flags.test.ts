@@ -94,7 +94,7 @@ describe('GET /api/feature-flags', () => {
 	})
 
 	describe('with an X-Workspace-Id header', () => {
-		const FLAG = FLAGS.GROUP_CHAT_WAKE_RULE
+		const FLAG = FLAGS.CAPABILITY_SCAN
 		const memberRow = { actorId: TESTER }
 
 		// Flag on for workspace A only. TESTER is neither a tester nor listed anywhere else.
@@ -149,14 +149,6 @@ describe('GET /api/feature-flags', () => {
 		it("returns today's answer unchanged when no header is sent", async () => {
 			const { app, mockResults } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 			mockResults.select = [memberRow]
-
-			const res = await app.request(jsonGet('/api/feature-flags'))
-			expect(await res.json()).toEqual({ flags: ALL_OFF })
-		})
-
-		it('does not turn the flag on for a tester listed for it', async () => {
-			setEnv({ FF_TESTER_ACTOR_IDS: TESTER, FF_TESTER_FEATURES: FLAG })
-			const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 			const res = await app.request(jsonGet('/api/feature-flags'))
 			expect(await res.json()).toEqual({ flags: ALL_OFF })
