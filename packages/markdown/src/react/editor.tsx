@@ -89,7 +89,6 @@ export interface ShortcutInfo {
 	shortcut: EditorShortcut
 	variant: EditorVariant
 	surface: string | undefined
-	objectId: string | undefined
 }
 
 export interface SavedInfo {
@@ -383,9 +382,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
 		const emitShortcut = useCallback(
 			(shortcut: EditorShortcut) => {
-				onShortcutUsedRef.current?.({ shortcut, variant, surface, objectId })
+				onShortcutUsedRef.current?.({ shortcut, variant, surface })
 			},
-			[variant, surface, objectId],
+			[variant, surface],
 		)
 
 		const openLinkPopover = useCallback(() => {

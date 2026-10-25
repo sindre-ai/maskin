@@ -19,7 +19,8 @@ function currentSessionId(): string | undefined {
 export function editorTelemetry(ctx: {
 	variant: EditorVariant
 	surface: string | undefined
-	objectId: string | undefined
+	// Optional: editor_shortcut_used carries no object id, so its caller has none to pass.
+	objectId?: string | undefined
 }) {
 	return createEditorTelemetry({ capture, getSessionId: currentSessionId, ...ctx })
 }
