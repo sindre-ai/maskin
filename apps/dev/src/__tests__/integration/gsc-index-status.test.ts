@@ -3,8 +3,10 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	GSC_INDEX_PROVIDER,
+	type IndexRow,
 	inspectIndexStatus,
 	parseIndexRows,
+	serializeIndexRows,
 } from '../../lib/integrations/providers/google-search-console/index-status'
 import { writeSearchDemand } from '../../lib/integrations/providers/google-search-console/search-demand'
 import {
@@ -29,6 +31,10 @@ const DAY1 = new Date('2026-10-12T10:00:00Z')
 const DAY1_LATE = new Date('2026-10-12T16:00:00Z')
 // 23 hours later, but the next calendar date.
 const DAY2 = new Date('2026-10-13T09:00:00Z')
+const DAY2_LATE = new Date('2026-10-13T16:00:00Z')
+const DAY3 = new Date('2026-10-14T09:00:00Z')
+// 7 calendar dates after DAY1.
+const DAY8 = new Date('2026-10-19T09:00:00Z')
 
 type Answer = Record<string, unknown> | { status: number }
 
@@ -171,7 +177,14 @@ describe('Search Console index status against real Postgres', () => {
 
 		const summary = await inspectIndexStatus(db, integration, deps(DAY1))
 
-		expect(summary).toEqual({ inspected: 4, errors: 1, noProperty: 1, properties: 1 })
+		expect(summary).toEqual({
+			inspected: 4,
+			errors: 1,
+			noProperty: 1,
+			properties: 1,
+			quotaStopped: 0,
+			failed: 0,
+		})
 		expect(inspected.sort()).toEqual([BROKEN, ELSEWHERE, HOME, UNKNOWN].sort())
 
 		const [index, ...rest] = await indexObjects(ws.id)
@@ -192,6 +205,10 @@ describe('Search Console index status against real Postgres', () => {
 			unknown_count: 1,
 			error_count: 1,
 		})
+		// One page of four failing is not a failed property.
+		expect(index.metadata).not.toHaveProperty('last_error')
+		expect(index.metadata).not.toHaveProperty('first_failure_at')
+		expect(index.metadata).not.toHaveProperty('quota_stopped_at')
 		for (const value of Object.values(index.metadata as object)) {
 			expect(['string', 'number', 'boolean']).toContain(typeof value)
 		}
@@ -462,5 +479,364 @@ describe('the daily sync and the index object leave each other alone', () => {
 		expect(withIndex).toEqual(withoutIndex)
 		expect((await metadataOf(home.id)).search_demand).toBe(valueWithout)
 		expect(valueWithout).toBe(40)
+	})
+})
+
+// ── Seen-only pages, the daily cap and Google errors ───────────────────────────────────
+
+const SECOND = 'sc-domain:second.test'
+const SECOND_HOME = 'https://second.test/'
+const OK = { verdict: 'PASS', coverageState: 'Submitted and indexed' }
+
+type SiteAnswer = (siteUrl: string, url: string, nth: number) => Answer | undefined
+
+/** Stubs Google for several properties. nth counts fetches for that property, retries included. */
+function stubGoogleBySite(answer: SiteAnswer) {
+	const calls: { siteUrl: string; url: string }[] = []
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async (url: string, init?: RequestInit) => {
+			if (url.endsWith('/sites')) return Response.json({ siteEntry: [] })
+			if (url.includes('searchAnalytics')) return Response.json({})
+			const body = JSON.parse(String(init?.body)) as { inspectionUrl: string; siteUrl: string }
+			calls.push({ siteUrl: body.siteUrl, url: body.inspectionUrl })
+			const nth = calls.filter((c) => c.siteUrl === body.siteUrl).length
+			const found = answer(body.siteUrl, body.inspectionUrl, nth) ?? OK
+			if ('status' in found) return new Response('error', { status: found.status as number })
+			return Response.json({ inspectionResult: { indexStatusResult: found } })
+		}),
+	)
+	return calls
+}
+
+/** The inspected URLs after the first (tracked) one, sorted. */
+const seenCalls = (calls: { url: string }[]) =>
+	calls
+		.slice(1)
+		.map((c) => c.url)
+		.sort()
+
+const syncRow = (page: string, date = '2026-10-09'): GscRow => [
+	date,
+	page,
+	'maskin',
+	'usa',
+	'DESKTOP',
+	5,
+	1,
+	0.2,
+	7,
+]
+
+const setSyncRows = (id: string, rows: GscRow[]) =>
+	db.update(objects).set({ content: serializeRows(rows) }).where(eq(objects.id, id))
+
+async function addProperty(workspaceId: string, integrationId: string, siteUrl: string) {
+	return insertObject(db, workspaceId, getTestActorId(), {
+		type: 'knowledge',
+		title: `Google Search Console: ${siteUrl}`,
+		content: serializeRows([]),
+		metadata: { provider: GSC_PROVIDER, external_id: siteUrl, integration_id: integrationId },
+	})
+}
+
+async function indexFor(workspaceId: string, siteUrl: string) {
+	const found = await indexObjects(workspaceId)
+	const index = found.find((o) => (o.metadata as { external_id: string }).external_id === siteUrl)
+	if (!index) throw new Error(`no index object for ${siteUrl}`)
+	const meta = index.metadata as Record<string, unknown>
+	return { ...index, rows: parseIndexRows(index.content), meta }
+}
+
+describe('seen-only pages and the daily cap', () => {
+	afterEach(() => vi.unstubAllGlobals())
+
+	it('inspects seen-only pages after the tracked ones, each row marked with its source', async () => {
+		const { ws, integration, propertyObject, piece } = await setup()
+		await piece(HOME)
+		const seenA = 'https://gsc-index.test/seen-a'
+		const seenB = 'https://www.gsc-index.test/seen-b'
+		await setSyncRows(propertyObject.id, [
+			syncRow(HOME),
+			syncRow(seenA),
+			syncRow(seenB),
+			// Not under any connected property, and too old for the 30 day window.
+			syncRow('https://other.example/seen'),
+			syncRow('https://gsc-index.test/old-seen', '2026-08-01'),
+		])
+		const calls = stubGoogleBySite(() => undefined)
+
+		const summary = await inspectIndexStatus(db, integration, deps(DAY1))
+
+		expect(summary).toMatchObject({ inspected: 3, errors: 0, properties: 1 })
+		expect(calls[0]?.url).toBe(HOME)
+		expect(seenCalls(calls)).toEqual([seenA, seenB])
+		const index = await indexFor(ws.id, SITE)
+		expect(new Map(index.rows.map((r) => [r.url, r.source]))).toEqual(
+			new Map([
+				[HOME, 'tracked'],
+				[seenA, 'seen'],
+				[seenB, 'seen'],
+			]),
+		)
+		// The counts in metadata match the content.
+		expect(index.meta).toMatchObject({
+			urls_tracked: 1,
+			urls_inspected_last_run: 3,
+			indexed_count: 3,
+			not_indexed_count: 0,
+			unknown_count: 0,
+			error_count: 0,
+			last_inspected_date: '2026-10-12',
+		})
+	})
+
+	it('keeps seen-only pages to a 7 date cadence, oldest first, and tracked pages daily', async () => {
+		const { ws, integration, propertyObject, piece } = await setup()
+		await piece(HOME)
+		const seenA = 'https://gsc-index.test/seen-a'
+		const seenB = 'https://gsc-index.test/seen-b'
+		await setSyncRows(propertyObject.id, [syncRow(seenA), syncRow(seenB)])
+		stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY1))
+
+		// Same date: nothing is due.
+		let calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY1_LATE))
+		expect(calls).toEqual([])
+
+		// Next date: only the tracked page.
+		calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY2))
+		expect(calls.map((c) => c.url)).toEqual([HOME])
+
+		// 7 dates after the seen-only pages were checked: all three are due, tracked first.
+		calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY8))
+		expect(calls[0]?.url).toBe(HOME)
+		expect(seenCalls(calls)).toEqual([seenA, seenB])
+		const index = await indexFor(ws.id, SITE)
+		expect(index.rows).toHaveLength(3)
+	})
+
+	it('never makes more than 300 calls for a property on one date, tracked page first', async () => {
+		const { ws, integration, propertyObject, piece } = await setup()
+		await piece(HOME)
+		const pages = Array.from({ length: 310 }, (_, i) => `https://gsc-index.test/seen/${i}`)
+		await setSyncRows(propertyObject.id, pages.map((page) => syncRow(page)))
+
+		let calls = stubGoogleBySite(() => undefined)
+		const first = await inspectIndexStatus(db, integration, deps(DAY1))
+		expect(calls).toHaveLength(300)
+		expect(calls[0]?.url).toBe(HOME)
+		expect(first).toMatchObject({ inspected: 300 })
+
+		// A later tick the same date has no budget left.
+		calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY1_LATE))
+		expect(calls).toEqual([])
+
+		// The next date: the tracked page again, plus the 11 seen-only pages still never checked.
+		calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY2))
+		expect(calls).toHaveLength(12)
+		expect(calls[0]?.url).toBe(HOME)
+		const index = await indexFor(ws.id, SITE)
+		expect(index.rows).toHaveLength(311)
+		expect(index.meta).toMatchObject({ urls_tracked: 1, urls_inspected_last_run: 12 })
+	})
+
+	it('drops seen-only rows first past 5,000 rows and says so in last_error', async () => {
+		const { ws, integration, propertyObject, piece } = await setup()
+		await piece(HOME)
+		const pages = Array.from({ length: 5001 }, (_, i) => `https://gsc-index.test/seen/${i}`)
+		await setSyncRows(propertyObject.id, pages.map((page) => syncRow(page)))
+		const stored = (url: string): IndexRow => ({
+			url,
+			source: 'seen',
+			checked_at: '2026-09-01T00:00:00.000Z',
+			state: 'indexed',
+			verdict: 'PASS',
+			coverageState: 'Submitted and indexed',
+			lastCrawlTime: null,
+			robotsTxtState: null,
+			indexingState: null,
+			pageFetchState: null,
+			googleCanonical: null,
+			userCanonical: null,
+			state_since: '2026-09-01',
+			error: null,
+		})
+		await insertObject(db, ws.id, getTestActorId(), {
+			type: 'knowledge',
+			title: `Google Search Console index status: ${SITE}`,
+			content: serializeIndexRows(pages.map(stored)),
+			metadata: {
+				provider: GSC_INDEX_PROVIDER,
+				external_id: SITE,
+				property_url: SITE,
+				integration_id: integration.id,
+			},
+		})
+		stubGoogleBySite(() => undefined)
+
+		await inspectIndexStatus(db, integration, deps(DAY1))
+
+		const index = await indexFor(ws.id, SITE)
+		expect(index.rows).toHaveLength(5000)
+		// The tracked page is kept; the seen-only pages that did not fit are gone.
+		expect(index.rows.find((r) => r.url === HOME)?.source).toBe('tracked')
+		expect(index.rows.some((r) => r.url === pages[5000])).toBe(false)
+		expect(index.meta.last_error).toBe(
+			'Over the 5000 row limit: dropped 2 pages, seen-only first',
+		)
+		expect(index.meta).not.toHaveProperty('first_failure_at')
+	})
+})
+
+describe('quota and Google errors', () => {
+	afterEach(() => vi.unstubAllGlobals())
+
+	async function twoProperties() {
+		const base = await setup()
+		await addProperty(base.ws.id, base.integration.id, SECOND)
+		const piece = base.piece
+		const tracked = [HOME, 'https://gsc-index.test/t2', 'https://gsc-index.test/t3']
+		for (const url of tracked) await piece(url)
+		await piece(SECOND_HOME)
+		return { ...base, tracked }
+	}
+
+	it('stops a property on a 429 that outlasts the retries, keeps its rows, and runs the others', async () => {
+		const { ws, integration, tracked } = await twoProperties()
+		// Day 1: everything is inspected.
+		stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY1))
+
+		// Day 2: the first call for SITE works, every call after it is a 429.
+		let calls = stubGoogleBySite((siteUrl, _url, nth) =>
+			siteUrl === SITE && nth > 1 ? { status: 429 } : undefined,
+		)
+		const summary = await inspectIndexStatus(db, integration, deps(DAY2))
+
+		const index = await indexFor(ws.id, SITE)
+		expect(summary).toMatchObject({ quotaStopped: 1, failed: 0 })
+		// One page inspected, then three tries on the next one, then the property stops.
+		expect(calls.filter((c) => c.siteUrl === SITE)).toHaveLength(4)
+		expect(index.meta.quota_stopped_at).toBe(DAY2.toISOString())
+		expect(index.meta).toMatchObject({ urls_inspected_last_run: 1, urls_tracked: 3 })
+		// Rows already saved remain: all three, one of them refreshed today.
+		expect(index.rows).toHaveLength(3)
+		const refreshed = index.rows.filter((r) => r.checked_at.startsWith('2026-10-13'))
+		expect(refreshed).toHaveLength(1)
+		// The other property ran in full and carries no stop.
+		const second = await indexFor(ws.id, SECOND)
+		expect(second.rows.find((r) => r.url === SECOND_HOME)?.checked_at).toBe(DAY2.toISOString())
+		expect(second.meta).not.toHaveProperty('quota_stopped_at')
+
+		// The next tick resumes with the pages checked on day 1, not the one done today.
+		calls = stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY2_LATE))
+		const resumed = calls.filter((c) => c.siteUrl === SITE).map((c) => c.url)
+		expect(resumed).toHaveLength(2)
+		expect(resumed).not.toContain(refreshed[0]?.url)
+		expect([...resumed, refreshed[0]?.url].sort()).toEqual([...tracked].sort())
+		// A clean run clears the stop.
+		expect((await indexFor(ws.id, SITE)).meta).not.toHaveProperty('quota_stopped_at')
+	})
+
+	it('skips a property on a 403, keeps first_failure_at while it lasts, and clears it on a clean run', async () => {
+		const { ws, integration } = await twoProperties()
+		const forbidden: SiteAnswer = (siteUrl) => (siteUrl === SECOND ? { status: 403 } : undefined)
+
+		stubGoogleBySite(forbidden)
+		const summary = await inspectIndexStatus(db, integration, deps(DAY1))
+		expect(summary).toMatchObject({ failed: 1, quotaStopped: 0 })
+		// The other property was inspected as usual.
+		const index = await indexFor(ws.id, SITE)
+		expect(index.rows).toHaveLength(3)
+		expect(index.meta).not.toHaveProperty('last_error')
+		const failing = await indexFor(ws.id, SECOND)
+		expect(failing.meta.last_error).toEqual(expect.stringContaining('HTTP 403'))
+		expect(failing.meta.first_failure_at).toBe(DAY1.toISOString())
+		expect(failing.rows).toEqual([])
+
+		// Still forbidden the next date: the streak keeps its first time.
+		stubGoogleBySite(forbidden)
+		await inspectIndexStatus(db, integration, deps(DAY2))
+		const still = await indexFor(ws.id, SECOND)
+		expect(still.meta.first_failure_at).toBe(DAY1.toISOString())
+		expect(still.meta.last_error).toEqual(expect.stringContaining('HTTP 403'))
+
+		// A clean run clears both.
+		stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY3))
+		const cleared = await indexFor(ws.id, SECOND)
+		expect(cleared.meta).not.toHaveProperty('last_error')
+		expect(cleared.meta).not.toHaveProperty('first_failure_at')
+		expect(cleared.rows.map((r) => r.url)).toEqual([SECOND_HOME])
+
+		// The integration itself was never touched.
+		const [stored] = await db.select().from(integrations).where(eq(integrations.id, integration.id))
+		expect(stored.status).toBe('active')
+		expect(stored.config).toEqual({
+			gsc: { lastSyncedDate: '2026-10-10', backfilledAt: '2026-10-01T00:00:00Z' },
+		})
+	})
+
+	it('gives a page a 400 or a 5xx an unknown state and an error, and the run goes on', async () => {
+		const { ws, integration, piece } = await setup()
+		await piece(HOME)
+		await piece(BROKEN)
+		const down = 'https://gsc-index.test/down'
+		await piece(down)
+		const calls = stubGoogleBySite((_site, url) =>
+			url === BROKEN ? { status: 400 } : url === down ? { status: 503 } : undefined,
+		)
+
+		const summary = await inspectIndexStatus(db, integration, deps(DAY1))
+
+		expect(summary).toMatchObject({ inspected: 3, errors: 2, failed: 0, quotaStopped: 0 })
+		// The 503 is tried three times before it counts as that page's error.
+		expect(calls.filter((c) => c.url === down)).toHaveLength(3)
+		const index = await indexFor(ws.id, SITE)
+		const byUrl = new Map(index.rows.map((r) => [r.url, r]))
+		expect(byUrl.get(BROKEN)).toMatchObject({
+			state: 'unknown',
+			error: expect.stringContaining('HTTP 400'),
+		})
+		expect(byUrl.get(down)).toMatchObject({
+			state: 'unknown',
+			error: expect.stringContaining('HTTP 503'),
+		})
+		expect(byUrl.get(HOME)).toMatchObject({ state: 'indexed', error: null })
+		expect(index.meta).toMatchObject({ error_count: 2, unknown_count: 2, indexed_count: 1 })
+		expect(index.meta).not.toHaveProperty('last_error')
+	})
+
+	it('marks a property failed only when every inspected page errored', async () => {
+		const { ws, integration, piece } = await setup()
+		await piece(BROKEN)
+		await piece('https://gsc-index.test/broken-2')
+		stubGoogleBySite(() => ({ status: 400 }))
+
+		const summary = await inspectIndexStatus(db, integration, deps(DAY1))
+
+		// The two tracked pages, and the home page the sync saw.
+		expect(summary).toMatchObject({ inspected: 3, errors: 3, failed: 1 })
+		const index = await indexFor(ws.id, SITE)
+		expect(index.rows.every((r) => r.state === 'unknown' && r.error !== null)).toBe(true)
+		expect(index.meta.last_error).toEqual(
+			expect.stringContaining('Every inspection in this run failed'),
+		)
+		expect(index.meta.first_failure_at).toBe(DAY1.toISOString())
+		expect(index.meta.error_count).toBe(3)
+
+		// The next date every page works: the failure clears.
+		stubGoogleBySite(() => undefined)
+		await inspectIndexStatus(db, integration, deps(DAY2))
+		const after = await indexFor(ws.id, SITE)
+		expect(after.meta).not.toHaveProperty('last_error')
+		expect(after.meta).not.toHaveProperty('first_failure_at')
 	})
 })
