@@ -57,12 +57,6 @@ public final class ChatComposerModel {
 	public var text = "" {
 		didSet { persistDraft() }
 	}
-	/// A message being replied to: shown as the quote strip ("Replying to {name}") and sent as a
-	/// block quote above the text, since the API has no reply field yet.
-	public private(set) var replyTo: (name: String, text: String)?
-	/// A message being edited: shown as the quote strip ("Editing message"); the field holds the
-	/// text being revised. The sender reads `editing?.messageID` before `take()` to route the edit.
-	public private(set) var editing: (messageID: String, originalText: String)?
 	/// The caret or selection as character offsets, kept by the text field. Nil until the field
 	/// reports one, in which case edits act at the end of the text.
 	public var selection: Range<Int>?
@@ -75,6 +69,26 @@ public final class ChatComposerModel {
 	public private(set) var attachments: [ChatAttachmentDraft] = []
 	/// A rule the last action ran into ("That file is over 10 MB."), shown once then cleared.
 	public var notice: String?
+	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
+	public private(set) var quote: Quote?
+
+	/// "Replying to Forge" / "Editing message" with the quoted text on one line.
+	public struct Quote: Equatable, Sendable {
+		public enum Kind: Equatable, Sendable { case reply, edit }
+		public var kind: Kind
+		/// The author's name for a reply; empty for an edit.
+		public var name: String
+		public var text: String
+		/// The server id of the message being edited.
+		public var messageID: String?
+
+		public var label: String {
+			switch kind {
+			case .reply: "Replying to \(name)"
+			case .edit: "Editing message"
+			}
+		}
+	}
 
 	public struct SelectionRequest: Equatable, Sendable {
 		public var id: Int
@@ -127,24 +141,33 @@ public final class ChatComposerModel {
 
 	/// The message to send, and the composer cleared. Nil when `canSend` is false.
 	public func take() -> (text: String, metadata: ChatSendMetadata?)? {
-		guard canSend else { return nil }
+		guard canSend, quote?.kind != .edit else { return nil }
 		let metadata = ChatSendMetadata(
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
 				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)))
-		var body = EmojiShortcodes.expand(trimmedText)
-		if let replyTo { body = ChatQuote.make(author: replyTo.name, content: replyTo.text) + body }
-		let result = (body, metadata.isEmpty ? nil : metadata)
+		// A reply carries its quote in the message text, the form the web renders as a block quote.
+		let quoted = quote.flatMap { $0.kind == .reply ? ChatQuote.make(author: $0.name, content: $0.text) : nil } ?? ""
+		let result = (quoted + EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
+		clear()
+		return result
+	}
+
+	/// The edit to save, and the composer cleared. Nil unless an edit is open and has text.
+	public func takeEdit() -> (messageID: String, text: String)? {
+		guard let quote, quote.kind == .edit, let id = quote.messageID, !trimmedText.isEmpty,
+			!isOverLength
+		else { return nil }
+		let result = (id, trimmedText)
 		clear()
 		return result
 	}
 
 	public func clear() {
+		quote = nil
 		text = ""
 		selection = nil
 		selectionRequest = nil
-		replyTo = nil
-		editing = nil
 		draftBeforeEdit = nil
 		mentions = []
 		attachments = []
@@ -195,39 +218,61 @@ public final class ChatComposerModel {
 
 	// MARK: Reply, edit and drafts
 
-	/// Start a reply to a message. The quote strip shows who and what; the quote itself is added
-	/// above the text on send. Replying replaces an edit in progress (and gives its draft back).
-	public func reply(to name: String, text: String) {
-		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !content.isEmpty else { return }
-		if editing != nil { clearQuote() }
-		replyTo = (name, content)
+	/// Reply to a message: a strip above the field names whom, and the quote joins the message on send.
+	/// Replying replaces an edit in progress (and gives its draft back).
+	public func beginReply(author: String, content: String) {
+		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return }
+		if quote?.kind == .edit { cancelQuote() }
+		quote = Quote(kind: .reply, name: author, text: trimmed, messageID: nil)
 		focusRequest += 1
 	}
 
-	/// The same as `reply(to:text:)`, under the name the thread already calls.
-	public func quote(author: String, content: String) { reply(to: author, text: content) }
+	/// The same as `beginReply`, under the name the object and flow threads call.
+	public func reply(to name: String, text: String) { beginReply(author: name, content: text) }
 
-	/// Start editing a sent message: the field takes its text, the strip says "Editing message".
+	/// The same as `beginReply`, under the name the chat thread used before.
+	public func quote(author: String, content: String) { beginReply(author: author, content: content) }
+
+	/// The reply in progress, if any.
+	public var replyTo: (name: String, text: String)? {
+		guard let quote, quote.kind == .reply else { return nil }
+		return (quote.name, quote.text)
+	}
+
+	/// The edit in progress, if any.
+	public var editing: (messageID: String, originalText: String)? {
+		guard let quote, quote.kind == .edit, let id = quote.messageID else { return nil }
+		return (id, quote.text)
+	}
+
+	/// Edit your latest message: its words go into the field under an "Editing message" strip.
 	/// Whatever was being typed is kept and comes back if the edit is cancelled.
-	public func beginEdit(messageID: String, originalText: String) {
-		if editing == nil { draftBeforeEdit = text }
-		replyTo = nil
-		editing = (messageID, originalText)
-		let end = originalText.count
-		setText(originalText, selecting: end..<end)
+	public func beginEdit(messageID: String, text original: String) {
+		if quote?.kind != .edit { draftBeforeEdit = text }
+		quote = Quote(kind: .edit, name: "", text: original, messageID: messageID)
+		let end = original.count
+		setText(original, selecting: end..<end)
 		focusRequest += 1
 	}
 
-	/// Drop the reply or edit. Cancelling an edit restores the text typed before it started.
-	public func clearQuote() {
-		replyTo = nil
-		if editing != nil {
-			editing = nil
+	public func beginEdit(messageID: String, originalText: String) {
+		beginEdit(messageID: messageID, text: originalText)
+	}
+
+	/// Close the reply or edit strip. Cancelling an edit restores the text typed before it started.
+	public func cancelQuote() {
+		guard let current = quote else { return }
+		quote = nil
+		if current.kind == .edit {
 			text = draftBeforeEdit ?? ""
 			draftBeforeEdit = nil
+			let end = text.count
+			setText(text, selecting: end..<end)
 		}
 	}
+
+	public func clearQuote() { cancelQuote() }
 
 	/// Keep this composer's text as the conversation's draft: restored now, saved on every change.
 	/// Text already in the field wins over a stored draft, so a quoted message is not lost.
@@ -241,7 +286,7 @@ public final class ChatComposerModel {
 	}
 
 	private func persistDraft() {
-		guard let boundConversationID, editing == nil else { return }
+		guard let boundConversationID, quote?.kind != .edit else { return }
 		ChatDraftStore.set(text, for: boundConversationID)
 	}
 
@@ -394,7 +439,7 @@ public enum DictationText {
 
 /// What the composer's last slot shows. One rule, shared by every variant, so the swap is the
 /// same everywhere: nothing to send → mic; text or an attachment → send; an agent working while
-/// the field is empty → stop.
+/// the field is empty → stop (the composer keeps the mic beside it so dictation is never blocked).
 public enum ComposerLastSlot: Equatable, Sendable {
 	case mic, send, stop, none
 

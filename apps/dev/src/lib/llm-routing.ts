@@ -122,6 +122,13 @@ export interface FallbackConfig {
 	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
 	 */
 	ignoreProviders: string[]
+	/**
+	 * Cancel and retry a funded streamed request whose first token takes longer
+	 * than this many milliseconds (strip-images-proxy.js, in the agent container).
+	 * From MASKIN_FALLBACK_TTFT_TIMEOUT_MS; unset uses DEFAULT_TTFT_TIMEOUT_MS,
+	 * 0 or "none" turns the guard off. Undefined here means off.
+	 */
+	ttftTimeoutMs?: number
 }
 
 /** The subset of OpenRouter's request-body "provider" object Maskin sends. */
@@ -165,6 +172,24 @@ export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
  */
 export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
 
+/**
+ * A funded request that has produced no token after this long is cancelled and
+ * retried once, then sent to the other allowed provider (two tries there). The
+ * last try has no timeout, so a request that is slow everywhere is still served.
+ * Measured first tokens on the allowed providers:
+ * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
+ * 8s leaves headroom for both and still catches the stalls.
+ */
+export const DEFAULT_TTFT_TIMEOUT_MS = 8000
+
+function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
+	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()
+	if (raw === undefined || raw === '') return DEFAULT_TTFT_TIMEOUT_MS
+	if (raw.toLowerCase() === 'none') return 0
+	const ms = Number(raw)
+	return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0
+}
+
 function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
 	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
 	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
@@ -206,6 +231,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			.split(',')
 			.map((p) => p.trim())
 			.filter(Boolean),
+		ttftTimeoutMs: readTtftTimeoutMs(env),
 	}
 }
 
@@ -547,6 +573,10 @@ function buildMaskinPlanEnv(
 	if (only || ignore) {
 		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
 	}
+	// The same proxy cancels and retries a request whose first token is slow.
+	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
+		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
+	}
 	return env
 }
 
@@ -574,7 +604,9 @@ function buildMaskinPlanEnv(
  * `enterprise` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
- * (the routes that don't already carry an explicit model of their own). Route
+ * (the routes that don't already carry an explicit model of their own). When it
+ * is unset they get CLAUDE_SUBSCRIPTION_MODEL instead: the Claude CLI's own
+ * default is not Sonnet, and an API key bills per token. Route
  * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
  * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
  * workspace/operator config and are left as-is.
@@ -590,7 +622,7 @@ function buildMaskinPlanEnv(
  * pre-flight and the post-hoc "the OAuth route produced nothing" check below
  * go through here so the two can't drift apart.
  */
-function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
 	return isClaudeFailoverEnabled(env)
 		? Boolean(resolveActiveSlot(claudeOauth))
 		: Boolean(readSlots(claudeOauth).primary)
@@ -637,9 +669,9 @@ export async function resolveLlmRoute(params: {
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
 			if (enterprise) {
-				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
-				if (agent.model) {
-					envVars.ANTHROPIC_MODEL = agent.model
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: agent.apiKey,
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 				}
 				return { route: LLM_ROUTE_AGENT, envVars }
 			}
@@ -756,9 +788,9 @@ export async function resolveLlmRoute(params: {
 		// 4. Workspace anthropic api key
 		const wsAnthropic = wsSettings.llm_keys?.anthropic
 		if (wsAnthropic) {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
+			const envVars: Record<string, string> = {
+				ANTHROPIC_API_KEY: wsAnthropic,
+				ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 			}
 			return { route: LLM_ROUTE_API_KEY, envVars }
 		}
@@ -1071,4 +1103,21 @@ export function resolveChatCredentials(params: {
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
 		...(providerPrefs && { providerPrefs }),
 	}
+}
+
+/**
+ * OpenAI Realtime (gpt-realtime) audio rates for Voice v1, in USD per second of
+ * audio. Anchors from the tech spec §Cost pipeline: $0.06/min in, $0.24/min
+ * out. Voice is billed to the operator's MASKIN_VOICE_OPENAI_API_KEY, not to a
+ * workspace route, so these sit beside the model pricing rather than in it.
+ */
+export const VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND = 0.001
+export const VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND = 0.004
+
+/** Dollar cost of one voice call, rounded to the 6 decimals voice_sessions.total_cost_usd stores. */
+export function computeVoiceCostUsd(inputAudioSeconds: number, outputAudioSeconds: number): number {
+	const usd =
+		inputAudioSeconds * VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND +
+		outputAudioSeconds * VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND
+	return Math.round(usd * 1e6) / 1e6
 }

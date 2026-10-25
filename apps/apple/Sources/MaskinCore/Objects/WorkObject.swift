@@ -63,10 +63,12 @@ public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var otherType: String
 	public var otherTitle: String
 	public var otherStatus: String?
+	/// The actor driving the other object (its owner), when the graph carries it.
+	public var otherDriver: String?
 
 	public init(
 		id: String, relation: String, isOutgoing: Bool, otherId: String, otherType: String,
-		otherTitle: String, otherStatus: String? = nil
+		otherTitle: String, otherStatus: String? = nil, otherDriver: String? = nil
 	) {
 		self.id = id
 		self.relation = relation
@@ -75,6 +77,7 @@ public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 		self.otherType = otherType
 		self.otherTitle = otherTitle
 		self.otherStatus = otherStatus
+		self.otherDriver = otherDriver
 	}
 
 	/// "blocks", "blocked by", "informs", "informed by", "relates to"...
@@ -179,17 +182,20 @@ public struct ObjectsSchema: Sendable, Equatable {
 public struct ObjectsQuery: Sendable, Equatable {
 	public var type: String?
 	public var status: String?
+	/// Only objects this actor drives (an agent's page).
+	public var driver: String?
 	public var search: String
 	public var limit: Int
 	public var offset: Int
 	public var sort: ObjectsSort
 
 	public init(
-		type: String? = nil, status: String? = nil, search: String = "", limit: Int = 50, offset: Int = 0,
-		sort: ObjectsSort = .needsYou
+		type: String? = nil, status: String? = nil, driver: String? = nil, search: String = "", limit: Int = 50,
+		offset: Int = 0, sort: ObjectsSort = .needsYou
 	) {
 		self.type = type
 		self.status = status
+		self.driver = driver
 		self.search = search
 		self.limit = limit
 		self.offset = offset

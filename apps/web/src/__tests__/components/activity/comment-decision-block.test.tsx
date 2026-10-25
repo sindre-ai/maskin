@@ -43,12 +43,11 @@ describe('CommentDecisionBlock', () => {
 		createMutate.mockReset()
 	})
 
-	it('renders every option with its consequences, so the ask is answerable here', () => {
+	it('renders every option and the reasons for the recommended one, so the ask is answerable here', () => {
 		renderBlock()
 		expect(screen.getByRole('button', { name: /Ship/ })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Hold/ })).toBeInTheDocument()
-		expect(screen.getByText('Goes out tonight')).toBeInTheDocument()
-		expect(screen.getByText('Stalls keep happening')).toBeInTheDocument()
+		expect(screen.getByText('Suggested: Ship. Goes out tonight. No rollback.')).toBeInTheDocument()
 	})
 
 	it('shows the ask above the options', () => {

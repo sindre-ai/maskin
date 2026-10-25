@@ -18,6 +18,8 @@ let package = Package(
 		.package(url: "https://github.com/apple/swift-openapi-generator", from: "1.6.0"),
 		.package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.8.0"),
 		.package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
+		// Google's WebRTC build, for the OpenAI Realtime voice call (MaskinFeatures, iOS only).
+		.package(url: "https://github.com/stasel/WebRTC", from: "130.0.0"),
 	],
 	targets: [
 		// Tokens are generated from the design-system CSS: scripts/gen-tokens.mjs.
@@ -51,7 +53,10 @@ let package = Package(
 		// Screens. One folder per feature; stores come from MaskinCore.
 		.target(
 			name: "MaskinFeatures",
-			dependencies: ["MaskinCore", "MaskinUI", "MaskinDesign", "MaskinAPI"]),
+			dependencies: [
+				"MaskinCore", "MaskinUI", "MaskinDesign", "MaskinAPI",
+				.product(name: "WebRTC", package: "WebRTC", condition: .when(platforms: [.iOS])),
+			]),
 		.testTarget(name: "MaskinFeaturesTests", dependencies: ["MaskinFeatures"]),
 	]
 )

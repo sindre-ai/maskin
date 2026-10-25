@@ -69,6 +69,8 @@ import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-t
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { withDeliveryState } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -87,6 +89,7 @@ import {
 	isWorkspaceMember,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -718,8 +721,7 @@ app.openapi(createObjectRoute, async (c) => {
 
 	// Log event · pass the session context so `recordEvent` can also upsert
 	// a `session → object` `produced_by` edge when the caller's session id
-	// arrived on the `X-Maskin-Session-Id` header and the
-	// `graph-provenance-writes` flag is on for the session's actor.
+	// arrived on the `X-Maskin-Session-Id` header.
 	await recordEvent(db, {
 		workspaceId,
 		actorId,
@@ -1346,6 +1348,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		}
 	}
 
+	const basePreview = buildObjectPreview(object)
+	const preview = basePreview
+		? await withDeliveryState(db, object.workspaceId, object.id, basePreview)
+		: null
+
 	return c.json(
 		{
 			object: {
@@ -1356,6 +1363,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
 				is_starred_by_me: starredIds.has(object.id),
+				preview,
 			},
 			relationships: rels.map((r) => ({
 				...serialize(r),
@@ -1718,6 +1726,7 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
+	const basePreview = buildObjectPreview(object)
 	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
@@ -1751,6 +1760,9 @@ app.openapi(getObjectRoute, async (c) => {
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
 			is_starred_by_me: starred,
+			preview: basePreview
+				? await withDeliveryState(db, object.workspaceId, id, basePreview)
+				: null,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)
@@ -1768,7 +1780,12 @@ const updateObjectRoute = createRoute({
 		body: {
 			content: {
 				'application/json': {
-					schema: updateObjectSchema,
+					schema: updateObjectSchema.extend({
+						/** The chat card a status change was made from: the agent behind it is told. */
+						chat: z
+							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
+							.optional(),
+					}),
 				},
 			},
 		},
@@ -1793,7 +1810,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const body = c.req.valid('json')
+	const { chat, ...body } = c.req.valid('json')
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
@@ -1954,6 +1971,19 @@ app.openapi(updateObjectRoute, async (c) => {
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	// Moved from a card in a chat: tell the agent behind the card, without posting a message
+	// in the person's name. Not awaited, since waking the agent may start its session.
+	if (chat && updated.status !== existing.status) {
+		void wakeAgentFromCard({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId: updated.workspaceId,
+			callerId: actorId,
+			card: chat,
+			instruction: movedInstruction(updated, updated.status),
+		})
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)

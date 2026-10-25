@@ -223,7 +223,14 @@ describe('createSpace', () => {
 
 		await createSpace(ctx, { purpose: 'p', actor_id: otherActor })
 
-		expect(getGoogleMeetAccessToken).toHaveBeenCalledWith(ctx.db, workspaceId, otherActor)
+		// The lookup follows the explicit actor; the credential read is attributed to the caller.
+		expect(getGoogleMeetAccessToken).toHaveBeenCalledWith(
+			ctx.db,
+			workspaceId,
+			otherActor,
+			ctx.callerActorId,
+			'meet.googleapis.com',
+		)
 	})
 })
 
@@ -417,6 +424,12 @@ describe('createMeetBackedEvent', () => {
 
 		await createMeetBackedEvent(ctx, { ...input, actor_id: otherActor })
 
-		expect(getGoogleMeetAccessToken).toHaveBeenCalledWith(ctx.db, workspaceId, otherActor)
+		expect(getGoogleMeetAccessToken).toHaveBeenCalledWith(
+			ctx.db,
+			workspaceId,
+			otherActor,
+			ctx.callerActorId,
+			'www.googleapis.com',
+		)
 	})
 })

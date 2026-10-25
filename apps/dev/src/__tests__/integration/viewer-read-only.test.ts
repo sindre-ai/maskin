@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { files, workspaceMembers } from '@maskin/db/schema'
+import { files, notifications, voiceSessions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
 import { getWorkspaceRole, isWorkspaceMember, isWorkspaceWriter } from '../../lib/workspace-auth'
 import {
 	buildCreateGraphBody,
+	buildCreateNotificationBody,
 	buildCreateObjectBody,
 	buildCreateRelationshipBody,
 	buildFile,
 	insertActor,
+	insertNotification,
 	insertObject,
 	insertWorkspace,
 } from '../factories'
@@ -24,6 +26,8 @@ const { default: filesRoutes } = await import('../../routes/files')
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
+const { default: voiceSessionsRoutes } = await import('../../routes/voice-sessions')
+const { default: notificationsRoutes } = await import('../../routes/notifications')
 
 // Real authMiddleware (the role comes from its membership lookup) in front of the
 // real routes, so a viewer API key goes through the same path as in production.
@@ -52,6 +56,8 @@ function createApp() {
 	app.route('/api/files', fileCommentsRoutes as never)
 	app.route('/api/events', eventsRoutes as never)
 	app.route('/api/imports', importsRoutes as never)
+	app.route('/api/voice-sessions', voiceSessionsRoutes as never)
+	app.route('/api/notifications', notificationsRoutes as never)
 	return app
 }
 
@@ -269,6 +275,194 @@ describe('Viewer role is read-only', () => {
 			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), auth(viewerKey)),
 		)
 		expect(res.status).toBe(201)
+	})
+
+	describe('voice calls', () => {
+		const addAgent = async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Chief of Staff', email: null })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: agent.id, role: 'member' })
+			return agent
+		}
+
+		it('returns 403 to a viewer who tries to start a call', async () => {
+			const agent = await addAgent()
+			const res = await createApp().request(
+				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: agent.id }, auth(viewerKey)),
+			)
+			expect(res.status).toBe(403)
+			const rows = await db
+				.select()
+				.from(voiceSessions)
+				.where(eq(voiceSessions.humanActorId, viewerId))
+			expect(rows).toHaveLength(0)
+		})
+
+		it('returns 403 to a member demoted to viewer after the call was reserved', async () => {
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'pending',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/offer`,
+					{ sdp: 'v=0' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('lets a viewer hang up their own call, so a demotion mid-call cannot strand it', async () => {
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'active',
+					vendorSessionId: 'vs_test',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/hangup`,
+					{ reason: 'user_hangup' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('notifications', () => {
+		it('returns 403 to a viewer and 201 to a member on POST /api/notifications', async () => {
+			const app = createApp()
+			const body = buildCreateNotificationBody({ source_actor_id: getTestActorId() })
+
+			const asViewer = await app.request(
+				jsonRequest('POST', '/api/notifications', body, auth(viewerKey)),
+			)
+			expect(asViewer.status).toBe(403)
+			expect((await asViewer.json()).error.code).toBe('FORBIDDEN')
+
+			const asMember = await app.request(
+				jsonRequest('POST', '/api/notifications', body, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(201)
+		})
+
+		it('returns 403 to a viewer on edit of a notification that is not theirs, 200 to a member', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: getTestActorId(),
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const asViewer = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${other?.id}`, { status: 'seen' }, bearerOnly),
+			)
+			expect(asViewer.status).toBe(403)
+
+			const asMember = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${other?.id}`,
+					{ status: 'seen' },
+					auth(memberKey),
+				),
+			)
+			expect(asMember.status).toBe(200)
+			expect((await asMember.json()).status).toBe('seen')
+		})
+
+		it('returns 403 to a viewer on delete of a notification that is not theirs, 200 to a member', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: getTestActorId(),
+			})
+			// A notification with no target is nobody's own.
+			const untargeted = await insertNotification(db, workspaceId, getTestActorId())
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			for (const n of [other, untargeted]) {
+				const res = await app.request(jsonDelete(`/api/notifications/${n?.id}`, bearerOnly))
+				expect(res.status).toBe(403)
+			}
+
+			const asMember = await app.request(
+				jsonDelete(`/api/notifications/${other?.id}`, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(200)
+		})
+
+		it('lets a viewer mark their own notification read and delete it', async () => {
+			const app = createApp()
+			const own = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: viewerId,
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const read = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${own?.id}`, { status: 'seen' }, bearerOnly),
+			)
+			expect(read.status).toBe(200)
+			expect((await read.json()).status).toBe('seen')
+
+			const del = await app.request(jsonDelete(`/api/notifications/${own?.id}`, bearerOnly))
+			expect(del.status).toBe(200)
+		})
+
+		it('returns 403 to a viewer who writes metadata on their own notification', async () => {
+			const app = createApp()
+			const own = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: viewerId,
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${own?.id}`,
+					{ status: 'resolved', metadata: { response: 'forged' } },
+					bearerOnly,
+				),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db
+				.select()
+				.from(notifications)
+				.where(eq(notifications.id, own?.id as string))
+			expect(row?.status).toBe('pending')
+			expect(row?.metadata).toBeNull()
+		})
+
+		it('keeps a non-member on 404 for edit and delete', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId())
+			const stranger = await insertActor(db, { name: 'Stranger' })
+			const headers = { Authorization: `Bearer ${stranger.apiKey}` }
+
+			const patch = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${other?.id}`, { status: 'seen' }, headers),
+			)
+			expect(patch.status).toBe(404)
+			const del = await app.request(jsonDelete(`/api/notifications/${other?.id}`, headers))
+			expect(del.status).toBe(404)
+		})
 	})
 
 	describe('workspace-auth helpers', () => {

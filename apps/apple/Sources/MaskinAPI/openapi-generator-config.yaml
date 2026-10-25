@@ -15,6 +15,9 @@ filter:
     - /api/conversations/{id}/messages
     - /api/conversations/{id}/messages/{messageId}
     - /api/conversations/{id}/messages/{messageId}/retry
+    - /api/conversations/{id}/messages/{messageId}/reactions
+    - /api/conversations/{id}/messages/{messageId}/thread/read
+    - /api/conversations/threads
     - /api/conversations/{id}/participants
     - /api/objects
     - /api/objects/search
@@ -24,6 +27,7 @@ filter:
     - /api/notifications/{id}
     - /api/notifications/{id}/respond
     - /api/briefing
+    - /api/for-you
     - /api/events/history
     - /api/feature-flags
     - /api/events
@@ -69,6 +73,9 @@ filter:
     - /api/integrations/providers
     - /api/integrations/{id}
     - /api/integrations/{provider}/connect
+    - /api/integrations/linkedin-unipile/connect
+    - /api/integrations/github/pending-selection/{id}
+    - /api/integrations/github/select-installation
     - /api/integrations/{id}/complete
     - /api/marketplace/loops
     - /api/marketplace/loops/{id}
@@ -78,3 +85,9 @@ filter:
     - /api/conversations/{id}/participants/{actorId}
     - /api/briefing/spoken
     - /api/billing/usage
+    - /api/invites/preview
+    - /api/invites/{token}/accept
+    - /api/notification-preferences
+    - /api/voice-sessions
+    - /api/voice-sessions/{id}/offer
+    - /api/voice-sessions/{id}/hangup

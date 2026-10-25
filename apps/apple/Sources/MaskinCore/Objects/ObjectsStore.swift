@@ -174,7 +174,9 @@ public final class ObjectsStore {
 	public var presentTypes: [String] {
 		var seen = seenTypes.union(inventory.map(\.type))
 		if let typeFilter { seen.insert(typeFilter) }
-		if seen.isEmpty { seen = Set(directory.schema.types) }
+		// The inventory is only the newest page: a type whose objects are all older never shows up
+		// in it, so once it is full every configured type stays on offer.
+		if seen.isEmpty || inventoryCapped { seen.formUnion(directory.schema.types) }
 		let schema = directory.schema
 		return ObjectTypeCatalog.sorted(Array(seen)) { schema.displayName(for: $0) }
 	}

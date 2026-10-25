@@ -2,135 +2,138 @@ import MaskinCore
 import MaskinDesign
 import MaskinUI
 import SwiftUI
+import WatchKit
 
-/// Decisions waiting on the wearer, one card per page. One tap decides (optimistic, held for the
-/// Undo window). Every option the iPhone card has is here, in order, scrolling with the Digital
-/// Crown; one that can't be taken back asks first, and Hold asks why. When the watch can't reach
-/// the feed, the last snapshot (from the phone or its own last read) is shown read-only.
+/// Decisions waiting on the wearer, one card per page. A page holds the ask, why, the recommended
+/// option and Hold / More, all without scrolling; "More" lists every option the iPhone card has.
+/// One tap decides (optimistic, held for the Undo window); one that can't be taken back asks
+/// first, and Hold asks why. When the watch can't reach the feed, the last snapshot (from the
+/// phone or its own last read) is shown read-only. Pushed from Home, inside its navigation stack.
 struct WatchNeedsYou: View {
 	let store: ForYouStore?
 	let watch: MaskinWatchStore
 	let workspaceId: String?
 
+	@State private var selection: String?
+	/// "Done" on the last receipt: the wearer is finished, so show Caught up rather than the receipts.
+	@State private var finished = false
+
 	private var entries: [FeedEntry] {
 		(store?.entries ?? []).filter { $0.section == .needs }
 	}
 
-	private var count: Int { store != nil && !entries.isEmpty ? (store?.needsCount ?? 0) : watch.needsCount }
-
 	var body: some View {
-		NavigationStack {
-			content
-				.navigationTitle("Needs you")
-				.toolbar {
-					ToolbarItem(placement: .topBarLeading) {
-						MaskinLogoTile(size: MaskinSpace.s10).accessibilityHidden(true)
-					}
-					if count > 0 {
-						ToolbarItem(placement: .topBarTrailing) { WatchCountBadge(count: count) }
-					}
-				}
-				.containerBackground(for: .navigation) { WatchBackdrop() }
+		content
+			.toolbar(.hidden, for: .navigationBar)
+			.containerBackground(for: .navigation) { WatchBackdrop() }
+			// A new decision arriving after Done ends the caught-up screen.
+				.onChange(of: entries.contains { $0.record == nil }) { _, hasOpen in
+				if hasOpen { finished = false }
+			}
+	}
+
+	/// "Done" on the last receipt: back to a decision still open, else Caught up.
+	private func finish() {
+		if let open = entries.first(where: { $0.record == nil }) {
+			selection = open.id
+		} else {
+			finished = true
 		}
 	}
 
 	@ViewBuilder
 	private var content: some View {
-		if let store, !entries.isEmpty {
-			TabView {
-				ForEach(entries) { entry in
-					WatchDecisionPage(store: store, entry: entry, workspaceId: workspaceId)
+		if finished, store != nil {
+			WatchCaughtUp()
+		} else if let store, !entries.isEmpty {
+			TabView(selection: $selection) {
+				ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+					WatchDecisionPage(
+						store: store, entry: entry, workspaceId: workspaceId,
+						position: WatchDecisionOptions.position(index, of: entries.count),
+						next: index + 1 < entries.count ? { selection = entries[index + 1].id } : nil,
+						finish: finish)
+					.tag(Optional(entry.id))
 				}
 			}
 			.tabViewStyle(.page)
 		} else if !watch.cards.isEmpty, store?.isEmpty != true {
 			// Offline or still loading: the last known state, read only.
 			TabView {
-				ForEach(watch.cards) { card in WatchSnapshotPage(card: card, offline: watch.isOffline) }
+				ForEach(Array(watch.cards.enumerated()), id: \.element.id) { index, card in
+					WatchSnapshotPage(
+						card: card, position: WatchDecisionOptions.position(index, of: watch.cards.count),
+						updatedAt: watch.snapshot?.updatedAt, offline: watch.isOffline)
+				}
 			}
 			.tabViewStyle(.page)
 		} else if let store, store.phase == .loading, store.cards.isEmpty {
-			ProgressView()
+			WatchSpinner()
 		} else if let store, case .failed(let message) = store.phase, store.cards.isEmpty {
-			EmptyState(symbol: "wifi.exclamationmark", title: "Can't load", message: message) {
+			EmptyState(symbol: "exclamationmark.circle", title: "Can't load", message: message, style: .circled) {
 				Button("Retry") { Task { await store.load() } }
 					.frame(minHeight: WatchMetrics.target)
 			}
 		} else {
-			EmptyState(symbol: "checkmark.circle", title: "You're caught up")
+			WatchCaughtUp()
 		}
 	}
 }
 
-/// The message block shared by the live and the snapshot page.
-private struct WatchMessage: View {
+/// Nothing waits on the wearer.
+private struct WatchCaughtUp: View {
+	var body: some View {
+		VStack(spacing: MaskinSpace.gapLoose) {
+			Image(systemName: "checkmark.circle")
+				.font(.system(size: MaskinFontSize.t26, weight: .regular))
+				.foregroundStyle(MaskinColor.sigHi)
+				.accessibilityHidden(true)
+			Text("You're caught up").font(WatchType.action()).foregroundStyle(MaskinColor.ink)
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+	}
+}
+
+/// Tile, sender and where this page sits in the pager ("1 of 3").
+private struct WatchDecisionHeader: View {
 	let sender: String
-	let at: Date?
-	let text: String
-	let ask: String?
-	/// The object the decision is about; underlined where the message names it, else shown as a
-	/// link line under the message.
-	var objectName: String?
+	let position: String
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack(spacing: MaskinSpace.gapDefault) {
-				WatchTile(name: sender)
-				Text(sender).font(WatchType.name()).foregroundStyle(MaskinColor.ink).lineLimit(1)
-				Spacer(minLength: 0)
-				if let at {
-					Text(at.formatted(date: .omitted, time: .shortened))
-						.font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
-				}
-			}
-			linked
-				.font(WatchType.body())
-				.lineSpacing(MaskinSpace.s1 + 1)
-				.lineLimit(4)
-				.foregroundStyle(MaskinColor.ink)
-			if let objectName = unlinkedObjectName(objectName) {
-				link(objectName).font(WatchType.caption()).lineLimit(1)
-			}
-			if let ask, !ask.isEmpty {
-				Text(ask).font(WatchType.question()).foregroundStyle(MaskinColor.ink3)
-			}
+		HStack(spacing: MaskinSpace.gapDefault) {
+			WatchTile(name: sender)
+			Text(sender).font(WatchType.name()).foregroundStyle(MaskinColor.ink).lineLimit(1)
+			Spacer(minLength: 0)
+			Text(position).font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
 		}
 	}
 }
 
-extension WatchMessage {
-	/// The message with the object's name underlined in the `sigHi` link colour.
-	fileprivate var linked: Text {
-		guard let name = objectName?.nonEmpty, let range = text.range(of: name, options: .caseInsensitive)
-		else { return Text(text) }
-		let before = String(text[..<range.lowerBound])
-		let after = String(text[range.upperBound...])
-		return Text("\(before)\(link(String(text[range])))\(after)")
-	}
-
-	/// The object's name when the message does not already say it.
-	fileprivate func unlinkedObjectName(_ name: String?) -> String? {
-		guard let name = name?.nonEmpty, text.range(of: name, options: .caseInsensitive) == nil else { return nil }
-		return name
-	}
-
-	fileprivate func link(_ name: String) -> Text {
-		Text(name).underline(true, color: MaskinColor.sigHi)
-	}
-}
-
-private struct WatchDecisionPage: View {
+/// One decision. Also pushed from a flow's "Review decision", where there is no pager (`next` nil).
+struct WatchDecisionPage: View {
 	let store: ForYouStore
 	let entry: FeedEntry
 	let workspaceId: String?
-	// Option labels (an option's id): `navigationDestination(item:)` wants a Hashable value.
-	@State private var confirming: String?
-	@State private var holding: String?
+	/// "1 of 3".
+	let position: String
+	/// Moves the pager to the next decision; nil on the last one.
+	let next: (() -> Void)?
+	/// "Done" on the last receipt.
+	var finish: () -> Void = {}
 
-	private func option(labelled label: String) -> DecisionOption? { options.first { $0.id == label } }
+	private enum Route: Hashable {
+		/// The label of the option being confirmed (an option's id).
+		case confirm(String)
+		case hold(String)
+		case all
+	}
+
+	@State private var route: Route?
+	@Environment(\.dismiss) private var dismiss
 
 	private var card: ForYouCard { entry.card }
 	private var options: [DecisionOption] { WatchDecisionOptions.all(card.decision?.options ?? []) }
+	private func option(labelled label: String) -> DecisionOption? { options.first { $0.id == label } }
 
 	var body: some View {
 		ScrollView {
@@ -138,15 +141,7 @@ private struct WatchDecisionPage: View {
 				if let record = entry.record, !isFailed(record) {
 					receipt(record)
 				} else {
-					WatchMessage(
-						sender: store.senderName(of: card) ?? "Chief of Staff", at: card.latestActivityAt,
-						text: card.decision?.summary.nonEmpty ?? card.headline, ask: card.decision?.ask,
-						objectName: card.objectTitle)
-					optionList
-					Label("Open on iPhone", systemImage: "iphone")
-						.font(WatchType.caption())
-						.foregroundStyle(MaskinColor.ink4)
-						.frame(minHeight: WatchMetrics.target)
+					decision
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -159,57 +154,81 @@ private struct WatchDecisionPage: View {
 			activity.title = card.headline
 			activity.userInfo = HandoffActivity.userInfo(workspaceId: workspaceId, objectId: card.id)
 		}
-		.navigationDestination(item: $confirming) { label in
-			if let option = option(labelled: label) {
-				WatchConfirm(option: option) {
-					store.choose(option, on: card)
-					confirming = nil
-				} cancel: {
-					confirming = nil
+		.navigationDestination(item: $route) { route in
+			switch route {
+			case .confirm(let label):
+				if let option = option(labelled: label) {
+					WatchConfirm(option: option) {
+						decide(option)
+						self.route = nil
+					} cancel: {
+						self.route = nil
+					}
 				}
-			}
-		}
-		.navigationDestination(item: $holding) { label in
-			if let option = option(labelled: label) {
-				WatchHoldReason { reason in
-					store.choose(option, note: HoldReason.normalized(reason), on: card)
-					holding = nil
+			case .hold(let label):
+				if let option = option(labelled: label) {
+					WatchHoldReason { reason in
+						store.choose(option, note: HoldReason.normalized(reason), on: card)
+						WKInterfaceDevice.current().play(.success)
+						self.route = nil
+					}
+				}
+			case .all:
+				WatchAllOptions(
+					ask: ask, options: WatchDecisionOptions.listed(options),
+					hold: WatchDecisionOptions.hold(options)
+				) { option in
+					choose(option)
 				}
 			}
 		}
 	}
 
-	/// Every option in the iPhone's order. More than three scroll inside their own block, which
-	/// the Crown drives once it is focused; three or fewer lie flat on the page.
+	private var ask: String { card.decision?.ask.nonEmpty ?? card.headline }
+
 	@ViewBuilder
-	private var optionList: some View {
-		let rows = VStack(spacing: MaskinSpace.gapDefault) {
-			ForEach(options) { option in
-				Button { choose(option) } label: {
-					WatchCapsule(
-						title: option.label, prominent: option.recommended,
-						font: WatchType.option(recommended: option.recommended))
-				}
-				.buttonStyle(.plain)
-			}
+	private var decision: some View {
+		WatchDecisionHeader(sender: store.senderName(of: card) ?? "Chief of Staff", position: position)
+		Text(ask)
+			.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+			.lineLimit(3)
+		if let reason = WatchDecisionOptions.reasonLine(card.decision?.summary ?? "") {
+			Text(reason)
+				.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
+				.lineLimit(2)
 		}
-		if options.count > WatchDecisionOptions.visibleRows {
-			let rowHeight = WatchMetrics.target + MaskinSpace.gapDefault
-			ScrollView(.vertical) { rows }
-				.frame(height: rowHeight * CGFloat(WatchDecisionOptions.visibleRows) - MaskinSpace.gapDefault)
-		} else {
-			rows
+		if let primary = WatchDecisionOptions.primary(options) {
+			Button { choose(primary) } label: {
+				WatchCapsule(title: primary.label, prominent: true, font: WatchType.option(recommended: true))
+			}
+			.buttonStyle(.plain)
+		}
+		HStack(spacing: MaskinSpace.gapDefault) {
+			if let hold = WatchDecisionOptions.hold(options) {
+				Button { route = .hold(hold.id) } label: { WatchCapsule(title: "Hold") }
+					.buttonStyle(.plain)
+			}
+			if WatchDecisionOptions.hasMore(options) {
+				Button { route = .all } label: { WatchCapsule(title: "More") }
+					.buttonStyle(.plain)
+			}
 		}
 	}
 
 	private func choose(_ option: DecisionOption) {
 		if WatchDecisionOptions.isHold(option) {
-			holding = option.id
+			route = .hold(option.id)
 		} else if WatchDecisionOptions.needsConfirmation(option) {
-			confirming = option.id
+			route = .confirm(option.id)
 		} else {
-			store.choose(option, on: card)
+			decide(option)
+			route = nil
 		}
+	}
+
+	private func decide(_ option: DecisionOption) {
+		store.choose(option, on: card)
+		WKInterfaceDevice.current().play(.success)
 	}
 
 	private func receipt(_ record: DecisionRecord) -> some View {
@@ -227,14 +246,30 @@ private struct WatchDecisionPage: View {
 			switch record.phase {
 			case .held:
 				Text("Undo any time in the next hour.").font(WatchType.caption()).foregroundStyle(MaskinColor.ink4)
-				Button("Undo") { _ = store.undo(card) }
-					.buttonStyle(SecondaryActionButtonStyle())
-					.frame(minHeight: WatchMetrics.target)
+				Button { _ = store.undo(card) } label: { WatchCapsule(title: "Undo") }
+					.buttonStyle(.plain)
+				advance
 			case .queued:
 				Text("Queued, sends when you're back.").font(WatchType.caption()).foregroundStyle(MaskinColor.sigHi)
+				advance
 			default:
 				EmptyView()
 			}
+		}
+	}
+
+	/// "Next" moves to the following decision; the last one says "Done" and ends the run.
+	@ViewBuilder
+	private var advance: some View {
+		if let next {
+			Button(action: next) { WatchCapsule(title: "Next", prominent: true) }
+				.buttonStyle(.plain)
+		} else {
+			Button {
+				finish()
+				dismiss()
+			} label: { WatchCapsule(title: "Done", prominent: true) }
+				.buttonStyle(.plain)
 		}
 	}
 
@@ -253,19 +288,72 @@ private struct WatchDecisionPage: View {
 	}
 }
 
+/// Every option, one capsule each in the iPhone's order, then Hold. A plain list: the page scrolls
+/// with the Crown and nothing inside it does.
+private struct WatchAllOptions: View {
+	let ask: String
+	let options: [DecisionOption]
+	let hold: DecisionOption?
+	let choose: (DecisionOption) -> Void
+
+	var body: some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
+				Text("ALL OPTIONS")
+					.font(WatchType.microMono()).tracking(0.8)
+					.foregroundStyle(MaskinColor.ink4)
+				Text(ask).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(3)
+				ForEach(options) { option in
+					Button { choose(option) } label: {
+						WatchCapsule(
+							title: option.label, prominent: option.recommended,
+							font: WatchType.option(recommended: option.recommended))
+					}
+					.buttonStyle(.plain)
+				}
+				if let hold {
+					Button { choose(hold) } label: { WatchCapsule(title: "Hold") }
+						.buttonStyle(.plain)
+				}
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+		}
+		.containerBackground(for: .navigation) { WatchBackdrop() }
+		.navigationBarBackButtonHidden()
+	}
+}
+
 /// A decision from the last snapshot: readable without a connection, decided on the iPhone.
 private struct WatchSnapshotPage: View {
 	let card: WatchSnapshot.Card
+	let position: String
+	let updatedAt: Date?
 	let offline: Bool
+
+	private var header: String? {
+		guard let updatedAt else { return offline ? "OFFLINE" : nil }
+		return offline
+			? WatchDecisionOptions.offlineHeader(updatedAt: updatedAt, now: Date())
+			: WatchDecisionOptions.updatedHeader(updatedAt: updatedAt, now: Date())
+	}
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				WatchMessage(
-					sender: card.sender, at: card.at,
-					text: card.summary.nonEmpty ?? card.headline, ask: card.ask,
-					objectName: card.objectTitle)
-				Label(offline ? "Offline. Decide on iPhone." : "Open on iPhone", systemImage: "iphone")
+				if let header {
+					Text(header).font(WatchType.microMono()).tracking(0.6).foregroundStyle(MaskinColor.ink4)
+				}
+				WatchDecisionHeader(sender: card.sender, position: position)
+				Text(card.ask.nonEmpty ?? card.headline)
+					.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+					.lineLimit(3)
+				if let reason = WatchDecisionOptions.reasonLine(card.summary) {
+					Text(reason).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(2)
+				}
+				if let primary = WatchDecisionOptions.primary(card.options) {
+					Text(primary.label).font(WatchType.row()).foregroundStyle(MaskinColor.ink2)
+				}
+				Label(offline ? "Decide on your iPhone." : "Open on iPhone", systemImage: "iphone")
 					.font(WatchType.caption())
 					.foregroundStyle(MaskinColor.ink4)
 					.frame(minHeight: WatchMetrics.target)
@@ -310,7 +398,7 @@ private struct WatchConfirm: View {
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
-				Text(option.label).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+				Text(WatchDecisionOptions.confirmTitle(for: option.label)).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 				ForEach(option.consequences, id: \.self) { line in
 					Text(line).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
 				}
@@ -318,7 +406,10 @@ private struct WatchConfirm: View {
 					WatchCapsule(title: "Confirm", prominent: true, font: WatchType.action())
 				}
 				.buttonStyle(.plain)
-				WatchQuietButton(title: "Cancel", action: cancel)
+				Button(action: cancel) {
+					WatchCapsule(title: "Cancel", font: WatchType.action())
+				}
+				.buttonStyle(.plain)
 			}
 		}
 		.containerBackground(for: .navigation) { WatchBackdrop() }

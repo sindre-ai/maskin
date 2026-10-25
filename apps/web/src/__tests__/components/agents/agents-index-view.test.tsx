@@ -10,6 +10,11 @@ vi.mock('@tanstack/react-router', async () => {
 	return { ...mockTanStackRouter() }
 })
 
+// The row Call button mounts VoiceCallDialog, whose hook reads the workspace.
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
 type DisplaySettingsBody = Record<string, unknown>
 type MockState = {
 	__dsUpsertCalls: number
@@ -489,5 +494,24 @@ describe('AgentsIndexView', () => {
 			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
 			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
+	})
+})
+
+describe('AgentsIndexView — row Call button', () => {
+	it('gives every agent row a Call button, beside the row link and not inside it', () => {
+		mount([agentAda(), agentBrian()], [])
+		const call = screen.getByRole('button', { name: 'Call Ada' })
+		expect(call).toHaveTextContent('Call')
+		expect(screen.getByRole('button', { name: 'Call Brian' })).toBeInTheDocument()
+		// A button nested in the row's anchor is invalid markup and would navigate.
+		expect(screen.getByRole('link', { name: /Ada/ })).not.toContainElement(call)
+		// Hover-reveal is desktop-only; below md the button is plain inline.
+		expect(call.className).toContain('md:opacity-0')
+		expect(call.className).not.toMatch(/(^|\s)opacity-0/)
+	})
+
+	it('has no Voice filter chip', () => {
+		mount([agentAda(), agentBrian()], [])
+		expect(screen.queryByRole('button', { name: /^Voice/ })).not.toBeInTheDocument()
 	})
 })

@@ -18,6 +18,7 @@ const TITLE_MAX_WORDS = 7
 const OPTION_LABEL_MAX_WORDS = 4
 const SUMMARY_MAX_SENTENCES = 2
 
+export const DRAFTS_MAX = 10
 export const OPTIONS_MIN = 2
 export const OPTIONS_MAX = 3
 export const CONSEQUENCES_MIN = 2
@@ -90,7 +91,89 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.',
 		),
+	destructive: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.',
+		),
 })
+
+/**
+ * The text an agent proposes to send, shown on the card above the buttons so the
+ * human reads it before choosing. It is deliberately NOT part of the prose rules
+ * in `validateDecisionProse`: those police the agent's own wording, and a human's
+ * words (a dash, a number-free sentence, an emoji) must reach the card untouched.
+ *
+ * The draft is normally an object whose description is the draft and nothing
+ * else (`object_id`), and the feed reads that description live, so an edit made
+ * after the card was posted shows on the card. `body` is only for a draft that
+ * is not an object. The feed always sends `body` to the client, filled from the
+ * object when there is one.
+ */
+/**
+ * A function, not a constant: `draft` and each entry of `drafts` must be separate schema
+ * instances, because the JSON Schema the MCP SDK builds turns a reused instance into a
+ * `$ref`, which some agent runtimes cannot follow (see mcp tools.test.ts).
+ */
+function buildDecisionDraftSchema() {
+	return z
+		.object({
+			id: z
+				.string()
+				.min(1)
+				.max(40)
+				.optional()
+				.describe(
+					'Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.',
+				),
+			file_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The workspace file the card is about, when what you are asking about is a file and not text to send: an HTML page, a markdown document, an image, a plain-text file. The card shows the file itself (a rendered page, the formatted text, the picture) above the buttons, live, so a later version shows up. Save the file first (create_file), then give its id. Use object_id instead for a message that would be sent.',
+				),
+			label: z
+				.string()
+				.min(1)
+				.max(30)
+				.optional()
+				.describe(
+					'What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft" (or the file name for a file).',
+				),
+			to: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.',
+				),
+			body: z
+				.string()
+				.min(1)
+				.max(20_000)
+				.optional()
+				.describe(
+					'Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.',
+				),
+		})
+		.refine(
+			(draft) =>
+				draft.object_id !== undefined || draft.body !== undefined || draft.file_id !== undefined,
+			{ message: 'A draft needs object_id (preferred), file_id or body' },
+		)
+}
+
+export const decisionDraftSchema = buildDecisionDraftSchema()
 
 export const commentDecisionSchema = z
 	.object({
@@ -119,11 +202,24 @@ export const commentDecisionSchema = z
 			.describe(
 				`${OPTIONS_MIN} or ${OPTIONS_MAX} options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.`,
 			),
+		drafts: z
+			.array(buildDecisionDraftSchema())
+			.min(1)
+			.max(DRAFTS_MAX)
+			.optional()
+			.describe(
+				`Use this instead of \`draft\` when one card asks about several messages (up to ${DRAFTS_MAX}), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an \`id\`. The card's options still apply to the whole batch. Never put the text in the summary.`,
+			),
+		draft: decisionDraftSchema
+			.optional()
+			.describe(
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.",
+			),
 	})
 	.describe(
 		[
 			'Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.',
-			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.',
+			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.',
 			'',
 			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
 			'title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;',
@@ -146,6 +242,7 @@ export const commentDecisionSchema = z
 	)
 
 export type CommentDecision = z.infer<typeof commentDecisionSchema>
+export type DecisionDraft = z.infer<typeof decisionDraftSchema>
 export type CommentDecisionOption = z.infer<typeof decisionOptionSchema>
 
 export interface DecisionProseViolation {

@@ -10,7 +10,7 @@ import { api } from '@/lib/api'
 // the flags endpoint must never white-screen the app or throw.
 
 // Versioned — bump the suffix to invalidate every client's cache if the
-// response shape changes. Same pattern as lib/release-note.ts.
+// response shape changes. Versioned the way every persisted client cache here is.
 const STORAGE_KEY = 'maskin-feature-flags:1'
 
 // TEST-ONLY override. `localStorage['ff:<flagId>'] = 'on' | 'off'` beats the

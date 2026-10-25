@@ -17,6 +17,7 @@
 // with a plain literal). Only a real conditional UPDATE against a row with
 // pre-existing usage catches that class of regression.
 
+import { issueApiKey, validateApiKey } from '@maskin/auth'
 import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import type {
@@ -26,7 +27,7 @@ import type {
 } from '../../services/session-lifecycle'
 import { settleSession } from '../../services/session-lifecycle'
 import { expectSessionSettled } from '../../services/session-lifecycle.assertions'
-import { insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 async function insertAgentServer(url = 'https://agent-parity.maskin.test:3001') {
@@ -197,6 +198,31 @@ describe('§5.2 parity matrix — DB-semantic cells against real Postgres', () =
 				).toBeDefined()
 			})
 		}
+	}
+
+	// The key minted for a session's container dies with the session, whichever way it ends. A
+	// pause counts too: resume mints a fresh key, so the old one has no reason to live.
+	for (const kind of KINDS) {
+		it(`${kind} — the session's API key stops authenticating, other keys keep working`, async () => {
+			const agent = await insertActor(db, { type: 'agent', apiKey: null })
+			const session = await insertSession(db, workspaceId, agent.id, actorId, {
+				status: 'running',
+				containerId: 'sbx-keys',
+				agentServerId: null,
+			})
+			const { key } = await issueApiKey(db, {
+				actorId: agent.id,
+				kind: 'session',
+				sessionId: session.id,
+			})
+			const { key: primary } = await issueApiKey(db, { actorId: agent.id, kind: 'primary' })
+			expect(await validateApiKey(db, key)).toEqual({ actorId: agent.id, type: 'agent' })
+
+			await settleSession(session.id, outcomeFor(kind), makeDeps('local'))
+
+			expect(await validateApiKey(db, key)).toBeNull()
+			expect(await validateApiKey(db, primary)).toEqual({ actorId: agent.id, type: 'agent' })
+		})
 	}
 
 	// A single row-level idempotency probe on the additive contract: two

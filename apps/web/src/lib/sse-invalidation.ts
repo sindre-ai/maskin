@@ -13,7 +13,11 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // Session events that can move the credit balance or end a run. Billing usage
 // only needs a refetch on these; routine session_updated / session_started
 // traffic does not change it.
-const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+const BILLING_INVALIDATING_ACTIONS = new Set([
+	'session_credit_debited',
+	'session_budget_stopped',
+	'session_stopped',
+])
 
 // Trailing windows for the refetches a burst of session events would otherwise
 // multiply. Agents PATCH current_activity on every step and a scheduled trigger
@@ -122,6 +126,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, { queryKey: queryKeys.objects.references(event.entity_id) })
 	}
 
+	// A draft approved or sent changes its card (Approved, sending, then Sent). The draft can
+	// be any object type, including ones the entity-type switch below does not list.
+	if (event.action === 'approved' || event.action === 'delivered') {
+		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
@@ -129,6 +139,8 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, {
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
+		// A reply on a thread can settle a curated For You item.
+		invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
@@ -185,10 +197,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// (['sessions', ws, 'paged']), which walks every page sequentially. The prefix
 			// matches both, so exclude them here — invalidating the paged walk per event
 			// cancels and restarts it, so under steady session traffic it never finishes.
+			// A per-session query (detail, logs) is only stale when the event is about that
+			// session — otherwise every mounted `useSession` refetches on every event for
+			// every other session in the workspace.
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
 					const key = query.queryKey
+					if (key[1] === 'detail') return key[2] === event.entity_id
+					if (key[2] === 'logs') return key[1] === event.entity_id
 					if (key[1] !== workspaceId) return true
 					return !(key.length === 2 || (key.length === 3 && key[2] === 'paged'))
 				},
@@ -263,8 +280,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		}
+		case 'integration':
+			// A grant, a default, a connect or a disconnect: the integration list, the Keychain page
+			// and every agent's access are all under this key, so they refresh together.
+			invalidate(queryClient, { queryKey: queryKeys.integrations.all(workspaceId) })
+			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 			break
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })

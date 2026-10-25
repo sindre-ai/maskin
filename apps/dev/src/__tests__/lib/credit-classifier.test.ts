@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { classifyCreditExhaustion } from '../../lib/credit-classifier'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { classifyCreditExhaustion, classifySessionExit } from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
 	describe('Claude Code CLI banner strings', () => {
@@ -274,5 +274,108 @@ describe('classifyCreditExhaustion — OpenRouter error envelopes', () => {
 		const tail = 'https://openrouter.ai/api\n{"error":{"code":402,"message":"no credits"}}'
 
 		expect(classifyCreditExhaustion(tail, { includeAmbiguousSignals: false })).toBeNull()
+	})
+})
+
+describe('classifySessionExit', () => {
+	const resultLine = (text: string, isError = false) =>
+		JSON.stringify({
+			type: 'result',
+			subtype: isError ? 'error_during_execution' : 'success',
+			is_error: isError,
+			result: text,
+		})
+	// What a stalled-work watchdog run reads from other sessions' logs.
+	const quotedLimitOutput =
+		'{"type":"user","message":{"content":[{"type":"tool_result","content":"Claude session limit reached\\nYou\'ve hit your session limit · resets 3:20pm (UTC)"}]}}'
+
+	it('completes a clean exit whose final result is not an error, even with limit text earlier in the output', () => {
+		const tail = `${quotedLimitOutput}\n${resultLine('Swept 12 sessions, 2 stalled.')}\n`
+
+		expect(classifySessionExit(tail, 0)).toBeNull()
+	})
+
+	it('ignores a limit banner quoted in the middle of a clean result text', () => {
+		const tail = `${resultLine("Session X failed: You've hit your session limit. Retried.")}\n`
+
+		expect(classifySessionExit(tail, 0)).toBeNull()
+	})
+
+	it('still classifies a clean exit whose result text opens with the banner', () => {
+		const tail = `${resultLine("You've hit your session limit · resets 3:20pm (UTC)")}\n`
+
+		expect(classifySessionExit(tail, 0)).toMatchObject({
+			reason_code: 'session_limit',
+			verbatim_output: "You've hit your session limit",
+		})
+	})
+
+	it('still classifies an error result that carries the banner', () => {
+		const tail = `${resultLine("You've hit your session limit · resets 3:20pm (UTC)", true)}\n`
+
+		expect(classifySessionExit(tail, 1)).toMatchObject({ reason_code: 'session_limit' })
+		expect(classifySessionExit(tail, 0)).toMatchObject({ reason_code: 'session_limit' })
+	})
+
+	it('classifies a non-zero exit from limit text in the output, as before', () => {
+		const tail = `${quotedLimitOutput}\n${resultLine('Swept 12 sessions.')}\n`
+
+		expect(classifySessionExit(tail, 1)).toMatchObject({ reason_code: 'session_limit' })
+	})
+
+	it('leaves a run with no result message unchanged', () => {
+		const withBanner = `work in progress\nYou've hit your session limit\n`
+
+		expect(classifySessionExit(withBanner, 0)).toEqual(
+			classifyCreditExhaustion(withBanner, { includeAmbiguousSignals: false }),
+		)
+		expect(classifySessionExit(withBanner, 0)).toMatchObject({ reason_code: 'session_limit' })
+		expect(classifySessionExit(withBanner, 1)).toEqual(classifyCreditExhaustion(withBanner))
+		// ambiguous signals stay off for a clean exit with no result message
+		expect(classifySessionExit('billing_error somewhere\n', 0)).toBeNull()
+	})
+
+	it('ignores a sub-agent result when looking for the final result', () => {
+		const subAgent = JSON.stringify({
+			type: 'result',
+			is_error: false,
+			result: 'sub-agent done',
+			parent_tool_use_id: 'toolu_1',
+		})
+		const tail = `${quotedLimitOutput}\n${subAgent}\n`
+
+		// Only a sub-agent result: no top-level result, so the whole tail counts.
+		expect(classifySessionExit(tail, 0)).toMatchObject({ reason_code: 'session_limit' })
+	})
+})
+
+describe('classifyCreditExhaustion reset time', () => {
+	afterEach(() => vi.useRealTimers())
+
+	const rejectedEvent = (resetsAt: number) =>
+		JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt } })
+
+	it('schedules a retry from a Copenhagen banner, which the UTC-only parser dropped', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-22T09:07:00Z') })
+		const result = classifyCreditExhaustion(
+			"You've hit your session limit · resets 2pm (Europe/Copenhagen)",
+		)
+		expect(result).toMatchObject({
+			reason_code: 'session_limit',
+			reset_at: '2026-10-22T12:00:00.000Z',
+			reset_confidence: 'advisory',
+		})
+	})
+
+	it('prefers the rate_limit_event epoch over the banner text', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-22T09:07:00Z') })
+		const result = classifyCreditExhaustion(
+			`${rejectedEvent(1792670400)}\nYou've hit your session limit · resets 2pm (Somewhere/Unreadable)`,
+		)
+		expect(result).toMatchObject({
+			reset_at: '2026-10-22T12:00:00.000Z',
+			reset_source: 'cli-banner',
+			reset_confidence: 'authoritative',
+		})
 	})
 })

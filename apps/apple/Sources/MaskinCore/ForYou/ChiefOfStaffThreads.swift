@@ -4,10 +4,7 @@ import Foundation
 /// reader's own message: the real agent answers, nothing here pretends to.
 public enum ForYouQuickQuestions {
 	public static func chips(for card: ForYouCard) -> [String] {
-		if let decision = card.decision {
-			let why = decision.recommended.map { "Why \($0.label)?" } ?? "Why is this needed?"
-			return [why, "What if I wait?", "Explain this simply"]
-		}
+		if card.decision != nil { return ["Explain it simply", "What if I wait?", "Who\u{2019}s involved?"] }
 		return ["Summarise this", "What do you need from me?", "Explain this simply"]
 	}
 }
@@ -52,10 +49,24 @@ public enum ChiefOfStaffThreads {
 	public static func open(
 		about card: ForYouCard, alsoInvite: [String] = [], conversations: ConversationsStore
 	) async throws -> Outcome {
+		try await open(titled: title(for: card), alsoInvite: alsoInvite, conversations: conversations)
+	}
+
+	/// The title of the wrist's thread with the Chief of Staff: a conversation about nothing in
+	/// particular, kept apart from the "About:" threads so it never collects their messages.
+	public static let watchTitle = "Watch"
+
+	/// The reader's context-free thread with the Chief of Staff, found or created by title.
+	public static func openWatchThread(conversations: ConversationsStore) async throws -> Outcome {
+		try await open(titled: watchTitle, conversations: conversations)
+	}
+
+	private static func open(
+		titled title: String, alsoInvite: [String] = [], conversations: ConversationsStore
+	) async throws -> Outcome {
 		await conversations.loadActors()
 		guard let chief = conversations.actors.first(where: isChiefOfStaff) else { throw NoChiefOfStaff() }
 		await conversations.refresh()
-		let title = title(for: card)
 		if let found = conversations.conversations.first(where: {
 			$0.title == title && !$0.archived && $0.participants.contains { $0.id == chief.id }
 		}) {

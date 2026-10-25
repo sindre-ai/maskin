@@ -1,80 +1,119 @@
+import MaskinCore
 import MaskinDesign
-import MaskinUI
 import SwiftUI
 
-/// Spec 7 §5: swipe right on a bubble to reply. The row follows the finger at 0.7×, capped at 84pt;
-/// past 56pt there is a haptic tick and releasing starts the reply; it springs back over 0.28s. A
-/// vertical move of more than 10pt before the threshold hands the gesture to scrolling.
+#if os(iOS)
+	import UIKit
+
+	/// A UIKit pan that only *begins* for a clearly rightward, mostly horizontal flick and always
+	/// recognises alongside the scroll view's own pan. A SwiftUI `DragGesture` on a bubble competes
+	/// with (and on recent iOS swallows) the vertical scroll pan; a delegate-gated recognizer cannot,
+	/// because a vertical drag never begins it.
+	@available(iOS 18.0, *)
+	private struct ReplyPan: UIGestureRecognizerRepresentable {
+		let onChange: (_ dx: Double) -> Void
+		let onEnd: (_ completed: Bool) -> Void
+
+		func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+		func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+			let pan = UIPanGestureRecognizer()
+			pan.delegate = context.coordinator
+			pan.cancelsTouchesInView = false
+			pan.delaysTouchesBegan = false
+			pan.delaysTouchesEnded = false
+			return pan
+		}
+
+		func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+			switch recognizer.state {
+			case .changed:
+				onChange(Double(recognizer.translation(in: recognizer.view).x))
+			case .ended:
+				onEnd(true)
+			case .cancelled, .failed:
+				onEnd(false)
+			default: break
+			}
+		}
+
+		final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+			func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+				guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+				let v = pan.velocity(in: pan.view)
+				// Rightward and mostly horizontal; anything else belongs to the scroll view.
+				return SwipeReply.isReplySwipe(dx: Double(v.x), dy: Double(v.y))
+			}
+
+			func gestureRecognizer(
+				_ gestureRecognizer: UIGestureRecognizer,
+				shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+			) -> Bool { true }
+		}
+	}
+#endif
+
+/// Swipe right on a bubble to reply to it. The bubble follows the finger at 0.7x up to 84pt, a
+/// selection tick marks the 56pt threshold, and releasing past it calls `onReply`. It springs back
+/// over 0.28s. Vertical drags never reach this: the recognizer refuses to begin for them.
 struct SwipeToReply: ViewModifier {
 	let onReply: () -> Void
-
-	static let follow: CGFloat = 0.7
-	static let cap: CGFloat = 84
-	static let threshold: CGFloat = 56
-	static let cancelAfterVertical: CGFloat = 10
-	static let springBack = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.28)
-
-	@State private var offset: CGFloat = 0
-	@State private var ticked = false
-	@State private var cancelled = false
+	@State private var offset: Double = 0
+	@State private var armed = false
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-	/// Pure mapping from finger travel to row travel, so the rule is testable.
+	/// Max row travel; mirrors `SwipeReply.cap` for callers and tests.
+	static let cap = CGFloat(SwipeReply.cap)
+
+	/// Row travel for a finger travel of `translation` points.
 	static func offset(for translation: CGFloat) -> CGFloat {
-		min(max(translation, 0) * follow, cap)
+		CGFloat(SwipeReply.offset(forDrag: Double(translation)))
 	}
 
 	func body(content: Content) -> some View {
-		content
+		let visual = content
 			.offset(x: offset)
-			.overlay(alignment: .leading) {
+			.background(alignment: .leading) {
 				Image(systemName: "arrowshape.turn.up.left.fill")
-					.font(.system(size: MaskinFontSize.t16, weight: .semibold))
-					.foregroundStyle(ticked ? MaskinColor.ink : MaskinColor.ink4)
-					.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
-					.background(MaskinSurface.fill, in: Circle())
-					.opacity(min(offset / Self.threshold, 1))
-					.scaleEffect(ticked || reduceMotion ? 1 : 0.85)
-					.offset(x: -(MaskinSpace.s14 + MaskinSpace.s4))
+					.foregroundStyle(armed ? MaskinColor.ink : MaskinColor.ink5)
+					.opacity(min(offset / SwipeReply.threshold, 1))
+					.scaleEffect(armed ? 1.15 : 0.85)
 					.accessibilityHidden(true)
 			}
-			.gesture(
-				DragGesture(minimumDistance: MaskinSpace.s7, coordinateSpace: .local)
-					.onChanged { value in
-						guard !cancelled else { return }
-						if offset == 0, abs(value.translation.height) > Self.cancelAfterVertical,
-							abs(value.translation.height) > abs(value.translation.width)
-						{
-							cancelled = true
-							return
-						}
-						offset = Self.offset(for: value.translation.width)
-						if offset >= Self.threshold, !ticked {
-							ticked = true
-							MaskinHaptics.play(.selection)
-						} else if offset < Self.threshold {
-							ticked = false
-						}
-					}
-					.onEnded { _ in
-						let fire = !cancelled && offset >= Self.threshold
-						withAnimation(reduceMotion ? nil : Self.springBack) { offset = 0 }
-						cancelled = false
-						ticked = false
-						if fire { onReply() }
-					}
-			)
+		#if os(iOS)
+			if #available(iOS 18.0, *) {
+				visual.gesture(
+					ReplyPan(onChange: track, onEnd: finish))
+			} else {
+				// iOS 17 has no UIKit-gesture bridge; reply stays available from the context menu.
+				visual
+			}
+		#else
+			visual
+		#endif
+	}
+
+	private func track(_ dx: Double) {
+		offset = SwipeReply.offset(forDrag: dx)
+		let reached = SwipeReply.reachesThreshold(offset: offset)
+		if reached != armed {
+			armed = reached
+			if reached { MaskinHaptics.play(.selection) }
+		}
+	}
+
+	private func finish(_ completed: Bool) {
+		let reply = armed && completed
+		armed = false
+		withAnimation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.28)) { offset = 0 }
+		if reply { onReply() }
 	}
 }
 
 extension View {
-	/// Swipe right to start a reply (spec 7 §5). Nil leaves the row still (nothing to quote).
+	/// Swipe right to reply; a nil action leaves the view alone.
 	@ViewBuilder
 	func swipeToReply(_ onReply: (() -> Void)?) -> some View {
-		if let onReply {
-			modifier(SwipeToReply(onReply: onReply))
-		} else {
-			self
-		}
+		if let onReply { modifier(SwipeToReply(onReply: onReply)) } else { self }
 	}
 }

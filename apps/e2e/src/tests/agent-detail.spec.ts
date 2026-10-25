@@ -91,7 +91,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
-			// Instructions comes before Skills, which comes before Tools.
+			// Instructions comes before Skills (Tools moved to Integrations).
 			const order = await page
 				.locator('section[aria-labelledby]')
 				.evaluateAll((els) =>
@@ -100,7 +100,6 @@ test.describe('Agent detail — header and Usage block', () => {
 			const at = (id: string) => order.findIndex((v) => v.includes(id))
 			expect(at('instructions')).toBeGreaterThanOrEqual(0)
 			expect(at('instructions')).toBeLessThan(at('skills'))
-			expect(at('skills')).toBeLessThan(at('tools'))
 
 			// Disabling the agent flips the control to Enable and the status word with it.
 			await disable.click()

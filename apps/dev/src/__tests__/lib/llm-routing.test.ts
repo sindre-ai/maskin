@@ -47,6 +47,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_ZDR',
 	'MASKIN_FALLBACK_PROVIDER_IGNORE',
 	'MASKIN_FALLBACK_PROVIDER_ONLY',
+	'MASKIN_FALLBACK_TTFT_TIMEOUT_MS',
 	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
@@ -169,13 +170,13 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
-	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+	it('defaults ANTHROPIC_MODEL to Sonnet when agent has no model preference', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
 			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
 		})
-		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
@@ -317,6 +318,18 @@ describe('resolveLlmRoute priority order', () => {
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+	})
+
+	it('4a. workspace api_key route defaults to Sonnet when the agent has no model', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
@@ -492,6 +505,20 @@ describe('resolveLlmRoute priority order', () => {
 				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
 					only: ['digitalocean', 'gmicloud'],
 				})
+			})
+
+			it('asks the proxy to guard time to first token at 8s by default', async () => {
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
+			})
+
+			it('takes the first-token timeout from MASKIN_FALLBACK_TTFT_TIMEOUT_MS', async () => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '6000'
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('6000')
+			})
+
+			it.each(['0', 'none', 'abc', '-5'])('turns the guard off for %s', async (value) => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = value
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBeUndefined()
 			})
 
 			it('sends the allow list together with the block list', async () => {

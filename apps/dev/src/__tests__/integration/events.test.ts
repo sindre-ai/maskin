@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertObject, insertWorkspace } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: eventsRoutes } = await import('../../routes/events')
@@ -239,5 +239,70 @@ describe('Events Integration — reply chain collapse', () => {
 
 		const data = stored.data as { parentEventId?: number | null }
 		expect(data.parentEventId).toBe(root.id)
+	})
+})
+
+describe('Events Integration — history ordering', () => {
+	let workspaceId: string
+	let objectId: string
+
+	beforeEach(async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		workspaceId = ws.id
+		const obj = await insertObject(db, workspaceId, getTestActorId())
+		objectId = obj.id
+	})
+
+	async function seedEvents(createdAts: Date[]) {
+		const rows = await db
+			.insert(events)
+			.values(
+				createdAts.map((createdAt) => ({
+					workspaceId,
+					actorId: getTestActorId(),
+					action: 'updated',
+					entityType: 'object',
+					entityId: objectId,
+					data: {},
+					createdAt,
+				})),
+			)
+			.returning({ id: events.id })
+		return rows.map((r) => r.id)
+	}
+
+	async function history(query: string) {
+		const app = createEventsApp()
+		const res = await app.request(
+			jsonGet(`/api/events/history?entity_id=${objectId}&${query}`, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+		return ((await res.json()) as Array<{ id: number }>).map((e) => e.id)
+	}
+
+	it('orders rows that share a createdAt by id descending', async () => {
+		const shared = new Date('2026-01-01T00:00:00.000Z')
+		const older = new Date('2025-12-31T00:00:00.000Z')
+		const ids = await seedEvents([shared, older, shared, shared, older])
+		// ids[0], ids[2], ids[3] share the newer timestamp; ids[1], ids[4] the older one.
+		const expected = [ids[3], ids[2], ids[0], ids[4], ids[1]]
+
+		expect(await history('limit=50')).toEqual(expected)
+	})
+
+	it('offset paging over equal createdAt rows has no gaps and no duplicates', async () => {
+		const shared = new Date('2026-01-01T00:00:00.000Z')
+		const ids = await seedEvents([shared, shared, shared, shared, shared])
+		const expected = [...ids].sort((a, b) => b - a)
+
+		const pages = [
+			await history('limit=2&offset=0'),
+			await history('limit=2&offset=2'),
+			await history('limit=2&offset=4'),
+		]
+
+		expect(pages.flat()).toEqual(expected)
 	})
 })

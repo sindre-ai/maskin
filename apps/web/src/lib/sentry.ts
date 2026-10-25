@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react'
+import { isClientErrorLoggingPaused } from './client-logging-pause'
 
 let initialized = false
 
@@ -16,6 +17,10 @@ export function initSentry(): void {
 			dsn,
 			environment: import.meta.env.MODE,
 			sendDefaultPii: false,
+			// Errors the SDK catches on its own (uncaught exceptions, unhandled rejections)
+			// never pass through captureException below, so the pause has to hold here too.
+			beforeSend: (event) => (isClientErrorLoggingPaused() ? null : event),
+			beforeBreadcrumb: (breadcrumb) => (isClientErrorLoggingPaused() ? null : breadcrumb),
 		})
 		initialized = true
 	} catch (err) {
@@ -27,7 +32,7 @@ export function initSentry(): void {
 }
 
 export function captureException(error: unknown): void {
-	if (!initialized) return
+	if (!initialized || isClientErrorLoggingPaused()) return
 	try {
 		Sentry.captureException(error)
 	} catch (err) {

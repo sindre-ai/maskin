@@ -138,11 +138,16 @@ struct APIKeyStoreTests {
 
 	@Test("a second regenerate while one is running is ignored")
 	func noDoubleRegenerate() async {
+		let gate = Gate()
 		let fake = FakeSettings()
+		fake.regenerateGate = gate
 		let store = make(fake) { _ in }
-		async let a: Void = store.regenerate()
-		async let b: Void = store.regenerate()
-		_ = await (a, b)
+		// Hold the first call inside the API so the second provably arrives while it is running.
+		let first = Task { await store.regenerate() }
+		await gate.waitUntilStarted()
+		await store.regenerate()
+		await gate.release()
+		await first.value
 		#expect(fake.calls.filter { $0 == "regenerate" }.count == 1)
 	}
 }

@@ -14,10 +14,11 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { onTestFinished } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db, getTestActorId } from './global-setup'
+import { db, getTestActorId, sql } from './global-setup'
 
 // POST /api/workspaces kicks off the Chief of Staff welcome session
 // fire-and-forget (.catch(), not awaited) right after the create transaction
@@ -45,20 +46,6 @@ const { capturePosthogEventMock } = vi.hoisted(() => ({
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
-
-// Failure injection for the partial-seed rollback test. provisionWorkspace()
-// calls seedDefaultAgentActors() module-internally, so mocking that export
-// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
-// crosses and make one generateApiKey() call throw. That runs the *real* seed
-// code, so the test covers production rollback behaviour rather than a
-// hand-rolled stand-in. Defaults to the genuine implementation; only the
-// rollback test arms a failure via mockImplementationOnce.
-const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
-vi.mock('@maskin/auth', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@maskin/auth')>()
-	generateApiKeyMock.mockImplementation(actual.generateApiKey)
-	return { ...actual, generateApiKey: generateApiKeyMock }
-})
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
@@ -1311,8 +1298,10 @@ describe('Workspaces Integration', () => {
 				.where(eq(triggers.workspaceId, ws.id))
 			// Bumped from 13 to 14 with the addition of the Beat 6 chained
 			// "Deep-research brief validated → Signal Analyst clustering" trigger
-			// in DEFAULT_WORKSPACE_TRIGGERS.
-			expect(triggerRows).toHaveLength(14)
+			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
+			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
+			// the list" cron.
+			expect(triggerRows).toHaveLength(16)
 		})
 
 		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
@@ -1448,18 +1437,28 @@ describe('Workspaces Integration', () => {
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
-			// Staff, Driver, then Strategist. Each mints an API key first, so
-			// throwing on the 4th generateApiKey() call fails strategist after
-			// agents 1-3 are already written into the transaction. Everything —
+			// Staff, Driver, then Strategist. A trigger that rejects the Strategist
+			// actor insert fails the 4th agent after agents 1-3 are already written
+			// into the transaction, running the real seed code. Everything —
 			// including those three partial actor inserts — must roll back.
-			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
-			generateApiKeyMock
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(() => {
-					throw new Error('mock failure on 4th agent')
-				})
+			onTestFinished(async () => {
+				await sql`drop trigger if exists test_reject_strategist on actors`
+				await sql`drop function if exists test_reject_strategist()`
+			})
+			await sql`
+				create function test_reject_strategist() returns trigger as $$
+				begin
+					if new.name = 'Strategist' then
+						raise exception 'mock failure on 4th agent';
+					end if;
+					return new;
+				end;
+				$$ language plpgsql
+			`
+			await sql`
+				create trigger test_reject_strategist before insert on actors
+				for each row execute function test_reject_strategist()
+			`
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db

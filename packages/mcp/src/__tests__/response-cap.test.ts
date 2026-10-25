@@ -449,6 +449,46 @@ describe('applyResponseTokenCap', () => {
 		expect(capped.structuredContent.heroCard.page.hasMore).toBe(true)
 	})
 
+	it('names only the shipped rows on the card after a trim, and keeps the real totalCount', () => {
+		// The tool builds the card from the whole page before the cap runs, so
+		// without a sync it names rows that never ship and then repeats them on
+		// the next page.
+		const rows = Array.from({ length: 30 }, (_, i) => makeRowWithCreatedAt(i, 1))
+		const response = {
+			content: [{ type: 'text', text: 'x' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'list',
+					tool: 'list_objects',
+					objects: rows.map((r) => ({ id: r.id, type: r.type, title: r.title })),
+					totalCount: 34,
+					page: { limit: rows.length, offset: 0, hasMore: false },
+				},
+				objects: rows,
+				page: { limit: 30, returned: rows.length },
+			},
+			[RESUME_CURSOR]: (last: unknown) => `after:${(last as { id: string }).id}`,
+		}
+		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 2500 })
+		expect(result.truncated).toBe(true)
+		const capped = result.response as {
+			structuredContent: {
+				heroCard: {
+					objects: Array<{ id: string }>
+					totalCount: number
+					page: { limit: number; hasMore: boolean }
+				}
+				objects: Array<{ id: string }>
+			}
+		}
+		const shippedIds = capped.structuredContent.objects.map((r) => r.id)
+		expect(shippedIds.length).toBeLessThan(rows.length)
+		expect(capped.structuredContent.heroCard.objects.map((o) => o.id)).toEqual(shippedIds)
+		expect(capped.structuredContent.heroCard.totalCount).toBe(34)
+		expect(capped.structuredContent.heroCard.page.limit).toBe(shippedIds.length)
+		expect(capped.structuredContent.heroCard.page.hasMore).toBe(true)
+	})
+
 	it('leaves next_cursor untouched when the pre-trim payload had no cursor', () => {
 		// No cursor in the pre-trim payload → the pagination upper bound
 		// wasn't hit → there is no "past the omitted tail" to worry about.
@@ -474,10 +514,9 @@ describe('applyResponseTokenCap', () => {
 		expect(capped.structuredContent.page.next_cursor).toBeUndefined()
 	})
 
-	it('handles the degenerate case where zero rows still exceed the cap', () => {
-		// _meta alone is above a 5-token cap. The wrapper still returns a valid
-		// truncated shape rather than looping — safer to ship a broken-looking
-		// response than to hang.
+	it('ships a single row that is over the cap on its own, untrimmed', () => {
+		// _meta alone is above a 5-token cap. There is nothing to drop, and a page
+		// with zero rows would stall a cursor walk, so the row ships as it came.
 		const rows = [makeObject('a', 1)]
 		const response = {
 			_meta: { padding: 'z'.repeat(4096) },
@@ -485,14 +524,22 @@ describe('applyResponseTokenCap', () => {
 			structuredContent: { objects: rows },
 		}
 		const result = applyResponseTokenCap('list_objects', response, { maxTokens: 5 })
+		expect(result.truncated).toBe(false)
+		expect(result.response).toBe(response)
+	})
+
+	it('keeps one row when every row is over the cap, and hands the rest to fetch_handle', () => {
+		const rows = [makeObject('a', 4), makeObject('b', 4), makeObject('c', 4)]
+		const result = applyResponseTokenCap('list_objects', makeListObjectsResponse(rows), {
+			maxTokens: 100,
+		})
 		expect(result.truncated).toBe(true)
 		const capped = result.response as {
 			_meta: { truncated: boolean; fetch_handle: { ids: string[] } }
-			structuredContent: { objects: unknown[] }
+			structuredContent: { objects: Array<{ id: string }> }
 		}
-		expect(capped._meta.truncated).toBe(true)
-		expect(capped.structuredContent.objects).toEqual([])
-		expect(capped._meta.fetch_handle.ids).toEqual(['a'])
+		expect(capped.structuredContent.objects.map((o) => o.id)).toEqual(['a'])
+		expect(capped._meta.fetch_handle.ids).toEqual(['b', 'c'])
 	})
 
 	it('reads the token override from process.env when no explicit maxTokens is passed', () => {
@@ -672,5 +719,151 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		// guarantee AC-T6 asks for.)
 		expect(followUp._meta?.truncated).toBeUndefined()
 		expect(followUp.structuredContent.objects).toHaveLength(omittedIds.length)
+	})
+
+	describe('a trimmed page keeps a cursor, so a walk skips no rows', () => {
+		const ROW_COUNT = 30
+		const PAGE_LIMIT = 10
+
+		type Page = {
+			_meta?: { truncated?: boolean }
+			structuredContent: Record<string, unknown> & { next_cursor?: string }
+		}
+
+		// Newest first, one second apart, so (createdAt, id) is a strict keyset order.
+		function createdAtOf(idx: number) {
+			return new Date(Date.UTC(2026, 0, 1) + (ROW_COUNT - idx) * 1000).toISOString()
+		}
+
+		// Well over the 4000-token cap used below, so this one row cannot fit on any page.
+		const OVERSIZED_PADDING = 40 * 1024
+
+		function objectRows(count: number, oversizedIdx?: number) {
+			return Array.from({ length: count }, (_, i) => {
+				const row = { ...bigObjectRow(i), createdAt: createdAtOf(i) }
+				if (i === oversizedIdx) row.metadata = { padding: 'x'.repeat(OVERSIZED_PADDING) }
+				return row
+			})
+		}
+
+		function relationshipRows(count: number, oversizedIdx?: number) {
+			return Array.from({ length: count }, (_, i) => ({
+				id: `rel-${String(i).padStart(12, '0')}`,
+				sourceId: `src-${i}`,
+				targetId: `tgt-${i}`,
+				type: 'in_loop',
+				createdAt: createdAtOf(i),
+				sourceTitle: 'x'.repeat(i === oversizedIdx ? OVERSIZED_PADDING : 3072),
+				targetTitle: `Target ${i}`,
+			}))
+		}
+
+		// Serves /api/objects and /api/relationships the way the API does: only rows strictly
+		// after the keyset cursor (newest first), at most `limit` of them.
+		function stubKeysetApi(fixture: Array<{ id: string; createdAt: string }>) {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const parsed = new URL(url as string)
+				if (!/^\/api\/(objects|relationships)$/.test(parsed.pathname)) {
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				}
+				const cursorAt = parsed.searchParams.get('cursor_created_at')
+				const cursorId = parsed.searchParams.get('cursor_id')
+				const limit = Number(parsed.searchParams.get('limit'))
+				const rows = fixture
+					.filter(
+						(r) =>
+							!cursorAt ||
+							!cursorId ||
+							r.createdAt < cursorAt ||
+							(r.createdAt === cursorAt && r.id < cursorId),
+					)
+					.slice(0, limit)
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve(rows) } as Response
+			})
+		}
+
+		function callTool(tool: string, args: Record<string, unknown>) {
+			const handler = handlers.get(tool)
+			if (!handler) throw new Error(`${tool} handler not registered`)
+			return handler(args) as Promise<Page>
+		}
+
+		const cases = [
+			{ tool: 'list_objects', rowsField: 'objects', makeRows: objectRows },
+			{ tool: 'list_relationships', rowsField: 'relationships', makeRows: relationshipRows },
+		]
+
+		for (const { tool, rowsField, makeRows } of cases) {
+			it(`${tool}: walking trimmed middle and final pages returns every row exactly once`, async () => {
+				process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '4000'
+				const fixture = makeRows(ROW_COUNT)
+				stubKeysetApi(fixture)
+
+				const seen: string[] = []
+				const pages: Page[] = []
+				let cursor: string | undefined
+				// Bounded so a cursor that never advances fails the test instead of hanging it.
+				for (let hop = 0; hop < ROW_COUNT + 2; hop++) {
+					const page = await callTool(tool, { limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}) })
+					pages.push(page)
+					const rows = page.structuredContent[rowsField] as Array<{ id: string }>
+					seen.push(...rows.map((r) => r.id))
+					cursor = page.structuredContent.next_cursor
+					if (!cursor) break
+				}
+
+				expect(seen).toEqual(fixture.map((r) => r.id))
+				// The cap cut many pages, including ones the API sent with no cursor of
+				// its own (fewer than PAGE_LIMIT rows left), and only the last page ends the walk.
+				expect(pages.filter((p) => p._meta?.truncated).length).toBeGreaterThan(2)
+				expect(pages.at(-1)?.structuredContent.next_cursor).toBeUndefined()
+			})
+
+			// The first row, a row that starts a later page, and the last row.
+			for (const oversizedIdx of [0, 12, ROW_COUNT - 1]) {
+				it(`${tool}: a walk with row ${oversizedIdx} over the cap returns every row exactly once and never stops early`, async () => {
+					process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '4000'
+					const fixture = makeRows(ROW_COUNT, oversizedIdx)
+					stubKeysetApi(fixture)
+
+					const seen: string[] = []
+					let cursor: string | undefined
+					// Bounded so a cursor that never advances fails the test instead of hanging it.
+					for (let hop = 0; hop < ROW_COUNT + 2; hop++) {
+						const page = await callTool(tool, { limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}) })
+						const rows = page.structuredContent[rowsField] as Array<{ id: string }>
+						// No page, including the one holding the oversized row, ships empty.
+						expect(rows.length).toBeGreaterThan(0)
+						seen.push(...rows.map((r) => r.id))
+						cursor = page.structuredContent.next_cursor
+						if (!cursor) break
+					}
+
+					expect(seen).toEqual(fixture.map((r) => r.id))
+					expect(cursor).toBeUndefined()
+				})
+			}
+
+			it(`${tool}: a trimmed page that held the whole list still emits a cursor after the last shipped row`, async () => {
+				process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '4000'
+				// 6 rows is under the page limit, so the API sends no cursor of its own.
+				const fixture = makeRows(6)
+				stubKeysetApi(fixture)
+
+				const page = await callTool(tool, { limit: PAGE_LIMIT })
+				const shipped = page.structuredContent[rowsField] as Array<{ id: string }>
+				expect(page._meta?.truncated).toBe(true)
+				expect(shipped.length).toBeGreaterThan(0)
+				expect(shipped.length).toBeLessThan(fixture.length)
+
+				const next = page.structuredContent.next_cursor
+				expect(next).toBeTruthy()
+				expect(decodeCursor(next)?.k.id).toBe(shipped.at(-1)?.id)
+
+				const rest = await callTool(tool, { limit: PAGE_LIMIT, cursor: next })
+				const restRows = rest.structuredContent[rowsField] as Array<{ id: string }>
+				expect(restRows[0]?.id).toBe(fixture[shipped.length].id)
+			})
+		}
 	})
 })

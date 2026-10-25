@@ -30,6 +30,7 @@ public enum WorkspacePageState {
 	}
 
 	public static let integrationAvailable = PageState("Connect", .plain)
+	public static let integrationConnecting = PageState("Connecting", .muted)
 
 	/// The line under an integration's name: never a provider id, only a name or a sentence.
 	public static func integrationSubtitle(_ state: ConnectedIntegration.State, account: String?)

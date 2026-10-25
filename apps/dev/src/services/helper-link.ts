@@ -5,6 +5,7 @@ import { trackMentionGuardDecision } from '../lib/analytics/mention-guard-events
 import { logger } from '../lib/logger'
 import { MENTION_GUARD_LIMITS, readHopDepth } from './mention-guards'
 import { TERMINAL_STATUSES } from './session-lifecycle'
+import { originConversationOf } from './session-origin'
 
 /**
  * Decide whether a new session may be linked to the session that claims to
@@ -20,9 +21,21 @@ import { TERMINAL_STATUSES } from './session-lifecycle'
  * The result also carries the hop depth the new session should store in
  * config.hop_depth: the sender's depth plus 1. A link that would sit deeper than
  * MENTION_GUARD_LIMITS.maxHopDepth is dropped (reason 'hop_cap').
+ *
+ * It also carries the sender's chat origin (originConversationOf), which the
+ * callers write to the new session's config.origin_conversation_id so a helper
+ * of a helper inherits it. Null when the sender has no chat behind it (cron,
+ * loop, object-started), so those sessions never get one.
  */
 export type SpawnLink =
-	| { linked: true; spawnedBySessionId: string; hopDepth: number }
+	| {
+			linked: true
+			spawnedBySessionId: string
+			hopDepth: number
+			originConversationId: string | null
+			/** The sender's own chat (sessions.conversation_id), not one stamped on it. */
+			senderConversationId: string | null
+	  }
 	| { linked: false; reason: SpawnLinkRefusal | null }
 
 export type SpawnLinkRefusal =
@@ -53,6 +66,7 @@ export async function resolveSpawnLink(
 			workspaceId: sessions.workspaceId,
 			actorId: sessions.actorId,
 			status: sessions.status,
+			conversationId: sessions.conversationId,
 			config: sessions.config,
 		})
 		.from(sessions)
@@ -87,5 +101,11 @@ export async function resolveSpawnLink(
 		})
 		return refuse('hop_cap')
 	}
-	return { linked: true, spawnedBySessionId: ctx.claimedSessionId, hopDepth }
+	return {
+		linked: true,
+		spawnedBySessionId: ctx.claimedSessionId,
+		hopDepth,
+		originConversationId: originConversationOf(sender),
+		senderConversationId: sender.conversationId,
+	}
 }

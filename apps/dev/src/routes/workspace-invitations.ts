@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword, validateApiKey } from '@maskin/auth'
+import { hashPassword, issueApiKey, validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -10,6 +10,7 @@ import {
 } from '@maskin/db/schema'
 import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
 import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
+import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
@@ -74,6 +75,7 @@ const previewResponseSchema = z.object({
 	workspaceId: z.string().uuid(),
 	workspaceName: z.string(),
 	inviterName: z.string(),
+	role: z.string(),
 	inviteEmail: z.string(),
 	expiresAt: z.string(),
 })
@@ -90,9 +92,10 @@ function isInviteExpired(invite: { expiresAt: Date; status: string }): boolean {
 
 function stripActorSecretsForResponse(
 	actor: typeof actors.$inferSelect,
+	apiKey: string,
 ): z.infer<typeof actorResponseInAcceptSchema> {
 	const {
-		apiKey,
+		apiKey: _legacyApiKey,
 		passwordHash: _passwordHash,
 		systemPrompt,
 		llmProvider,
@@ -103,8 +106,8 @@ function stripActorSecretsForResponse(
 		...serialize(rest),
 		system_prompt: systemPrompt,
 		llm_provider: llmProvider,
-		llm_config: llmConfig,
-		api_key: apiKey ?? '',
+		llm_config: maskLlmConfigSecrets(llmConfig),
+		api_key: apiKey,
 	} as z.infer<typeof actorResponseInAcceptSchema>
 }
 
@@ -145,6 +148,63 @@ function isEmailUniqueViolation(err: unknown): boolean {
 // lives on the sibling endpoints in this file (and T2's endpoints in the same
 // file) — the accept endpoint's contract is documented in the code comment
 // below and in the parent bet's shaping doc.
+
+// The handler stays a plain app.post() (see above); this only publishes the contract in
+// /api/openapi.json so native clients can generate against it.
+app.openAPIRegistry.registerPath({
+	method: 'post',
+	path: '/{token}/accept',
+	tags: ['workspace-invitations'],
+	operationId: 'acceptInvite',
+	summary: 'Accept an invite by token (public path; reads Authorization itself)',
+	description:
+		'Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or ' +
+		'`{ email, password, name? }` with no Authorization to sign up and join. Do not send ' +
+		'X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup ' +
+		'branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.',
+	request: {
+		params: z.object({ token: z.string().min(1) }),
+		body: {
+			required: false,
+			content: { 'application/json': { schema: acceptBodySchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Authenticated accept: joined (or already a member)',
+			content: {
+				'application/json': {
+					schema: z.object({ workspaceId: z.string().uuid(), actorId: z.string().uuid() }),
+				},
+			},
+		},
+		201: {
+			description: 'Signup accept: actor created and joined',
+			content: {
+				'application/json': {
+					schema: z.object({
+						actor: actorResponseInAcceptSchema,
+						workspaceId: z.string().uuid(),
+					}),
+				},
+			},
+		},
+		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
+		401: {
+			description: 'Missing or invalid API key (authenticated branch)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Workspace seat cap reached',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Unknown token', content: { 'application/json': { schema: errorSchema } } },
+		410: {
+			description: 'Invite expired, revoked or already used',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
 
 app.post('/:token/accept', async (c) => {
 	const db = c.get('db')
@@ -255,7 +315,9 @@ app.post('/:token/accept', async (c) => {
 			)
 		}
 
-		const { key: apiKey } = generateApiKey()
+		// Hashed at rest, so the new account's key is minted inside the accept transaction and shown
+		// once, in this response.
+		let apiKey = ''
 		const passwordHash = await hashPassword(body.password ?? '')
 		const displayName = (body.name ?? body.email ?? '').trim() || (body.email ?? '')
 
@@ -283,7 +345,6 @@ app.post('/:token/accept', async (c) => {
 						type: 'human',
 						name: displayName,
 						email: body.email,
-						apiKey,
 						passwordHash,
 						createdBy: null,
 					})
@@ -296,6 +357,7 @@ app.post('/:token/accept', async (c) => {
 					// instead of a TypeError deep in the join below.
 					throw new Error('Actor insert returned no row')
 				}
+				apiKey = (await issueApiKey(tx, { actorId: insertedActor.id, kind: 'primary' })).key
 
 				// Lock workspace, run seat-cap check exactly like POST /workspaces/:id/members.
 				const [locked] = await tx
@@ -409,7 +471,7 @@ app.post('/:token/accept', async (c) => {
 
 		return c.json(
 			{
-				actor: stripActorSecretsForResponse(outcome.actor),
+				actor: stripActorSecretsForResponse(outcome.actor, apiKey),
 				workspaceId: outcome.workspaceId,
 			},
 			201,
@@ -692,6 +754,7 @@ app.openapi(previewRoute, async (c) => {
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			inviterName: inviter.name,
+			role: invite.role,
 			inviteEmail: invite.email,
 			expiresAt: invite.expiresAt.toISOString(),
 		},
@@ -806,6 +869,7 @@ function sendFailureLogContext(err: unknown) {
 const createInviteRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Invite someone to a workspace by email',
 	description:
@@ -1129,6 +1193,7 @@ app.openapi(createInviteRoute, (async (c) => {
 const resendInviteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resend',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Resend a pending invite with a fresh token and expiry',
 	request: { params: idParamSchema },
@@ -1256,6 +1321,7 @@ app.openapi(resendInviteRoute, (async (c) => {
 const revokeInviteRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Revoke a pending invite',
 	request: { params: idParamSchema },

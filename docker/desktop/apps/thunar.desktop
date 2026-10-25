@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Files
+Exec=thunar %U
+Icon=/usr/share/icons/maskin/files.png
+StartupWMClass=Thunar
+StartupNotify=true
+Categories=System;FileManager;

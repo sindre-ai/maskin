@@ -9,11 +9,12 @@ struct OutboxTests {
 	private func makeOutbox(
 		file: URL = temporaryOutboxFile(), executor: ScriptedExecutor = ScriptedExecutor(),
 		network: ManualNetworkMonitor = ManualNetworkMonitor(), workspace: String? = "ws-1",
-		maxAttempts: Int = 8
+		maxAttempts: Int = 8, maxServerErrorAge: TimeInterval = 24 * 60 * 60
 	) -> (Outbox, ScriptedExecutor, ManualNetworkMonitor, URL) {
 		let outbox = Outbox(
 			fileURL: file, executor: executor, network: network, workspaceId: { workspace },
-			backoff: { _ in 0.02 }, maxAttempts: maxAttempts)
+			backoff: { _ in 0.02 }, maxAttempts: maxAttempts,
+			maxServerErrorAge: maxServerErrorAge)
 		return (outbox, executor, network, file)
 	}
 
@@ -125,12 +126,59 @@ struct OutboxTests {
 
 	@Test func givesUpAfterMaxAttempts() async throws {
 		let executor = ScriptedExecutor()
-		executor.fail(payload: "one", with: Array(repeating: URLError(.badServerResponse), count: 10))
+		executor.fail(payload: "one", with: Array(repeating: URLError(.cannotParseResponse), count: 10))
 		let (outbox, _, _, _) = makeOutbox(executor: executor, maxAttempts: 2)
 		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
 		#expect(await eventually { !outbox.failures.isEmpty })
 		#expect(outbox.entries.isEmpty)
 		#expect(executor.calls.count == 2)
+	}
+
+	@Test func serverErrorsDoNotCountTowardTheAttemptCap() async throws {
+		let executor = ScriptedExecutor()
+		let errors: [any Error] = [
+			ChatsHTTPError(status: 503, message: "down"), ChatsHTTPError(status: 429, message: "slow"),
+			URLError(.badServerResponse), ChatsHTTPError(status: 500, message: "boom"),
+			URLError(.badServerResponse),
+		]
+		executor.fail(payload: "one", with: errors)
+		let (outbox, _, _, _) = makeOutbox(executor: executor, maxAttempts: 2)
+		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
+		#expect(await eventually { outbox.entries.isEmpty })
+		#expect(outbox.failures.isEmpty)
+		#expect(executor.calls.count == 6)  // five server errors, then it got through
+	}
+
+	@Test func givesUpOnServerErrorsOnlyAfterTheMaxAge() async throws {
+		let executor = ScriptedExecutor()
+		executor.fail(
+			payload: "one", with: Array(repeating: ChatsHTTPError(status: 503, message: "down"), count: 1000))
+		let (outbox, _, _, _) = makeOutbox(executor: executor, maxAttempts: 2, maxServerErrorAge: 0.3)
+		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
+		#expect(await eventually { !outbox.failures.isEmpty })
+		#expect(outbox.entries.isEmpty)
+		#expect(executor.calls.count > 2)  // well past the attempt cap before the age ran out
+	}
+
+	@Test func undecodableFileIsKeptAsideAndLogged() async throws {
+		let file = temporaryOutboxFile()
+		try FileManager.default.createDirectory(
+			at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+		let garbage = Data("{ not an outbox".utf8)
+		try garbage.write(to: file)
+
+		let (outbox, executor, _, _) = makeOutbox(file: file)
+		#expect(outbox.entries.isEmpty)
+		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
+		#expect(await eventually { outbox.entries.isEmpty })
+		#expect(executor.calls.count == 1)
+
+		// The unreadable file survives the save that follows, under a name beside the queue file.
+		let siblings = try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path)
+		let aside = siblings.filter { $0.hasPrefix("outbox.json.unreadable-") }
+		#expect(aside.count == 1)
+		let kept = try Data(contentsOf: file.deletingLastPathComponent().appendingPathComponent(aside[0]))
+		#expect(kept == garbage)
 	}
 
 	@Test func permanentStatusClassification() {
@@ -180,6 +228,43 @@ struct OutboxTests {
 		#expect(await eventually { outbox.entries.isEmpty })
 		#expect(executor.calls.count == 5)
 		#expect(Set(executor.calls.map(\.payload)).count == 5)
+	}
+
+	@Test func entryParkedByAnotherOutboxSurvivesTheLiveOutboxsSaveAndIsReplayed() async throws {
+		let file = temporaryOutboxFile()
+		let offline = ManualNetworkMonitor(isOnline: false)
+		let (live, liveExecutor, liveNetwork, _) = makeOutbox(file: file, network: offline)
+		let first = try live.enqueue(kind: "t", lane: "a", summary: "first", payload: "first")
+
+		// The notification action: a second outbox over the same file, while `live` stays alive.
+		let (parker, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		let parked = try parker.enqueue(kind: "t", lane: "b", summary: "parked", payload: "parked")
+
+		// The live outbox saves again (a new write) and must not drop what it never held.
+		let later = try live.enqueue(kind: "t", lane: "c", summary: "later", payload: "later")
+		let (reread, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		#expect(Set(reread.entries.map(\.id)) == [first.id, parked.id, later.id])
+
+		// Back online: all three go out, the parked one with the key it was parked under.
+		liveNetwork.set(online: true)
+		await live.drain()
+		#expect(Set(liveExecutor.calls.map(\.payload)) == ["first", "parked", "later"])
+		#expect(liveExecutor.calls.first { $0.payload == "parked" }?.key == parked.idempotencyKey)
+		#expect(live.entries.isEmpty)
+	}
+
+	@Test func drainReplaysAnEntryParkedByAnotherOutboxWithoutAnySave() async throws {
+		let file = temporaryOutboxFile()
+		let (live, liveExecutor, liveNetwork, _) = makeOutbox(
+			file: file, network: ManualNetworkMonitor(isOnline: false))
+		let (parker, _, _, _) = makeOutbox(file: file, network: ManualNetworkMonitor(isOnline: false))
+		try parker.enqueue(kind: "t", lane: "b", summary: "parked", payload: "parked")
+		#expect(live.entries.isEmpty)
+
+		liveNetwork.set(online: true)
+		await live.drain()
+		#expect(liveExecutor.calls.map(\.payload) == ["parked"])
+		#expect(live.entries.isEmpty)
 	}
 
 	@Test func entriesForAnotherWorkspaceWait() async throws {

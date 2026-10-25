@@ -111,3 +111,43 @@ test.describe('Chats v2 — handed-off strip (light + dark)', () => {
 		})
 	}
 })
+
+test.describe('Chats v2 — handed-off strip title', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`titles a comment-started handoff by the comment, not the sender line @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const agent = await account.api.createAgentActor(`Handoff Agent ${Date.now()}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			const conversation = await account.api.createConversation(account.workspaceId, {
+				title: `Handoff chat ${Date.now()}`,
+				participant_actor_ids: [agent.id],
+				initial_message: 'Please hand this off.',
+			})
+
+			const messageId = await seedStrip(account.workspaceId, conversation.id, agent.api_key)
+
+			await account.api.createSession(account.workspaceId, {
+				actor_id: agent.id,
+				action_prompt:
+					'Sent by PMM, another agent. This came from another agent, not from a person.\n\nComment content:\n"""\nDraft the launch post\n"""',
+				conversation_id: conversation.id,
+				message_id: messageId,
+				auto_start: false,
+				spawned_by_message_id: messageId,
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const card = page
+				.locator('div.rounded-xl')
+				.filter({ has: page.getByRole('button', { name: 'View thread' }) })
+				.filter({ hasText: 'Draft the launch post' })
+			await expect(card).toBeVisible({ timeout: 15_000 })
+			await expect(card).not.toContainText('Sent by')
+		})
+	}
+})

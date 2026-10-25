@@ -6,6 +6,7 @@ export function PageHeader({
 	title,
 	subtitle,
 	actions,
+	leadingActions,
 	titleTabs,
 	stickyIdentity,
 	crumb,
@@ -20,6 +21,8 @@ export function PageHeader({
 	// Muted count or context that sits beside the title in the nav row.
 	subtitle?: string
 	actions?: React.ReactNode
+	// Like `actions`, but rendered before the workspace search rather than after it.
+	leadingActions?: React.ReactNode
 	// Controls that sit beside the <h1> in the nav row's left cluster instead
 	// of out by search and New — see PageHeaderContext.
 	titleTabs?: React.ReactNode
@@ -47,6 +50,7 @@ export function PageHeader({
 		setTitle,
 		setSubtitle,
 		setActions,
+		setLeadingActions,
 		setTitleTabs,
 		setStickyIdentity,
 		setCrumb,
@@ -70,6 +74,11 @@ export function PageHeader({
 		setActions(actions ?? null)
 		return () => setActions(null)
 	}, [actions, setActions])
+
+	useEffect(() => {
+		setLeadingActions(leadingActions ?? null)
+		return () => setLeadingActions(null)
+	}, [leadingActions, setLeadingActions])
 
 	useEffect(() => {
 		setTitleTabs(titleTabs ?? null)

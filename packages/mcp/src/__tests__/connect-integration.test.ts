@@ -20,6 +20,7 @@ vi.mock('node:fs', () => ({
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
+import { tools } from '../tools'
 
 const SESSION_ID = '11111111-1111-1111-1111-111111111111'
 
@@ -135,5 +136,71 @@ describe('connect_integration', () => {
 
 		await expect(handler({ provider: 'nope' })).rejects.toThrow(/API error 400/)
 		expect(paths()).toEqual([`/api/sessions/${SESSION_ID}/connect-card`])
+	})
+})
+
+describe('reconnecting a non-active integration', () => {
+	let listHandler: (args: Record<string, unknown>) => Promise<ToolResult>
+	let fetchMock: ReturnType<typeof vi.spyOn>
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.mocked(McpServer).mockImplementation(
+			() => ({ registerResource: vi.fn(), connect: vi.fn() }) as unknown as McpServer,
+		)
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, h) => {
+			if (name === 'list_integrations') listHandler = h as typeof listHandler
+		})
+		fetchMock = vi.spyOn(globalThis, 'fetch')
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	const row = (id: string, provider: string, status: string) => ({
+		id,
+		provider,
+		status,
+		createdAt: '2026-10-19T07:00:00.000Z',
+	})
+
+	it('connect_integration description says it re-authenticates a non-active connection', () => {
+		expect(tools.connect_integration.description).toContain('re-authenticate')
+		expect(tools.connect_integration.description).toContain('not active')
+	})
+
+	it('list_integrations text points a revoked row at connect_integration', async () => {
+		createMcpServer(config)
+		fetchMock.mockResolvedValue(
+			jsonResponse([row('a', 'gmail', 'revoked'), row('b', 'slack', 'active')]),
+		)
+
+		const text = (await listHandler({})).content[0]?.text ?? ''
+
+		expect(text).toContain('Needs reconnecting: gmail (revoked)')
+		expect(text).toContain('connect_integration')
+		expect(text).not.toContain('slack (')
+	})
+
+	it('list_integrations text carries no hint when every row is active', async () => {
+		createMcpServer(config)
+		fetchMock.mockResolvedValue(
+			jsonResponse([row('a', 'gmail', 'active'), row('b', 'slack', 'active')]),
+		)
+
+		const text = (await listHandler({})).content[0]?.text ?? ''
+
+		expect(text).not.toContain('Needs reconnecting')
+		expect(() => JSON.parse(text)).not.toThrow()
+	})
+
+	it('list_integrations text ignores a pending row, which is an unfinished connect', async () => {
+		createMcpServer(config)
+		fetchMock.mockResolvedValue(jsonResponse([row('a', 'gmail', 'pending')]))
+
+		const text = (await listHandler({})).content[0]?.text ?? ''
+
+		expect(text).not.toContain('Needs reconnecting')
 	})
 })

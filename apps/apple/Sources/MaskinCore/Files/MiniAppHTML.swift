@@ -16,6 +16,29 @@ public enum MiniAppHTML {
 	private static let headOpenPattern = #"<head(\s[^>]*)?>"#
 	private static let doctypePattern = #"<!doctype[^>]*>"#
 
+	private static let scriptSrcPattern = #"<script\b[^>]*\bsrc\s*=\s*["']?(?:https?:)?//"#
+	private static let linkTagPattern = #"<link\b[^>]*>"#
+	private static let fontHostPattern = #"(?:https?:)?//fonts\.(?:googleapis|gstatic)\.com"#
+	private static let remoteHrefPattern = #"\bhref\s*=\s*["']?(?:https?:)?//"#
+
+	/// True when the page pulls a script or a stylesheet over the network. `csp` refuses both on
+	/// purpose, so such a page (a Tailwind-from-a-CDN prototype, say) can only ever render as
+	/// unstyled markup. Web fonts don't count: without them the page still lays out.
+	public static func needsNetwork(_ html: String) -> Bool {
+		if html.range(of: scriptSrcPattern, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+		var search = html.startIndex..<html.endIndex
+		while let tag = html.range(of: linkTagPattern, options: [.regularExpression, .caseInsensitive], range: search) {
+			let text = String(html[tag])
+			search = tag.upperBound..<html.endIndex
+			guard text.range(of: #"rel\s*=\s*["']?stylesheet"#, options: [.regularExpression, .caseInsensitive]) != nil,
+				text.range(of: remoteHrefPattern, options: [.regularExpression, .caseInsensitive]) != nil,
+				text.range(of: fontHostPattern, options: [.regularExpression, .caseInsensitive]) == nil
+			else { continue }
+			return true
+		}
+		return false
+	}
+
 	public static func prepare(_ html: String) -> String {
 		var scrubbed = html
 		for pattern in [cspMetaPattern, refreshMetaPattern] {

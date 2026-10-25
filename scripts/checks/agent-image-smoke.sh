@@ -130,6 +130,17 @@ check "$label" -e MASKIN_CLAUDE_EFFORT=low -e MASKIN_DISABLE_WEB_SEARCH=1
 expect "$label" "--effort low"
 expect "$label" "--disallowedTools=WebSearch"
 
+# Only the first-token guard set (no strip flag, no provider prefs): it still needs the proxy.
+label="first-token guard only"
+check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000 -e ANTHROPIC_BASE_URL=https://openrouter.ai/api
+expect "$label" "strip-images proxy up"
+expect "$label" "STUB_CLAUDE_RAN base_url=http://127.0.0.1:9334"
+
+# The guard without a base URL has nothing to proxy; it must not end the session.
+label="first-token guard without a base URL"
+check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000
+expect "$label" "STUB_CLAUDE_RAN base_url=<unset>"
+
 # Neither set (every other route): the CLI gets neither argument.
 label="no effort, web search on"
 check "$label"
@@ -212,5 +223,25 @@ if [ -n "$PREVIOUS_IMAGE" ]; then
 	fi
 	SESSION_IMAGE=""
 fi
+
+# Stdio tool servers: a stand-in third-party server (env) must see none of the Maskin
+# or GitHub token variables, a server whose env block names one keeps exactly that
+# one, and the http entry is left alone. The stub prints variable NAMES only.
+MCP_CREDS=(-e MASKIN_API_KEY=canary-key -e MASKIN_API_URL=http://canary
+	-e MASKIN_WORKSPACE_ID=canary-ws -e GITHUB_TOKEN=canary-gh -e GITHUB_TOKEN_ACME=canary-acme)
+MCP_JSON='{"mcpServers":{"third-party":{"command":"env"},"named":{"command":"env","env":{"MASKIN_API_KEY":"${MASKIN_API_KEY}"}},"maskin-http":{"type":"http","url":"${MASKIN_API_URL}/mcp"}}}'
+
+label="tool servers see only the variables they name"
+check "$label" -e STUB_RUN_MCP_STDIO=1 "${MCP_CREDS[@]}" -e AGENT_MCP_JSON="$MCP_JSON"
+expect "$label" "STUB_MCP_STDIO third-party sees: <none>"
+expect "$label" "STUB_MCP_STDIO named sees: MASKIN_API_KEY "
+reject "$label" "STUB_MCP_STDIO maskin-http"
+
+# The rollback: with the scrub off the stand-in server inherits everything again.
+# The switch itself is a MASKIN_* name in the container, so the server lists it too.
+label="tool server scrub off"
+check "$label" -e STUB_RUN_MCP_STDIO=1 -e MASKIN_MCP_ENV_SCRUB=off "${MCP_CREDS[@]}" \
+	-e AGENT_MCP_JSON="$MCP_JSON"
+expect "$label" "STUB_MCP_STDIO third-party sees: GITHUB_TOKEN GITHUB_TOKEN_ACME MASKIN_API_KEY MASKIN_API_URL MASKIN_MCP_ENV_SCRUB MASKIN_WORKSPACE_ID "
 
 echo "agent-image-smoke: OK ($SESSIONS sessions reached the agent launch)"

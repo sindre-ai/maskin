@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
@@ -149,13 +150,22 @@ export function AgentsIndexView({
 		[statusFilter],
 	)
 
+	// `voice` was a filter chip until every agent became callable; a persisted
+	// or bookmarked `voice` must not empty the list. Other unknown values still
+	// fail closed (empty state), by design.
+	const statusOnlyFilters = useMemo(
+		() => activeStatuses.filter((s) => s !== 'voice'),
+		[activeStatuses],
+	)
+
 	const visibleRows = useMemo(
 		() =>
 			rows.filter((row) => {
 				const bucket = portraitStatusToFilter(row.portrait)
-				return activeStatuses.length === 0 || activeStatuses.includes(bucket)
+				const statusMatches = statusOnlyFilters.length === 0 || statusOnlyFilters.includes(bucket)
+				return statusMatches
 			}),
-		[rows, activeStatuses],
+		[rows, statusOnlyFilters],
 	)
 
 	const sortedRows = useMemo(() => {
@@ -199,7 +209,7 @@ export function AgentsIndexView({
 			// casting: a stale persisted filter can't crash the group render
 			// via an undefined STATUS_GROUP_META entry.
 			const buckets: StatusBucket[] = [...AGENT_STATUSES].filter((b) =>
-				activeStatuses.length === 0 ? true : activeStatuses.includes(b),
+				statusOnlyFilters.length === 0 ? true : statusOnlyFilters.includes(b),
 			)
 			return buckets.map((bucket) => {
 				const meta = STATUS_GROUP_META[bucket]
@@ -229,7 +239,7 @@ export function AgentsIndexView({
 				}))
 		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
-	}, [groupBy, activeStatuses, sortedRows])
+	}, [groupBy, statusOnlyFilters, sortedRows])
 
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
@@ -277,8 +287,8 @@ export function AgentsIndexView({
 		[activeStatuses, statusCounts],
 	)
 
-	const statusTabs = useMemo(
-		() => [
+	const statusTabs = useMemo(() => {
+		const base: Array<{ label: string; value: string | undefined; count: number; dot?: string }> = [
 			{ label: 'All', value: undefined, count: rows.length },
 			...AGENT_STATUSES.map((bucket) => ({
 				label: STATUS_GROUP_META[bucket].label,
@@ -286,9 +296,9 @@ export function AgentsIndexView({
 				count: statusCounts[bucket],
 				dot: STATUS_DOT[bucket],
 			})),
-		],
-		[rows.length, statusCounts],
-	)
+		]
+		return base
+	}, [rows.length, statusCounts])
 
 	return (
 		<div>
@@ -475,12 +485,12 @@ function AgentRowItem({
 		// A hairline under every row, including the last — the group below butts
 		// straight onto it, so the list reads as one unbroken column of rows rather
 		// than a stack of framed cards (mockup 2327).
-		<li className="border-b border-border-subtle">
+		<li className="group/row flex items-center border-b border-border-subtle">
 			{/* The whole row is the click target (mockup 2327), not just the name. */}
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
@@ -544,6 +554,10 @@ function AgentRowItem({
 					aria-hidden
 				/>
 			</Link>
+			{/* Row-level Call. A sibling of the row link, not a child: a button
+			    inside an anchor is invalid nesting and would navigate on click. The
+			    button itself is hover-revealed on md+ and always inline below that. */}
+			<AgentCallButton agent={agent} variant="row" shortcut={false} />
 		</li>
 	)
 }

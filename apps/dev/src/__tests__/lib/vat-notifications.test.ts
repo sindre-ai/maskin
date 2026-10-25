@@ -1,14 +1,14 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getIntegrationCredential, getValidToken, slackApiCall, loggerError } = vi.hoisted(() => ({
-	getIntegrationCredential: vi.fn(),
+const { findIntegrationRow, getValidToken, slackApiCall, loggerError } = vi.hoisted(() => ({
+	findIntegrationRow: vi.fn(),
 	getValidToken: vi.fn(),
 	slackApiCall: vi.fn(),
 	loggerError: vi.fn(),
 }))
 
-vi.mock('../../lib/integrations/lookup', () => ({ getIntegrationCredential }))
+vi.mock('../../lib/integrations/lookup', () => ({ findIntegrationRow }))
 vi.mock('../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
 		getValidToken = getValidToken
@@ -37,7 +37,7 @@ describe('notifySebkOnSlack', () => {
 		process.env.MASKIN_OPS_WORKSPACE_ID = OPS_WORKSPACE_ID
 		// biome-ignore lint/performance/noDelete: assigning undefined would leave the string "undefined"
 		delete process.env.SLACK_BOT_TOKEN
-		getIntegrationCredential.mockResolvedValue({ id: INTEGRATION_ID })
+		findIntegrationRow.mockResolvedValue({ id: INTEGRATION_ID })
 		getValidToken.mockResolvedValue('xoxb-ops-token')
 		slackApiCall.mockResolvedValue({ ok: true })
 	})
@@ -55,7 +55,7 @@ describe('notifySebkOnSlack', () => {
 	it('DMs Sebk with the ops workspace integration token and no SLACK_BOT_TOKEN env var', async () => {
 		await notifySebkOnSlack(db, 'dispute opened')
 
-		expect(getIntegrationCredential).toHaveBeenCalledWith(db, OPS_WORKSPACE_ID, 'slack', null)
+		expect(findIntegrationRow).toHaveBeenCalledWith(db, OPS_WORKSPACE_ID, 'slack', null, {})
 		expect(getValidToken).toHaveBeenCalledWith(db, INTEGRATION_ID, expect.anything())
 		expect(slackApiCall).toHaveBeenCalledWith('xoxb-ops-token', 'chat.postMessage', {
 			channel: 'U04A164KDB7',
@@ -75,12 +75,12 @@ describe('notifySebkOnSlack', () => {
 			expect.stringContaining('MASKIN_OPS_WORKSPACE_ID unset'),
 			expect.any(Object),
 		)
-		expect(getIntegrationCredential).not.toHaveBeenCalled()
+		expect(findIntegrationRow).not.toHaveBeenCalled()
 		expect(slackApiCall).not.toHaveBeenCalled()
 	})
 
 	it('logs at error and does not throw when the ops workspace has no active slack integration', async () => {
-		getIntegrationCredential.mockResolvedValue(null)
+		findIntegrationRow.mockResolvedValue(null)
 
 		await expect(notifySebkOnSlack(db, 'dispute opened')).resolves.toBeUndefined()
 

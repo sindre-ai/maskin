@@ -5,6 +5,7 @@ vi.mock('@sentry/react', () => ({
 	captureException: vi.fn(),
 }))
 
+import { pauseClientErrorLogging } from '@/lib/client-logging-pause'
 import { __setInitializedForTesting, captureException, initSentry } from '@/lib/sentry'
 import * as Sentry from '@sentry/react'
 
@@ -100,5 +101,34 @@ describe('captureException', () => {
 
 		expect(() => captureException(new Error('boom'))).not.toThrow()
 		expect(consoleSpy).toHaveBeenCalledOnce()
+	})
+})
+
+describe('while client error logging is paused', () => {
+	it('captureException sends nothing', () => {
+		__setInitializedForTesting(true)
+		const release = pauseClientErrorLogging()
+
+		captureException(new Error('boom'))
+		release()
+
+		expect(Sentry.captureException).not.toHaveBeenCalled()
+	})
+
+	it('the SDK hooks drop events and breadcrumbs, and pass them through once released', () => {
+		vi.stubEnv('VITE_SENTRY_DSN', 'https://example.invalid/1')
+		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')
+		initSentry()
+		const config = vi.mocked(Sentry.init).mock.calls[0][0]
+		const event = { message: 'x', type: undefined }
+		const breadcrumb = { message: 'y' }
+
+		const release = pauseClientErrorLogging()
+		expect(config?.beforeSend?.(event, {})).toBeNull()
+		expect(config?.beforeBreadcrumb?.(breadcrumb)).toBeNull()
+		release()
+
+		expect(config?.beforeSend?.(event, {})).toBe(event)
+		expect(config?.beforeBreadcrumb?.(breadcrumb)).toBe(breadcrumb)
 	})
 })

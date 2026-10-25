@@ -54,6 +54,17 @@ const CONNECTIONS_SUITE: readonly LinkedInVerb[] = [
 
 const PROFILE_SUITE: readonly LinkedInVerb[] = ['search_people', 'get_profile'] as const
 
+/** Outreach-loop tools: personal identities only, never company pages. */
+const OUTREACH_SUITE: readonly LinkedInVerb[] = [
+	'get_inmail_balance',
+	'list_sent_invitations',
+	'withdraw_invitation',
+	'list_user_posts',
+	'get_company',
+	'react_to_post',
+	'send_inmail',
+] as const
+
 /**
  * Return the subset of R11 verbs (Phase 1 + Phase 2) registered on the
  * instance described by `cfg`. Preserves the canonical order from
@@ -78,6 +89,7 @@ export function toolsForIdentity(
 	if (cfg.identityType === 'personal') {
 		for (const v of CONNECTIONS_SUITE) allowed.add(v)
 		for (const v of PROFILE_SUITE) allowed.add(v)
+		for (const v of OUTREACH_SUITE) allowed.add(v)
 	}
 
 	// Canonical order — do NOT sort alphabetically; keep spec order for diff stability.

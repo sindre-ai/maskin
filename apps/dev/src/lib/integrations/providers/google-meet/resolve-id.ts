@@ -1,3 +1,4 @@
+import { logger } from '../../../logger'
 import type { StoredCredentials } from '../../types'
 import { resolveGoogleEmail } from '../_google/userinfo'
 
@@ -19,7 +20,7 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 }
 
 /**
- * Fetch the caller's Google People id via `people.get(me)`.
+ * Resolve the caller's stable Google account id (the "People id").
  *
  * The Workspace Events subscription Task 3 creates targets
  * `//cloudidentity.googleapis.com/users/{peopleId}` — that string is built
@@ -27,29 +28,28 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
  * carry the People-id (not the email) as the resource reference; the
  * webhook fan-out looks the row up by matching this stored id.
  *
- * Scopes: `openid` alone grants `people.get(me)` — no `directory.readonly`
- * needed (CTO 2026-09-10 deferral; see Reshape §4.1 addendum / S12 smoke).
- *
- * Shape: the response's `metadata.sources[]` array contains one entry per
- * source that populated the profile. The first entry's `id` is the stable
- * People id (a numeric string that never changes for a Google account) —
- * that is what the Workspace Events API expects at
- * `targetResource=//cloudidentity.googleapis.com/users/{id}`.
+ * Read from the OAuth userinfo endpoint's `id` (the OIDC `sub`), which is the
+ * same numeric id `people/me` reports in `metadata.sources[].id`. We do NOT
+ * call the People API: it is a separate Cloud API that has to be enabled in
+ * the OAuth client's project, and in prod it was not — Google answered 403
+ * `SERVICE_DISABLED` (Sentry MASKIN-DEV-11), which no scope can fix. Userinfo
+ * needs nothing beyond the `openid` + `userinfo.email` scopes already granted.
  */
 export async function resolveMeetPeopleId(accessToken: string): Promise<string> {
-	const res = await fetch('https://people.googleapis.com/v1/people/me?personFields=metadata', {
+	const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
 		headers: { Authorization: `Bearer ${accessToken}` },
 	})
 	if (!res.ok) {
 		const text = await res.text()
+		logger.warn('Google userinfo call failed while resolving People id', {
+			httpStatus: res.status,
+			body: text.slice(0, 2000),
+		})
 		throw new Error(`Failed to resolve Google People id: HTTP ${res.status} ${text}`)
 	}
-	const data = (await res.json()) as {
-		metadata?: { sources?: Array<{ id?: string }> }
+	const data = (await res.json()) as { id?: string }
+	if (!data.id) {
+		throw new Error('Google userinfo response missing id field')
 	}
-	const peopleId = data.metadata?.sources?.[0]?.id
-	if (!peopleId) {
-		throw new Error('Google People response missing metadata.sources[0].id')
-	}
-	return peopleId
+	return data.id
 }

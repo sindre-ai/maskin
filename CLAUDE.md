@@ -55,7 +55,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 73 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 89 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -97,6 +97,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend data fetching: TanStack Query hooks in `apps/web/src/hooks/`, API client in `apps/web/src/lib/api.ts`
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
+- **Lists are alphabetical by default**: every list, dropdown, picker and filter option list sorts A→Z by its visible label (locale-aware, case-insensitive, numeric-aware) — never by `createdAt`/`updatedAt` or API order unless the user picks that order or the order is inherent to the data (statuses, timelines, chat/log feeds, wizard steps). Sort a copy with a stable tiebreaker, once in the shared hook/helper that feeds the list
 - **Frontend responsiveness is non-negotiable**: every UI surface must work at 375px (mobile), 768px (iPad portrait), and 1024px (iPad landscape). Use Tailwind breakpoints (`md:`, `lg:`) — never hardcode widths or skip mobile collapse. Full guidelines in `apps/web/CLAUDE.md` under "Responsive (mobile + iPad)".
 - All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
 - PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers
@@ -119,6 +120,11 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `GET /api/health` — health check
 - `GET /api/openapi.json` — OpenAPI spec
 - `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
+- `POST /api/device-auth/start`, `POST /api/device-auth/token` — device sign-in for a keyboard-less client (Apple TV): the device gets a short code, a signed-in person approves it at `/tv`, the device then receives the session once
+
+### Device sign-in approval (`/api/device-auth`, signed-in humans only)
+- `GET /api/device-auth/preview` — which device is asking, for a code
+- `POST /api/device-auth/approve` / `POST /api/device-auth/deny` — approve or refuse a code
 
 ### Actors (`/api/actors`)
 - `GET /api/actors` — list actors
@@ -176,6 +182,12 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `POST /api/integrations/:provider/connect` — start OAuth/connection flow
 - `GET /api/integrations/:provider/callback` — OAuth callback (no auth)
 - `DELETE /api/integrations/:id` — disconnect integration
+- `GET|PUT /api/integrations/:id/grants`, `PUT|DELETE /api/integrations/:id/grants/:actorId`, `PUT /api/integrations/:id/default-access` — which agents may use an integration, and how (see `docs/reference/agent-access.md`)
+- `POST|GET|DELETE /api/integrations/:provider/gateway` — gated gateway to a hosted MCP (Gmail, Google Calendar, Linear, PostHog)
+
+### Custom tool servers (`/api/custom-mcp-servers`) — a workspace's own MCP servers, shared with agents through grants
+- `POST /api/custom-mcp-servers` — add a server (humans only)
+- `GET|PUT /api/custom-mcp-servers/:id` — read (secrets masked) or change one; removal is `DELETE /api/integrations/:id`
 
 ### Webhooks (`/api/webhooks`) — no auth
 - `POST /api/webhooks/:provider` — incoming webhook handler
@@ -231,7 +243,7 @@ promoting it, so the config can't become a graveyard of undeleted code.
 - Flags gate **per-actor behaviour**, never shared state. A flag may gate any
   behaviour whose off-state is the already-shipped state — visual (a UI branch)
   or behavioural (an action the system takes for the flagging actor, read per
-  driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+  driver-actor). A flag must
   **never** make a data-layer, API, or migration change safe: those change
   shared state for everyone, and an actor-scoped flag read at runtime cannot
   isolate the un-flagged population, so such changes must be safe for all users

@@ -14,6 +14,9 @@ const mockDisconnect = vi.fn()
  *  whether to open the post-authorization org picker. */
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
+// The Tools section has its own tests (components/integrations/tools-section.test.tsx).
+vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -67,6 +70,12 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// The Resend connect dialog is always mounted (closed); it only has to render.
+	useResendDnsPrecheck: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	// Agent access has its own tests; here it only has to render.
+	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected
@@ -294,10 +303,12 @@ describe('IntegrationsPage', () => {
 			}),
 		]
 
-		it('renders one header showing the count, with nested rows for each installation', () => {
+		it('renders one header showing the count, with nested rows for each installation', async () => {
+			const user = userEvent.setup()
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			expect(screen.getByText('GitHub · 2')).toBeInTheDocument()
 			expect(screen.getByText('vaerksted-ai')).toBeInTheDocument()
@@ -306,14 +317,14 @@ describe('IntegrationsPage', () => {
 			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(2)
 		})
 
-		it('defaults to expanded when more than one installation exists', () => {
+		it('starts collapsed even when more than one installation exists', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
-			expect(header).toHaveAttribute('aria-expanded', 'true')
-			expect(screen.getByRole('button', { name: /Add another/ })).toBeInTheDocument()
+			expect(header).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
 		})
 
 		it('defaults to collapsed when only one installation exists', () => {
@@ -338,12 +349,12 @@ describe('IntegrationsPage', () => {
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
 			await user.click(header)
-			expect(header).toHaveAttribute('aria-expanded', 'false')
-			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
-
-			await user.click(header)
 			expect(header).toHaveAttribute('aria-expanded', 'true')
 			expect(screen.getByText('vaerksted-ai')).toBeInTheDocument()
+
+			await user.click(header)
+			expect(header).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
 		})
 
 		it('disconnects only the targeted installation when a nested Disconnect is clicked', async () => {
@@ -351,6 +362,7 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			const sindreRow = screen.getByText('sindre-ai').closest('div.flex') as HTMLElement
 			await user.click(within(sindreRow).getByRole('button', { name: 'Disconnect' }))
@@ -364,6 +376,7 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			await user.click(screen.getByRole('button', { name: /Add another/ }))
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
@@ -722,7 +735,8 @@ describe('IntegrationsPage', () => {
 
 		it('labels each connected account by the member who connected it', async () => {
 			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
-			// Two installs default the group to expanded.
+			// The group starts collapsed; open it.
+			await userEvent.click(screen.getByRole('button', { name: /LinkedIn · 2/ }))
 			expect(await screen.findByText('Magnus')).toBeInTheDocument()
 			expect(screen.getByText('Colleague')).toBeInTheDocument()
 			expect(screen.getByText('2 connected accounts')).toBeInTheDocument()
@@ -730,6 +744,7 @@ describe('IntegrationsPage', () => {
 
 		it("marks the current member's own account so two rows are tellable apart", async () => {
 			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
+			await userEvent.click(screen.getByRole('button', { name: /LinkedIn · 2/ }))
 			expect(await screen.findByText('(you)')).toBeInTheDocument()
 		})
 
@@ -759,5 +774,26 @@ describe('IntegrationsPage', () => {
 			renderWith([linkedInFor('actor-1', 'acct-a')])
 			expect(await screen.findByText(/\$49/)).toBeInTheDocument()
 		})
+	})
+})
+
+describe('IntegrationsPage ordering', () => {
+	it('lists providers alphabetically by name', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+				{ name: 'linear', displayName: 'Linear', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		const gh = screen.getByText('GitHub', { exact: false })
+		const li = screen.getByText('Linear', { exact: false })
+		const sl = screen.getByText('Slack', { exact: false })
+		expect(gh.compareDocumentPosition(li) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(li.compareDocumentPosition(sl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 })

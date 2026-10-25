@@ -316,7 +316,7 @@ struct ObjectDetailStoreTests {
 			ObjectLink(id: "r5", relation: "relates_to", isOutgoing: false, otherId: "l1", otherType: "loop", otherTitle: "Mobile launch"))
 		remote.setGraph(graph)
 		await store.load()
-		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocks", "Part of"])
+		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocking", "Belongs to"])
 	}
 
 	// Each property gets a fresh store: the fake's `update` answers from the graph it was seeded

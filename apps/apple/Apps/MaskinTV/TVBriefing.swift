@@ -34,7 +34,7 @@ private struct TVStoryCard: View {
 		VStack(alignment: .leading, spacing: 0) {
 			HStack(alignment: .top) {
 				Text(card.unit.uppercased())
-					.font(.system(size: 20, weight: .semibold, design: .monospaced))
+					.font(.system(size: 24, weight: .semibold, design: .monospaced))
 					.foregroundStyle(isSeen ? MaskinColor.ink5 : MaskinColor.stLab)
 					.lineLimit(1)
 					.padding(.horizontal, 16).padding(.vertical, 6)

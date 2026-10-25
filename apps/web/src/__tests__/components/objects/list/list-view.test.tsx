@@ -72,6 +72,9 @@ globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
 
 const deployedAt = '2026-08-01T12:00:00.000Z'
 
+// RelativeTime's compact age column: "now", "3d", or a locale date past a month.
+const AGE_TOKEN = /^(now|\d+[mhd]|\p{L}{3,} \d+|\d+\.? \p{L}{3,}\.?)$/u
+
 // Wraps ListView so checkbox clicks and group-header toggles in tests visibly
 // round-trip through the controlled rowSelection + expanded boundaries.
 // Production wiring lives in the Objects route; this harness just keeps the
@@ -186,8 +189,9 @@ describe('ListView', () => {
 		expect(screen.getByText('In progress')).toBeInTheDocument()
 
 		// Updated-time (RelativeTime, compact age column) renders something for a
-		// known date — "3d", "2h", "now", or a "5 Jul" fallback past a month.
-		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
+		// known date — "3d", "2h", "now", or a locale date fallback past a month
+		// ("5 Jul", "Jul 5", "5. jul.").
+		expect(screen.getByText(AGE_TOKEN)).toBeInTheDocument()
 
 		// No trailing open chevron — the whole row is the target (mockup 764).
 		expect(screen.queryAllByRole('button', { name: /open object/i })).toHaveLength(0)
@@ -358,7 +362,7 @@ describe('ListView', () => {
 		// shared/relative-time renders the compact age token.
 		// shared/actor-avatar is absent (no driver) — null driver renders nothing.
 		expect(screen.getAllByText('Done').length).toBeGreaterThan(0)
-		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
+		expect(screen.getByText(AGE_TOKEN)).toBeInTheDocument()
 	})
 	// Mockup 1021–1022: the empty state names the filters that produced it and
 	// offers a single action that clears them.
