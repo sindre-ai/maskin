@@ -5,7 +5,11 @@ import { Hono } from 'hono'
 import { classifyMcpClient } from '../lib/analytics/mcp-client'
 import { normalizeActorType } from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
+import { findIntegrationRow } from '../lib/integrations/lookup'
 import { createGoogleDriveMcpServer } from '../lib/integrations/providers/google-drive/mcp-server'
+import { GOOGLE_DRIVE_PROVIDER } from '../lib/integrations/providers/google-drive/token'
+import { readContextFor } from '../lib/integrations/read-context'
+import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -20,7 +24,8 @@ import { isWorkspaceWriter } from '../lib/workspace-auth'
  *
  * The route is dumb: one build-server + connect-transport per POST. A workspace
  * with no connected Drive gets a clean INTEGRATION_MISSING envelope when a tool
- * is called.
+ * is called. With a connected Drive, each tool is gated on the calling agent's
+ * access level (Read, Read & write), the same as Meet.
  */
 
 type Env = {
@@ -55,15 +60,30 @@ app.post('/', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	const mcpServer = createGoogleDriveMcpServer({
-		db,
+	// The same row the token lookup picks (the read context widens it exactly as the token read
+	// does), so the gate judges the connection the tool will use. The credential stays sealed.
+	const drive = await findIntegrationRow(db, workspaceId, GOOGLE_DRIVE_PROVIDER, null, {
+		ctx: readContextFor(actorId),
+	})
+	const gate = await toolGateFor(db, {
 		workspaceId,
 		actorId,
-		sessionId: c.req.header('x-maskin-session-id') || undefined,
-		client: classifyMcpClient(c.req.header('user-agent')),
-		actorType: normalizeActorType(c.get('actorType')),
-		storage: c.get('storageProvider'),
+		integrationId: drive?.id ?? null,
+		provider: GOOGLE_DRIVE_PROVIDER,
+		providerLabel: 'Google Drive',
 	})
+	const mcpServer = createGoogleDriveMcpServer(
+		{
+			db,
+			workspaceId,
+			actorId,
+			sessionId: c.req.header('x-maskin-session-id') || undefined,
+			client: classifyMcpClient(c.req.header('user-agent')),
+			actorType: normalizeActorType(c.get('actorType')),
+			storage: c.get('storageProvider'),
+		},
+		gate,
+	)
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,

@@ -92,11 +92,16 @@ export interface DriveMcpContext {
 	storage?: StorageProvider
 }
 
-export function createGoogleDriveMcpServer(ctx: DriveMcpContext): McpServer {
+export function createGoogleDriveMcpServer(
+	ctx: DriveMcpContext,
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
+): McpServer {
 	const server = new McpServer(
 		{ name: 'maskin-google-drive', version: '0.1.0' },
 		{ capabilities: { tools: {} } },
 	)
+	onServer?.(server)
 	const toolCtx: DriveToolContext = {
 		db: ctx.db,
 		workspaceId: ctx.workspaceId,
