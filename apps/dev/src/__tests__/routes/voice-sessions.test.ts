@@ -276,6 +276,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			[memberRow()],
 			[offerAgent()],
 			[], // agentSkills
+			[{ name: 'Sam', timezone: null }], // caller
 			[{ settings: null }], // transcript persistence
 		]
 		mockResults.update = [{ id: SESSION }]
@@ -332,6 +333,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 				[memberRow()],
 				[offerAgent()],
 				[], // agentSkills
+				[{ name: 'Sam', timezone: null }], // caller
 				opts.callerStillInChat ? [{ id: CHAT }] : [],
 				...(opts.callerStillInChat
 					? [
@@ -369,6 +371,71 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		})
 	})
 
+	describe('call instructions', () => {
+		async function instructionsFor(opts: {
+			skills?: Array<{ name: string; content: string }>
+			caller: { name: string; timezone: string | null }
+		}) {
+			openSocketImmediately()
+			setVoiceInvokeToolFactory(async () => ({
+				tools: VOICE_TOOLS,
+				invokeTool: vi.fn(),
+				readOnlyTools: new Set<string>(),
+				unreachableServers: [],
+				close: async () => {},
+			}))
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response('v=0 vendor answer', {
+					status: 201,
+					headers: { location: '/v1/realtime/calls/rtc_abc' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [
+				[sessionRow()],
+				[memberRow()],
+				[offerAgent()],
+				opts.skills ?? [],
+				[opts.caller],
+				[{ settings: null }], // transcript persistence
+			]
+			mockResults.update = [{ id: SESSION }]
+			const res = await post(app)
+			expect(res.status).toBe(200)
+			const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+			return (JSON.parse(form.get('session') as string) as { instructions: string }).instructions
+		}
+
+		it("states who is calling and the date and time in the caller's time zone", async () => {
+			const instructions = await instructionsFor({
+				caller: { name: 'Sam', timezone: 'Europe/Copenhagen' },
+			})
+			expect(instructions).toContain('You are speaking with Sam.')
+			expect(instructions).toMatch(
+				/It is now \w+ \d+ \w+ \d{4}, \d{2}:\d{2} \(Europe\/Copenhagen\)\./,
+			)
+		})
+
+		it('gives the time in UTC when the caller has no time zone', async () => {
+			const instructions = await instructionsFor({ caller: { name: 'Sam', timezone: null } })
+			expect(instructions).toMatch(/It is now \w+ \d+ \w+ \d{4}, \d{2}:\d{2} UTC\./)
+		})
+
+		it('drops the longest skill when the attached skills pass the size cap', async () => {
+			const instructions = await instructionsFor({
+				caller: { name: 'Sam', timezone: null },
+				skills: [
+					{ name: 'short-skill', content: 'Keep me.' },
+					{ name: 'giant-skill', content: 'x'.repeat(60_000) },
+				],
+			})
+			expect(instructions).toContain('## Skill: short-skill')
+			expect(instructions).not.toContain('giant-skill')
+			expect(instructions.length).toBeLessThan(30_000)
+		})
+	})
+
 	it('reports tools_available false when the server socket cannot attach', async () => {
 		setCreateRealtimeCallFn(async () => ({
 			kind: 'ok',
@@ -392,6 +459,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			[memberRow()],
 			[offerAgent()],
 			[],
+			[{ name: 'Sam', timezone: null }],
 			[{ settings: null }],
 		]
 		mockResults.update = [{ id: SESSION }]
