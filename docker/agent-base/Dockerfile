@@ -10,9 +10,18 @@ FROM node:22-slim
 # System tools. fontconfig + DejaVu + Liberation give headless Chromium glyphs
 # to paint when it rasterises inside the session sandbox (qa-deck.sh); without
 # them text renders blank. Add fonts-noto-color-emoji only if emoji are needed.
+# The lib* block is Chromium's runtime shared libraries (the set Playwright's
+# install-deps asks for on bookworm, minus fonts). Sessions run as a non-root
+# user and cannot apt-get, so without these chrome-headless-shell exits 127 on
+# libglib-2.0.so.0. The browser binary itself is NOT baked in: sessions run
+# `playwright install chromium` so it matches the version the repo pins.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ca-certificates openssh-client gettext-base \
     fontconfig fonts-dejavu-core fonts-liberation \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdbus-1-3 \
+    libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 \
+    libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 \
+    libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
