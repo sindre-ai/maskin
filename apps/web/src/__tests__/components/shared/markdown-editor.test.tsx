@@ -44,6 +44,39 @@ describe('MarkdownEditor', () => {
 		expect(onChange).toHaveBeenCalledTimes(1)
 	})
 
+	it('calls onSaved once per saving blur with the content length, and not per keystroke or on a no-edit blur', async () => {
+		const onSaved = vi.fn()
+		const { pm, ref, onChange } = await mount({
+			value: 'hello',
+			surface: 'bet',
+			objectId: 'obj-1',
+			onSaved,
+		})
+
+		fireEvent.focus(pm)
+		fireEvent.blur(pm)
+		expect(onSaved).not.toHaveBeenCalled()
+
+		fireEvent.focus(pm)
+		act(() => ref.current?.insertContent(' world'))
+		act(() => ref.current?.insertContent('!'))
+		expect(onSaved).not.toHaveBeenCalled()
+
+		fireEvent.blur(pm)
+		expect(onSaved).toHaveBeenCalledTimes(1)
+		expect(onSaved).toHaveBeenCalledWith({
+			variant: 'document',
+			surface: 'bet',
+			objectId: 'obj-1',
+			contentLength: (onChange.mock.calls[0]?.[0] as string).length,
+			saveTrigger: 'blur',
+		})
+
+		fireEvent.focus(pm)
+		fireEvent.blur(pm)
+		expect(onSaved).toHaveBeenCalledTimes(1)
+	})
+
 	it('falls back to plain text and reports once when markdown parses to an empty doc', async () => {
 		const raw = '[//]: # (only a link reference definition)'
 		const onParseError = vi.fn()

@@ -41,6 +41,10 @@
 			"types": "./src/editor-blocks.ts",
 			"default": "./dist/editor-blocks.js"
 		},
+		"./react/telemetry": {
+			"types": "./src/react/telemetry.ts",
+			"default": "./dist/react/telemetry.js"
+		},
 		"./react/slash-command": {
 			"types": "./src/react/slash-command.ts",
 			"default": "./dist/react/slash-command.js"
