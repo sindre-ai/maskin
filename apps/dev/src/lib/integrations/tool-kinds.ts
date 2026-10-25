@@ -38,7 +38,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_meet__get_transcript_entries',
 		'google_meet__list_recordings',
 	]),
-	'google-search-console': new Set(['inspect_url', 'list_sites']),
+	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
 	// Matched on the verb: LinkedIn tool names carry a per-identity prefix.
 	'linkedin-unipile': new Set([
 		'read_post_comments',
