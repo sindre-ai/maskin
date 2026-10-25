@@ -66,7 +66,7 @@ function BackToIntegrations() {
 			<Link
 				to="/$workspaceId/settings/integrations"
 				params={{ workspaceId }}
-				search={{ select_github: undefined, error: undefined }}
+				search={{ select_github: undefined, error: undefined, return_to: undefined }}
 			>
 				<ChevronLeft aria-hidden="true" />
 				Integrations
@@ -175,7 +175,7 @@ function DriveDetail() {
 						navigate({
 							to: '/$workspaceId/settings/integrations',
 							params: { workspaceId },
-							search: { select_github: undefined, error: undefined },
+							search: { select_github: undefined, error: undefined, return_to: undefined },
 						})
 					}
 				/>
