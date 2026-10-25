@@ -116,7 +116,7 @@ function expandMcpConfig(env: Record<string, string>) {
 	try {
 		const script = [
 			'set -e',
-			`eval "$(sed -n '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
+			`eval "$(sed -n -e '/^MCP_GUARD_NAME=/p' -e '/^mcp_guard_runs()/,/^}/p' -e '/^drop_unavailable_guarded_servers()/,/^}/p' -e '/^setup_mcps()/,/^}/p' "${AGENT_RUN}")"`,
 			'setup_mcps',
 			'cat "$MCP_CONFIG_FILE"',
 		].join('\n')
