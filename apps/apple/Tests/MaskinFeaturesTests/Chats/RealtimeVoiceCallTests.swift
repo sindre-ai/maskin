@@ -44,15 +44,17 @@ private actor FakeCalls: VoiceCalling {
 	var offerFailure: VoiceCallFailure?
 	var toolsAvailable = true
 	private(set) var created: [String] = []
+	private(set) var createdFrom: [String?] = []
 	private(set) var offers: [String] = []
 	private(set) var hangups: [Hangup] = []
 
 	func failCreate(_ failure: VoiceCallFailure) { createFailure = failure }
 	func failOffer(_ failure: VoiceCallFailure) { offerFailure = failure }
 
-	func create(agentActorID: String) async throws -> String {
+	func create(agentActorID: String, conversationID: String?) async throws -> String {
 		if let createFailure { throw createFailure }
 		created.append(agentActorID)
+		createdFrom.append(conversationID)
 		return "vs-1"
 	}
 
@@ -75,10 +77,11 @@ private actor FakeCalls: VoiceCalling {
 @Suite("RealtimeVoiceCall") struct RealtimeVoiceCallTests {
 	private func make(
 		calls: FakeCalls = FakeCalls(), transport: FakeTransport = FakeTransport(),
-		reconnectWindow: Duration = .seconds(3600)
+		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600)
 	) -> (RealtimeVoiceCall, FakeCalls, FakeTransport) {
 		let call = RealtimeVoiceCall(
-			agentID: "agent-1", agentName: "Chief", calls: calls, makeTransport: { transport },
+			agentID: "agent-1", agentName: "Chief", conversationID: conversationID, calls: calls,
+			makeTransport: { transport },
 			reconnectWindow: reconnectWindow)
 		return (call, calls, transport)
 	}
@@ -98,6 +101,44 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.offers == ["offer-sdp"])
 		#expect(transport.accepted == ["answer-sdp"])
 		#expect(call.failure == nil)
+	}
+
+	@Test("a call started from a chat reserves the call with that chat's id")
+	func sendsTheChat() async {
+		let (call, calls, _) = make(conversationID: "chat-1")
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.createdFrom == ["chat-1"])
+	}
+
+	@Test("a call that isn't started from a chat sends no chat id")
+	func sendsNoChat() async {
+		let (call, calls, _) = make()
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.createdFrom == [nil])
+	}
+
+	@Test("only a call started from a chat names that chat")
+	func requestNamesTheChat() {
+		let lead = ChatParticipant(id: "agent-1", name: "Chief", kind: .agent)
+		#expect(LiveMeetingRequest.conversation(id: "chat-1", lead: lead).startedFromConversationID == "chat-1")
+		#expect(LiveMeetingRequest.chiefOfStaff.startedFromConversationID == nil)
+		#expect(LiveMeetingRequest.dailyBriefing.startedFromConversationID == nil)
+	}
+
+	@Test("each finished line of the call is handed on, yours and the agent's, but not tool calls")
+	func handsOnFinishedLines() async {
+		let (call, _, transport) = make()
+		var lines: [String] = []
+		call.onLine = { isYou, text in lines.append("\(isYou ? "you" : "agent"): \(text)") }
+		call.begin(existing: [])
+		await settle()
+		func send(_ json: String) { transport.onEvent?(Data(json.utf8)) }
+		send(#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"What is blocked?"}"#)
+		send(#"{"type":"response.function_call_arguments.done","call_id":"c1","name":"list_objects","arguments":"{}"}"#)
+		send(#"{"type":"response.output_audio_transcript.done","transcript":"Three bets."}"#)
+		#expect(lines == ["you: What is blocked?", "agent: Three bets."])
 	}
 
 	@Test("events from the call drive the phase")
@@ -183,6 +224,21 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.micEnabled.last == false)
 		call.toggleMute()
 		#expect(transport.micEnabled.last == true)
+	}
+
+	@Test("the agent is asked to greet once, also when muted and after an ICE restart")
+	func greetsOnce() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.toggleMute()
+		await settle()
+		transport.receive("session.created")
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		transport.onConnection?(.failed)
+		transport.onConnection?(.connected)
+		transport.receive("session.created")
+		#expect(transport.iceRestarts == 1)
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
 	}
 
 	@Test("tapping to interrupt cancels the response")

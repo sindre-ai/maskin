@@ -112,6 +112,9 @@ function ConversationThreadPage() {
 		sessionId: string | null
 	}>(() => (producedRequested ? { tab: 'produced', sessionId: null } : null))
 	const threads = useConversationThreads(workspaceId, conversationId)
+	const computersCount = (conversation?.participants ?? []).filter(
+		(p) => p.actorType === 'agent',
+	).length
 	const messagesOldestFirst = useMemo(
 		() => flattenMessagesOldestFirst(messagesData),
 		[messagesData],
@@ -128,7 +131,7 @@ function ConversationThreadPage() {
 			openLinked: (target: { kind: 'object' | 'file'; id: string }) => {
 				focusNonceRef.current += 1
 				setLinkedFocus({ ...target, nonce: focusNonceRef.current })
-				setOverview({ tab: 'linked', sessionId: null })
+				setOverview({ tab: 'produced', sessionId: null })
 			},
 		}),
 		[],
@@ -257,7 +260,7 @@ function ConversationThreadPage() {
 	)
 	const consumeLinkedFocus = useCallback(() => setLinkedFocus(null), [])
 	// A focus request that was never acted on (item not listed) must not linger into a later open.
-	const linkedTabOpen = overview?.tab === 'linked'
+	const linkedTabOpen = overview?.tab === 'produced'
 	useEffect(() => {
 		if (!linkedTabOpen) setLinkedFocus(null)
 	}, [linkedTabOpen])
@@ -269,14 +272,13 @@ function ConversationThreadPage() {
 			tab={overview.tab}
 			onTabChange={(tab) => setOverview({ tab, sessionId: null })}
 			threadsCount={threads.length}
-			producedCount={totalCount}
+			computersCount={computersCount}
 			openSessionId={overview.sessionId}
 			onOpenSession={(sessionId) => setOverview({ tab: 'threads', sessionId })}
 			producedObjects={producedObjects}
 			producedFiles={producedFiles}
 			producedLoading={producedLoading}
 			linkedItems={linkedItems}
-			linkedCount={linkedCount}
 			linkedFocus={linkedFocus}
 			onFocusConsumed={consumeLinkedFocus}
 			onJumpToMessage={jumpToMessage}

@@ -18,10 +18,16 @@ vi.mock('../../../../lib/integrations/sync/runner', () => ({
 
 import {
 	INDEX_ROW_COLUMNS,
+	INSPECT_DAILY_CAP,
 	type IndexRow,
+	MAX_INDEX_ROWS,
+	type PageEntry,
+	buildPages,
+	capPages,
 	deriveIndexState,
 	inspectUrl,
 	parseIndexRows,
+	planInspections,
 	propertyForUrl,
 	serializeIndexRows,
 } from '../../../../lib/integrations/providers/google-search-console/index-status'
@@ -286,6 +292,127 @@ describe('inspectUrl', () => {
 		await expect(
 			inspectUrl('tok', 'sc-domain:maskin.io', 'https://maskin.io/', async () => {}),
 		).rejects.toThrow(/no indexStatusResult/)
+	})
+})
+
+// ── Rotation ─────────────────────────────────────────────────────────────────────────
+
+describe('planInspections and the page list', () => {
+	const TODAY = '2026-10-12'
+	const page = (n: number, source: PageEntry['source']): PageEntry => ({
+		url: `https://maskin.io/p${n}`,
+		key: `https://maskin.io/p${n}`,
+		source,
+	})
+	const stored = (pages: PageEntry[], checkedAt: Record<string, string>) =>
+		new Map(
+			pages
+				.filter((p) => checkedAt[p.key])
+				.map((p) => [
+					p.key,
+					{ url: p.url, source: p.source, checked_at: checkedAt[p.key] } as IndexRow,
+				]),
+		)
+
+	it('lists tracked pages and seen-only pages once each, a tracked page never as seen', () => {
+		const pages = buildPages(
+			['https://maskin.io/a', 'https://maskin.io/b/'],
+			['https://maskin.io/B', 'https://maskin.io/c?x=1', 'https://maskin.io/c'],
+		)
+		expect(pages).toEqual([
+			{ url: 'https://maskin.io/a', key: 'https://maskin.io/a', source: 'tracked' },
+			{ url: 'https://maskin.io/b/', key: 'https://maskin.io/b', source: 'tracked' },
+			{ url: 'https://maskin.io/c?x=1', key: 'https://maskin.io/c', source: 'seen' },
+		])
+	})
+
+	it('puts tracked pages before seen-only pages', () => {
+		const pages = [page(1, 'seen'), page(2, 'tracked'), page(3, 'seen'), page(4, 'tracked')]
+		const plan = planInspections(pages, new Map(), TODAY)
+		expect(plan.map((p) => p.key)).toEqual([
+			'https://maskin.io/p2',
+			'https://maskin.io/p4',
+			'https://maskin.io/p1',
+			'https://maskin.io/p3',
+		])
+	})
+
+	it('takes never-checked pages first, then the oldest checked, within each group', () => {
+		const pages = [page(1, 'seen'), page(2, 'seen'), page(3, 'seen'), page(4, 'tracked')]
+		const known = stored(pages, {
+			'https://maskin.io/p1': '2026-09-20T10:00:00.000Z',
+			'https://maskin.io/p3': '2026-09-01T10:00:00.000Z',
+			'https://maskin.io/p4': '2026-10-11T10:00:00.000Z',
+		})
+		const plan = planInspections(pages, known, TODAY)
+		expect(plan.map((p) => p.key)).toEqual([
+			'https://maskin.io/p4',
+			'https://maskin.io/p2',
+			'https://maskin.io/p3',
+			'https://maskin.io/p1',
+		])
+	})
+
+	it('skips a tracked page already checked on this calendar date, even hours earlier', () => {
+		const pages = [page(1, 'tracked'), page(2, 'tracked')]
+		const known = stored(pages, {
+			'https://maskin.io/p1': '2026-10-12T00:05:00.000Z',
+			'https://maskin.io/p2': '2026-10-11T23:55:00.000Z',
+		})
+		const plan = planInspections(pages, known, TODAY)
+		expect(plan.map((p) => p.key)).toEqual(['https://maskin.io/p2'])
+	})
+
+	it('re-inspects a seen-only page only once 7 dates have passed', () => {
+		const pages = [page(1, 'seen'), page(2, 'seen'), page(3, 'seen')]
+		const known = stored(pages, {
+			'https://maskin.io/p1': '2026-10-06T23:59:00.000Z',
+			'https://maskin.io/p2': '2026-10-05T00:01:00.000Z',
+			'https://maskin.io/p3': '2026-10-12T08:00:00.000Z',
+		})
+		const plan = planInspections(pages, known, TODAY)
+		// 6 dates ago and today are inside the cadence; 7 dates ago is due.
+		expect(plan.map((p) => p.key)).toEqual(['https://maskin.io/p2'])
+	})
+
+	it('cuts the list at 300 inspections a date, tracked pages kept, seen-only pages waiting', () => {
+		const tracked = Array.from({ length: 30 }, (_, i) => page(i, 'tracked'))
+		const seen = Array.from({ length: 400 }, (_, i) => page(1000 + i, 'seen'))
+		const plan = planInspections([...seen, ...tracked], new Map(), TODAY)
+		expect(INSPECT_DAILY_CAP).toBe(300)
+		expect(plan).toHaveLength(300)
+		expect(plan.slice(0, 30).every((p) => p.source === 'tracked')).toBe(true)
+		expect(plan.slice(30).every((p) => p.source === 'seen')).toBe(true)
+	})
+
+	it('counts what was already inspected today against the cap', () => {
+		const seen = Array.from({ length: 400 }, (_, i) => page(i, 'seen'))
+		const done = Object.fromEntries(
+			seen.slice(0, 290).map((p) => [p.key, '2026-10-12T04:00:00.000Z']),
+		)
+		const plan = planInspections(seen, stored(seen, done), TODAY)
+		expect(plan).toHaveLength(10)
+		const full = Object.fromEntries(
+			seen.slice(0, 300).map((p) => [p.key, '2026-10-12T04:00:00.000Z']),
+		)
+		expect(planInspections(seen, stored(seen, full), TODAY)).toEqual([])
+	})
+
+	it('drops seen-only pages first over the row cap, never-inspected ones before stored ones', () => {
+		const tracked = Array.from({ length: 3 }, (_, i) => page(i, 'tracked'))
+		const seen = [page(10, 'seen'), page(11, 'seen'), page(12, 'seen')]
+		const known = stored(seen, { 'https://maskin.io/p11': '2026-10-05T00:00:00.000Z' })
+		const { kept, dropped } = capPages([...tracked, ...seen], known, 5)
+		expect(dropped).toBe(1)
+		expect(kept.map((p) => p.key)).toEqual([
+			'https://maskin.io/p0',
+			'https://maskin.io/p1',
+			'https://maskin.io/p2',
+			'https://maskin.io/p11',
+			'https://maskin.io/p10',
+		])
+		expect(MAX_INDEX_ROWS).toBe(5000)
+		expect(capPages(tracked, known, 5)).toEqual({ kept: tracked, dropped: 0 })
 	})
 })
 

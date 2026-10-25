@@ -5,16 +5,21 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
+import { useBackfilledRunActivity } from '@/hooks/use-backfilled-run-activity'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import {
+	type MessageTurnActivity,
+	useConversationActivity,
+} from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
 import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type RedoneTurns,
@@ -96,6 +101,8 @@ export function ThreadMessages({
 		conversationId,
 		messages,
 	)
+	// Replies copied in from a background run, whose thinking and tool calls live in that run's log.
+	const backfilledActivity = useBackfilledRunActivity(workspaceId, messages)
 	// Every session `useActiveSessionsForConversation` returns already carries
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
@@ -143,22 +150,45 @@ export function ThreadMessages({
 		// A helper's result handed to the agent that started it: the agent gets it, the
 		// person reads it in the helper's thread as its final output.
 		if (m.metadata?.helper_return) return false
+		// A card button's nudge to the agent: delivered, but not something to read.
+		if (m.metadata?.hidden_from_chat) return false
 		if (helperQuestionIds.has(m.id)) return !answeredQuestionIds.has(m.id)
 		const answered = m.metadata?.question_answer?.question_message_id
 		return !(typeof answered === 'number' && helperQuestionIds.has(answered))
 	})
 
+	// A turn a hidden nudge started (a card's Done or Save) has no bubble to hang under, so it
+	// hangs under the last message the person can see. Without it the wait for the agent's
+	// answer would show nothing at all.
+	const turnsFromHidden = new Map<number, MessageTurnActivity[]>()
+	const visibleIds = new Set(visibleMessages.map((m) => m.id))
+	let lastVisibleId: number | null = null
+	for (const m of messages) {
+		if (visibleIds.has(m.id)) {
+			lastVisibleId = m.id
+			continue
+		}
+		const turns = m.metadata?.hidden_from_chat ? byTriggerMessageId.get(m.id) : undefined
+		if (turns && lastVisibleId !== null) {
+			turnsFromHidden.set(lastVisibleId, [...(turnsFromHidden.get(lastVisibleId) ?? []), ...turns])
+		}
+	}
+
 	// A linked object's card shows once, on the first message that links it; later
-	// messages keep the link but not another copy of the card.
+	// messages keep the link but not another copy of the card. Only messages that
+	// draw cards count: your own bubble draws none, so a link you posted first must
+	// not hide the card from the agent's reply.
+	const ownActorId = getStoredActor()?.id
 	const shownLinkedObjectIdsByMessage = useMemo(() => {
 		const seen = new Set<string>()
 		const byMessage = new Map<number, ReadonlySet<string>>()
 		for (const m of visibleMessages) {
 			byMessage.set(m.id, new Set(seen))
+			if (m.kind !== 'message' || m.actorId === ownActorId) continue
 			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
 		}
 		return byMessage
-	}, [visibleMessages])
+	}, [visibleMessages, ownActorId])
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -370,9 +400,13 @@ export function ThreadMessages({
 					// it; turns this message triggered (still in progress, no
 					// reply yet) render below it, in the gap before that reply
 					// lands — see useConversationActivity's doc comment.
-					const turnsAbove = byReplyMessageId.get(message.id) ?? []
+					const turnsAbove =
+						byReplyMessageId.get(message.id) ?? backfilledActivity.get(message.id) ?? []
 					const turnsBelow = dropRedoneFailedTurns(
-						byTriggerMessageId.get(message.id) ?? [],
+						[
+							...(byTriggerMessageId.get(message.id) ?? []),
+							...(turnsFromHidden.get(message.id) ?? []),
+						],
 						message.id,
 						redoneTurns,
 					)

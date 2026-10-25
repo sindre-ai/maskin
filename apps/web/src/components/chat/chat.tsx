@@ -68,6 +68,26 @@ function makeTempId() {
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
+// A screenshot reaches the clipboard with no real name (Chrome calls it "image.png").
+// Give it a readable one; a copied file that already has a name keeps it.
+const CLIPBOARD_IMAGE_EXTENSIONS: Record<string, string> = { jpeg: 'jpg', 'svg+xml': 'svg' }
+
+export function nameClipboardImage(file: File, now: Date): File {
+	if (!file.type.startsWith('image/')) return file
+	if (file.name !== '' && !/^image\.[a-z0-9]+$/i.test(file.name)) return file
+	const subtype = file.type.slice('image/'.length)
+	const base = subtype.replace(/[^a-z0-9].*$/i, '') || 'png'
+	const ext = CLIPBOARD_IMAGE_EXTENSIONS[subtype] ?? base
+	const pad = (n: number) => String(n).padStart(2, '0')
+	const stamp =
+		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+	return new File([file], `pasted-image-${stamp}.${ext}`, {
+		type: file.type,
+		lastModified: file.lastModified,
+	})
+}
+
 // The three built-in NEWKIND labels that can promote to a type-filter chip when
 // typed as `/task ` / `/bet ` / `/insight `. Any custom workspace type falls
 // through as a normal search query — hardcoded per spec §Create-new rows.
@@ -471,6 +491,14 @@ export function Composer({
 			},
 			[setValue],
 		),
+		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback(
+			(streamed: string, refined: string) => {
+				setValue((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
+			},
+			[setValue],
+		),
 	)
 
 	// Abort every in-flight upload when the composer unmounts so a closed
@@ -723,20 +751,6 @@ export function Composer({
 		[setValue, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
 	)
 
-	// A paste that starts with the prefix and has no whitespace, into an empty composer,
-	// goes straight to the vault field. Intercepted before the textarea takes it, so the
-	// secret is never in the composer's value, not even for a frame.
-	const handlePaste = useCallback(
-		(e: ClipboardEvent<HTMLTextAreaElement>) => {
-			if (vaultFlow?.blocking || valueRef.current !== '') return
-			const seed = vaultSeedFrom(e.clipboardData.getData('text'))
-			if (seed === null) return
-			e.preventDefault()
-			enterVault(seed)
-		},
-		[vaultFlow?.blocking, enterVault],
-	)
-
 	// Compute the picker's live query — text from the char AFTER the `/` up to
 	// the current caret. Falls back to '' when the picker is closed or the
 	// user has typed nothing after the trigger.
@@ -880,11 +894,10 @@ export function Composer({
 		[uploadFile, onDispatchSelection],
 	)
 
-	const handleFileSelection = useCallback(
-		(event: ChangeEvent<HTMLInputElement>) => {
-			const input = event.target
-			const files = Array.from(input.files ?? [])
-			input.value = '' // allow re-picking the same file after removing it
+	// The one entry point for files into the composer: the picker and a clipboard
+	// paste both end here, so a chip behaves the same whichever way it arrived.
+	const attachFiles = useCallback(
+		(files: File[]) => {
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -900,6 +913,44 @@ export function Composer({
 			})
 		},
 		[uploadPickedFile],
+	)
+
+	const handleFileSelection = useCallback(
+		(event: ChangeEvent<HTMLInputElement>) => {
+			const input = event.target
+			const files = Array.from(input.files ?? [])
+			input.value = '' // allow re-picking the same file after removing it
+			attachFiles(files)
+		},
+		[attachFiles],
+	)
+
+	// A paste that starts with the prefix and has no whitespace, into an empty composer,
+	// goes straight to the vault field. Intercepted before the textarea takes it, so the
+	// secret is never in the composer's value, not even for a frame.
+	// A paste that carries files and no text attaches them. Text always wins: copying
+	// from a web page or spreadsheet puts a rendered image next to the text, and the
+	// text is what the user meant to paste.
+	const handlePaste = useCallback(
+		(e: ClipboardEvent<HTMLTextAreaElement>) => {
+			if (vaultFlow?.blocking) return
+			const text = e.clipboardData.getData('text')
+			if (valueRef.current === '') {
+				const seed = vaultSeedFrom(text)
+				if (seed !== null) {
+					e.preventDefault()
+					enterVault(seed)
+					return
+				}
+			}
+			if (text !== '') return
+			const files = Array.from(e.clipboardData.files)
+			if (files.length === 0) return
+			e.preventDefault()
+			const now = new Date()
+			attachFiles(files.map((file) => nameClipboardImage(file, now)))
+		},
+		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
 	const handleRemovePending = useCallback((tempId: string) => {
@@ -1158,11 +1209,18 @@ export function Composer({
 								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
 							)}
 							onClick={dictation.toggle}
-							disabled={disabled}
+							disabled={disabled || dictation.transcribing}
 							aria-pressed={dictation.recording}
-							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
+							aria-busy={dictation.transcribing}
+							aria-label={
+								dictation.transcribing
+									? 'Transcribing'
+									: dictation.recording
+										? 'Stop dictating'
+										: 'Dictate a message'
+							}
 						>
-							<Mic size={14} aria-hidden />
+							{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
 						</Button>
 					) : null}
 					{callAgent ? (

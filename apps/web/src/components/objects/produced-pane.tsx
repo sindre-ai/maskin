@@ -153,6 +153,7 @@ function FileCard({ workspaceId, file }: { workspaceId: string; file: ProducedFi
 						.join(' · ')}
 				</span>
 			</span>
+			<TypeBadge type="file" className="shrink-0" />
 		</Link>
 	)
 }

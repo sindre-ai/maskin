@@ -4,7 +4,7 @@ import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * The Overview drawer's Linked tab: everything the chat's messages link to, worked on in one
+ * The Overview drawer's Items tab: everything the chat's messages link to, worked on in one
  * place. An agent message links a LinkedIn draft, a contact and a markdown file; the drawer
  * counts them, draws the draft as a card with Approve, the contact as a compact row and the
  * file as itself.
@@ -19,7 +19,7 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 	expect(scrollWidth, `${label}: page overflows horizontally`).toBeLessThanOrEqual(innerWidth + 1)
 }
 
-test.describe('Chat — Linked tab in the Overview drawer', () => {
+test.describe('Chat — Items tab in the Overview drawer', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`lists the draft, the contact and the file a message links to @ ${vp.label}`, async ({
 			page,
@@ -60,7 +60,7 @@ test.describe('Chat — Linked tab in the Overview drawer', () => {
 			await expect(page.getByTestId('thread-messages')).toBeVisible({ timeout: 10_000 })
 
 			await page.getByRole('button', { name: 'Open Overview' }).click()
-			const linkedTab = page.getByRole('tab', { name: /Linked/ })
+			const linkedTab = page.getByRole('tab', { name: /Items/ })
 			await expect(linkedTab).toBeVisible()
 			await expect(linkedTab).toContainText('3')
 			await linkedTab.click()

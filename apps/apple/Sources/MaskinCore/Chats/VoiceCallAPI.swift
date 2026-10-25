@@ -29,7 +29,7 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 	case notAnAgent
 	/// 409: this person already has a live call (or the session already took its offer).
 	case alreadyInCall
-	/// 429: the vendor or the workspace's daily voice minutes are used up.
+	/// 429: the vendor is rate limiting calls.
 	case rateLimited(retryAfterSeconds: Int?)
 	case server(String)
 	case network(String)
@@ -40,7 +40,7 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 		case .unavailable: return "Voice calls aren't available right now."
 		case .notAnAgent: return "That isn't an agent, so it can't take a call."
 		case .alreadyInCall: return "You're already in a call. End it and try again."
-		case .rateLimited: return "Voice minutes are used up for today. Try again later."
+		case .rateLimited: return "Voice is busy right now. Try again in a moment."
 		case .server(let text), .network(let text): return text
 		}
 	}
@@ -57,7 +57,9 @@ public enum VoiceCallFailure: Error, Sendable, Equatable {
 /// The three calls a Realtime voice call makes, as a seam so the call logic tests without a server.
 public protocol VoiceCalling: Sendable {
 	/// Reserves the caller's live-call slot for this agent. Returns the voice session id.
-	func create(agentActorID: String) async throws -> String
+	/// `conversationID` is the chat the call was started from, so the agent knows what was said
+	/// there; nil for a call that isn't tied to a chat.
+	func create(agentActorID: String, conversationID: String?) async throws -> String
 	func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer
 	/// Ends the call. Idempotent on the server. Returns the id of the conversation the transcript
 	/// was saved to, if any.
@@ -86,8 +88,16 @@ public struct URLSessionVoiceCalls: VoiceCalling {
 		self.session = session
 	}
 
-	public func create(agentActorID: String) async throws -> String {
-		let data = try await post("voice-sessions", body: ["agent_actor_id": agentActorID])
+	/// The body of the create call. `conversation_id` is left out, not null, when there is no chat.
+	struct CreateBody: Encodable, Equatable {
+		var agent_actor_id: String
+		var conversation_id: String?
+	}
+
+	public func create(agentActorID: String, conversationID: String?) async throws -> String {
+		let data = try await post(
+			"voice-sessions",
+			body: CreateBody(agent_actor_id: agentActorID, conversation_id: conversationID))
 		struct Created: Decodable { let voice_session_id: String }
 		return try decode(Created.self, from: data).voice_session_id
 	}

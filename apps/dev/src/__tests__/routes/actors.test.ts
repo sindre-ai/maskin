@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
 import { PlanCapExceededError } from '../../lib/llm-routing'
+import { heartbeatCronExpression } from '../../services/default-heartbeat'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
@@ -93,6 +94,31 @@ describe('Actors Routes', () => {
 					workspaceId: WORKSPACE_ID,
 					actorId: actor.id,
 					role: 'member',
+				})
+			})
+
+			it('gives the new agent a daily Heartbeat trigger, written in the same transaction', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				// inserts: [actor, workspace member, workspace_member event, Heartbeat trigger, trigger event]
+				expect(calls.inserts[3]).toMatchObject({
+					workspaceId: WORKSPACE_ID,
+					name: 'Heartbeat',
+					type: 'cron',
+					targetActorId: actor.id,
+					enabled: true,
+					config: { expression: heartbeatCronExpression(actor.id) },
+				})
+				expect(calls.inserts[4]).toMatchObject({
+					entityType: 'trigger',
+					action: 'created',
+					workspaceId: WORKSPACE_ID,
 				})
 			})
 

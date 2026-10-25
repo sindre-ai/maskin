@@ -51,9 +51,13 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	var agentWords: String? { machine.lastAgentWords }
 
 	@ObservationIgnored var onFallBack: (@MainActor () -> Void)?
+	/// Called with each finished line of the call, yours or the agent's, as it is transcribed, so
+	/// the thread can keep it (the call itself posts nothing to the chat).
+	@ObservationIgnored var onLine: (@MainActor (_ isYou: Bool, _ text: String) -> Void)?
 
 	@ObservationIgnored private let agentID: String
 	@ObservationIgnored private let agentName: String
+	@ObservationIgnored private let conversationID: String?
 	@ObservationIgnored private let calls: any VoiceCalling
 	@ObservationIgnored private let makeTransport: @MainActor () -> (any RealtimeTransport)?
 	@ObservationIgnored private let now: @MainActor () -> Date
@@ -66,14 +70,17 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private var reconnectTask: Task<Void, Never>?
 	@ObservationIgnored private var restartedIce = false
 
+	/// `conversationID` is the chat the call is started from; the server gives the agent its recent
+	/// messages. Nil when the call isn't tied to a chat.
 	init(
-		agentID: String, agentName: String, calls: any VoiceCalling,
+		agentID: String, agentName: String, conversationID: String? = nil, calls: any VoiceCalling,
 		makeTransport: @escaping @MainActor () -> (any RealtimeTransport)?,
 		now: @escaping @MainActor () -> Date = { Date() },
 		reconnectWindow: Duration = RealtimeVoiceCall.reconnectWindow
 	) {
 		self.agentID = agentID
 		self.agentName = agentName
+		self.conversationID = conversationID
 		self.calls = calls
 		self.makeTransport = makeTransport
 		self.now = now
@@ -82,7 +89,8 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 
 	// MARK: LiveVoiceDriving
 
-	/// Start the call. Messages already in the thread don't matter: the conversation is by voice.
+	/// Start the call. The thread's earlier messages aren't sent from here: the server reads them
+	/// from `conversationID` and hands them to the agent.
 	func begin(existing: [ChatMessage]) {
 		guard !isActive else { return }
 		isActive = true
@@ -117,7 +125,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		}
 		self.transport = transport
 		do {
-			let id = try await calls.create(agentActorID: agentID)
+			let id = try await calls.create(agentActorID: agentID, conversationID: conversationID)
 			voiceSessionID = id
 			// Ended while the slot was being reserved: give it straight back.
 			guard isActive else {
@@ -175,7 +183,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 
 	private func received(_ data: Data) {
 		guard isActive, let event = RealtimeEvent.parse(data) else { return }
+		let seen = machine.lines.count
 		run(machine.handle(event, at: now()))
+		for line in machine.lines.dropFirst(seen) where line.kind != .tool {
+			onLine?(line.kind == .user, line.text)
+		}
 	}
 
 	private func run(_ commands: [RealtimeCallMachine.Command]) {
