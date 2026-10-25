@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	notifications,
 	objects,
 	sessions,
 	triggerCooldowns,
@@ -2496,8 +2497,34 @@ export class CommentDispatcher {
 		helperReturnSessionId: string | null
 		authorSessionId: string | null
 	}): Promise<void> {
-		const [notification] = await this.db.transaction((tx) =>
-			insertNotificationsWithEvents(tx, {
+		// One comment event wakes one mentioned actor once. During a rolling deploy
+		// the old and new instance both run this dispatcher on the same NOTIFY, so
+		// the notification row is the claim: the first transaction writes it, the
+		// second waits on the lock, finds it and stops. Without this the second
+		// instance writes a second notification and starts a second session.
+		const notification = await this.db.transaction(async (tx) => {
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtextextended(${`mention:${ctx.eventId}:${ctx.actor.id}`}, 0))`,
+			)
+			const [existing] = await tx
+				.select({ id: notifications.id })
+				.from(notifications)
+				.where(
+					and(
+						eq(notifications.targetActorId, ctx.actor.id),
+						eq(notifications.objectId, ctx.objectId),
+						sql`${notifications.metadata}->>'comment_event_id' = ${String(ctx.eventId)}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				logger.info('Comment mention already dispatched by another process', {
+					eventId: ctx.eventId,
+					actorId: ctx.actor.id,
+				})
+				return null
+			}
+			const [created] = await insertNotificationsWithEvents(tx, {
 				workspaceId: ctx.workspaceId,
 				actorId: ctx.commenterId,
 				rows: [
@@ -2506,14 +2533,19 @@ export class CommentDispatcher {
 						type: 'needs_input' as const,
 						title: '@mentioned by comment',
 						content: ctx.content,
+						metadata: { comment_event_id: ctx.eventId },
 						sourceActorId: ctx.commenterId,
 						targetActorId: ctx.actor.id,
 						objectId: ctx.objectId,
 						status: 'pending' as const,
 					},
 				],
-			}),
-		)
+			})
+			return created
+		})
+
+		// null: another process already dispatched this mention, nothing left to do.
+		if (notification === null) return
 
 		if (!notification) {
 			logger.warn('Comment mention notification not created', {
