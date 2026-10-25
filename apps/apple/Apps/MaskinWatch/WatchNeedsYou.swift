@@ -8,7 +8,7 @@ import WatchKit
 /// option and Hold / More, all without scrolling; "More" lists every option the iPhone card has.
 /// One tap decides (optimistic, held for the Undo window); one that can't be taken back asks
 /// first, and Hold asks why. When the watch can't reach the feed, the last snapshot (from the
-/// phone or its own last read) is shown read-only.
+/// phone or its own last read) is shown read-only. Pushed from Home, inside its navigation stack.
 struct WatchNeedsYou: View {
 	let store: ForYouStore?
 	let watch: MaskinWatchStore
@@ -23,15 +23,13 @@ struct WatchNeedsYou: View {
 	}
 
 	var body: some View {
-		NavigationStack {
-			content
-				.toolbar(.hidden, for: .navigationBar)
-				.containerBackground(for: .navigation) { WatchBackdrop() }
-		}
-		// A new decision arriving after Done ends the caught-up screen.
-		.onChange(of: entries.contains { $0.record == nil }) { _, hasOpen in
-			if hasOpen { finished = false }
-		}
+		content
+			.toolbar(.hidden, for: .navigationBar)
+			.containerBackground(for: .navigation) { WatchBackdrop() }
+			// A new decision arriving after Done ends the caught-up screen.
+				.onChange(of: entries.contains { $0.record == nil }) { _, hasOpen in
+				if hasOpen { finished = false }
+			}
 	}
 
 	/// "Done" on the last receipt: back to a decision still open, else Caught up.

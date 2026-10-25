@@ -11,6 +11,8 @@ struct WatchFlows: View {
 	let loaded: Bool
 	/// The live feed, so a flow that needs the wearer can open its decision; nil offline.
 	let store: ForYouStore?
+	/// The flow a complication asked to open, by id; cleared once it is showing.
+	@Binding var openFlow: String?
 
 	@State private var showOnTrack = false
 
@@ -39,6 +41,9 @@ struct WatchFlows: View {
 			}
 			.toolbar(.hidden, for: .navigationBar)
 			.containerBackground(for: .navigation) { WatchBackdrop() }
+			.navigationDestination(item: $openFlow) { id in
+				if let flow = flows.first(where: { $0.id == id }) { WatchFlowSummary(flow: flow, store: store) }
+			}
 		}
 	}
 

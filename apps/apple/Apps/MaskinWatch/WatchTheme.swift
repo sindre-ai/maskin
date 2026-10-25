@@ -40,6 +40,13 @@ enum WatchMetrics {
 	/// The play and pause button of the briefing player.
 	static let player: CGFloat = 84
 	static let playerStroke = MaskinSpace.s3
+	/// Home's microphone button, and the capsule drawn in it.
+	static let mic: CGFloat = 84
+	static let micGlyph = CGSize(width: 16, height: 28)
+	/// One of the three thinking dots.
+	static let dot: CGFloat = 10
+	/// The "!" circle on a problem screen.
+	static let alert: CGFloat = 36
 }
 
 /// The small square with initials that stands for an agent: "Co" for the Chief of Staff.

@@ -155,7 +155,11 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 
 	var isSpeaking: Bool { phase != .idle }
 
-	override init() {
+	/// What Now Playing calls it.
+	private let title: String
+
+	init(title: String = "Daily briefing") {
+		self.title = title
 		super.init()
 		synthesizer.delegate = self
 	}
@@ -210,7 +214,7 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 
 	private func updateNowPlaying() {
 		MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-			MPMediaItemPropertyTitle: "Daily briefing",
+			MPMediaItemPropertyTitle: title,
 			MPMediaItemPropertyArtist: "Maskin",
 			MPNowPlayingInfoPropertyPlaybackRate: phase == .speaking ? 1.0 : 0.0,
 		]
