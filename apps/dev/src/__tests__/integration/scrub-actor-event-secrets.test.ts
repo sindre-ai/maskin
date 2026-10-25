@@ -45,7 +45,7 @@ async function insertEvent(
 			${action},
 			${entityType},
 			${entityId},
-			${JSON.stringify(data)}::jsonb
+			${sql.json(data as Parameters<typeof sql.json>[0])}
 		)
 		RETURNING id
 	`
