@@ -7,9 +7,7 @@ import type {
 	DisplaySettingsBody,
 	FileCommentDto,
 	FromSuggestedStep,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	NeededTool,
 	SafeMetadata,
@@ -29,9 +27,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	SendRoundInput,
 	SendRoundResponse,
@@ -306,10 +302,12 @@ export const api = {
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
 		// hash is the preview's `content_hash`, so a draft that changed since is refused.
-		approve: (id: string, contentHash?: string) =>
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
 			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
 				method: 'POST',
-				body: contentHash ? { content_hash: contentHash } : {},
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
 			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
@@ -536,8 +534,6 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
-		steps: (id: string, workspaceId: string) =>
-			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -647,6 +643,17 @@ export const api = {
 			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
+			),
+		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
+		allowAccess: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			level: 'read' | 'read_write',
+		) =>
+			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-access`,
+				{ method: 'POST', body: { sessionId, level }, workspaceId },
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
@@ -817,6 +824,18 @@ export const api = {
 			request<{ ok: true }>(`/sessions/${id}/input`, {
 				method: 'POST',
 				body,
+				workspaceId,
+			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
 				workspaceId,
 			}),
 		stop: (id: string, workspaceId: string) =>
@@ -1117,6 +1136,13 @@ export const api = {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
+	transcriptions: {
+		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
+		// so the workspace header is required (a read-only viewer is refused).
+		create: (workspaceId: string, body: { audio: string; language?: string }) =>
+			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
 	},
 
 	voiceSessions: {
@@ -1490,9 +1516,8 @@ export interface BillingUsageResponse {
 	// "Buy usage credits" entry points are hidden in that case.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
-	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
-	// `linkedin-addon-visible` flag is off OR the workspace has no connected
-	// linkedin-unipile credentials. Deliberately separate from
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
+	// connected linkedin-unipile credentials or is enterprise. Deliberately separate from
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
@@ -1707,6 +1732,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -2353,6 +2386,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -2392,6 +2427,8 @@ export interface MessageQuestion {
 /** An agent's request to connect an integration, surfaced into chat as a Connect card. */
 export interface MessageIntegrationConnect {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	provider: string
 }
 
@@ -2414,6 +2451,8 @@ export interface CustomMcpServerResponse {
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
@@ -2455,16 +2494,38 @@ export interface AgentAccessView {
 
 export interface MessageKeychainAccessRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	integration_id: string
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
 }
 
+/** An agent asking for more access to an integration that is connected, surfaced as a card. */
+export interface MessageIntegrationAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	provider: string
+	display_name: string
+	level: 'read' | 'read_write'
+	reason?: string
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2504,9 +2565,15 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
+	integration_access_request?: MessageIntegrationAccessRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: MessageCardAnswer
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
@@ -2558,6 +2625,8 @@ export interface SpawnedSession {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**
@@ -2627,6 +2696,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {
@@ -2663,6 +2734,7 @@ export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
 	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
-const sendMutate = vi.fn()
 const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -14,9 +13,12 @@ vi.mock('@/hooks/use-objects', () => ({
 }))
 vi.mock('@/components/shared/file-preview', () => ({
 	FilePreview: ({ fileId }: { fileId: string }) => <div data-testid="file-preview">{fileId}</div>,
+	isPreviewableFile: (mime: string) =>
+		/^(text\/|image\/(png|jpeg|gif|webp))/.test(mime) || mime === 'application/xhtml+xml',
 }))
-vi.mock('@/hooks/use-conversation', () => ({
-	useSendMessage: () => ({ mutate: sendMutate }),
+const useFiles = vi.fn()
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: (...args: unknown[]) => useFiles(...args),
 }))
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
@@ -61,12 +63,15 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { LinkedObjectPreviews } from '@/components/chat/linked-object-preview'
+import { LinkedCardOrLink, LinkedObjectCard } from '@/components/chat/linked-object-preview'
+import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
+// What the card sends along so the server tells the agent; nothing is posted in the chat.
+const CARD = { conversation_id: CHAT, agent_id: AGENT }
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -81,7 +86,22 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 }
 
 function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
-	return render(<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} {...props} />)
+	return render(<LinkedObjectCard workspaceId={WS} objectId={ID} {...props} />)
+}
+
+const DRAFT_PREVIEW = {
+	kind: 'email',
+	label: 'Email',
+	provider: 'gmail',
+	recipients: [],
+	subject: 'Hello',
+	details: [],
+	body: 'Hej Catja, tillykke med fusionen.',
+	maxLength: null,
+	missing: [],
+	warnings: [],
+	content_hash: 'hash-0',
+	delivery: { state: 'draft', at: null },
 }
 
 // The card starts contracted; click its top to read the text.
@@ -89,11 +109,10 @@ async function expand() {
 	await userEvent.click(screen.getByText('LinkedIn note to Catja'))
 }
 
-describe('LinkedObjectPreviews', () => {
+describe('LinkedObjectCard', () => {
 	beforeEach(() => {
 		useObject.mockReset()
 		updateMutate.mockReset()
-		sendMutate.mockReset()
 		approveMutate.mockReset()
 	})
 
@@ -115,21 +134,13 @@ describe('LinkedObjectPreviews', () => {
 		}
 	}
 
-	it('ends a draft in Approve and send, not the next phase, and tells the agent to send the text', async () => {
+	it('ends a draft in Approve and send, not the next phase, and names the chat so the server tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
-		approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
-		expect(approveMutate).toHaveBeenCalledWith(
-			{ id: ID, contentHash: 'hash-1' },
-			expect.any(Object),
-		)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain(`passing object_id ${ID}`)
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 	})
 
 	it('shows what the draft answers and who it goes to, above the text', async () => {
@@ -197,21 +208,6 @@ describe('LinkedObjectPreviews', () => {
 		expect(screen.getByText('LinkedIn message · P1')).toBeInTheDocument()
 	})
 
-	it('shows nothing when the message links to no object', () => {
-		const { container } = render(<LinkedObjectPreviews workspaceId={WS} objectIds={[]} />)
-		expect(container).toBeEmptyDOMElement()
-		expect(useObject).not.toHaveBeenCalled()
-	})
-
-	it('shows no card for an object an earlier message already shows', () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		const { container } = render(
-			<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} skipIds={new Set([ID])} />,
-		)
-		expect(container).toBeEmptyDOMElement()
-		expect(useObject).not.toHaveBeenCalled()
-	})
-
 	it('shows nothing for an object from another workspace', () => {
 		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other' }) })
 		const { container } = renderCard()
@@ -243,35 +239,16 @@ describe('LinkedObjectPreviews', () => {
 			'done',
 		])
 		await userEvent.selectOptions(menu, 'done')
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-	})
-
-	it('tells the agent, with the text as it stands, once the move has saved', async () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
-		renderCard({ conversationId: CHAT, agentId: AGENT })
-		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
-		expect(sendMutate).toHaveBeenCalledTimes(1)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain('to Done')
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		// The chat rides along with the move: the server tells the agent, no message is posted.
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('offers the next phase in the workspace order as a button that moves and tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-		expect(sendMutate).toHaveBeenCalledTimes(1)
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('has no next-phase button on the last status', async () => {
@@ -360,21 +337,12 @@ describe('LinkedObjectPreviews', () => {
 			expect(screen.getByText('Dokumenter efter demoen')).toBeInTheDocument()
 		})
 
-		it('approves the exact text on screen and tells the agent what was approved', async () => {
+		it('approves the exact text on screen and names the chat whose agent sends it', async () => {
 			useObject.mockReturnValue({ data: draft() })
-			approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
-			expect(approveMutate).toHaveBeenCalledWith(
-				{ id: ID, contentHash: 'hash-1' },
-				expect.any(Object),
-			)
-			expect(sendMutate).toHaveBeenCalledTimes(1)
-			const message = sendMutate.mock.calls[0][0]
-			expect(message.metadata).toEqual({ mentions: [AGENT] })
-			expect(message.content).toContain('Approved "Follow up with Torben"')
-			expect(message.content).toContain('> Hej Torben, her er dokumenterne.')
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 		})
 
 		it('cannot be approved from a card that has no agent to tell', async () => {
@@ -403,7 +371,7 @@ describe('LinkedObjectPreviews', () => {
 
 		it('shows that it is approved, and that it has been sent, instead of the button', async () => {
 			for (const [state, label] of [
-				['approved', 'Approved'],
+				['approved', 'Approved, sending'],
 				['sent', 'Sent'],
 			] as const) {
 				useObject.mockReturnValue({ data: draft({ delivery: { state, at: null } }) })
@@ -441,19 +409,88 @@ describe('LinkedObjectPreviews', () => {
 		})
 	})
 
-	describe('files the message links to', () => {
-		const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
-
-		it('shows a card for a linked file', () => {
-			render(<LinkedObjectPreviews workspaceId={WS} objectIds={[]} fileIds={[FILE]} />)
-			expect(screen.getByTestId('file-preview')).toHaveTextContent(FILE)
-		})
-
-		it('shows cards for the object and the file when a message links both', () => {
+	describe('Show in panel', () => {
+		it('is not offered without a panel to show it in', () => {
 			useObject.mockReturnValue({ data: objectRow() })
-			render(<LinkedObjectPreviews workspaceId={WS} objectIds={[ID]} fileIds={[FILE]} />)
-			expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
-			expect(screen.getByTestId('file-preview')).toBeInTheDocument()
+			renderCard()
+			expect(screen.queryByRole('button', { name: 'Show in panel' })).not.toBeInTheDocument()
 		})
+
+		it('asks the panel to show the object, without toggling the card', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			const openLinked = vi.fn()
+			render(
+				<LinkedPanelContext.Provider value={{ openLinked }}>
+					<LinkedObjectCard workspaceId={WS} objectId={ID} />
+				</LinkedPanelContext.Provider>,
+			)
+			await userEvent.click(screen.getByRole('button', { name: 'Show in panel' }))
+			expect(openLinked).toHaveBeenCalledWith({ kind: 'object', id: ID })
+			expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+		})
+	})
+})
+
+describe('LinkedCardOrLink', () => {
+	const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
+	const link = <a href="/x">the original link</a>
+	const renderObject = () =>
+		render(
+			<LinkedCardOrLink workspaceId={WS} target={{ kind: 'object', id: ID }} fallback={link} />,
+		)
+
+	beforeEach(() => {
+		useObject.mockReset()
+		useFiles.mockReset()
+		useFiles.mockReturnValue({ data: undefined })
+	})
+
+	it('keeps the link while the object loads, is missing, or failed to load', () => {
+		for (const result of [{ data: undefined }, { data: undefined, isError: true }]) {
+			useObject.mockReturnValue(result)
+			const { unmount } = renderObject()
+			expect(screen.getByText('the original link')).toBeInTheDocument()
+			unmount()
+		}
+	})
+
+	it('keeps the link for an object in another workspace', () => {
+		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other', preview: DRAFT_PREVIEW }) })
+		renderObject()
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+	})
+
+	it('keeps the link for an object that is not a draft', () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderObject()
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+	})
+
+	it('replaces the link by the card for a draft', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+	})
+
+	it('keeps the link for a file that is loading or not previewable, and replaces it for a page', () => {
+		const file = (
+			<LinkedCardOrLink workspaceId={WS} target={{ kind: 'file', id: FILE }} fallback={link} />
+		)
+		for (const data of [
+			undefined,
+			[{ id: FILE, name: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 1 }],
+		]) {
+			useFiles.mockReturnValue({ data })
+			const { unmount } = render(file)
+			expect(screen.getByText('the original link')).toBeInTheDocument()
+			unmount()
+		}
+		useFiles.mockReturnValue({
+			data: [{ id: FILE, name: 'page.html', mimeType: 'text/html', sizeBytes: 1 }],
+		})
+		render(file)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByTestId('file-preview')).toBeInTheDocument()
 	})
 })

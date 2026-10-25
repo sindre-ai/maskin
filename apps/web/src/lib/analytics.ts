@@ -767,26 +767,6 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 	})
 }
 
-// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
-// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
-// container into view — exactly once per depth per mount. Wired to the parent
-// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
-// event as load-bearing). `depth` is the four-value union rather than a raw
-// number so a typo can't invent a fifth bucket, and `loopId` is the
-// `objects.id` for taxonomy joins on the standard `entity_id` field.
-export function trackLoopsDetailFlowScrollDepth(p: {
-	depth: 25 | 50 | 75 | 100
-	loopId: string
-}): void {
-	trackEvent('loops.detail.flow_scroll_depth', {
-		depth: p.depth,
-		loopId: p.loopId,
-		entity_id: p.loopId,
-		entity_type: 'loop',
-		source: 'web',
-	})
-}
-
 // LOAD-BEARING for the Loops v4 polish bet's Won / Lost falsification metric
 // (Decide ↓ click-through ≥ 30% on sessions where the AskBanner renders). Fires
 // on the D3 AskBanner's Decide click. `loopId` and `pendingCount` are the two

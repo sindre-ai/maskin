@@ -594,6 +594,21 @@ export async function insertWorkspace(
 	return ws
 }
 
+/**
+ * Makes an actor a member of a workspace if it is not one already. Starting a
+ * session for an actor now requires membership (startSession fails closed), so
+ * the factories that name an agent for a workspace (trigger target, session
+ * actor, object driver) seed the membership a real workspace would have.
+ * Tests of the foreign-actor case insert the foreign actor without these
+ * factories, or into a different workspace.
+ */
+export async function ensureWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
+	await db
+		.insert(workspaceMembers)
+		.values({ workspaceId, actorId, role: 'member' })
+		.onConflictDoNothing()
+}
+
 export async function insertObject(
 	db: Database,
 	workspaceId: string,
@@ -602,6 +617,7 @@ export async function insertObject(
 ) {
 	const data = buildObject({ workspaceId, createdBy: actorId, ...overrides })
 	const rows = await db.insert(objects).values(data).returning()
+	if (typeof data.driver === 'string') await ensureWorkspaceMember(db, workspaceId, data.driver)
 	return rows[0]
 }
 
@@ -656,6 +672,7 @@ export async function insertSession(
 ) {
 	const data = buildSession({ workspaceId, actorId, createdBy, ...overrides })
 	const rows = await db.insert(sessions).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, actorId)
 	return rows[0]
 }
 
@@ -714,6 +731,7 @@ export async function insertTrigger(
 		...overrides,
 	})
 	const rows = await db.insert(triggers).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, targetActorId)
 	return rows[0]
 }
 

@@ -174,6 +174,7 @@ describe('MCP telemetry wrapper', () => {
 			'stop_session',
 			'pause_session',
 			'resume_session',
+			'send_session_message',
 		])
 		// Tools whose names start with create_/update_/delete_ but are NOT
 		// mutations (e.g. delete_object is — but no such read-only impostors
@@ -222,6 +223,91 @@ describe('MCP telemetry wrapper', () => {
 		// surface in CI rather than silently changing the baseline.
 		expect(evt.content_tokens).toBe(Math.ceil(evt.content_bytes / 4))
 		expect(evt.structured_content_tokens).toBe(Math.ceil(evt.structured_content_bytes / 4))
+	})
+
+	describe('list_actors size event', () => {
+		const mockActors = (rows: unknown[]) =>
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return new Response(JSON.stringify(rows), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json', 'X-Total-Count': String(rows.length) },
+					})
+				}
+				if (urlStr.includes('/api/loops')) {
+					return new Response(JSON.stringify({ loops: [] }), { status: 200 })
+				}
+				return new Response(JSON.stringify([]), { status: 200 })
+			})
+
+		const lastSizeEvent = () => {
+			const evt = recorded.filter((r) => r.event_type === 'tool_call_response_size').at(-1)
+			if (!evt || evt.event_type !== 'tool_call_response_size') throw new Error('no size event')
+			return evt
+		}
+
+		const actorRows = [
+			{ id: 'a-1', type: 'agent', name: 'Architect' },
+			{ id: 'a-2', type: 'agent', name: 'Developer' },
+			{ id: 'a-3', type: 'human', name: 'Magnus' },
+		]
+
+		it('reports row_count equal to the rows returned and view slim by default', async () => {
+			mockActors(actorRows)
+			await getHandler('list_actors')({ workspace_id: wsId })
+			expect(lastSizeEvent()).toMatchObject({
+				tool_name: 'list_actors',
+				row_count: 3,
+				view: 'slim',
+			})
+		})
+
+		it('reports view full when include asks for triggers or loops', async () => {
+			mockActors(actorRows)
+			await getHandler('list_actors')({ workspace_id: wsId, include: 'triggers,loops' })
+			expect(lastSizeEvent()).toMatchObject({ row_count: 3, view: 'full' })
+		})
+
+		it('reports view slim for the cross-workspace listing even with include', async () => {
+			mockActors(actorRows)
+			await getHandler('list_actors')({ include: 'triggers' })
+			expect(lastSizeEvent().view).toBe('slim')
+		})
+
+		it('reports row_count 0, not null, for an empty list', async () => {
+			mockActors([])
+			await getHandler('list_actors')({ workspace_id: wsId })
+			expect(lastSizeEvent()).toMatchObject({ row_count: 0, view: 'slim' })
+		})
+
+		it('reports row_count 1 when a single actor collapses to a single heroCard', async () => {
+			mockActors([actorRows[0]])
+			await getHandler('list_actors')({ workspace_id: wsId })
+			expect(lastSizeEvent().row_count).toBe(1)
+		})
+
+		it('sets no view and no row_count for get_actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(
+				async () =>
+					new Response(JSON.stringify({ id: 'a-1', type: 'agent', name: 'Architect' }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					}),
+			)
+			await getHandler('get_actor')({
+				id: '11111111-1111-1111-1111-111111111111',
+				workspace_id: wsId,
+			})
+			const evt = lastSizeEvent()
+			expect(evt.view).toBeUndefined()
+			expect(evt.row_count).toBeUndefined()
+		})
+
+		it('sets no view for list_objects', async () => {
+			await getHandler('list_objects')({ workspace_id: wsId })
+			expect(lastSizeEvent().view).toBeUndefined()
+		})
 	})
 
 	it('reports zero structured_content bytes when the tool omits structuredContent', async () => {

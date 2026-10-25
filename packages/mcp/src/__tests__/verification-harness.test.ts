@@ -656,3 +656,122 @@ describe('list_sessions — trimmed pages resume through next_cursor', () => {
 		expect(result.structuredContent.next_cursor).toBeUndefined()
 	})
 })
+
+// ─────────────────────────────────────────────────────────────────
+// list_workspace_skills — every page size walks every row exactly once
+// ─────────────────────────────────────────────────────────────────
+//
+// Skill rows carry a long description, so a page of 100 passes the token cap
+// long before `limit`. The cap drops rows from the tail; the page must hand
+// back a cursor that resumes after the last shipped row, or the caller reads
+// a short page with no cursor and believes the list is complete.
+
+describe('list_workspace_skills — cursor walk returns every row once', () => {
+	let handlers: Map<string, Handler>
+
+	const TOTAL = 130
+	const BASE_MS = Date.UTC(2026, 5, 1, 12, 0, 0)
+
+	// Three skills share each created_at, so the id tie-break is exercised too.
+	function skillRow(idx: number) {
+		return {
+			id: `60000000-0000-0000-0000-${String(idx).padStart(12, '0')}`,
+			name: `skill-${String(idx).padStart(3, '0')}`,
+			description: `Skill ${idx}. ${'d'.repeat(1200)}`,
+			isValid: true,
+			createdAt: new Date(BASE_MS - Math.floor(idx / 3) * 60_000).toISOString(),
+		}
+	}
+
+	// Stands in for GET /api/workspaces/:id/skills: (createdAt desc, id asc),
+	// created_at <= snapshot_at, keyset seek after (cursor_created_at, cursor_id),
+	// and a hard 100-row cap like the real route.
+	function stubSkillsApi(rows: ReturnType<typeof skillRow>[]) {
+		return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			const u = new URL(String(url))
+			if (!u.pathname.endsWith('/skills')) {
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			}
+			const limit = Number(u.searchParams.get('limit') ?? 100)
+			if (limit > 100) throw new Error(`limit ${limit} is above the route cap of 100`)
+			const snapshot = u.searchParams.get('snapshot_at')
+			const cursorAt = u.searchParams.get('cursor_created_at')
+			const cursorId = u.searchParams.get('cursor_id')
+			const page = rows
+				.filter((r) => !snapshot || r.createdAt <= snapshot)
+				.sort((a, b) =>
+					a.createdAt === b.createdAt ? (a.id < b.id ? -1 : 1) : a.createdAt < b.createdAt ? 1 : -1,
+				)
+				.filter(
+					(r) =>
+						!cursorAt ||
+						!cursorId ||
+						r.createdAt < cursorAt ||
+						(r.createdAt === cursorAt && r.id > cursorId),
+				)
+				.slice(0, limit)
+			return { ok: true, headers: new Headers(), json: () => Promise.resolve(page) } as Response
+		})
+	}
+
+	type SkillsResult = {
+		_meta: { truncated?: boolean }
+		structuredContent: {
+			skills: Array<{ id: string }>
+			page: { limit: number; returned: number; next_cursor?: string }
+			next_cursor?: string
+		}
+	}
+
+	async function walk(limit: number) {
+		const handler = handlers.get('list_workspace_skills')
+		if (!handler) throw new Error('list_workspace_skills handler not registered')
+		const pages: SkillsResult[] = []
+		let cursor: string | undefined
+		do {
+			const page = (await handler({ limit, ...(cursor ? { cursor } : {}) })) as SkillsResult
+			pages.push(page)
+			cursor = page.structuredContent.next_cursor
+		} while (cursor && pages.length < TOTAL + 1)
+		return pages
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		handlers = setupServer()
+		stubSkillsApi(Array.from({ length: TOTAL }, (_, i) => skillRow(i)))
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it.each([100, 25, 7])('a walk at limit %i returns every skill exactly once', async (limit) => {
+		const pages = await walk(limit)
+		const seen = pages.flatMap((p) => p.structuredContent.skills.map((s) => s.id))
+		expect(seen).toHaveLength(TOTAL)
+		expect(new Set(seen).size).toBe(TOTAL)
+	})
+
+	it.each([100, 25, 7])(
+		'at limit %i page.limit is the limit asked for, page.returned the rows shipped, and next_cursor is null only on the last page',
+		async (limit) => {
+			const pages = await walk(limit)
+			pages.forEach((p, i) => {
+				const { page, skills, next_cursor } = p.structuredContent
+				expect(page.limit).toBe(limit)
+				expect(page.returned).toBe(skills.length)
+				expect(page.next_cursor).toBe(next_cursor)
+				expect(next_cursor === undefined).toBe(i === pages.length - 1)
+			})
+		},
+	)
+
+	it('a limit-100 page over the token cap is flagged and carries a cursor, never a silent short page', async () => {
+		const [first] = await walk(100)
+		expect(first._meta.truncated).toBe(true)
+		expect(first.structuredContent.skills.length).toBeLessThan(100)
+		expect(first.structuredContent.next_cursor).toBeTruthy()
+		expect(estimateResponseTokens(first)).toBeLessThanOrEqual(DEFAULT_MAX_RESPONSE_TOKENS)
+	})
+})

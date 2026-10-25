@@ -11,6 +11,8 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type McpEra,
+	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
@@ -55,7 +57,9 @@ import {
 	safeBuildSetupBlock,
 } from './setup-guidance/index.js'
 import {
+	type ListActorsView,
 	MUTATION_TOOL_KINDS,
+	TELEMETRY_VIEW,
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
@@ -63,7 +67,7 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import { tools } from './tools.js'
+import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -97,6 +101,14 @@ export interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label for telemetry, next to
+	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
+	 * sets the fallback (legacy, none) because the SDK does not expose the
+	 * negotiated version on the server object. See `TelemetryConfig.mcpEra`.
+	 */
+	telemetryEra?: McpEra
+	telemetryProtocolVersion?: McpProtocolVersionLabel
 	/**
 	 * `events.id` of the comment that dispatched this agent session, when the
 	 * session was triggered by a comment. `create_comment` uses it as the
@@ -181,6 +193,14 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+const CHAT_SNIPPET_MAX_LENGTH = 200
+
+/** A chat message can run to thousands of characters; a list row only needs the opening. */
+function truncateSnippet(text: string | null): string | null {
+	if (text === null || text.length <= CHAT_SNIPPET_MAX_LENGTH) return text
+	return `${text.slice(0, CHAT_SNIPPET_MAX_LENGTH - 1)}…`
+}
+
 /**
  * One line telling the agent which listed integrations are not live and how to
  * get them reconnected, or null when every row is active. `pending` rows are an
@@ -197,6 +217,35 @@ function buildReconnectHint(rows: Array<{ provider?: string; status?: string }>)
 	if (broken.size === 0) return null
 	const list = [...broken].map(([provider, status]) => `${provider} (${status})`).join(', ')
 	return `Needs reconnecting: ${list}. To put a one-click Reconnect card in the chat, call connect_integration with that provider and end your turn. Do not tell the user to go to Settings.`
+}
+
+/**
+ * Card keys on message metadata, mapped to the tool that really shows that card.
+ * The server drops them from anything posted through post_conversation_message,
+ * so a call that carried one used to succeed with the card silently missing.
+ * A null tool means no agent tool shows that card at all.
+ */
+const CARD_METADATA_KEYS: Record<string, string | null> = {
+	integration_connect: 'connect_integration',
+	keychain_request: 'request_keychain_credential',
+	keychain_access_request: 'request_keychain_access',
+	computer_request: 'show_computer',
+	question: 'ask_user_question',
+	needed_tools: null,
+}
+
+/** Throws when message metadata carries a card key, naming the tool to use instead. */
+function rejectCardMetadata(metadata: Record<string, unknown> | undefined): void {
+	if (!metadata) return
+	const found = Object.keys(CARD_METADATA_KEYS).filter((key) => metadata[key] !== undefined)
+	if (found.length === 0) return
+	const advice = found.map((key) => {
+		const tool = CARD_METADATA_KEYS[key]
+		return tool ? `${key}: call ${tool}` : `${key}: no agent tool shows this card`
+	})
+	throw new Error(
+		`post_conversation_message cannot render cards, so nothing was posted. Remove ${found.join(', ')} from metadata (${advice.join('; ')}). Never write card text yourself or tell the user a card is shown.`,
+	)
 }
 
 /** Default page size when the caller did not pass an explicit limit. Kept
@@ -861,15 +910,17 @@ async function assertLoopTypesValid(
 	config: McpConfig,
 	input: {
 		closedStatuses?: Record<string, string[]>
+		closedWhen?: Record<string, string[]>
 		steps?: LoopStepInput[]
 	},
 	workspaceId?: string,
 ): Promise<void> {
 	const closedEntries = Object.entries(input.closedStatuses ?? {})
+	const closedWhenTypes = Object.keys(input.closedWhen ?? {})
 	const stepTypes = (input.steps ?? [])
 		.map((s) => ('object_type' in s.when ? s.when.object_type : undefined))
 		.filter((t): t is string => typeof t === 'string')
-	if (closedEntries.length === 0 && stepTypes.length === 0) return
+	if (closedEntries.length === 0 && closedWhenTypes.length === 0 && stepTypes.length === 0) return
 
 	const wsId = workspaceId ?? config.defaultWorkspaceId
 	if (!wsId) return // downstream calls raise the standard no-workspace hint
@@ -888,6 +939,14 @@ async function assertLoopTypesValid(
 		if (bad.length > 0) {
 			throw new Error(
 				`closed_statuses for type '${type}' references unknown status(es): ${bad.join(', ')}. Valid statuses for '${type}': ${valid.join(', ')}.`,
+			)
+		}
+	}
+
+	for (const type of closedWhenTypes) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`closed_when references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types.`,
 			)
 		}
 	}
@@ -1109,12 +1168,91 @@ async function enrichSessionActorName<T extends SessionRow>(
 	return session
 }
 
-// A waiting create_session checks every few seconds until the session ends. The
-// limit is kept short enough to finish before MCP clients give up on the tool
-// call, so the notify_on_complete fallback below is actually reachable. A session
-// still running at the limit is left running and reported as not settled.
+/** A session row as the tools return it: with the agent's name and a link to it. */
+async function presentSession(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	row: SessionRow,
+): Promise<SessionRow> {
+	const enriched = await enrichSessionActorName(config, workspaceId, row)
+	return workspaceId
+		? (addUrl(enriched as Record<string, unknown>, config, workspaceId, {
+				kind: 'session',
+				id: enriched.id,
+				actorId: (enriched as { actorId?: string }).actorId,
+			}) as SessionRow)
+		: enriched
+}
+
+/** Failure of a tool call when the session is not in a state the tool works on. */
+function sessionStateError(status: string, id: string): Error {
+	if (status === 'running') {
+		return new Error(
+			`Session ${id} is still running, so there is nothing to resume. Talk to it with send_session_message, or wait for it with get_session (wait: true).`,
+		)
+	}
+	return new Error(
+		`Session ${id} is ${status}, which is not something to resume or continue yet. Check it with get_session (wait: true to hold until it is done) and try again once it is paused or has ended.`,
+	)
+}
+
+/** A running interactive session accepts a message; anything else says why not. */
+async function sendSessionInput(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	id: string,
+	content: string,
+): Promise<void> {
+	try {
+		await apiCall(
+			config,
+			'POST',
+			`/api/sessions/${id}/input`,
+			{ content },
+			{
+				workspaceId,
+			},
+		)
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		throw new Error(
+			/not running/i.test(message)
+				? `${message}. A session that is paused or has ended is carried on with resume_session, which also takes a message.`
+				: message,
+		)
+	}
+}
+
+const ENDED_SESSION_STATUSES = ['completed', 'failed', 'timeout', 'user_stopped']
+// Told to an ended session when the caller gives no message of their own.
+const DEFAULT_CONTINUE_MESSAGE =
+	'Please carry on where you left off and finish the work you were doing.'
+const RESUME_RUNNING_WAIT_MS = 120_000
+const RESUME_RUNNING_POLL_MS = 2_000
+
+/** After resuming a paused session, wait for it to be running before it can take a message. */
+async function waitUntilSessionRunning(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	id: string,
+): Promise<boolean> {
+	const deadline = Date.now() + RESUME_RUNNING_WAIT_MS
+	while (Date.now() < deadline) {
+		const row = (await apiCall(config, 'GET', `/api/sessions/${id}`, undefined, {
+			workspaceId,
+		})) as { status: string }
+		if (row.status === 'running') return true
+		if (ENDED_SESSION_STATUSES.includes(row.status)) return false
+		await new Promise((resolve) => setTimeout(resolve, RESUME_RUNNING_POLL_MS))
+	}
+	return false
+}
+
+// A waiting call checks every few seconds until the session ends. There is no time
+// limit: the wait ends when the session ends, when it stops moving on its own
+// (waiting for input, paused) or when the status checks keep failing. Sessions have
+// their own timeout, so none runs forever.
 const WAIT_POLL_MS = 5_000
-const WAIT_LIMIT_MS = 660_000
 
 // Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
 // still going backs off so a long one is not ~130 requests against the API.
@@ -1129,8 +1267,8 @@ function waitPollDelayMs(attempt: number): number {
 const MAX_POLL_FAILURES = 5
 
 /**
- * The `wait: true` path of `create_session`: start the session, poll until it
- * reaches a terminal state (or the wait runs out), and return `{ session, logs }`.
+ * The `wait: true` path of `create_session`: start the session, then wait for it to
+ * reach a terminal state and return `{ session, logs }`.
  */
 async function createSessionAndWait(
 	config: McpConfig,
@@ -1161,8 +1299,34 @@ async function createSessionAndWait(
 		status: string
 	}
 
+	return waitForSessionResult(config, {
+		toolName: 'create_session',
+		workspaceId: workspace_id,
+		session,
+		registerReturn: true,
+	})
+}
+
+/**
+ * Polls a session until it ends (or stops moving) and returns `{ session, logs, settled }`.
+ * Shared by every tool that takes `wait`. `registerReturn` is for the one caller that
+ * started the session itself: when the wait stops with the session still going, it asks
+ * for the session's result to be sent back to that caller later.
+ */
+async function waitForSessionResult(
+	config: McpConfig,
+	opts: {
+		toolName: 'create_session' | 'get_session' | 'resume_session' | 'send_session_message'
+		workspaceId: string | undefined
+		session: { id: string; status: string }
+		registerReturn?: boolean
+		/** The session was just read, so judge that reading before the first sleep. */
+		judgeFirst?: boolean
+	},
+) {
+	const { toolName, workspaceId: workspace_id, session, registerReturn = false } = opts
+	const wsOpts = { workspaceId: workspace_id }
 	let sessionId = session.id
-	const deadline = Date.now() + WAIT_LIMIT_MS
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
@@ -1176,32 +1340,35 @@ async function createSessionAndWait(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
-	let stoppedBecause: 'waiting_for_input' | undefined
+	let stoppedBecause: 'waiting_for_input' | 'paused' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
-	while (Date.now() < deadline) {
-		const delay = Math.min(waitPollDelayMs(pollAttempt++), deadline - Date.now())
-		await new Promise((resolve) => setTimeout(resolve, delay))
-		try {
-			current = (await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${sessionId}`,
-				undefined,
-				wsOpts,
-			)) as typeof current
-			pollFailures = 0
-		} catch (err) {
-			pollFailures += 1
-			pollError = err instanceof Error ? err.message : String(err)
-			if (pollFailures >= MAX_POLL_FAILURES) {
-				console.error(`create_session: gave up polling session ${sessionId}`, err)
-				break
+	let judgeNow = opts.judgeFirst ?? false
+	while (true) {
+		if (!judgeNow) {
+			await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(pollAttempt++)))
+			try {
+				current = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sessionId}`,
+					undefined,
+					wsOpts,
+				)) as typeof current
+				pollFailures = 0
+			} catch (err) {
+				pollFailures += 1
+				pollError = err instanceof Error ? err.message : String(err)
+				if (pollFailures >= MAX_POLL_FAILURES) {
+					console.error(`${toolName}: gave up polling session ${sessionId}`, err)
+					break
+				}
+				continue
 			}
-			continue
+			pollError = undefined
 		}
-		pollError = undefined
+		judgeNow = false
 		if (terminalStatuses.includes(current.status)) {
 			const retryId = current.retriedSessionId
 			if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
@@ -1212,18 +1379,19 @@ async function createSessionAndWait(
 			settled = true
 			break
 		}
-		// A session parked on waiting_for_input will not progress until someone
-		// answers it, so polling on would only burn the whole wait. Stop early but
-		// leave settled false: the session is not finished.
-		if (current.status === 'waiting_for_input') {
-			stoppedBecause = 'waiting_for_input'
+		// A session parked on waiting_for_input, or paused, will not progress until
+		// someone acts on it, and with no time limit polling on would never end. Stop
+		// early but leave settled false: the session is not finished.
+		if (current.status === 'waiting_for_input' || current.status === 'paused') {
+			stoppedBecause = current.status
 			break
 		}
 	}
 
-	// The wait ended with the helper still going (it ran out, or it stopped on
-	// waiting_for_input): ask for its result to be sent back later. Never on the
-	// settled path, where the caller gets it inline.
+	// The wait ended with the helper still going (it stopped on waiting_for_input or
+	// paused, or the status checks kept failing): ask for its result to be sent back
+	// later. Never on the settled path, where the caller gets it inline, and only for
+	// the caller that started the session.
 	// If the helper ended in the gap, the PATCH sends the return itself.
 	// The server says what became of it: 'registered' (still running, it will
 	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
@@ -1231,7 +1399,7 @@ async function createSessionAndWait(
 	let notifyOnComplete:
 		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
 		| undefined
-	if (!settled) {
+	if (!settled && registerReturn) {
 		try {
 			const patched = (await apiCall(
 				config,
@@ -1248,7 +1416,7 @@ async function createSessionAndWait(
 				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
 			}
 		} catch (err) {
-			console.error('create_session: could not register notify_on_complete', err)
+			console.error(`${toolName}: could not register notify_on_complete`, err)
 			notifyOnComplete = {
 				state: 'failed',
 				reason: err instanceof Error ? err.message : String(err),
@@ -1274,7 +1442,9 @@ async function createSessionAndWait(
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
 			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
-			: undefined
+			: stoppedBecause === 'paused'
+				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -1293,7 +1463,7 @@ async function createSessionAndWait(
 			: currentWithUrl
 
 	return {
-		_meta: meta('create_session', config, workspace_id),
+		_meta: meta(toolName, config, workspace_id),
 		content: [
 			{
 				type: 'text' as const,
@@ -1656,7 +1826,8 @@ export interface HeroCardObject {
 	tools?: Record<string, unknown> | null
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor carries id + name pairs; a list_actors row carries names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
@@ -1943,7 +2114,8 @@ interface RawActor {
 	tools?: Record<string, unknown> | null
 	llm_provider?: string | null
 	llm_config?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor returns id + name pairs; the workspace list returns names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 }
 
 // create_actor/update_actor accept a single `llm_config: { provider, ... }`
@@ -2490,6 +2662,8 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		mcpEra: config.telemetryEra,
+		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -2573,6 +2747,12 @@ export function createMcpServer(config: McpConfig) {
 				transport: config.transport,
 			})
 
+			// Read before the cap below: applyResponseTokenCap may hand back a
+			// different object, and the symbol only lives on the handler's own.
+			const telemetryView = (response as { [TELEMETRY_VIEW]?: ListActorsView } | undefined)?.[
+				TELEMETRY_VIEW
+			]
+
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
 			// the wire response see the same, capped shape.
@@ -2604,6 +2784,7 @@ export function createMcpServer(config: McpConfig) {
 				seq: currentToolCallSeq(),
 				args,
 				transport: config.transport,
+				view: telemetryView,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {
@@ -3645,6 +3826,18 @@ export function createMcpServer(config: McpConfig) {
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships, even on the final page where no cursor was emitted.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as (typeof raw)[number]
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
+				},
 			}
 		},
 	)
@@ -3876,7 +4069,29 @@ export function createMcpServer(config: McpConfig) {
 			// would re-fetch the identical first page forever. Fall back to
 			// plain offset pagination — matching this tool's pre-cursor
 			// behavior — whenever `workspace_id` is omitted.
-			const workspaceScoped = Boolean(args.workspace_id)
+			//
+			// A name filter only exists on the workspace-scoped path, so a call that
+			// passes one without a workspace_id falls back to the default workspace
+			// instead of silently taking the unfiltered cross-workspace branch.
+			if (args.name !== undefined && args.name_prefix !== undefined) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'Pass name or name_prefix, not both' }],
+				}
+			}
+			const nameFilterRequested = args.name !== undefined || args.name_prefix !== undefined
+			const scopeWorkspaceId =
+				args.workspace_id ??
+				(nameFilterRequested ? config.defaultWorkspaceId || undefined : undefined)
+			if (nameFilterRequested && !scopeWorkspaceId) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'name and name_prefix need a workspace_id' }],
+				}
+			}
+			const workspaceScoped = Boolean(scopeWorkspaceId)
 			const pagination = resolveListPagination({
 				limit: args.limit,
 				cursor: workspaceScoped ? args.cursor : undefined,
@@ -3888,6 +4103,10 @@ export function createMcpServer(config: McpConfig) {
 			const fetchCap = workspaceScoped ? pagination.limit + 1 : pagination.limit
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
 			if (workspaceScoped) {
+				// Skill names ride on every workspace-scoped row.
+				params.set('include', 'skills')
+				if (args.name !== undefined) params.set('name', args.name)
+				if (args.name_prefix !== undefined) params.set('name_prefix', args.name_prefix)
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
 				if (pagination.cursor) {
@@ -3900,7 +4119,7 @@ export function createMcpServer(config: McpConfig) {
 				'GET',
 				`/api/actors?${params}`,
 				undefined,
-				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+				scopeWorkspaceId ? { workspaceId: scopeWorkspaceId } : { skipWorkspace: true },
 			)
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
@@ -3917,7 +4136,7 @@ export function createMcpServer(config: McpConfig) {
 			// from addUrl(), which needs a workspace id. Compute them here and
 			// fold them into each hero object so structuredContent is the sole
 			// carrier of the response (no separate `content` text channel).
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const wsId = scopeWorkspaceId ?? config.defaultWorkspaceId
 			const enriched =
 				wsId && Array.isArray(trimmedData)
 					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
@@ -3927,24 +4146,36 @@ export function createMcpServer(config: McpConfig) {
 			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
 				? (enriched as Array<Record<string, unknown>>)
 				: []
-			// Connected triggers/loops only resolve for a single, known workspace —
+			// Connected triggers/loops are the bulk of a row (about 73% of the
+			// bytes), so they only come back when the caller asks for them with
+			// `include`. They also only resolve for a single, known workspace —
 			// the cross-workspace branch (no workspace_id) lists actors from many
-			// workspaces at once, and a trigger/loop belongs to exactly one.
-			const actorLinks = workspaceScoped
-				? await resolveActorLinks(config, args.workspace_id as string)
-				: null
+			// workspaces at once, and a trigger/loop belongs to exactly one, so
+			// `include` is ignored there.
+			const include = parseListActorsInclude(args.include)
+			const wantTriggers = workspaceScoped && include.includes('triggers')
+			const wantLoops = workspaceScoped && include.includes('loops')
+			const actorLinks =
+				wantTriggers || wantLoops
+					? await resolveActorLinks(config, scopeWorkspaceId as string)
+					: null
 			const heroObjects = rows.map((a, idx) => {
 				let obj = buildActorHeroCardObject(a)
 				const url = pickUrl(enrichedRows[idx])
 				if (url) obj = { ...obj, url }
+				// Names only; the API leaves the key out for humans and for agents with none.
+				if (workspaceScoped && Array.isArray(a.skills) && a.skills.length > 0) {
+					obj = { ...obj, skills: a.skills as string[] }
+				}
 				if (actorLinks) {
-					const connectedTriggers = actorLinks.triggersByActor.get(a.id)
-					const connectedLoops = actorLinks.loopsByActor.get(a.id)
+					const connectedTriggers = wantTriggers ? actorLinks.triggersByActor.get(a.id) : undefined
+					const connectedLoops = wantLoops ? actorLinks.loopsByActor.get(a.id) : undefined
 					if (connectedTriggers?.length) obj = { ...obj, connectedTriggers }
 					if (connectedLoops?.length) obj = { ...obj, connectedLoops }
 				}
 				return obj
 			})
+			const view: ListActorsView = wantTriggers || wantLoops ? 'full' : 'slim'
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			// heroCard.objects carries every row the API returned on this page —
 			// `structuredContent` has no separate rich row array for this tool, so
@@ -3968,12 +4199,10 @@ export function createMcpServer(config: McpConfig) {
 								},
 							}
 			return {
-				_meta: uiMeta(
-					'list_actors',
-					config,
-					args.workspace_id,
-					pickCollectionResourceUri(heroCard),
-				),
+				// Read by the registerAppTool wrapper for the size event; a symbol
+				// never serializes onto the wire.
+				[TELEMETRY_VIEW]: view,
+				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -4685,31 +4914,49 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
-			const qs = params.toString()
-			const raw = (await apiCall(
-				config,
-				'GET',
-				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
-				undefined,
-				{ workspaceId: wsId },
-			)) as Array<{
+			const skillsPath = `/api/workspaces/${wsId}/skills`
+			type SkillListRow = {
 				id: string
 				name: string
 				description?: string | null
 				isValid?: boolean
 				createdAt?: string | null
-			}>
+			}
+			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+				workspaceId: wsId,
+			})) as SkillListRow[]
+			const lastRaw = raw[raw.length - 1]
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw?.createdAt &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastRaw.createdAt)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
+					workspaceId: wsId,
+				})) as SkillListRow[]
+				raw = [...raw, ...probe]
+			}
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as typeof raw
+			const result = trimmed as SkillListRow[]
 			return {
 				_meta: meta(
 					'list_workspace_skills',
@@ -4725,11 +4972,23 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					skills: result,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of ending at the pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as SkillListRow
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
 				},
 			}
 		},
@@ -5156,6 +5415,80 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_chats',
+		{
+			description: tools.list_chats.description,
+			inputSchema: tools.list_chats.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
+			// The route pages by offset, so the position travels in the cursor as n.
+			const offset = pagination.cursor?.n ?? 0
+			const params = new URLSearchParams()
+			params.set('sort', 'activity')
+			params.set('limit', String(pagination.limit))
+			params.set('offset', String(offset))
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.has_human) params.set('has_human', 'true')
+			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as {
+				conversations: Array<{
+					id: string
+					title: string
+					lastMessageAt: string | null
+					unread_count: number
+					snippet: string | null
+					snippet_actor_id: string | null
+					snippet_actor_name: string | null
+					snippet_is_caller: boolean
+					participants: Array<{ actorName: string; actorType: string }>
+				}>
+				has_more: boolean
+			}
+			const chats = raw.conversations.map((c) => ({
+				id: c.id,
+				title: c.title,
+				participants: c.participants.map((p) => ({ name: p.actorName, type: p.actorType })),
+				last_message_at: c.lastMessageAt,
+				last_message: c.snippet_actor_id
+					? {
+							from: c.snippet_actor_name,
+							is_you: c.snippet_is_caller,
+							snippet: truncateSnippet(c.snippet),
+						}
+					: null,
+				unread_count: c.unread_count,
+			}))
+			const last = raw.conversations[raw.conversations.length - 1]
+			const nextOffset = offset + chats.length
+			const nextCursor =
+				raw.has_more && last?.lastMessageAt && nextOffset <= CURSOR_MAX_OFFSET
+					? encodeCursor({
+							s: pagination.snapshotAt,
+							o: pagination.order,
+							k: { sortValue: last.lastMessageAt, id: last.id },
+							n: nextOffset,
+						})
+					: null
+			return {
+				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				structuredContent: {
+					chats,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_conversation_messages',
 		{
 			description: tools.list_conversation_messages.description,
@@ -5195,6 +5528,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, conversation_id, mention_names, ...body } = args
+			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
 			let unresolvedMentions: MentionNameResolution['unresolved'] = []
@@ -5460,7 +5794,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
@@ -5480,7 +5816,7 @@ export function createMcpServer(config: McpConfig) {
 				),
 				assertLoopTypesValid(
 					config,
-					{ closedStatuses: closed_statuses, steps: stepList },
+					{ closedStatuses: closed_statuses, closedWhen: closed_when, steps: stepList },
 					workspace_id,
 				),
 			])
@@ -5515,7 +5851,9 @@ export function createMcpServer(config: McpConfig) {
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+				if (closed_when !== undefined) metadata.closed_when = closed_when
 				if (tags !== undefined) metadata.tags = tags
+				if (targets !== undefined) metadata.targets = targets
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
@@ -5627,7 +5965,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 				add_steps,
 				add_trigger_ids,
 				remove_trigger_ids,
@@ -5669,7 +6009,11 @@ export function createMcpServer(config: McpConfig) {
 					),
 					assertLoopTypesValid(
 						config,
-						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
+						{
+							closedStatuses: closed_statuses,
+							closedWhen: closed_when,
+							steps: add_steps as LoopStepInput[] | undefined,
+						},
 						workspace_id,
 					),
 				])
@@ -5718,7 +6062,9 @@ export function createMcpServer(config: McpConfig) {
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+					if (closed_when !== undefined) metadataPatch.closed_when = closed_when
 					if (tags !== undefined) metadataPatch.tags = tags
+					if (targets !== undefined) metadataPatch.targets = targets
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
@@ -6487,6 +6833,21 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (args.wait) {
+				const current = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${args.id}`,
+					undefined,
+					wsOpts,
+				)) as { id: string; status: string }
+				return waitForSessionResult(config, {
+					toolName: 'get_session',
+					workspaceId: args.workspace_id,
+					session: current,
+					judgeFirst: true,
+				})
+			}
 			const params = new URLSearchParams()
 			if (args.include_logs) {
 				params.set('include_logs', 'true')
@@ -6649,21 +7010,139 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as SessionRow
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched = await enrichSessionActorName(config, wsId, result)
-			const withUrl = wsId
-				? addUrl(enriched as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: enriched.id,
-						actorId: (enriched as { actorId?: string }).actorId,
+			const { workspace_id, id, message, wait } = args
+			const wsOpts = { workspaceId: workspace_id }
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const reply = (body: unknown) => ({
+				_meta: meta('resume_session', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(body) }],
+			})
+
+			// One tool for every way a session can be not running: look at where it is and
+			// take the matching route. A paused session is restored from its snapshot; one
+			// that has ended gets a follow-up session in the same thread.
+			const before = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${id}`,
+				undefined,
+				wsOpts,
+			)) as SessionRow & { status: string }
+
+			if (before.status === 'paused') {
+				const resumed = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${id}/resume`,
+					undefined,
+					wsOpts,
+				)) as SessionRow
+				let messageNote: { message_delivered: false; message_note: string } | undefined
+				if (message) {
+					if (await waitUntilSessionRunning(config, workspace_id, id)) {
+						await sendSessionInput(config, workspace_id, id, message)
+					} else {
+						messageNote = {
+							message_delivered: false,
+							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+						}
+					}
+				}
+				if (wait) {
+					return waitForSessionResult(config, {
+						toolName: 'resume_session',
+						workspaceId: workspace_id,
+						session: { id, status: resumed.status as string },
 					})
-				: enriched
+				}
+				return reply({ ...(await presentSession(config, wsId, resumed)), ...messageNote })
+			}
+
+			if (ENDED_SESSION_STATUSES.includes(before.status)) {
+				const { session_id: followUpId } = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${id}/continue`,
+					{ content: message ?? DEFAULT_CONTINUE_MESSAGE },
+					wsOpts,
+				)) as { session_id: string }
+				if (wait) {
+					return waitForSessionResult(config, {
+						toolName: 'resume_session',
+						workspaceId: workspace_id,
+						session: { id: followUpId, status: 'pending' },
+					})
+				}
+				const followUp = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${followUpId}`,
+					undefined,
+					wsOpts,
+				)) as SessionRow
+				return reply({
+					...(await presentSession(config, wsId, followUp)),
+					continued_from_session_id: id,
+				})
+			}
+
+			throw sessionStateError(before.status, id)
+		},
+	)
+
+	registerAppTool(
+		server,
+		'send_session_message',
+		{
+			description: tools.send_session_message.description,
+			inputSchema: tools.send_session_message.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, id, content, wait } = args
+			const wsOpts = { workspaceId: workspace_id }
+
+			// Waiting only makes sense for a session that ends after its reply (a helper
+			// started from a chat). One that stays open never finishes, so with no time
+			// limit waiting on it would never return: deliver the message and say so.
+			let waitable = false
+			let session: { id: string; status: string } | undefined
+			if (wait) {
+				const row = (await apiCall(config, 'GET', `/api/sessions/${id}`, undefined, wsOpts)) as {
+					id: string
+					status: string
+					config?: { stop_on_result?: unknown } | null
+				}
+				session = row
+				waitable = row.config?.stop_on_result === true
+			}
+
+			await sendSessionInput(config, workspace_id, id, content)
+
+			if (wait && waitable && session) {
+				return waitForSessionResult(config, {
+					toolName: 'send_session_message',
+					workspaceId: workspace_id,
+					session,
+				})
+			}
 			return {
-				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				_meta: meta('send_session_message', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							delivered: true,
+							session_id: id,
+							...(wait
+								? {
+										waited: false,
+										note: 'This session stays open after replying, so there is nothing to wait for. Read its reply with get_session_activity.',
+									}
+								: {}),
+						}),
+					},
+				],
 			}
 		},
 	)
@@ -6986,6 +7465,87 @@ export function createMcpServer(config: McpConfig) {
 					{
 						type: 'text' as const,
 						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_integration_access',
+		{
+			description: tools.request_integration_access.description,
+			inputSchema: tools.request_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat; the person allows it there, which sets the same per-agent access
+			// as Settings → Integrations. The agent can never widen its own access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/integration-access-card`,
+					{
+						integration_id: args.integration_id,
+						level: args.level,
+						...(args.reason ? { reason: args.reason } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: 'You already have that access to this integration. If a call was refused, you were started before it was allowed, so ask the user to send you a new message.',
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No connected integration with that id. Call list_integrations for the ids, or connect_integration if it is not connected yet.',
+					)
+				}
+				if (status === 400) {
+					return fail(
+						'That integration cannot be asked for this way. For a saved key or login use list_keychain_credentials and request_keychain_access. A tool server that runs inside you cannot be limited to reading: ask for read_write.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
 					},
 				],
 			}
@@ -8201,6 +8761,8 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		telemetryEra: 'legacy',
+		telemetryProtocolVersion: 'none',
 	}
 
 	const server = createMcpServer(config)

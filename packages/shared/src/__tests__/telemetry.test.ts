@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	alignTopFields,
+	recordMcpTelemetrySchema,
 	recordMcpToolCallResponseSizeSchema,
 	recordMcpToolCallSchema,
 } from '../schemas/telemetry'
@@ -91,5 +92,98 @@ describe('alignTopFields', () => {
 		expect(alignTopFields(undefined, undefined)).toEqual({ topFields: [], topFieldBytes: [] })
 		// An older producer sending names but no sizes is still misaligned.
 		expect(alignTopFields(['data'], undefined)).toEqual({ topFields: [], topFieldBytes: [] })
+	})
+})
+
+describe('era labels on the ingest schemas', () => {
+	const sizeEvent = {
+		event_type: 'tool_call_response_size' as const,
+		tool_name: 'list_objects',
+		content_bytes: 1,
+		content_tokens: 1,
+		structured_content_bytes: 1,
+		structured_content_tokens: 1,
+		truncated: false,
+	}
+
+	it('accepts optional mcp_era and mcp_protocol_version on tool_call and response size', () => {
+		const call = recordMcpToolCallSchema.parse(
+			baseEvent({ mcp_era: 'legacy', mcp_protocol_version: '2025-06-18' }),
+		)
+		expect(call.mcp_era).toBe('legacy')
+		expect(call.mcp_protocol_version).toBe('2025-06-18')
+		const size = recordMcpToolCallResponseSizeSchema.parse({
+			...sizeEvent,
+			mcp_era: 'modern',
+			mcp_protocol_version: '2026-07-28',
+		})
+		expect(size.mcp_era).toBe('modern')
+		expect(size.mcp_protocol_version).toBe('2026-07-28')
+	})
+
+	it('accepts the error event with labels', () => {
+		const parsed = recordMcpTelemetrySchema.parse({
+			event_type: 'error',
+			kind: 'tool_not_found',
+			tool_name: 'imaginary_tool',
+			mcp_era: 'legacy',
+			mcp_protocol_version: 'none',
+		})
+		expect(parsed).toMatchObject({ mcp_era: 'legacy', mcp_protocol_version: 'none' })
+	})
+
+	it('still validates an old event that sends neither field', () => {
+		const call = recordMcpToolCallSchema.parse(baseEvent())
+		expect(call.mcp_era).toBeUndefined()
+		expect(call.mcp_protocol_version).toBeUndefined()
+		expect(recordMcpToolCallResponseSizeSchema.safeParse(sizeEvent).success).toBe(true)
+	})
+
+	// Same stance as arg_keys: an odd value costs the label, never the row.
+	it('drops an out-of-set value instead of failing the parse', () => {
+		const result = recordMcpToolCallSchema.safeParse(
+			baseEvent({ mcp_era: 'quantum', mcp_protocol_version: '1999-01-01' }),
+		)
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect(result.data.mcp_era).toBeUndefined()
+			expect(result.data.mcp_protocol_version).toBeUndefined()
+		}
+	})
+
+	it('is not strict about unknown keys', () => {
+		expect(recordMcpToolCallSchema.safeParse(baseEvent({ some_future_field: 1 })).success).toBe(
+			true,
+		)
+	})
+})
+
+describe('recordMcpToolCallResponseSizeSchema — view', () => {
+	const sizeEvent = (overrides: Record<string, unknown> = {}) => ({
+		event_type: 'tool_call_response_size' as const,
+		tool_name: 'list_actors',
+		session_id: 'session-1',
+		content_bytes: 10,
+		content_tokens: 2,
+		structured_content_bytes: 900,
+		structured_content_tokens: 220,
+		truncated: false,
+		...overrides,
+	})
+
+	it.each(['slim', 'full'])('accepts view=%s', (view) => {
+		expect(recordMcpToolCallResponseSizeSchema.parse(sizeEvent({ view })).view).toBe(view)
+	})
+
+	it('leaves view undefined when the producer omits it', () => {
+		expect(recordMcpToolCallResponseSizeSchema.parse(sizeEvent()).view).toBeUndefined()
+	})
+
+	it('drops a free-text view instead of rejecting the event', () => {
+		const parsed = recordMcpToolCallResponseSizeSchema.parse(
+			sizeEvent({ view: 'Acquire the Nakatomi account' }),
+		)
+		expect(parsed.view).toBeUndefined()
+		expect(parsed.structured_content_bytes).toBe(900)
 	})
 })

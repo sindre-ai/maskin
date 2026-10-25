@@ -23,6 +23,16 @@ public enum LiveMeetingRequest: Identifiable {
 }
 
 extension LiveMeetingRequest {
+	/// The chat the call is started from, whose earlier messages the agent should know. Nil for the
+	/// Chief of Staff and briefing calls, which are not started from a chat the person has open.
+	var startedFromConversationID: String? {
+		switch self {
+		case .thread(let chat, _): chat.conversationID
+		case .conversation(let id, _): id
+		case .dailyBriefing, .chiefOfStaff: nil
+		}
+	}
+
 	/// The Live button's accessibility label.
 	var buttonLabel: String {
 		if case .dailyBriefing = self { "Live briefing" } else { "Live" }

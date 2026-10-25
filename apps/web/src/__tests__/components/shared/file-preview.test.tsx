@@ -1,3 +1,4 @@
+import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import type { FileDetail, FileListItem } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
@@ -233,5 +234,29 @@ describe('isPreviewableFile', () => {
 		for (const type of ['application/pdf', 'application/zip', 'video/mp4']) {
 			expect(isPreviewableFile(type)).toBe(false)
 		}
+	})
+
+	describe('Show in panel', () => {
+		it('is not offered without a panel to show it in', () => {
+			renderCard({ meta: { name: 'a.html', mimeType: 'text/html', sizeBytes: 1 } })
+			expect(screen.queryByRole('button', { name: 'Show in panel' })).not.toBeInTheDocument()
+		})
+
+		it('asks the panel to show the file, without opening the card', async () => {
+			const openLinked = vi.fn()
+			render(
+				<LinkedPanelContext.Provider value={{ openLinked }}>
+					<FilePreview
+						workspaceId={WS}
+						fileId={ID}
+						meta={{ name: 'a.html', mimeType: 'text/html', sizeBytes: 1 }}
+					/>
+				</LinkedPanelContext.Provider>,
+				{ wrapper: TestWrapper },
+			)
+			await userEvent.click(screen.getByRole('button', { name: 'Show in panel' }))
+			expect(openLinked).toHaveBeenCalledWith({ kind: 'file', id: ID })
+			expect(screen.queryByTitle('Preview of a.html')).not.toBeInTheDocument()
+		})
 	})
 })

@@ -1,10 +1,13 @@
 import {
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
-	splitAtLinkedObjects,
+	showsObjectCard,
+	splitOwnLinks,
+	targetOfHref,
 } from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
+const WS = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const B = '4aee24db-5d54-476a-8399-9586516e7de1'
 const C = '3ecab143-9e98-4474-9e52-779a55d95952'
@@ -55,33 +58,88 @@ describe('extractLinkedFileIds', () => {
 	})
 })
 
-describe('splitAtLinkedObjects', () => {
-	it('keeps a message without links as one piece', () => {
-		expect(splitAtLinkedObjects('One.\n\nTwo.')).toEqual([{ text: 'One.\n\nTwo.', objectIds: [] }])
+describe('showsObjectCard', () => {
+	const draft = { workspaceId: 'ws', content: 'Hej', preview: { body: 'Hej' } }
+
+	it('is true for a draft with text in this workspace', () => {
+		expect(showsObjectCard(draft, 'ws')).toBe(true)
 	})
 
-	it('puts the card right after the paragraph that links it', () => {
-		const text = `Intro.\n\nDraft: /objects/${A}\n\nClosing.`
-		expect(splitAtLinkedObjects(text)).toEqual([
-			{ text: `Intro.\n\nDraft: /objects/${A}`, objectIds: [A] },
-			{ text: 'Closing.', objectIds: [] },
+	it('is false for a plain task, another workspace, no text, or no object', () => {
+		expect(showsObjectCard({ ...draft, preview: null }, 'ws')).toBe(false)
+		expect(showsObjectCard(draft, 'other')).toBe(false)
+		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
+		expect(showsObjectCard(undefined, 'ws')).toBe(false)
+	})
+})
+
+describe('targetOfHref', () => {
+	const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+
+	it('reads an object or file id from an address', () => {
+		expect(targetOfHref(`https://x.io/ws/objects/${id.toUpperCase()}`)).toEqual({
+			kind: 'object',
+			id,
+		})
+		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
+	})
+
+	it('ignores any other address', () => {
+		expect(targetOfHref('https://x.io/ws/agents')).toBeNull()
+		expect(targetOfHref(undefined)).toBeNull()
+	})
+})
+
+describe('extractLinkedObjectIds / extractLinkedFileIds in code and with boundaries', () => {
+	it('ignores addresses in inline code and fenced blocks', () => {
+		const text = `Use \`/ws/objects/${A}\`.\n\n\`\`\`\n/ws/objects/${B}\n/ws/files/${C}\n\`\`\`\n\nReal: /ws/objects/${D}`
+		expect(extractLinkedObjectIds(text)).toEqual([D])
+		expect(extractLinkedFileIds(text)).toEqual([])
+	})
+
+	it('needs the id to end where an address ends', () => {
+		expect(extractLinkedObjectIds(`/ws/objects/${A}x`)).toEqual([])
+		expect(extractLinkedObjectIds(`/ws/objects/${A}-more`)).toEqual([])
+		expect(
+			extractLinkedObjectIds(`(/ws/objects/${A}), /ws/objects/${B}?x=1 /ws/objects/${C}/`),
+		).toEqual([A, B, C])
+	})
+})
+
+describe('splitOwnLinks', () => {
+	const url = (kind: string, id: string) => `https://maskin.io/${WS}/${kind}/${id}`
+
+	it('keeps the words and the link in the order they were written', () => {
+		expect(splitOwnLinks(`is this done? ${url('objects', A)} thanks`, WS)).toEqual([
+			{ kind: 'text', text: 'is this done? ' },
+			{ kind: 'object', id: A },
+			{ kind: 'text', text: ' thanks' },
 		])
 	})
 
-	it('gives a repeated link one card, at its first mention', () => {
-		const text = `First /objects/${A}\n\nAgain /objects/${A}`
-		expect(splitAtLinkedObjects(text).map((s) => s.objectIds)).toEqual([[A], []])
+	it('finds a link to a file and leaves the sentence punctuation in the words', () => {
+		expect(splitOwnLinks(`see ${url('files', B)}.`, WS)).toEqual([
+			{ kind: 'text', text: 'see ' },
+			{ kind: 'file', id: B },
+			{ kind: 'text', text: '.' },
+		])
 	})
 
-	it('does not cut inside a fenced block', () => {
-		const text = `Look:\n\n\`\`\`\nline\n\n/objects/${A}\n\`\`\`\n\nDone.`
-		const segments = splitAtLinkedObjects(text)
-		expect(segments[0].text).toContain('line\n\n/objects/')
-		expect(segments[0].objectIds).toEqual([A])
+	it('is just the link when the message is only the link', () => {
+		expect(splitOwnLinks(url('objects', A), WS)).toEqual([{ kind: 'object', id: A }])
 	})
 
-	it('stops giving cards after the maximum', () => {
-		const text = [A, B, C, D].map((id) => `/objects/${id}`).join('\n\n')
-		expect(splitAtLinkedObjects(text, 3).flatMap((s) => s.objectIds)).toEqual([A, B, C])
+	it('keeps every link, including a repeated one', () => {
+		const link = url('objects', A)
+		expect(splitOwnLinks(`${link} ${link}`, WS).filter((s) => s.kind === 'object')).toHaveLength(2)
+	})
+
+	it('leaves links to another workspace, another site or a non-object page as words', () => {
+		const other = `https://maskin.io/${A}/objects/${B}`
+		const elsewhere = `https://example.com/${WS}/objects/${A}`
+		const page = url('agents', A)
+		for (const text of [other, elsewhere, page, 'no links here']) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
 	})
 })

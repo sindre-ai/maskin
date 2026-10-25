@@ -24,11 +24,13 @@ import {
 	type TriggerQueueDrainSource,
 	trackTriggerCronTickDropped,
 } from '../lib/analytics/trigger-queue-events'
+import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
@@ -43,7 +45,7 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
-import { loadSenderLine } from './workspace-briefing'
+import { commentPromptHeadline } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -88,22 +90,6 @@ async function loadInitiatedFromObject(
  * objects flowing through loops.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-/**
- * Name of the Chief of Staff agent seeded into every workspace at creation —
- * the actor of last resort for case 3 dispatch when a commented object has no
- * driver (or the only candidate driver is the comment author). Load-bearing
- * per spec — see `always-a-responder-rule-shaping.md` §Solution sketch case 3.
- *
- * Resolved per workspace, NOT hardcoded to one actor id. Every workspace gets
- * its own Chief of Staff row at creation and keeps it for the workspace's
- * lifetime, so a single global id is only ever correct in the one workspace it
- * came from — everywhere else case 3 dispatched to a nonexistent actor and
- * failed inside `dispatchCommentFallback`'s catch, silently. Resolution
- * mirrors `lib/onboarding/signup-welcome.ts`'s `resolveAgentIdByName`, which
- * is how the same agent is already located at signup.
- */
-const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
 
 interface TriggerFailureState {
 	count: number
@@ -2173,17 +2159,30 @@ export class CommentDispatcher {
 		authorSessionId: string | null
 	}): Promise<void> {
 		// The commenter rides along in the same lookup so the loop guards can tell
-		// an agent-authored mention from a human one without an extra query.
-		const mentionedActors = await this.db
-			.select({ id: actors.id, type: actors.type })
+		// an agent-authored mention from a human one without an extra query. The
+		// join marks which rows are members of this workspace: a mention of an
+		// actor from another workspace is dropped below, so it gets no
+		// notification and no session. The commenter is read whether or not it is
+		// a member, so the loop guards never lose track of an agent author.
+		const lookedUp = await this.db
+			.select({ id: actors.id, type: actors.type, memberWorkspaceId: workspaceMembers.workspaceId })
 			.from(actors)
+			.leftJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
 			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
-		const commenterIsAgent = mentionedActors.some(
-			(a) => a.id === ctx.commenterId && a.type === 'agent',
-		)
+		const commenterIsAgent = lookedUp.some((a) => a.id === ctx.commenterId && a.type === 'agent')
+		const mentionedActors = lookedUp
+			.filter((a) => a.memberWorkspaceId !== null)
+			.map((a) => ({ id: a.id, type: a.type }))
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
-		// don't resolve to an actor row; both cases quietly drop out here).
+		// don't resolve to a member of this workspace; both cases quietly drop out
+		// here).
 		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
 		const seen = new Set<string>()
 		let anyDispatched = false
@@ -2364,27 +2363,8 @@ export class CommentDispatcher {
 		)
 	}
 
-	/**
-	 * Resolves the workspace's own Chief of Staff. Matched on name + agent type
-	 * through `workspace_members`, the same way `signup-welcome.ts` locates it.
-	 * Oldest membership wins so the answer is stable for the workspace's
-	 * lifetime if a second same-named agent is ever added.
-	 */
-	private async chiefOfStaffId(workspaceId: string): Promise<string | null> {
-		const [row] = await this.db
-			.select({ actorId: workspaceMembers.actorId })
-			.from(workspaceMembers)
-			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(
-				and(
-					eq(workspaceMembers.workspaceId, workspaceId),
-					eq(actors.name, CHIEF_OF_STAFF_NAME),
-					eq(actors.type, 'agent'),
-				),
-			)
-			.orderBy(actors.createdAt)
-			.limit(1)
-		return row?.actorId ?? null
+	private chiefOfStaffId(workspaceId: string): Promise<string | null> {
+		return findChiefOfStaffId(this.db, workspaceId)
 	}
 
 	private async dispatchCommentFallback(ctx: {
@@ -2597,6 +2577,7 @@ export class CommentDispatcher {
 		// must have no link of its own, or returns could chain.
 		let spawnedBySessionId: string | undefined
 		let originConversationId: string | null = null
+		let notifyOnComplete = false
 		if (!isHelperReturn) {
 			const link = await resolveSpawnLink(this.db, {
 				claimedSessionId: ctx.authorSessionId,
@@ -2608,17 +2589,23 @@ export class CommentDispatcher {
 				spawnedBySessionId = link.spawnedBySessionId
 				hopDepth = link.hopDepth
 				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
 			}
 		}
 
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
-		const senderLine = await loadSenderLine(this.db, ctx.commenterId)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: ctx.actor.id,
 			callerKind: 'trigger',
 			actionPrompt: buildMentionPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
@@ -2626,6 +2613,9 @@ export class CommentDispatcher {
 				parentEventId: ctx.parentEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.commenterId,
 				mention: {
 					object_id: ctx.objectId,
 					commenter_actor_id: ctx.commenterId,
@@ -2635,6 +2625,7 @@ export class CommentDispatcher {
 				},
 				...(hopDepth ? { hop_depth: hopDepth } : {}),
 				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
 			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
@@ -2678,6 +2669,8 @@ export function buildMentionPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('Mentioned in a comment', ctx.content),
+		'',
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',

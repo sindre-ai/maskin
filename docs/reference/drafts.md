@@ -30,12 +30,15 @@ Then mention the person with `create_comment`. No `decision` is needed; the obje
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |
 |---|---|---|---|---|
 | `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })` |
-| `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to` | 8,000 | `reply({ object_id })` |
-| `linkedin_connection_request` | LinkedIn | `to` (required) | 200 | `send_connection_request` |
+| `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to`; `recipient_provider_id` (LinkedIn id, for a first message with no `thread_id`); `attachment_file_id` (one workspace PDF, PNG or JPEG up to 10 MB) | 8,000 | `reply({ object_id })` with a `thread_id`, `send_message({ object_id })` for a first message |
+| `linkedin_connection_request` | LinkedIn | `to` (required) | 300 | `send_connection_request` |
+| `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
 | `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date` | 3,000 | `publish_post` |
 | `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message` |
 
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
+
+Both LinkedIn message tools send through one path: the text, the recipient and the file are read from the approved object, never from the call, and the send is refused until a person has approved exactly this content and refused again once it has gone. `recipient_provider_id` and `attachment_file_id` are detail lines, so changing either withdraws the approval. `send_message` takes no `attachments`: a call that passes them gets `INVALID_INPUT`. A file is checked at send time: it must be in the caller's workspace, typed by its bytes (not its name), at most 10 MB, and not changed after the approval; sending one is behind the `linkedin-outreach-actions` flag.
 
 A LinkedIn reply is a task filed with `channel: "linkedin_dm"` (that matches the kind, so `kind` is not needed) and `to` (who it goes to; without it the card warns "To is not filed"), `thread_id` (the conversation) and `reply_to` (the message being answered, shown above the draft):
 
@@ -86,7 +89,13 @@ A card disappears when its task reaches `done`, `archived`, `dismissed` or `disc
 
 ## In chat
 
-A message that links an object (`/objects/<id>`) shows it as a card: contracted to its title, a click opens it. A draft with a preview names its kind in the header ("Email", "LinkedIn post"), shows its recipients and detail lines, and ends in **Approve**. Approving records the same `approved` event as answering a For You card, for exactly the text on screen, and tells the agent what was approved. Once approved the button reads "Approved", and "Sent" after a send. A draft that carries a header (a LinkedIn post) shows only the text that goes out; it is edited on the object page.
+A message that links an object (`/objects/<id>`) or a file (`/files/<id>`) shows a card **only for things a person acts on**: a draft with a preview, or a previewable file. A contact, a company or a plain task stays an ordinary link in the text.
+
+- **Where.** A link that stands alone as a paragraph or a list item (a short lead-in ending in ":" is fine) is replaced by its card in place, so the message reads once. A link inside a sentence stays a link, and its card is added under the message. A card is never drawn twice for one link.
+- **A link never vanishes.** The original link stays while the object loads, if it fails, if the object is missing or in another workspace, or if it does not deserve a card. Only a resolved card replaces it. Links inside code are not links.
+- **The card.** Contracted to its title, a click opens it. A draft names its kind ("Email", "LinkedIn post"), shows recipients and detail lines, the whole text (never folded behind "Read all"), and ends in **Approve**. Approving records the same `approved` event as answering a For You card, for exactly the text on screen, and tells the agent what was approved. Then it reads "Approved", and "Sent" after a send. A draft that carries a header (a LinkedIn post) shows only the text that goes out; it is edited on the object page.
+- **The drawer.** The chat's Overview drawer (right rail on desktop, bottom sheet on small screens) has a **Linked** tab listing every object and file the conversation links, newest first, with who linked it and a jump to that message. Drafts and files are full cards there; other objects are compact rows. "Show in panel" on a card in the transcript opens the drawer on that item.
+- **Native apps.** The iOS and iPad apps draw the same cards in chat (in place or under the message), approve from them, and have a Linked sheet from the chat toolbar. The For You card shows the preview's recipients, subject, detail lines, approval state and files.
 
 ## Files
 

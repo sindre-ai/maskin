@@ -1805,6 +1805,27 @@ public struct Client: APIProtocol {
                     in: &request,
                     style: .form,
                     explode: true,
+                    name: "include",
+                    value: input.query.include
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "name",
+                    value: input.query.name
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "name_prefix",
+                    value: input.query.name_prefix
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
                     name: "snapshot_at",
                     value: input.query.snapshot_at
                 )
@@ -8296,6 +8317,27 @@ public struct Client: APIProtocol {
                     in: &request,
                     style: .form,
                     explode: true,
+                    name: "updated_after",
+                    value: input.query.updated_after
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "has_human",
+                    value: input.query.has_human
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "sort",
+                    value: input.query.sort
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
                     name: "limit",
                     value: input.query.limit
                 )
@@ -11549,7 +11591,7 @@ public struct Client: APIProtocol {
             }
         )
     }
-    /// The Chief of Staff's ranked list of what needs the current actor
+    /// What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.

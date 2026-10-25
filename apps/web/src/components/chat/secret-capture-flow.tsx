@@ -386,7 +386,7 @@ export function SecretCaptureFlow({
 			<div className="flex flex-col gap-2">
 				{vaultedCards}
 				<div
-					className="rounded-xl border border-brand/40 bg-brand-subtle p-4"
+					className="rounded-xl border border-border bg-muted/40 p-4"
 					onKeyDown={(e) => {
 						if (e.key === 'Escape' && !busy) {
 							e.preventDefault()

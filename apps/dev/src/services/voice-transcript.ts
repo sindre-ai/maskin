@@ -97,10 +97,11 @@ export interface WriteVoiceTranscriptLineArgs {
  * human's actor, the agent's under the agent's, each tagged
  * metadata = { source: 'voice', voice_session_id }.
  *
- * Returns null and writes nothing when the workspace has opted out or the line
- * is blank. Goes through insertConversationMessage, not the POST /messages
- * route, so a spoken line cannot wake an agent through @mention auto-join or
- * the conversation responder — the call itself is the live exchange.
+ * Returns null and writes no message when the workspace has opted out or the line
+ * is blank. A non-blank line pushes the idle deadline out either way. Goes
+ * through insertConversationMessage, not the POST /messages route, so a spoken
+ * line cannot wake an agent through @mention auto-join or the conversation
+ * responder — the call itself is the live exchange.
  */
 export async function writeVoiceTranscriptLine(
 	db: Database,
@@ -108,6 +109,17 @@ export async function writeVoiceTranscriptLine(
 ): Promise<{ conversationId: string; messageId: number } | null> {
 	const text = args.text.trim().slice(0, MESSAGE_MAX_LENGTH)
 	if (!text) return null
+	// Any spoken line keeps the call alive, whether or not it is stored: with
+	// transcripts off the sweeper would otherwise end an active call as idle.
+	await db
+		.update(voiceSessions)
+		.set({ timeoutAt: new Date(Date.now() + VOICE_IDLE_TIMEOUT_MS) })
+		.where(
+			and(
+				eq(voiceSessions.id, args.session.id),
+				inArray(voiceSessions.status, ['pending', 'active']),
+			),
+		)
 	if (!(await isTranscriptPersistenceEnabled(db, args.session.workspaceId))) return null
 
 	const conversationId = await ensureVoiceConversation(db, args.session, args.agentName)
@@ -120,17 +132,6 @@ export async function writeVoiceTranscriptLine(
 		sessionId: null,
 	})
 	if (!message) throw new Error('Voice transcript message insert was suppressed')
-
-	// Activity keeps the call alive: push the idle deadline out from now.
-	await db
-		.update(voiceSessions)
-		.set({ timeoutAt: new Date(Date.now() + VOICE_IDLE_TIMEOUT_MS) })
-		.where(
-			and(
-				eq(voiceSessions.id, args.session.id),
-				inArray(voiceSessions.status, ['pending', 'active']),
-			),
-		)
 
 	return { conversationId, messageId: message.id }
 }

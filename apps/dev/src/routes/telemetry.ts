@@ -144,6 +144,8 @@ app.openapi(recordRoute, (async (c) => {
 				// so its User-Agent says nothing about Claude Code or Cursor.
 				client: 'other',
 				actorType: normalizeActorType(c.get('actorType')),
+				mcpEra: body.mcp_era,
+				mcpProtocolVersion: body.mcp_protocol_version,
 			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
 		}
 	} else if (body.event_type === 'mutation') {
@@ -166,6 +168,8 @@ app.openapi(recordRoute, (async (c) => {
 			requestedShape: body.requested_shape,
 			sessionId: body.session_id ?? null,
 			agentActorId: body.agent_actor_id ?? null,
+			mcpEra: body.mcp_era,
+			mcpProtocolVersion: body.mcp_protocol_version,
 		})
 	} else {
 		// tool_call_response_size — PostHog-only fan-out for the MCP
@@ -208,6 +212,9 @@ app.openapi(recordRoute, (async (c) => {
 			// Always emitted (never omitted) so a dashboard can filter on it
 			// without having to treat "absent" as a third state.
 			shape_error: body.shape_error ?? false,
+			// Named here because this object is built key by key: a property not
+			// listed is dropped silently. null when the tool sets no view.
+			view: body.view ?? null,
 			// Derived here rather than in a dashboard query so the "is each row
 			// too fat?" question is answerable by grouping alone. Guarded against
 			// a zero row count, which is a real and frequent response.
@@ -218,6 +225,8 @@ app.openapi(recordRoute, (async (c) => {
 			total_bytes: body.content_bytes + body.structured_content_bytes,
 			total_tokens: body.content_tokens + body.structured_content_tokens,
 			workspace_id: workspaceId,
+			mcp_era: body.mcp_era,
+			mcp_protocol_version: body.mcp_protocol_version,
 		})
 	}
 

@@ -9,7 +9,11 @@ import {
 	githubAuth,
 	mintInstallationTokenWithRecovery,
 } from '../../../../lib/integrations/providers/github/auth'
-import { config } from '../../../../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+	config,
+} from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
 
 // Generate an RSA key pair for testing JWT signing
@@ -55,6 +59,22 @@ describe('GitHub provider config', () => {
 		expect(config.mcp).toBeDefined()
 		expect(config.mcp?.command).toBe('github-mcp-server')
 		expect(config.mcp?.envKey).toBe('GITHUB_TOKEN')
+	})
+
+	it('guards the supervised spec so an image without the supervisor runs the plain binary', () => {
+		expect(GITHUB_MCP_SUPERVISED_SPEC.command).toBe('sh')
+		const [flag, script, argv0, ...serverArgs] = GITHUB_MCP_SUPERVISED_SPEC.args
+		expect(flag).toBe('-c')
+		expect(script).toBe(
+			'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+		)
+		expect(argv0).toBe('github-mcp-server')
+		// Both branches receive the unchanged server args through "$@".
+		expect(serverArgs).toEqual(GITHUB_MCP_SERVER_SPEC.args)
+		expect(GITHUB_MCP_SERVER_SPEC).toEqual({
+			command: 'github-mcp-server',
+			args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+		})
 	})
 })
 

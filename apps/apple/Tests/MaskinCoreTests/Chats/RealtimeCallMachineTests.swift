@@ -101,6 +101,20 @@ import Testing
 		#expect(m.interrupted(at: at(2)).isEmpty)
 	}
 
+	@Test("the call greets once, on the first session.created, and not again")
+	func greetsOnce() throws {
+		var m = RealtimeCallMachine()
+		let first = m.handle(event("session.created"), at: at(0))
+		#expect(first == [.sendEvent(RealtimeCallMachine.greetingRequest)])
+		#expect(m.handle(event("session.created"), at: at(1)).isEmpty)
+
+		let sent = try #require(JSONSerialization.jsonObject(with: Data(RealtimeCallMachine.greetingRequest.utf8)) as? [String: Any])
+		#expect(sent["type"] as? String == "response.create")
+		let response = try #require(sent["response"] as? [String: Any])
+		#expect((response["instructions"] as? String)?.isEmpty == false)
+		#expect(response["tool_choice"] as? String == "none")
+	}
+
 	@Test("events it does not know, or that are not JSON, change nothing")
 	func unknown() {
 		var m = RealtimeCallMachine()
@@ -127,6 +141,18 @@ import Testing
 		#expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ank_test")
 		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == "ws-1")
 		#expect(request.value(forHTTPHeaderField: "X-Client-Source") == "ios")
+	}
+
+	@Test("the create body carries the chat the call was started from, and leaves it out otherwise")
+	func createBody() throws {
+		func json(_ body: URLSessionVoiceCalls.CreateBody) throws -> [String: String] {
+			let data = try JSONEncoder().encode(body)
+			return try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
+		}
+		let fromChat = try json(.init(agent_actor_id: "a-1", conversation_id: "c-1"))
+		#expect(fromChat == ["agent_actor_id": "a-1", "conversation_id": "c-1"])
+		let fresh = try json(.init(agent_actor_id: "a-1", conversation_id: nil))
+		#expect(fresh == ["agent_actor_id": "a-1"])
 	}
 
 	@Test("status codes map to the failure the call screen reacts to")

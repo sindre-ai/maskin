@@ -73,11 +73,13 @@ export function SecretDetectedCard({
 			}}
 			className={cn(
 				'flex flex-col gap-3 rounded-xl border p-4',
-				high ? 'border-brand/40 bg-brand-subtle' : 'border-warning/40 bg-warning/10',
+				high ? 'border-border bg-muted/40' : 'border-warning/40 bg-warning/10',
 			)}
 		>
 			<div className="flex items-start gap-2">
-				{high ? <Lock size={16} className="mt-0.5 shrink-0 text-brand" aria-hidden /> : null}
+				{high ? (
+					<Lock size={16} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+				) : null}
 				<h3 id={headingId} className="text-sm font-semibold">
 					{high
 						? 'Maskin detected a secret in your message.'

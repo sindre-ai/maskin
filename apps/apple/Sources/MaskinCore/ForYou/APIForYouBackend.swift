@@ -75,18 +75,12 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 									recommended: $0.recommended ?? false,
 									destructive: $0.destructive ?? false)
 							},
-							// The server fills `body` from the draft object's current description, so a
-							// draft without text (an object that is gone or empty) shows no box.
-							draft: d.draft.flatMap { draft in
-								guard let body = draft.body, !body.isEmpty else { return nil }
-								return DecisionDraft(label: draft.label ?? "Draft", to: draft.to, body: body)
-							},
-							// One card, several messages. A message without text is left out and the rest stay.
-							drafts: (d.drafts ?? []).compactMap { draft in
-								guard let body = draft.body, !body.isEmpty else { return nil }
-								return DecisionDraft(
-									id: draft.id, label: draft.label ?? "Draft", to: draft.to, body: body)
-							})
+							// The server fills `body` from the draft object's current description. A draft
+							// with neither text nor a file (an object that is gone or empty) shows no box.
+							draft: d.draft.flatMap { Self.draft($0, fallbackLabel: "Draft") },
+							// One card, several messages. One with neither text nor file is left out
+							// and the rest stay.
+							drafts: (d.drafts ?? []).compactMap { Self.draft($0, fallbackLabel: "Draft") })
 					})
 			}
 			return ForYouCard(
@@ -154,6 +148,15 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 		}
 	}
 
+	/// Maps a feed draft (the card's single one or one of several: the generated types differ but
+	/// have the same JSON shape) to the app's model. Nil when it has neither text nor a file.
+	static func draft<T: Encodable>(_ raw: T, fallbackLabel: String) -> DecisionDraft? {
+		guard let data = try? JSONEncoder().encode(raw),
+			let dto = try? JSONDecoder().decode(FeedDraftDTO.self, from: data)
+		else { return nil }
+		return dto.model(fallbackLabel: fallbackLabel)
+	}
+
 	private static func failure(status: Int) -> any Error {
 		if OutboxRejection.isAuthFailure(status: status) { return OutboxAuthRequired(status: status) }
 		if OutboxRejection.isPermanent(status: status) {
@@ -165,5 +168,63 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 	private static func date(_ s: String) -> Date? {
 		let f = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 		return (try? f.parse(s)) ?? (try? Date.ISO8601FormatStyle().parse(s))
+	}
+}
+
+/// The JSON of a draft in the feed, read once into plain values so the single `draft` and each
+/// entry of `drafts` map the same way.
+struct FeedDraftDTO: Decodable {
+	struct Recipient: Decodable { var role: String; var name: String?; var address: String? }
+	struct Detail: Decodable { var label: String; var value: String }
+	struct Delivery: Decodable { var state: String }
+	struct Preview: Decodable {
+		var kind: String
+		var label: String
+		var recipients: [Recipient]?
+		var subject: String?
+		var details: [Detail]?
+		var body: String
+		var missing: [String]?
+		var warnings: [String]?
+		var content_hash: String
+		var delivery: Delivery?
+	}
+	struct File: Decodable {
+		var id: String
+		var name: String
+		var mime_type: String
+		var size_bytes: Double
+	}
+	var id: String?
+	var object_id: String?
+	var label: String?
+	var to: String?
+	var body: String?
+	var preview: Preview?
+	var file: File?
+
+	func model(fallbackLabel: String) -> DecisionDraft? {
+		let text = body ?? ""
+		let fileReference = file.map {
+			FileReference(
+				id: $0.id, name: $0.name, mimeType: $0.mime_type,
+				sizeBytes: $0.size_bytes.isFinite ? Int(max(0, min($0.size_bytes, Double(Int32.max)))) : 0)
+		}
+		guard !text.isEmpty || fileReference != nil else { return nil }
+		let objectPreview = preview.map { p in
+			ObjectPreview(
+				kind: p.kind, label: p.label,
+				recipients: (p.recipients ?? []).map {
+					.init(role: $0.role, name: $0.name, address: $0.address)
+				},
+				subject: p.subject,
+				details: (p.details ?? []).map { .init(label: $0.label, value: $0.value) },
+				body: p.body, missing: p.missing ?? [], warnings: p.warnings ?? [],
+				contentHash: p.content_hash,
+				delivery: p.delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })
+		}
+		return DecisionDraft(
+			id: id, label: label ?? objectPreview?.label ?? fallbackLabel, to: to, body: text,
+			objectId: object_id, preview: objectPreview, file: fileReference)
 	}
 }

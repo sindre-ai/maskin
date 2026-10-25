@@ -1,38 +1,51 @@
+import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
-import { FilePreview } from '@/components/shared/file-preview'
+import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
+import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
+import { type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ArrowUpRight, Check, ChevronDown } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 
 interface PreviewProps {
 	workspaceId: string
 	objectId: string
-	/** The chat the message is in and the agent that wrote it; together they let a
-	 *  status change tell that agent. Without them the card only previews. */
+	/** Open straight away instead of contracted (the drawer's working view). */
+	defaultExpanded?: boolean
+	className?: string
+	/** The chat the message is in and the agent that wrote it; together they let an approval
+	 *  or a status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
 }
 
-function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }: PreviewProps) {
+/** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
+export function LinkedObjectCard({
+	workspaceId,
+	objectId,
+	conversationId,
+	agentId,
+	defaultExpanded = false,
+	className,
+}: PreviewProps) {
 	const { data: object } = useObject(objectId)
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
 	const approve = useApproveObject()
-	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
+	const linkedPanel = useLinkedPanel()
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
-	const [expanded, setExpanded] = useState(false)
+	const [expanded, setExpanded] = useState(defaultExpanded)
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -45,6 +58,10 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
+	// Sent with an approval or a status change so the server tells the agent behind the card.
+	// Nothing is posted in the chat: the person did not write a message.
+	const chat =
+		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
 	const properties = describeObjectProperties(object.metadata)
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
@@ -61,64 +78,52 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
-	// The agent is always told. The text goes in the message so it can compare it
+	// The agent is always told, by the server, with the text as it stands so it can compare it
 	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
-		update.mutate(
-			{ id: object.id, data: { status } },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Moved "${object.title || 'Untitled'}" to ${statusLabel(status)}. The text as it stands:\n\n${body
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		update.mutate({ id: object.id, data: { status, chat } })
 	}
 
-	// The person's yes to this exact text. The agent is told with the text it can send, the same
-	// way a status change tells it, so it does not have to guess what was approved.
+	// The person's yes to this exact text. The server tells the agent to send it, with the text,
+	// so it does not have to guess what was approved.
 	const approveDraft = () => {
 		if (!preview) return
-		approve.mutate(
-			{ id: object.id, contentHash: preview.content_hash },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
 	return (
-		<div className="mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card">
+		<div
+			data-linked-card=""
+			className={cn(
+				'@container not-prose mt-2 max-w-[660px] overflow-hidden rounded-xl border border-border bg-card',
+				className,
+			)}
+		>
 			{/* The whole top (header and title) toggles the card. The status menu and
 			    Open stop the click so they keep doing their own job; the status menu's
 			    dropdown is portalled but still bubbles through React, so it is covered too. */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the chevron button inside is the keyboard path; its click bubbles here */}
 			<div className="cursor-pointer" onClick={() => setExpanded((open) => !open)}>
 				<div
-					className={cn('flex items-center gap-2 px-3 py-2', expanded && 'border-b border-border')}
+					className={cn(
+						'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2',
+						expanded && 'border-b border-border',
+					)}
 				>
-					<span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
-						{preview?.label ?? typeLabel(object.type)}
+					{/* The chip yields first: it shrinks and truncates so the icon controls stay on this row. */}
+					<span className="min-w-0 flex-1">
+						<span className="inline-block max-w-full truncate rounded-md bg-secondary px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
+							{preview?.label ?? typeLabel(object.type)}
+						</span>
 					</span>
-					<span className="flex-1" />
 					{canAct && statuses.length > 0 ? (
-						<span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+						// On a narrow card the status menu takes a row of its own instead of being cut off.
+						<span
+							className="order-last w-full @sm:order-none @sm:w-auto"
+							onClick={(e) => e.stopPropagation()}
+							onKeyDown={(e) => e.stopPropagation()}
+						>
 							<StatusSelect
 								current={object.status}
 								options={statuses}
@@ -127,13 +132,27 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 							/>
 						</span>
 					) : null}
+					{linkedPanel ? (
+						<button
+							type="button"
+							aria-label="Show in panel"
+							title="Show in panel"
+							onClick={(e) => {
+								e.stopPropagation()
+								linkedPanel.openLinked({ kind: 'object', id: object.id })
+							}}
+							className="inline-flex shrink-0 items-center rounded p-1 text-muted-foreground hover:text-foreground"
+						>
+							<PanelRight size={14} aria-hidden />
+						</button>
+					) : null}
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: object.id }}
 						onClick={(e) => e.stopPropagation()}
 						className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
 					>
-						Open
+						<span className="sr-only @sm:not-sr-only">Open</span>
 						<ArrowUpRight size={13} aria-hidden />
 					</Link>
 					<button
@@ -179,7 +198,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
 					    A very long text scrolls inside the card instead of being cut off. */}
-					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
+					<div className="max-h-50 overflow-y-auto px-3 pt-2 text-[13.5px]">
 						<MarkdownContent
 							content={shown}
 							size="sm"
@@ -200,7 +219,7 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 							) : delivery === 'approved' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
-									Approved
+									Approved, sending
 								</span>
 							) : (
 								<Button
@@ -248,48 +267,114 @@ function LinkedObjectPreview({ workspaceId, objectId, conversationId, agentId }:
 }
 
 /**
- * The cards for the objects and files a message links to: what they say, what they are about,
- * their status (changeable from the card, with the writing agent told), a button for the next
- * phase, and the text editable in place; a draft an integration can deliver shows where it goes
- * and is approved from the card. A linked file (an HTML page, a markdown document, a picture)
- * shows as itself. Works for any agent and any object type, because it reads the link, not a
- * tool call. The message places the object cards: each follows the paragraph that links it
- * (see `splitAtLinkedObjects`).
+ * A link's card once it is known to deserve one, otherwise `fallback` (the original link or
+ * paragraph; nothing for a card that is only ever added). While the object or file is loading,
+ * missing, in another workspace or not worth a card, the fallback stays, so a link never vanishes.
  */
-export function LinkedObjectPreviews({
+export function LinkedCardOrLink({
 	workspaceId,
-	objectIds,
-	fileIds = [],
+	target,
 	conversationId,
 	agentId,
-	skipIds,
+	fallback = null,
+	label,
 }: {
 	workspaceId: string
-	objectIds: string[]
-	/** Files the message links to; their cards follow the objects'. */
-	fileIds?: string[]
+	target: LinkedTarget
 	conversationId?: string
 	agentId?: string
-	/** Objects whose card an earlier message in the chat already shows; the link
-	 *  in this message stays, the card is not repeated. */
-	skipIds?: ReadonlySet<string>
+	fallback?: ReactNode
+	/** Text that led the link ("Draft:"); kept above the card once it replaces the link. */
+	label?: string
 }) {
-	const ids = objectIds.filter((id) => !skipIds?.has(id))
-	if (ids.length === 0 && fileIds.length === 0) return null
-	return (
+	return target.kind === 'object' ? (
+		<ObjectCardOrLink
+			workspaceId={workspaceId}
+			objectId={target.id}
+			conversationId={conversationId}
+			agentId={agentId}
+			fallback={fallback}
+			label={label}
+		/>
+	) : (
+		<FileCardOrLink
+			workspaceId={workspaceId}
+			fileId={target.id}
+			fallback={fallback}
+			label={label}
+		/>
+	)
+}
+
+function withLabel(label: string | undefined, card: ReactNode): ReactNode {
+	return label ? (
 		<>
-			{ids.map((id) => (
-				<LinkedObjectPreview
-					key={id}
-					workspaceId={workspaceId}
-					objectId={id}
-					conversationId={conversationId}
-					agentId={agentId}
-				/>
-			))}
-			{fileIds.map((id) => (
-				<FilePreview key={id} workspaceId={workspaceId} fileId={id} />
-			))}
+			<p>{label}</p>
+			{card}
 		</>
+	) : (
+		card
+	)
+}
+
+/** `MarkdownContent`'s `linkedCards.renderCard`: it cannot import the cards, which render markdown. */
+export function renderLinkedCard(
+	target: LinkedTarget,
+	fallback: ReactNode,
+	context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+): ReactNode {
+	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+function ObjectCardOrLink({
+	workspaceId,
+	objectId,
+	conversationId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	objectId: string
+	conversationId?: string
+	agentId?: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: object } = useObject(objectId)
+	if (!showsObjectCard(object, workspaceId)) return <>{fallback}</>
+	return withLabel(
+		label,
+		<LinkedObjectCard
+			workspaceId={workspaceId}
+			objectId={objectId}
+			conversationId={conversationId}
+			agentId={agentId}
+		/>,
+	)
+}
+
+function FileCardOrLink({
+	workspaceId,
+	fileId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	fileId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	// A list row is a few hundred bytes; the file itself may be megabytes and is fetched by the card.
+	const { data } = useFiles(workspaceId, { ids: [fileId] })
+	const file = data?.[0]
+	if (!file || !isPreviewableFile(file.mimeType)) return <>{fallback}</>
+	return withLabel(
+		label,
+		<FilePreview
+			workspaceId={workspaceId}
+			fileId={fileId}
+			meta={{ name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes }}
+		/>,
 	)
 }

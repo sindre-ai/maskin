@@ -14,9 +14,11 @@ import type { VoiceSessionRow } from './voice-transcript'
  * posts it to POST /v1/realtime/calls with the operator key, then attaches a
  * server-side WebSocket to the new call (wss://.../v1/realtime?call_id=...)
  * with the same key. Tool calls, transcript lines and turn telemetry all run
- * over that socket, through the same channel logic the whitelist, attention
- * cap, mentions refusal and bet refusal already live in
- * (services/voice-session-channel.ts).
+ * over that socket, through the channel logic in
+ * (services/voice-session-channel.ts). Tool calls run as the agent with the
+ * call's workspace. Every tool that is not read-only is held until the person
+ * says yes out loud (services/voice-write-gate.ts); there is no tool allow-list,
+ * attention cap, mentions refusal or bet refusal.
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -56,13 +58,23 @@ export interface CreateRealtimeCallInput {
 
 export type CreateRealtimeCallOutcome =
 	| { kind: 'ok'; callId: string; answerSdp: string }
-	| { kind: 'rate_limited'; retryAfterSeconds: number }
+	| { kind: 'rate_limited'; retryAfterSeconds: number; vendorBody?: string }
+	/** A 429 whose body says the account is out of quota or billing, not that it is going too fast. */
+	| { kind: 'quota_exhausted'; vendorBody: string }
 	| { kind: 'error'; status: number; body: string }
 
 /** Test seam: contract tests drive every branch without reaching OpenAI. */
 export type CreateRealtimeCallFn = (
 	input: CreateRealtimeCallInput,
 ) => Promise<CreateRealtimeCallOutcome>
+
+/**
+ * OpenAI sends insufficient_quota (or billing_hard_limit_reached) on a 429 that waiting will not fix.
+ * A bare "billing" match is too wide: plain free-tier rate limits link to the billing page.
+ */
+export function isQuotaBody(body: string): boolean {
+	return /insufficient_quota|exceeded your current quota|billing_hard_limit/i.test(body)
+}
 
 async function defaultCreateRealtimeCall(
 	input: CreateRealtimeCallInput,
@@ -110,10 +122,13 @@ async function defaultCreateRealtimeCall(
 		return { kind: 'error', status: 502, body: err instanceof Error ? err.message : String(err) }
 	}
 	if (res.status === 429) {
+		const vendorBody = await res.text().catch(() => '')
+		if (isQuotaBody(vendorBody)) return { kind: 'quota_exhausted', vendorBody }
 		const parsed = Number.parseInt(res.headers.get('retry-after') ?? '', 10)
 		return {
 			kind: 'rate_limited',
 			retryAfterSeconds: Number.isFinite(parsed) && parsed > 0 ? parsed : 30,
+			vendorBody,
 		}
 	}
 	if (!res.ok) {
@@ -223,6 +238,8 @@ export interface AttachVoiceCallInput {
 	session: VoiceSessionRow
 	agentName: string
 	invokeTool: InvokeTool
+	/** Tools that only read; every other tool waits for the person's yes. */
+	readOnlyTools: ReadonlySet<string>
 	/** Releases what the call's tools hold open (connections to the agent's MCP servers). */
 	dispose?: () => Promise<void> | void
 	callId: string
@@ -236,6 +253,7 @@ export interface AttachVoiceCallInput {
 interface RealtimeEvent {
 	type?: string
 	call_id?: string
+	item_id?: string
 	name?: string
 	arguments?: string
 	transcript?: string
@@ -314,6 +332,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		session,
 		agentName: input.agentName,
 		invokeTool: input.invokeTool,
+		isReadOnlyTool: (name) => input.readOnlyTools.has(name),
 		send: onChannelMessage,
 		now,
 	})
@@ -341,7 +360,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			case 'conversation.item.input_audio_transcription.completed': {
 				const text = evt.transcript?.trim()
-				if (text) feed({ type: 'transcript', role: 'user', text })
+				if (text) feed({ type: 'transcript', role: 'user', text, item_id: evt.item_id })
 				return
 			}
 			// GA name first; the beta name is kept so a fake or older edge still works.
@@ -352,6 +371,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			}
 			case 'input_audio_buffer.speech_started':
+				feed({ type: 'user_speech_started', item_id: evt.item_id })
 				userSpeechStartedAt = now()
 				// Speaking over an agent that is mid-response is a barge-in.
 				if (agentResponseStartedAt !== null) bargeIn = true
