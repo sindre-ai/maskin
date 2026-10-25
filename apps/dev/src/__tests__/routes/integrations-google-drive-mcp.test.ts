@@ -31,8 +31,8 @@ vi.mock('../../lib/integrations/lookup', () => ({
 	findIntegrationRow: vi.fn(async () => ({ id: 'drive-int-1' })),
 }))
 
-import { createGoogleDriveMcpServer } from '../../lib/integrations/providers/google-drive/mcp-server'
 import { findIntegrationRow } from '../../lib/integrations/lookup'
+import { createGoogleDriveMcpServer } from '../../lib/integrations/providers/google-drive/mcp-server'
 import { toolGateFor } from '../../lib/integrations/tool-gate'
 import { isWorkspaceWriter } from '../../lib/workspace-auth'
 import googleDriveMcpRoutes from '../../routes/integrations-google-drive-mcp'
