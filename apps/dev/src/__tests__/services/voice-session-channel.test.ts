@@ -386,7 +386,7 @@ describe('voice channel — session lifecycle hooks', () => {
 	})
 })
 
-describe('voice channel — a write waits for the person to say yes', () => {
+describe('voice channel — a risky write waits for the person to say yes', () => {
 	const WRITE_ARGS = { entity_id: ENTITY, content: 'hello' }
 
 	function writeSetup() {
@@ -415,7 +415,7 @@ describe('voice channel — a write waits for the person to say yes', () => {
 
 	it('holds a write without running it and tells the model to ask', async () => {
 		const { invoke, toolCall, results, outputOf } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		expect(invoke).not.toHaveBeenCalled()
 		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
 		expect(outputOf(0).error).toContain('Not done yet')
@@ -424,17 +424,17 @@ describe('voice channel — a write waits for the person to say yes', () => {
 
 	it('runs the same call once after the person says yes, with the confirmation id removed', async () => {
 		const { invoke, toolCall, results, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await say('Yeah, go ahead.', 'item_1')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
 
 		expect(invoke).toHaveBeenCalledTimes(1)
-		expect(invoke.mock.calls[0]?.[0]).toBe('create_comment')
+		expect(invoke.mock.calls[0]?.[0]).toBe('gmail_send_email')
 		expect(invoke.mock.calls[0]?.[1]).toEqual({ ...WRITE_ARGS, workspace_id: WORKSPACE })
 		expect(results()[1]).toMatchObject({ ok: true, error_code: null })
 
 		// Single use: the same id again is a new hold.
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
 		expect(invoke).toHaveBeenCalledTimes(1)
 		expect(results()[2]?.error_code).toBe('voice_confirmation_required')
 	})
@@ -442,9 +442,9 @@ describe('voice channel — a write waits for the person to say yes', () => {
 	it('runs the write when the yes is transcribed while the repeated call is waiting', async () => {
 		vi.useFakeTimers()
 		const { invoke, toolCall, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		const repeated = toolCall(
-			'create_comment',
+			'gmail_send_email',
 			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
 			'call_2',
 		)
@@ -458,9 +458,9 @@ describe('voice channel — a write waits for the person to say yes', () => {
 	it('refuses a repeated call when the model confirms but the person said nothing', async () => {
 		vi.useFakeTimers()
 		const { invoke, toolCall, results, heldId } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		const repeated = toolCall(
-			'create_comment',
+			'gmail_send_email',
 			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
 			'call_2',
 		)
@@ -474,11 +474,11 @@ describe('voice channel — a write waits for the person to say yes', () => {
 		vi.useFakeTimers()
 		const { invoke, toolCall, heldId, say, frame } = writeSetup()
 		await frame({ type: 'user_speech_started', item_id: 'item_request' })
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		// The request's own transcript lands after the hold. It is not an answer.
 		await frame({ type: 'transcript', role: 'user', text: 'yes', item_id: 'item_request' })
 		const repeated = toolCall(
-			'create_comment',
+			'gmail_send_email',
 			{ ...WRITE_ARGS, confirmation_id: heldId(0) },
 			'call_2',
 		)
@@ -488,15 +488,15 @@ describe('voice channel — a write waits for the person to say yes', () => {
 
 		// A later yes still works on the same hold.
 		await say('yes', 'item_answer')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
 		expect(invoke).toHaveBeenCalledTimes(1)
 	})
 
 	it('drops the action when the person says no', async () => {
 		const { invoke, toolCall, results, outputOf, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await say('No, wait.', 'item_1')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
 		expect(invoke).not.toHaveBeenCalled()
 		expect(results()[1]?.error_code).toBe('voice_confirmation_missing')
 		expect(outputOf(1).error).toContain('said no')
@@ -508,29 +508,29 @@ describe('voice channel — a write waits for the person to say yes', () => {
 		['a hedge', 'Yes but wait'],
 	])('does not take %s for a yes', async (_label, line) => {
 		const { invoke, toolCall, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await say(line, 'item_1')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
 		expect(invoke).not.toHaveBeenCalled()
 	})
 
 	it('drops the action after 60 seconds, even if the person then says yes', async () => {
 		vi.useFakeTimers()
 		const { invoke, toolCall, results, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await vi.advanceTimersByTimeAsync(60_000)
 		await say('yes', 'item_1')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_2')
 		expect(invoke).not.toHaveBeenCalled()
 		expect(results()[1]?.error_code).toBe('voice_confirmation_required')
 	})
 
 	it('treats changed arguments as a new hold, not a confirmation', async () => {
 		const { invoke, toolCall, results, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await say('yes', 'item_1')
 		await toolCall(
-			'create_comment',
+			'gmail_send_email',
 			{ ...WRITE_ARGS, content: 'something else', confirmation_id: heldId(0) },
 			'call_2',
 		)
@@ -541,10 +541,10 @@ describe('voice channel — a write waits for the person to say yes', () => {
 
 	it('lets a newer write replace the pending one', async () => {
 		const { invoke, toolCall, heldId, say } = writeSetup()
-		await toolCall('create_comment', WRITE_ARGS)
+		await toolCall('gmail_send_email', WRITE_ARGS)
 		await toolCall('delete_object', { id: ENTITY }, 'call_2')
 		await say('yes', 'item_1')
-		await toolCall('create_comment', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
+		await toolCall('gmail_send_email', { ...WRITE_ARGS, confirmation_id: heldId(0) }, 'call_3')
 		expect(invoke).not.toHaveBeenCalled()
 	})
 
@@ -554,6 +554,13 @@ describe('voice channel — a write waits for the person to say yes', () => {
 		expect(invoke).not.toHaveBeenCalled()
 		expect(results()[0]?.error_code).toBe('voice_confirmation_required')
 		expect(outputOf(0).error).toContain('risky')
+	})
+
+	it('runs an ordinary workspace change at once, without a yes', async () => {
+		const { invoke, toolCall, results } = writeSetup()
+		await toolCall('create_comment', WRITE_ARGS)
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(results()[0]).toMatchObject({ ok: true, error_code: null })
 	})
 
 	it('runs a read-only tool at once without a yes', async () => {

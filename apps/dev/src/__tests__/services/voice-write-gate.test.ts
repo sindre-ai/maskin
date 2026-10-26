@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CONFIRM_ARG,
 	createWriteGate,
+	isNo,
 	isRiskyTool,
 	isYes,
 	withConfirmationArg,
@@ -15,11 +16,23 @@ describe('isYes', () => {
 		'go ahead',
 		'Do it!',
 		'sure',
-		'confirm',
 		"That's right",
 		'that is right',
 		'yes, do it',
 		'okay go ahead',
+		'I approve.',
+		'great, send it',
+		'perfect',
+		'okay sure',
+		'confirmed',
+		'Sounds good, send it.',
+		'Sure, do that.',
+		"Let's do it.",
+		'Yes, send it.',
+		'Approved.',
+		'Yeah that works',
+		'Yes, go ahead and send it now please',
+		'Approve all',
 	])('takes "%s" for a yes', (line) => {
 		expect(isYes(line)).toBe(true)
 	})
@@ -30,7 +43,58 @@ describe('isYes', () => {
 		'yes but wait',
 		'yes?',
 		'can you repeat that',
-		'yes please go ahead and do that right now',
+		'yes please go ahead and do that right now with all of them',
+		'go',
+		'okay go',
+		'lets go',
+		'send 500',
+		'send $500',
+		'approve 2',
+		'approve #3',
+		'go 2',
+		'send it 5',
+		'do it 10',
+		'send 2 please',
+		'go ahead 3',
+		'yes 5',
+		'yes åbn den',
+		'send ø',
+		'yes 👍',
+		'approve 50%',
+		'please correct',
+		'okay correct',
+		'please confirm',
+		'okay confirm',
+		'confirm',
+		'correct',
+		'please',
+		'please now',
+		'fine',
+		'great',
+		'alright',
+		'exactly',
+		'please correct it',
+		'ok correct that',
+		'okay confirm it',
+		'okay is that right',
+		'sure is that correct',
+		'okay is it fine',
+		'yes do you',
+		'sure you do it',
+		'ok you send it',
+		'please read it to me first',
+		'sure, what does it say',
+		'ok so who gets it',
+		'great, read me the draft',
+		'go ahead and read it',
+		'okay show me the email',
+		'right now',
+		'yes send it to Casper',
+		'yes but only Casper',
+		'yes, send it to Casper instead',
+		'sounds good, but wait',
+		'what does it say',
+		'perfect, can you read it first?',
 		'yesterday',
 		'not yet',
 		"don't do it",
@@ -38,6 +102,22 @@ describe('isYes', () => {
 	])('does not take "%s" for a yes', (line) => {
 		expect(isYes(line)).toBe(false)
 	})
+})
+
+describe('isNo', () => {
+	it.each(['no', 'No, wait', "don't send it", 'not yet', 'cancel that', 'yes but change it'])(
+		'takes "%s" for a no',
+		(line) => {
+			expect(isNo(line)).toBe(true)
+		},
+	)
+
+	it.each(['what does it say', 'can you repeat that', 'hmm', 'read it again', 'yes'])(
+		'does not take "%s" for a no',
+		(line) => {
+			expect(isNo(line)).toBe(false)
+		},
+	)
 })
 
 describe('isRiskyTool', () => {
@@ -92,11 +172,12 @@ describe('withConfirmationArg', () => {
 })
 
 describe('createWriteGate', () => {
-	const ARGS = { entity_id: 'e1', content: 'hi' }
+	const TOOL = 'gmail_send_email'
+	const ARGS = { to: 'a@example.com', body: 'hi' }
 
 	async function held() {
 		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false })
-		const hold = await gate.review('create_comment', ARGS, null)
+		const hold = await gate.review(TOOL, ARGS, null)
 		if (hold.kind !== 'hold') throw new Error('expected a hold')
 		return { gate, id: hold.id }
 	}
@@ -105,12 +186,48 @@ describe('createWriteGate', () => {
 		const { gate, id } = await held()
 		gate.noteSpeechStarted('item_yes')
 		gate.noteUserLine('yes', 'item_yes')
-		expect(await gate.review('create_comment', ARGS, id)).toEqual({ kind: 'run' })
+		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'run' })
 	})
 
 	it('ignores a yes that carries no item id, since it cannot be placed after the hold', async () => {
 		const { gate, id } = await held()
 		gate.noteUserLine('yes', undefined)
-		expect((await gate.review('create_comment', ARGS, id)).kind).toBe('refuse')
+		expect((await gate.review(TOOL, ARGS, id)).kind).toBe('refuse')
+	})
+
+	it('runs an ordinary workspace change at once, with no hold', async () => {
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false })
+		expect(await gate.review('create_comment', { entity_id: 'e1' }, null)).toEqual({ kind: 'run' })
+		expect(await gate.review('update_objects', { objects: [] }, null)).toEqual({ kind: 'run' })
+	})
+
+	it('still holds a send, a delete and a tool of an attached server', async () => {
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false })
+		for (const tool of ['gmail_send_email', 'delete_object', 'gmail__send']) {
+			expect((await gate.review(tool, {}, null)).kind).toBe('hold')
+		}
+	})
+
+	it('runs the write after a natural yes such as "sounds good, send it"', async () => {
+		const { gate, id } = await held()
+		gate.noteSpeechStarted('item_yes')
+		gate.noteUserLine('Sounds good, send it.', 'item_yes')
+		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'run' })
+	})
+
+	it('keeps the ask open through a question, then runs on the yes that follows', async () => {
+		const { gate, id } = await held()
+		gate.noteSpeechStarted('item_q')
+		gate.noteUserLine('what does it say?', 'item_q')
+		gate.noteSpeechStarted('item_yes')
+		gate.noteUserLine('yes', 'item_yes')
+		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'run' })
+	})
+
+	it('turns the ask down on a clear no, and a repeat of the same hold stays refused', async () => {
+		const { gate, id } = await held()
+		gate.noteSpeechStarted('item_no')
+		gate.noteUserLine("no, don't send it", 'item_no')
+		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'refuse', reason: 'declined' })
 	})
 })

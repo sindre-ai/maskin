@@ -165,7 +165,7 @@ describe('attachVoiceCall', () => {
 		expect(socket.sent[1]).toEqual({ type: 'response.create' })
 	})
 
-	it('holds a write until the person says yes over the socket, then runs it once', async () => {
+	it('holds a risky write until the person says yes over the socket, then runs it once', async () => {
 		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'done' }] })
 		const socket = fakeSocket()
 		const attached = attach(socket, invokeTool)
@@ -175,7 +175,7 @@ describe('attachVoiceCall', () => {
 			socket.emit({
 				type: 'response.function_call_arguments.done',
 				call_id: id,
-				name: 'create_comment',
+				name: 'gmail_send_email',
 				arguments: JSON.stringify({ entity_id: 'e1', content: 'hi', ...extra }),
 			})
 
