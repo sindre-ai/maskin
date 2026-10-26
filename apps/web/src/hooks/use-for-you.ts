@@ -1,4 +1,5 @@
 import { type ForYouItem, type UnreadItem, api } from '@/lib/api'
+import { NOTIFICATION_ENTITY } from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useQuery } from '@tanstack/react-query'
 
@@ -9,10 +10,13 @@ import { useQuery } from '@tanstack/react-query'
  * item server-side.
  */
 export function forYouItemToFeedItem(item: ForYouItem): UnreadItem | null {
-	if (!item.entity_id || !item.entity_type) return null
+	// A card with no object (the morning budget card) is keyed by its notification, which is
+	// what dismissing it resolves. Without either there is nothing to open or to dismiss.
+	const objectless = !item.entity_id || !item.entity_type
+	if (objectless && !item.notification_id) return null
 	return {
-		entity_type: item.entity_type,
-		entity_id: item.entity_id,
+		entity_type: objectless ? NOTIFICATION_ENTITY : (item.entity_type as string),
+		entity_id: objectless ? (item.notification_id as string) : (item.entity_id as string),
 		unread_count: 1,
 		mentioning_unread_count: 1,
 		max_unread_attention: item.latest_mention?.attention ?? null,

@@ -1,4 +1,5 @@
 import { type ObjectGraphResponse, type ObjectResponse, api } from '@/lib/api'
+import { NOTIFICATION_ENTITY } from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -88,7 +89,10 @@ export function useMarkUnread(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: ({ entityType, entityId }: { entityType: string; entityId: string }) =>
-			api.subscriptions.markUnread(workspaceId, entityType, entityId),
+			// A For You card with no object is "read" by dismissing its notification.
+			entityType === NOTIFICATION_ENTITY
+				? api.notifications.update(entityId, { status: 'pending' })
+				: api.subscriptions.markUnread(workspaceId, entityType, entityId),
 		onMutate: async ({ entityType, entityId }) => {
 			if (entityType !== 'object') return
 			await queryClient.cancelQueries({ queryKey: queryKeys.objects.detail(entityId) })
@@ -155,7 +159,10 @@ export function useMarkRead(workspaceId: string) {
 			entityType: string
 			entityId: string
 			lastEventId: number
-		}) => api.subscriptions.markRead(workspaceId, entityType, entityId, lastEventId),
+		}) =>
+			entityType === NOTIFICATION_ENTITY
+				? api.notifications.update(entityId, { status: 'dismissed' })
+				: api.subscriptions.markRead(workspaceId, entityType, entityId, lastEventId),
 		onMutate: async ({ entityType, entityId }) => {
 			if (entityType !== 'object') return
 			await queryClient.cancelQueries({ queryKey: queryKeys.objects.detail(entityId) })

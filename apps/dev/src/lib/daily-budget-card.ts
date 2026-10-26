@@ -178,7 +178,28 @@ export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
 	return {
 		headline: yesterdayLine(yesterday, target.unit),
 		rationale: [todayLine(today, target), ...forecastLines(forecast, target, approximate)].join(
-			'\n',
+			'\n\n',
 		),
 	}
+}
+
+/**
+ * The target as the target-setting task stores it on the workspace: `settings.daily_budget`
+ * (unit, amount, stop_at_share, timezone). The timezone is an IANA name and lives with the
+ * target; there is no general workspace timezone. This is the one place that reads that shape.
+ * Off (null) when the key is absent, the amount is not a positive number or the timezone is
+ * missing: a workspace with no target gets no card, and a day is never guessed in UTC.
+ */
+export function readBudgetSettings(
+	settings: unknown,
+): { target: BudgetTarget; timezone: string } | null {
+	const s = (settings ?? {}) as Record<string, unknown>
+	const raw = (s.daily_budget ?? null) as Record<string, unknown> | null
+	if (!raw || typeof raw !== 'object') return null
+	const { unit, amount } = raw
+	if (unit !== 'tokens' && unit !== 'usd') return null
+	if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return null
+	const { timezone } = raw
+	if (typeof timezone !== 'string' || timezone.length === 0) return null
+	return { target: { unit, amount }, timezone }
 }

@@ -58,6 +58,17 @@ export function bucketRank(bucket: FeedBucket): number {
 	return index === -1 ? BUCKET_ORDER.length : index
 }
 
+/**
+ * `entity_type` of a For You card that is not about an object (the morning budget card). Its
+ * `entity_id` is the notification's own id, and reading it dismisses that notification.
+ */
+export const NOTIFICATION_ENTITY = 'notification'
+
+/** A card with no object behind it: nothing to open, no thread to reply in. */
+export function isObjectlessCard(item: Pick<UnreadItem, 'entity_type'>): boolean {
+	return item.entity_type === NOTIFICATION_ENTITY
+}
+
 export function feedItemKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
 }
