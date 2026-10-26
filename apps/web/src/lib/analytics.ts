@@ -593,7 +593,7 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
-export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'objects' | 'automations'
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
 
 // Fires once per settled query on either surface. Never carries the query text
 // (queries can name customers and PostHog is a third party): only its length
