@@ -466,6 +466,27 @@ struct ChatStoreTests {
 		#expect(told == [3])
 	}
 
+	@Test("above the bottom, a newest message the reader cannot scroll to does not keep the chat unread")
+	func readPastHiddenAndOwnMessages() async {
+		var reply = chatMsg(3, by: "relay", agent: true)
+		reply.threadRootID = 1
+		let h = ChatHarness(
+			server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), reply, chatMsg(4)],
+			detail: chatConvo("c1", lastRead: 0))
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		h.store.isAtBottom = false
+		await h.store.start()
+		h.store.countsSeen = true
+		#expect(h.store.timelineHasUnseen(after: 1))
+		#expect(!h.store.timelineHasUnseen(after: 2))
+		// The reader has read message 2, the last one the timeline shows from anyone else: a thread
+		// reply (3) and their own message (4) come after it, so the chat is read to its end.
+		h.store.noteSeen(2)
+		#expect(await eventually { await h.api.readCalls == [4] })
+		#expect(told == [4])
+	}
+
 	@Test("the opening position is known from the saved thread or the server")
 	func openPositionKnown() async {
 		let h = ChatHarness(server: [chatMsg(1), chatMsg(2)], detail: chatConvo("c1", lastRead: 1))
