@@ -1017,7 +1017,10 @@ public final class ChatStore {
 	/// Only while the thread is visible and the app is active.
 	public func markReadIfNeeded() async {
 		guard isActive, let last = lastServerID else { return }
-		let target = isAtBottom ? last : min(last, seenThrough)
+		var target = isAtBottom ? last : min(last, seenThrough)
+		// Past the last message the reader can still scroll to there is nothing left to read: their
+		// own messages and thread replies (shown in their thread, not here) are never scrolled past.
+		if target < last, !timelineHasUnseen(after: target) { target = last }
 		guard target > readSent else { return }
 		let previous = readSent
 		readSent = target
@@ -1033,6 +1036,11 @@ public final class ChatStore {
 		} catch {
 			readSent = previous
 		}
+	}
+
+	/// Whether the main timeline still holds a message from someone else after `cursor`.
+	func timelineHasUnseen(after cursor: Int) -> Bool {
+		messages.contains { ($0.serverID ?? 0) > cursor && $0.actorID != currentActorID }
 	}
 
 	/// The reader has scrolled past message `serverID`: read state follows a moment later, so a
