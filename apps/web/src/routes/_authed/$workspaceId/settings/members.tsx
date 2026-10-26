@@ -38,7 +38,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
@@ -74,6 +74,12 @@ function MembersPage() {
 	const [roleError, setRoleError] = useState<string | null>(null)
 	const [pendingRevoke, setPendingRevoke] = useState<PendingInviteListItem | null>(null)
 	const [revokeError, setRevokeError] = useState<string | null>(null)
+
+	// The page stays mounted when search or cmd+k picks a person while already
+	// here, so follow ?member= instead of reading it only on mount.
+	useEffect(() => {
+		if (memberFromSearch) setActiveHumanId(memberFromSearch)
+	}, [memberFromSearch])
 
 	const handleResend = async (invite: PendingInviteListItem) => {
 		try {
@@ -353,7 +359,18 @@ function MembersPage() {
 					workspaceId={workspaceId}
 					open
 					onOpenChange={(open) => {
-						if (!open) setActiveHumanId(null)
+						if (open) return
+						setActiveHumanId(null)
+						// Clear the param so a reload does not reopen the dialog and the
+						// same person can be picked again.
+						if (memberFromSearch) {
+							navigate({
+								to: '/$workspaceId/settings/members',
+								params: { workspaceId },
+								search: {},
+								replace: true,
+							})
+						}
 					}}
 				/>
 			)}

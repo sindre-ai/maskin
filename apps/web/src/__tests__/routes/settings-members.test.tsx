@@ -62,7 +62,19 @@ vi.mock('@/components/shared/route-error', () => ({
 }))
 
 vi.mock('@/components/settings/human-detail-dialog', () => ({
-	HumanDetailDialog: () => <div data-testid="human-detail-dialog" />,
+	HumanDetailDialog: ({
+		actorId,
+		onOpenChange,
+	}: {
+		actorId: string
+		onOpenChange: (open: boolean) => void
+	}) => (
+		<div data-testid="human-detail-dialog" data-actor-id={actorId}>
+			<button type="button" onClick={() => onOpenChange(false)}>
+				Close person
+			</button>
+		</div>
+	),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/members'
@@ -71,11 +83,13 @@ const MembersPage = (Route as unknown as { component: React.FC }).component
 
 // The imported Route comes from the mocked createFileRoute, so it has no
 // useSearch. The page reads the optional ?member= param from it.
-;(Route as unknown as { useSearch: () => Record<string, unknown> }).useSearch = () => ({})
+let mockSearch: Record<string, unknown> = {}
+;(Route as unknown as { useSearch: () => Record<string, unknown> }).useSearch = () => mockSearch
 
 describe('MembersPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockSearch = {}
 		mockUseWorkspaceInvites.mockReturnValue({ data: [] })
 	})
 
@@ -251,6 +265,50 @@ describe('MembersPage', () => {
 
 			fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }))
 			await waitFor(() => expect(mockRevokeMutateAsync).toHaveBeenCalledWith('inv-1'))
+		})
+	})
+
+	describe('person dialog follows ?member=', () => {
+		const people = [
+			{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
+			{ actorId: 'a2', name: 'Anna', type: 'human', role: 'member', joinedAt: null },
+		]
+
+		it('opens the dialog when ?member= changes while the page is mounted', () => {
+			mockUseWorkspaceMembers.mockReturnValue({ data: people, isLoading: false })
+			const { rerender } = render(<MembersPage />)
+			expect(screen.queryByTestId('human-detail-dialog')).not.toBeInTheDocument()
+
+			mockSearch = { member: 'a2' }
+			rerender(<MembersPage />)
+
+			expect(screen.getByTestId('human-detail-dialog')).toHaveAttribute('data-actor-id', 'a2')
+		})
+
+		it('clears ?member= from the address when the dialog is closed', () => {
+			mockUseWorkspaceMembers.mockReturnValue({ data: people, isLoading: false })
+			mockSearch = { member: 'a1' }
+			render(<MembersPage />)
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close person' }))
+
+			expect(screen.queryByTestId('human-detail-dialog')).not.toBeInTheDocument()
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/settings/members',
+				params: { workspaceId: 'ws-1' },
+				search: {},
+				replace: true,
+			})
+		})
+
+		it('does not touch the address when a dialog opened from a row is closed', () => {
+			mockUseWorkspaceMembers.mockReturnValue({ data: people, isLoading: false })
+			render(<MembersPage />)
+
+			fireEvent.click(screen.getAllByText('Alice')[0])
+			fireEvent.click(screen.getByRole('button', { name: 'Close person' }))
+
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 })
