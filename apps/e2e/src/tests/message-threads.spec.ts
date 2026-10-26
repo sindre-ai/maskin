@@ -249,6 +249,23 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			expect(page.url()).toContain(`thread=${rootId}`)
 		})
 
+		test('the chat list flags a chat whose thread has unread replies', async ({
+			page,
+			account,
+		}) => {
+			const other = await createSecondPerson(account)
+			const { conversationId, rootId } = await seedChat(account, [other.id])
+			await other.api.postConversationMessage(conversationId, account.workspaceId, {
+				content: `Hint reply ${Date.now()}`,
+				thread_root_id: rootId,
+			})
+
+			await page.goto(`/${account.workspaceId}/chats`)
+			const row = page.getByRole('link', { name: /E2E threads/ })
+			await expect(row).toBeVisible({ timeout: 10_000 })
+			await expect(row).toContainText('1 unread reply in threads')
+		})
+
 		test('the pill and the pane render in light and dark', async ({ page, account }) => {
 			const other = await createSecondPerson(account)
 			const { conversationId, rootId } = await seedChat(account, [other.id])

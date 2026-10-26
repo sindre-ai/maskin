@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
@@ -81,6 +82,16 @@ function ChatConversationList({
 	})
 
 	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
+	// Unread thread replies per chat, from the same list the Threads filter shows. A chat that
+	// reads as caught up can still hold an unread thread; the row says so.
+	const { data: replyThreads } = useReplyThreads(workspaceId)
+	const threadUnreadByChat = new Map<string, number>()
+	for (const t of replyThreads?.threads ?? []) {
+		threadUnreadByChat.set(
+			t.conversationId,
+			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
+		)
+	}
 	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'default',
 	})
@@ -163,7 +174,12 @@ function ChatConversationList({
 								<div key={group.key} className="flex flex-col gap-px">
 									<div className="eyebrow px-2 pt-2.5 pb-1">{group.label}</div>
 									{group.items.map((c) => (
-										<ConversationListRow key={c.id} workspaceId={workspaceId} conversation={c} />
+										<ConversationListRow
+											key={c.id}
+											workspaceId={workspaceId}
+											conversation={c}
+											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+										/>
 									))}
 								</div>
 							))}
