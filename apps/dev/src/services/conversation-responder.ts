@@ -17,6 +17,7 @@ import {
 import { logger } from '../lib/logger'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
+import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
 // mirrors MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
@@ -599,6 +600,7 @@ export async function deliverTurnToAgent(params: {
 		groupWakeRule,
 	} = params
 
+	const activeSessionsNote = await loadActiveSessionsNote(db, { conversationId, workspaceId })
 	const turnPayload = {
 		type: 'user' as const,
 		message: {
@@ -610,6 +612,7 @@ export async function deliverTurnToAgent(params: {
 				newMessageContent: message.content,
 				isDirectConversation,
 				wakeReason,
+				activeSessionsNote,
 			}),
 		},
 	}
@@ -673,6 +676,7 @@ export async function deliverTurnToAgent(params: {
 		isDirectConversation,
 		wakeReason,
 		groupWakeRule,
+		activeSessionsNote,
 	})
 }
 
@@ -700,6 +704,8 @@ async function spawnOrJoinConversationSession(params: {
 	groupWakeRule?: boolean
 	isDirectConversation: boolean
 	wakeReason: ConversationWakeReason
+	/** Sessions already on the way for this chat's agents, from loadActiveSessionsNote. */
+	activeSessionsNote: string
 }): Promise<GroupChatDelivery> {
 	const {
 		db,
@@ -713,6 +719,7 @@ async function spawnOrJoinConversationSession(params: {
 		isDirectConversation,
 		wakeReason,
 		groupWakeRule,
+		activeSessionsNote,
 	} = params
 
 	try {
@@ -729,6 +736,7 @@ async function spawnOrJoinConversationSession(params: {
 				isDirectConversation,
 				wakeReason,
 				groupWakeRule,
+				activeSessionsNote,
 			}),
 			config: {
 				interactive: true,
@@ -785,6 +793,7 @@ async function spawnOrJoinConversationSession(params: {
 				newMessageContent: message.content,
 				isDirectConversation,
 				wakeReason,
+				activeSessionsNote,
 			}),
 		},
 	}
@@ -985,6 +994,7 @@ function buildConversationReplyPrompt(ctx: {
 	isDirectConversation: boolean
 	wakeReason: ConversationWakeReason
 	groupWakeRule?: boolean
+	activeSessionsNote: string
 }): string {
 	return [
 		'A new message was posted in a conversation you are a participant in. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
@@ -997,6 +1007,7 @@ function buildConversationReplyPrompt(ctx: {
 		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${HUMAN_MESSAGE_STYLE_SHORT} ${describeReplyExpectation(ctx)}`,
 		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
+		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
@@ -1052,6 +1063,7 @@ function buildConversationTurnPrompt(ctx: {
 	newMessageContent: string
 	isDirectConversation: boolean
 	wakeReason: ConversationWakeReason
+	activeSessionsNote: string
 }): string {
 	const speaker =
 		ctx.authorType === 'agent'
@@ -1066,5 +1078,6 @@ function buildConversationTurnPrompt(ctx: {
 				: ctx.wakeReason === 'first_message_lone_agent'
 					? ` (${LONE_AGENT_WAKE_TEXT})`
 					: ''
-	return `${speaker}: ${ctx.newMessageContent}${reminder}`
+	const sessionsNote = ctx.activeSessionsNote ? `\n\n${ctx.activeSessionsNote}` : ''
+	return `${speaker}: ${ctx.newMessageContent}${reminder}${sessionsNote}`
 }
