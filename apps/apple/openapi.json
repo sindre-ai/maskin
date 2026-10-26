@@ -1362,6 +1362,73 @@
 					},
 					{
 						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "starred",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "working",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "attention_ids",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_by",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_value",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 64
+						},
+						"required": false,
+						"name": "tz",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "q",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "string",
 							"format": "uuid"
 						},
@@ -1690,6 +1757,405 @@
 				}
 			}
 		},
+		"/api/objects/facets": {
+			"get": {
+				"tags": [
+					"Objects"
+				],
+				"summary": "Counts for the Objects page",
+				"description": "Totals under the same filters as GET /objects. Each facet ignores its own axis (type counts ignore `type`, status counts ignore `status`, ...) so every option shows what picking it would give. `groups` is the total per `group_by` value, in display order.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 50,
+							"pattern": "^[a-z][a-z0-9_]*$"
+						},
+						"required": false,
+						"name": "type",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "status",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "driver",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "ids",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "updated_before",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "updated_after",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200,
+							"default": "createdAt"
+						},
+						"required": false,
+						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"asc",
+								"desc"
+							],
+							"default": "desc"
+						},
+						"required": false,
+						"name": "order",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100,
+							"default": 50
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"integer",
+								"null"
+							],
+							"minimum": 0,
+							"default": 0
+						},
+						"required": false,
+						"name": "offset",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time",
+							"description": "ISO timestamp captured at first-call time. When set, the server applies `created_at <= snapshot_at` so a row inserted mid-pagination cannot leak into the current walk."
+						},
+						"required": false,
+						"description": "ISO timestamp captured at first-call time. When set, the server applies `created_at <= snapshot_at` so a row inserted mid-pagination cannot leak into the current walk.",
+						"name": "snapshot_at",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time",
+							"description": "Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`."
+						},
+						"required": false,
+						"description": "Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.",
+						"name": "cursor_created_at",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "cursor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false,
+							"description": "When false (the default), rows with `status = \"archived\"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the \"Include archived\" DisplayPanel toggle)."
+						},
+						"required": false,
+						"description": "When false (the default), rows with `status = \"archived\"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the \"Include archived\" DisplayPanel toggle).",
+						"name": "include_archived",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "starred",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "working",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "attention_ids",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_by",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_value",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 64
+						},
+						"required": false,
+						"name": "tz",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "q",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "day_start",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "waiting_ids",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Facet counts",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"total": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"by_type": {
+											"type": "object",
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"by_status": {
+											"type": "object",
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"by_driver": {
+											"type": "object",
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"updated": {
+											"type": "object",
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"fresh": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"starred": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"working": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"waiting": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"groups": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"value": {
+														"type": "string"
+													},
+													"total": {
+														"type": "integer",
+														"minimum": 0
+													}
+												},
+												"required": [
+													"value",
+													"total"
+												]
+											}
+										}
+									},
+									"required": [
+										"total",
+										"by_type",
+										"by_status",
+										"by_driver",
+										"updated",
+										"fresh",
+										"starred",
+										"working",
+										"waiting",
+										"groups"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/objects/board": {
 			"get": {
 				"tags": [
@@ -1840,6 +2306,65 @@
 						"required": false,
 						"description": "When false (the default), rows with `status = \"archived\"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the \"Include archived\" DisplayPanel toggle).",
 						"name": "include_archived",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "starred",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"boolean",
+								"null"
+							],
+							"default": false
+						},
+						"required": false,
+						"name": "working",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "attention_ids",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_by",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "group_value",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 64
+						},
+						"required": false,
+						"name": "tz",
 						"in": "query"
 					},
 					{
