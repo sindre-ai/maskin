@@ -1,5 +1,12 @@
 import Foundation
 
+/// How an agent's explicit row on a credential reads. A saved key or login is on or off: `none` is
+/// off, anything else is on (read and write).
+public enum KeychainGrant: String, Sendable, Equatable {
+	case none, read
+	case readWrite = "read_write"
+}
+
 /// One credential in the workspace Keychain (a pasted key, a login, or an OAuth connection an
 /// agent may use). The value itself never reaches the app: only its name, kind and who may use it.
 public struct KeychainCredential: Identifiable, Equatable, Sendable {
@@ -8,25 +15,45 @@ public struct KeychainCredential: Identifiable, Equatable, Sendable {
 	public var id: String
 	public var name: String
 	public var kind: Kind
+	/// `active` once saved; `pending_undo` while a chat capture can still be undone.
+	public var status: String
 	/// Saved by pasting it into a chat; the web shows a "Captured via chat" tag.
 	public var capturedViaChat: Bool
 	public var createdAt: Date?
 	public var createdByID: String
-	/// The agents that may use it, by actor id. Empty means no agent can: it fails closed.
-	public var agentIDs: [String]
+	/// An agent's explicit row, by actor id. A `none` row is off, not "no row".
+	public var grants: [String: KeychainGrant]
+	/// What an agent with no row of its own gets. The server's default "read" means on for every
+	/// agent; anything else means off. This is why "empty grants" is not "no agent can use it".
+	public var defaultOn: Bool
 
 	public init(
-		id: String, name: String, kind: Kind, capturedViaChat: Bool = false, createdAt: Date? = nil,
-		createdByID: String = "", agentIDs: [String] = []
+		id: String, name: String, kind: Kind, status: String = "active", capturedViaChat: Bool = false,
+		createdAt: Date? = nil, createdByID: String = "", grants: [String: KeychainGrant] = [:],
+		defaultOn: Bool = false
 	) {
 		self.id = id
 		self.name = name
 		self.kind = kind
+		self.status = status
 		self.capturedViaChat = capturedViaChat
 		self.createdAt = createdAt
 		self.createdByID = createdByID
-		self.agentIDs = agentIDs
+		self.grants = grants
+		self.defaultOn = defaultOn
 	}
+
+	/// Whether this agent may use it, as the server decides: its own row if it has one, else the default.
+	public func allows(_ agentID: String) -> Bool {
+		if let grant = grants[agentID] { return grant != .none }
+		return defaultOn
+	}
+
+	public var isActive: Bool { status == "active" }
+
+	/// Who may use it can be changed for a saved key or login that is live; not an OAuth connection,
+	/// and not one still inside its undo window (the server refuses both).
+	public var canEditAccess: Bool { kind != .oauth && isActive }
 
 	public var kindLabel: String {
 		switch kind {
@@ -37,13 +64,15 @@ public struct KeychainCredential: Identifiable, Equatable, Sendable {
 	}
 }
 
-/// An agent a credential can be shared with.
-public struct KeychainAgent: Identifiable, Equatable, Sendable {
+/// Someone in the workspace: an agent a credential can be shared with, or a person in its activity.
+public struct KeychainMember: Identifiable, Equatable, Sendable {
 	public var id: String
 	public var name: String
-	public init(id: String, name: String) {
+	public var isAgent: Bool
+	public init(id: String, name: String, isAgent: Bool) {
 		self.id = id
 		self.name = name
+		self.isAgent = isAgent
 	}
 }
 

@@ -35,34 +35,77 @@ public struct APIKeychainSource: KeychainAPI {
 				row.status != "undone"
 			else { return nil }
 			let name = row.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+			var grants: [String: KeychainGrant] = [:]
+			for grant in row.agentGrants ?? [] {
+				grants[grant.actorId] = KeychainGrant(rawValue: grant.access.rawValue) ?? .none
+			}
 			return KeychainCredential(
-				id: row.id, name: (name?.isEmpty == false ? name : nil) ?? "Credential", kind: kind,
+				id: row.id, name: (name?.isEmpty == false ? name : nil) ?? "Credential", kind: kind, status: row.status,
 				capturedViaChat: row.source == "chat_capture", createdAt: ChatDates.parse(row.createdAt),
-				createdByID: row.createdBy ?? "", agentIDs: (row.agentGrants ?? []).map(\.actorId))
+				createdByID: row.createdBy ?? "", grants: grants,
+				// The server's default "read" means on for every agent with no row of its own.
+				defaultOn: row.defaultAgentAccess?.rawValue == "read")
 		}
 	}
 
-	public func agents() async throws -> [KeychainAgent] {
+	public func members() async throws -> [KeychainMember] {
 		try await APISettingsSource(client: client, workspaceID: workspaceID)
-			.list(workspaceId: workspaceID).filter(\.isAgent).map { KeychainAgent(id: $0.actorId, name: $0.name) }
+			.list(workspaceId: workspaceID).map { KeychainMember(id: $0.actorId, name: $0.name, isAgent: $0.isAgent) }
 	}
 
-	public func setAgents(credentialID: String, agentIDs: [String]) async throws {
-		let output = try await client.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(
-			.init(
-				path: .init(id: credentialID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-				body: .json(.init(grants: agentIDs.map { .init(actorId: $0, access: .read_write) }))))
-		switch output {
-		case .ok: return
-		case .forbidden: throw KeychainAccessError("Only a person can change who can use a credential.")
-		default: throw KeychainAccessError("Couldn't update access.")
+	public func setAccess(credentialID: String, agentID: String, to grant: KeychainGrant?) async throws {
+		let headers = Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Headers(
+			x_hyphen_workspace_hyphen_id: workspaceID)
+		if let grant {
+			let output = try await client.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+				.init(
+					path: .init(id: credentialID, actorId: agentID), headers: headers,
+					body: .json(.init(access: grant == .none ? .none : .read_write))))
+			switch output {
+			case .ok: return
+			case .forbidden(let r): throw Self.refusal(403, (try? r.body.json)?.error.message as String?, fallback: "Only a person can change who can use a credential.")
+			case .badRequest(let r): throw Self.refusal(400, (try? r.body.json)?.error.message)
+			case .notFound(let r): throw Self.refusal(404, (try? r.body.json)?.error.message)
+			case .conflict(let r): throw Self.refusal(409, (try? r.body.json)?.error.message)
+			default: throw Self.refusal(0, nil)
+			}
+		} else {
+			let output = try await client.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+				.init(
+					path: .init(id: credentialID, actorId: agentID),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			switch output {
+			case .ok: return
+			case .forbidden(let r): throw Self.refusal(403, (try? r.body.json)?.error.message as String?, fallback: "Only a person can change who can use a credential.")
+			case .badRequest(let r): throw Self.refusal(400, (try? r.body.json)?.error.message)
+			case .notFound(let r): throw Self.refusal(404, (try? r.body.json)?.error.message)
+			case .conflict(let r): throw Self.refusal(409, (try? r.body.json)?.error.message)
+			default: throw Self.refusal(0, nil)
+			}
 		}
+	}
+
+	/// The server's reason where it gives one (a credential still in its undo window, one that is
+	/// gone), else a plain sentence; never just "try again" for something retrying cannot fix.
+	static func refusal(_ status: Int, _ serverMessage: String?, fallback: String = "Couldn't update access.")
+		-> KeychainAccessError
+	{
+		KeychainAccessError(serverMessage.map { "Couldn't update access: \($0)" } ?? fallback)
 	}
 
 	public func remove(credentialID: String) async throws {
 		let output = try await client.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(
 			.init(path: .init(id: credentialID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
-		guard case .ok = output else { throw KeychainAccessError("Couldn't remove it.") }
+		switch output {
+		case .ok: return
+		case .forbidden: throw KeychainAccessError("Only the person who saved this or a workspace admin can remove it.")
+		case .notFound: throw KeychainAccessError("It is already gone.")
+		case .conflict(let r):
+			// Not a removable key or login, or already removed: the server says which.
+			let reason: String? = (try? r.body.json)?.error.message
+			throw KeychainAccessError(reason.map { "Couldn't remove it: \($0)" } ?? "Couldn't remove it.")
+		default: throw KeychainAccessError("Couldn't remove it.")
+		}
 	}
 
 	public func audit(credentialID: String, before: String?) async throws -> KeychainAuditPage {

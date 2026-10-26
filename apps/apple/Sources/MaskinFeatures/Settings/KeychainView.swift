@@ -54,7 +54,8 @@ struct KeychainView: View {
 				subtitle: "\(credential.kindLabel) · \(store.scopeSummary(credential))"
 					+ (credential.capturedViaChat ? " · captured via chat" : ""),
 				accessory: .state(
-					credential.agentIDs.isEmpty ? PageState("Unassigned", .muted) : PageState("Assigned", .active)),
+					store.agentsWithAccess(credential).isEmpty
+						? PageState("Unassigned", .muted) : PageState("Assigned", .active)),
 				showsChevron: true, action: { selected = credential })
 		}
 	}
@@ -85,15 +86,17 @@ struct KeychainDetailView: View {
 						}
 						access(credential)
 						activity(credential)
-						Section {
-							Button("Remove credential", role: .destructive) { confirmRemove = true }
-						} footer: {
-							Text("The secret is destroyed. Agents that used it lose access at once.")
+						if store.canRemove(credential) {
+							Section {
+								Button("Remove credential", role: .destructive) { confirmRemove = true }
+							} footer: {
+								Text("The secret is destroyed. Agents that used it lose access at once.")
+							}
 						}
 					}
 					.task(id: credentialID) {
 						if !seeded {
-							chosen = Set(credential.agentIDs)
+							chosen = Set(store.agentsWithAccess(credential).map(\.id))
 							seeded = true
 						}
 						await store.loadAudit(for: credential)
@@ -125,29 +128,41 @@ struct KeychainDetailView: View {
 			if store.agents.isEmpty {
 				Text("No agents in this workspace.").foregroundStyle(MaskinColor.ink4)
 			}
-			ForEach(store.agents) { agent in
-				Toggle(
-					agent.name,
-					isOn: Binding(
-						get: { chosen.contains(agent.id) },
-						set: { on in if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) } }))
-			}
-			if chosen != Set(credential.agentIDs) {
-				Button("Save access") {
-					let ids = store.agents.map(\.id).filter(chosen.contains)
-					Task { await store.setAgents(of: credential, to: ids) }
+			if credential.canEditAccess {
+				ForEach(store.agents) { agent in
+					Toggle(
+						agent.name,
+						isOn: Binding(
+							get: { chosen.contains(agent.id) },
+							set: { on in if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) } }))
 				}
-				.disabled(store.isBusy)
+				if chosen != Set(store.agentsWithAccess(credential).map(\.id)) {
+					Button("Save access") { Task { await store.setAccess(of: credential, to: chosen) } }
+						.disabled(store.isBusy)
+				}
+			} else {
+				// Read-only: an OAuth connection is managed under Integrations, and one still inside its
+				// undo window can't be shared yet (the server refuses both).
+				ForEach(store.agentsWithAccess(credential)) { Text($0.name) }
 			}
 			if let error = store.actionError { FormError(error) }
 		} header: {
 			Text("Who can use it")
 		} footer: {
-			Text(
-				chosen.isEmpty
-					? "No agents can use this credential yet."
-					: "These agents get read-and-write access to use it, in any chat or run.")
+			Text(accessFooter(credential))
 		}
+	}
+
+	private func accessFooter(_ credential: KeychainCredential) -> String {
+		if !credential.canEditAccess {
+			return credential.kind == .oauth
+				? "This connection is managed under Integrations."
+				: "You can choose who can use it once it is saved for good."
+		}
+		if credential.defaultOn { return "Every agent can use this by default. Untick an agent to block it." }
+		return chosen.isEmpty
+			? "No agents can use this credential yet."
+			: "These agents get read-and-write access to use it, in any chat or run."
 	}
 
 	@ViewBuilder
@@ -234,11 +249,14 @@ struct AddCredentialView: View {
 	private func save() async {
 		let value: KeychainNewValue =
 			isLogin ? .login(username: username.trimmingCharacters(in: .whitespaces), password: password) : .apiKey(secret)
-		let saved = await store.add(name: name.trimmingCharacters(in: .whitespacesAndNewlines), value: value)
+		let outcome = await store.add(name: name.trimmingCharacters(in: .whitespacesAndNewlines), value: value)
+		// Only a saved credential clears what was typed: a refused save (name taken, offline) keeps
+		// the fields so nothing has to be typed or pasted again.
+		guard outcome.didSave else { return }
 		// The value is gone from the screen the moment it is saved.
 		secret = ""
 		password = ""
 		username = ""
-		if saved { dismiss() }
+		dismiss()
 	}
 }

@@ -97,7 +97,7 @@ struct SettingsServices {
 		let source = APIKeychainSource(
 			client: environment.client, workspaceID: workspaceID, baseURL: environment.baseURL,
 			clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
-		return KeychainStore(api: source)
+		return KeychainStore(api: source, currentActorID: actorId, canManageWorkspace: role.canManage)
 	}
 
 	func apiKeyStore() -> APIKeyStore {
