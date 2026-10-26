@@ -270,7 +270,14 @@ export function ObjectDocumentView({
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
 			<div className="mb-8 xl:max-w-[75ch]">
 				{contentLoaded ? (
-					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+					<MarkdownContent
+						content={object.content ?? ''}
+						onChange={handleContentChange}
+						editable
+						preserveSource
+						surface="description"
+						objectId={object.id}
+					/>
 				) : (
 					<p className="text-sm text-muted-foreground italic">
 						Content not included in this response.

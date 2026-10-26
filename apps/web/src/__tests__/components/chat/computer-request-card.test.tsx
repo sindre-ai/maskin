@@ -4,7 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const sendMutate = vi.fn()
-vi.mock('@/hooks/use-conversation', () => ({ useSendMessage: () => ({ mutate: sendMutate }) }))
+let cardAnswer: 'declined' | 'done' | null = null
+vi.mock('@/hooks/use-conversation', () => ({
+	useSendMessage: () => ({ mutate: sendMutate }),
+	useCardAnswer: () => cardAnswer,
+}))
+const inputMutate = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSendSessionInput: () => ({ mutate: inputMutate }),
+}))
 
 // The live view needs noVNC; the card only decides WHEN and for WHOM to show it.
 const mounted = vi.fn()
@@ -23,15 +31,16 @@ const request = {
 	task: 'Approve the 2FA prompt on e-conomic.',
 }
 
-const renderCard = () =>
+const renderCard = (req: typeof request & { reply_to_session?: boolean } = request) =>
 	render(
 		<TestWrapper>
 			<ComputerRequestCard
 				workspaceId="ws-1"
 				conversationId="conv-1"
+				messageId={7}
 				agentId={AGENT}
 				agentName="Ledger"
-				request={request}
+				request={req}
 			/>
 		</TestWrapper>,
 	)
@@ -39,6 +48,7 @@ const renderCard = () =>
 describe('ComputerRequestCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		cardAnswer = null
 	})
 
 	it('says what to do, and does not connect to the computer by itself', () => {
@@ -77,22 +87,35 @@ describe('ComputerRequestCard', () => {
 		expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
 	})
 
+	it('for a helper another agent started, Done goes to its session and is recorded for the card', async () => {
+		const user = userEvent.setup()
+		renderCard({ ...request, reply_to_session: true })
+		await user.click(screen.getByRole('button', { name: 'Open computer' }))
+
+		await user.click(await screen.findByRole('button', { name: 'Done' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledTimes(1)
+		expect(inputMutate.mock.calls[0]?.[0]).toMatchObject({
+			id: request.session_id,
+			conversationId: 'conv-1',
+			card_answer: { message_id: 7, outcome: 'done' },
+		})
+		expect(screen.getByText('Handed back to Ledger.')).toBeInTheDocument()
+	})
+
 	it('has no Done before the computer is open: there is nothing to have finished', () => {
 		renderCard()
 
 		expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument()
 	})
 
-	it("lets the person say they can't, from before or after opening it", async () => {
-		const user = userEvent.setup()
+	it('offers no way to decline: the person skips it by writing a message', () => {
 		renderCard()
 
-		await user.click(screen.getByRole('button', { name: "Can't do this" }))
-
-		expect(sendMutate).toHaveBeenCalledTimes(1)
-		expect(sendMutate.mock.calls[0]?.[0].content).toMatch(/couldn't do that/i)
-		expect(screen.getByText("Told Ledger you couldn't do this.")).toBeInTheDocument()
-		expect(mounted).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'Open computer' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: "Can't do this" })).not.toBeInTheDocument()
+		expect(sendMutate).not.toHaveBeenCalled()
 	})
 
 	it('posts plain text, never anything that carries the task or the screen', async () => {
@@ -104,5 +127,13 @@ describe('ComputerRequestCard', () => {
 
 		const sent = JSON.stringify(sendMutate.mock.calls[0]?.[0])
 		expect(sent).not.toContain('e-conomic')
+	})
+
+	it('reads as handed back when the chat already holds the person’s Done', () => {
+		cardAnswer = 'done'
+		renderCard()
+
+		expect(screen.getByText('Handed back to Ledger.')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Open computer' })).not.toBeInTheDocument()
 	})
 })

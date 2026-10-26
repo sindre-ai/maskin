@@ -1,5 +1,6 @@
 import { LinkedPane } from '@/components/chat/linked-pane'
 import type { LinkedItem } from '@/hooks/use-conversation-linked'
+import type { ProducedFileItem, ProducedObjectItem } from '@/hooks/use-conversation-produced'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +14,14 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 		<div data-testid="card" data-agent={p.agentId} data-expanded={String(!!p.defaultExpanded)}>
 			{p.objectId}
 		</div>
+	),
+}))
+vi.mock('@/components/objects/produced-pane', () => ({
+	ProducedObjectsGroup: ({ items }: { items: Array<{ entityId: string }> }) => (
+		<div data-testid="produced-objects">{items.map((i) => i.entityId).join(',')}</div>
+	),
+	ProducedFilesGroup: ({ items }: { items: Array<{ fileId: string }> }) => (
+		<div data-testid="produced-files">{items.map((i) => i.fileId).join(',')}</div>
 	),
 }))
 vi.mock('@/components/shared/object-reference', () => ({
@@ -36,6 +45,9 @@ const item = (over: Partial<LinkedItem>): LinkedItem => ({
 const base = {
 	workspaceId: 'ws',
 	conversationId: 'c1',
+	producedObjects: [] as ProducedObjectItem[],
+	producedFiles: [] as ProducedFileItem[],
+	producedLoading: false,
 	focus: null,
 	onFocusConsumed: vi.fn(),
 	onJumpToMessage: vi.fn(),
@@ -50,7 +62,29 @@ describe('LinkedPane', () => {
 
 	it('shows the empty state when nothing is linked', () => {
 		render(<LinkedPane {...base} items={[]} />)
-		expect(screen.getByText('Nothing linked yet')).toBeInTheDocument()
+		expect(screen.getByText('Nothing here yet')).toBeInTheDocument()
+	})
+
+	it('labels each item with its type', () => {
+		objects.o2 = { id: 'o2', type: 'contact', workspaceId: 'ws', preview: null }
+		render(<LinkedPane {...base} items={[item({ id: 'o2' }), item({ kind: 'file', id: 'f1' })]} />)
+		expect(screen.getByText('contact')).toBeInTheDocument()
+		expect(screen.getByText('file')).toBeInTheDocument()
+	})
+
+	it('adds produced items that no message links to, once', () => {
+		objects.o2 = { id: 'o2', workspaceId: 'ws', preview: null }
+		render(
+			<LinkedPane
+				{...base}
+				items={[item({ id: 'o2' })]}
+				producedObjects={[{ entityId: 'o2' }, { entityId: 'o9' }] as ProducedObjectItem[]}
+				producedFiles={[{ fileId: 'f9' }] as ProducedFileItem[]}
+			/>,
+		)
+		expect(screen.getByTestId('produced-objects')).toHaveTextContent('o9')
+		expect(screen.getByTestId('produced-objects')).not.toHaveTextContent('o2')
+		expect(screen.getByTestId('produced-files')).toHaveTextContent('f9')
 	})
 
 	it('draws a draft as a card with the writing agent', () => {

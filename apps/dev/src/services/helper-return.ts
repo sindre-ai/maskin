@@ -48,6 +48,7 @@ export type HelperReturnSkipReason =
 	| 'return_cap'
 	| 'no_destination'
 	| 'agent_message_cap'
+	| 'relaunching'
 
 export type HelperReturnOutcome =
 	| { returned: true; destination: 'object' | 'conversation' }
@@ -71,6 +72,85 @@ export async function returnToSender(
 	} catch (err) {
 		logger.error('Helper return failed', { sessionId, error: String(err) })
 		return { returned: false, reason: 'error' }
+	}
+}
+
+/**
+ * Tell a sender about helpers that failed while it was still busy.
+ *
+ * A helper that ends while its sender is mid-run has its return skipped as
+ * `sender_live`, so a sender that never stopped to wait would carry on without
+ * knowing the helper died. Called when the sender itself finishes: every helper of
+ * it that failed or timed out under that skip gets its one-shot claim back and is
+ * returned now, waking the sender for a follow-up run. A person's own stop is not
+ * reported, and neither are completed helpers (their result is not lost work the
+ * sender must hear about; a sender that wanted it used wait or notify_on_complete).
+ *
+ * Never throws: the caller is on a session's terminal path.
+ */
+export async function returnDeferredHelpers(
+	db: Database,
+	senderSessionId: string,
+	opts: { sessionManager?: SessionManager } = {},
+): Promise<void> {
+	try {
+		const helpers = await db
+			.select({
+				id: sessions.id,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+				status: sessions.status,
+				result: sessions.result,
+			})
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.spawnedBySessionId, senderSessionId),
+					inArray(sessions.status, ['failed', 'timeout']),
+					isNotNull(sessions.helperReturnedAt),
+					sql`exists (
+						select 1 from events
+						where events.entity_type = 'session'
+							and events.entity_id = ${sessions.id}
+							and events.action = 'helper_return_skipped'
+							and events.data->>'reason' = 'sender_live'
+					)`,
+					// Once only: a helper whose return was already retried is not retried again.
+					sql`not exists (
+						select 1 from events
+						where events.entity_type = 'session'
+							and events.entity_id = ${sessions.id}
+							and events.action = 'helper_return_retried'
+					)`,
+				),
+			)
+		for (const helper of helpers) {
+			if (classify(helper.status, helper.result) === 'user_stopped') continue
+			// The claim is given back only while the skip is the last word, so a helper
+			// already returned later is not reported twice.
+			const [reset] = await db
+				.update(sessions)
+				.set({ helperReturnedAt: null })
+				.where(and(eq(sessions.id, helper.id), isNotNull(sessions.helperReturnedAt)))
+				.returning({ id: sessions.id })
+			if (!reset) continue
+			await recordEvent(db, {
+				workspaceId: helper.workspaceId,
+				actorId: helper.actorId,
+				action: 'helper_return_retried',
+				entityType: 'session',
+				entityId: helper.id,
+				data: {},
+			}).catch((err) =>
+				logger.warn('Failed to record helper_return_retried', {
+					sessionId: helper.id,
+					error: String(err),
+				}),
+			)
+			await returnToSender(db, helper.id, opts)
+		}
+	} catch (err) {
+		logger.error('Deferred helper return failed', { senderSessionId, error: String(err) })
 	}
 }
 
@@ -101,6 +181,7 @@ async function doReturn(
 			actorId: sessions.actorId,
 			status: sessions.status,
 			result: sessions.result,
+			retryAt: sessions.retryAt,
 			config: sessions.config,
 			spawnedBySessionId: sessions.spawnedBySessionId,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
@@ -142,6 +223,12 @@ async function doReturn(
 	if (!sender || sender.workspaceId !== helper.workspaceId) return skip('sender_missing')
 
 	const notify = isNotifyOnComplete(helper.config)
+
+	// Stopped to start again with a credential or access a person just gave it (see
+	// chat-relaunch.ts): its follow-up reports instead, so this is not an ending.
+	if ((helper.config as { relaunching?: unknown } | null)?.relaunching === true) {
+		return skip('relaunching')
+	}
 
 	// create_session wait:true callers still waiting inline already get the result there.
 	// Accepted loss: a sender that is live now and finishes later without ever
@@ -196,6 +283,7 @@ async function doReturn(
 			actorId: helper.actorId,
 		}),
 		reason: describeFailure(helper.result),
+		retryAt: kind === 'failed' ? helper.retryAt : null,
 		finalMessage: notify && kind === 'completed' ? await readFinalMessage(db, sessionId) : null,
 		exchange: notify ? await readQuestionExchange(db, sessionId, helper.config) : [],
 	})
@@ -434,6 +522,8 @@ export function buildReturnMessage(ctx: {
 	sessionId: string
 	agentUrl: string
 	reason: string | null
+	/** When the system will start this helper again by itself, after a usage limit. */
+	retryAt?: Date | null
 	/** Flagged helpers only: the helper's last message, already quoted and capped. */
 	finalMessage?: FinalMessage | null
 	/** Flagged helpers only: questions the helper put to the person, with their answers. */
@@ -466,6 +556,12 @@ export function buildReturnMessage(ctx: {
 			}
 			return `${ctx.helperName} finished the work you handed it. ${where} Read its comments on this object or its logs for what it produced.`
 		case 'failed':
+			// A usage limit lifts on its own and the system reruns the session then, so
+			// "retry it yourself" would double the work and "it failed" would be wrong.
+			if (ctx.retryAt) {
+				const at = ctx.retryAt.toISOString().slice(0, 16).replace('T', ' ')
+				return `${ctx.helperName} has not done the work yet: it hit its usage limit before it could start. It starts again by itself at ${at} UTC, and you will get its result here then. Do not hand the work to it again.${quoted}\n\n${where}`
+			}
 			return `${ctx.helperName} stopped with an error. ${where}${quoted}\n\n${options}`
 		case 'timeout':
 			return `${ctx.helperName} ran out of time. ${where}${quoted}\n\n${options}`

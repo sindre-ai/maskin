@@ -487,4 +487,66 @@ describe('POST /api/webhooks/resend/:token (integration)', () => {
 		expect(bodyJson).toEqual({ ok: true })
 		expect(bodyJson.error).toBeUndefined()
 	})
+
+	describe('a connection with no credentials', () => {
+		const emptyBlobs = {
+			'an empty credentials column': '',
+			'a blob without the signing secret': JSON.stringify({ accessToken: 're_secret_key' }),
+		}
+
+		for (const [label, credentials] of Object.entries(emptyBlobs)) {
+			it(`answers 409 INTEGRATION_CREDENTIALS_MISSING for ${label}, not a 500`, async () => {
+				const actorId = getTestActorId()
+				const ws = await insertWorkspace(db, actorId)
+				const systemActorId = await seedSystemActor(ws.id)
+				const token = randomBytes(24).toString('hex')
+				const [row] = await db
+					.insert(integrations)
+					.values({
+						workspaceId: ws.id,
+						provider: 'resend',
+						status: 'active',
+						externalId: token,
+						credentials: credentials === '' ? '' : encrypt(credentials),
+						config: { system_actor_id: systemActorId },
+						createdBy: actorId,
+					})
+					.returning({ id: integrations.id })
+				const warnSpy = vi.spyOn(logger, 'warn')
+				const errorSpy = vi.spyOn(logger, 'error')
+
+				const body = buildEmailReceivedBody(`em_${randomUUID()}`)
+				const res = await buildApp().request(
+					webhookRequest(token, body, svixHeaders(whsec(), body)),
+				)
+				const text = await res.text()
+
+				expect(res.status).toBe(409)
+				const json = JSON.parse(text)
+				expect(json.error.code).toBe('CONFLICT')
+				expect(json.error.details).toEqual([
+					{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' },
+				])
+				expect(json.error.message).toContain('/api/integrations/resend/connect')
+				expect(errorSpy).not.toHaveBeenCalled()
+				expect(warnSpy).toHaveBeenCalledWith('resend.webhook.credentials_missing', {
+					integration_id: row?.id,
+					workspace_id: ws.id,
+				})
+
+				// No credential material in the response or in any log call.
+				const logged = JSON.stringify([...warnSpy.mock.calls, ...errorSpy.mock.calls])
+				expect(text).not.toContain('re_secret_key')
+				expect(logged).not.toContain('re_secret_key')
+
+				// Nothing was claimed, fetched or committed.
+				expect(fetchMock).not.toHaveBeenCalled()
+				const claims = await db
+					.select()
+					.from(webhookDeliveries)
+					.where(eq(webhookDeliveries.workspaceId, ws.id))
+				expect(claims).toHaveLength(0)
+			})
+		}
+	})
 })

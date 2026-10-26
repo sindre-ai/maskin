@@ -17,7 +17,9 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
+import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
 	type DevBootstrapResult,
@@ -29,18 +31,17 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
-import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
+import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
-import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
@@ -64,11 +65,6 @@ import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
 
-// Voice v1: fail fast when the flag is enabled for testers but the operator
-// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
-// deploy is caught at boot rather than 500-ing the first tester click.
-assertVoiceOperatorEnv()
-
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -79,6 +75,8 @@ const db = createDb(databaseUrl)
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
+
+warnIfPosthogKeyUnset()
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -320,27 +318,32 @@ migrateAgentToolServers(db)
 	})
 	.catch((err) => logger.error('Agent tool server migration failed', { error: String(err) }))
 
+// One-off: gives every existing agent its default Heartbeat. Does nothing unless
+// RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
+void runDefaultHeartbeatBackfillOnBoot(db)
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
-
-// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
-// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
-// unsetting the sub-flag from the env + restarting is the rollback path.
-const loopEscalationReconciler = new LoopEscalationReconciler(db)
-loopEscalationReconciler.start()
-logger.info('Loop escalation reconciler started')
 
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
+// Daily capability scan, shadow mode. A server job with no model call. Does
+// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
+// capability-scan.
+const capabilityScanner = new CapabilityScanner(db)
+capabilityScanner.start()
+logger.info('Capability scanner started')
 // Voice v1: ends calls whose timeout_at has passed (tab closed with no
-// hangup). A no-op until a voice_sessions row exists, so it is safe for every
-// deployment whether or not voice-mode-v1 is enabled.
+// hangup). A no-op until a voice_sessions row exists.
 const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
 voiceSessionTimeoutSweeper.start()
 logger.info('Voice session timeout sweeper started')
+if (!process.env.MASKIN_VOICE_OPENAI_API_KEY?.trim()) {
+	logger.warn('MASKIN_VOICE_OPENAI_API_KEY is unset: voice calls will fail at call start')
+}
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher

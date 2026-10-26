@@ -9,16 +9,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useObject } from '@/hooks/use-objects'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { splitOwnLinks } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Bell, Box, Copy, Link2, Pencil, RotateCcw } from 'lucide-react'
+import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
+import { IntegrationAccessRequestCard } from './integration-access-request-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
@@ -44,17 +47,14 @@ interface MessageBubbleProps {
 	activity?: React.ReactNode
 	/** A later message in the thread already answered this message's question. */
 	questionAnswered?: boolean
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
-	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.bubbles`
-	 *  sub-flag. Off keeps the pre-v4 bubble — lowercase "You attached" eyebrow
-	 *  and no per-message Copy/Retry action row. */
-	v4Polish?: boolean
 	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
 	/** Linked objects an earlier message already shows a card for. */
 	shownLinkedObjectIds?: ReadonlySet<string>
+	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
+	onRetried?: (message: MessageResponse) => void
 }
 
 /**
@@ -69,9 +69,9 @@ export function MessageBubble({
 	message,
 	activity,
 	questionAnswered = false,
-	v4Polish = false,
 	spawnInfo,
 	shownLinkedObjectIds,
+	onRetried,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -87,8 +87,7 @@ export function MessageBubble({
 	// Real, persisted, own message (not a system row, not an optimistic
 	// bubble) — the only kind that can be edited or retried.
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
-	// Any real, persisted message with text can be copied, own or not, and
-	// independent of the v4 polish flag.
+	// Any real, persisted message with text can be copied, own or not.
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
@@ -111,6 +110,21 @@ export function MessageBubble({
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 	const hasMentions = mentions.length > 0
 	const isVoice = message.metadata?.source === 'voice'
+	// Links to objects and files in your own message are drawn inline as chips with the thing's
+	// name. Only your own words: another author's links are handled by `linkedCards` on their markdown.
+	// A tapped answer reaches the agent with its question for context; the person's own bubble
+	// shows only what they picked (one question: just the pick, several: header and pick).
+	const answers = message.metadata?.question_answer?.answers
+	const shownContent =
+		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
+			? answers
+					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
+					.join('\n')
+			: message.content
+	const ownSegments = useMemo(
+		() => (isOwn ? splitOwnLinks(shownContent, workspaceId) : []),
+		[isOwn, shownContent, workspaceId],
+	)
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -153,7 +167,7 @@ export function MessageBubble({
 			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
-						<span className="eyebrow shrink-0">{v4Polish ? 'YOU ATTACHED' : 'You attached'}</span>
+						<span className="eyebrow shrink-0">YOU ATTACHED</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
@@ -168,53 +182,66 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
+				{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				    (`pr-2`) and owns the absolute placement, so the bar sits flush
+				    against the bubble and stays inside the box that measures overflow. */}
 				<div
 					className={cn(
-						'relative flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground',
+						'relative max-w-[min(560px,80%)]',
+						spawnInfo && 'pr-2',
 						editing && 'w-full',
 					)}
 				>
-					{spawnInfo ? (
-						// S2 · persistent spawn marker. Absolute + right-side placement
-						// so the bar sits flush against the bubble without changing
-						// its width or reflowing the transcript. Nested inside the
-						// bubble so it inherits the bubble's height and clips
-						// naturally on wrap.
-						<SpawnBar className="absolute -right-2 top-0 h-full" />
-					) : null}
-					{fileList}
-					{editing ? (
-						<div className="flex flex-col gap-2">
-							<Textarea
-								value={draft}
-								onChange={(e) => setDraft(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !e.shiftKey) {
-										e.preventDefault()
-										saveEdit()
-									}
-									if (e.key === 'Escape') setEditing(false)
-								}}
-								aria-label="Edit message"
-								autoFocus
-								className="bg-background text-foreground"
-							/>
-							<div className="flex justify-end gap-2">
-								<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-									Cancel
-								</Button>
-								<Button size="sm" onClick={saveEdit}>
-									Save
-								</Button>
+					{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+					<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
+						{fileList}
+						{editing ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={draft}
+									onChange={(e) => setDraft(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault()
+											saveEdit()
+										}
+										if (e.key === 'Escape') setEditing(false)
+									}}
+									aria-label="Edit message"
+									autoFocus
+									className="bg-background text-foreground"
+								/>
+								<div className="flex justify-end gap-2">
+									<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+										Cancel
+									</Button>
+									<Button size="sm" onClick={saveEdit}>
+										Save
+									</Button>
+								</div>
 							</div>
-						</div>
-					) : message.content.length > 0 ? (
-						// `break-words` is load-bearing next to the column's `min-w-0`:
-						// `min-w-0` bounds the box, this bounds the ink. Without it an
-						// unbroken token (a long URL) raises this span's min-content and
-						// paints past the bubble's `max-w` cap, out to the viewport edge.
-						<span className="whitespace-pre-wrap text-balance break-words">{message.content}</span>
-					) : null}
+						) : message.content.length > 0 ? (
+							// `break-words` is load-bearing next to the column's `min-w-0`:
+							// `min-w-0` bounds the box, this bounds the ink. Without it an
+							// unbroken token (a long URL) raises this span's min-content and
+							// paints past the bubble's `max-w` cap, out to the viewport edge.
+							<span className="whitespace-pre-wrap text-balance break-words">
+								{ownSegments.map((segment, index) =>
+									segment.kind === 'text' ? (
+										// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+										<Fragment key={index}>{segment.text}</Fragment>
+									) : (
+										<OwnLinkChip
+											// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+											key={index}
+											workspaceId={workspaceId}
+											segment={segment}
+										/>
+									),
+								)}
+							</span>
+						) : null}
+					</div>
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
@@ -252,7 +279,12 @@ export function MessageBubble({
 							</button>
 							<button
 								type="button"
-								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								onClick={() =>
+									retryMessage.mutate(
+										{ messageId: message.id },
+										{ onSuccess: () => onRetried?.(message) },
+									)
+								}
 								disabled={retryMessage.isPending}
 								aria-label="Ask agents to respond again"
 								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
@@ -267,8 +299,8 @@ export function MessageBubble({
 	}
 
 	// Optimistic bubbles (id ≤ 0) get no action row. Copy is always available;
-	// Retry is a v4 delta, so it is additionally gated by `v4Polish`.
-	const canRetryAgent = v4Polish && message.id > 0 && message.kind === 'message'
+	// Retry only applies to a persisted agent message.
+	const canRetryAgent = message.id > 0 && message.kind === 'message'
 	return (
 		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar
@@ -278,13 +310,13 @@ export function MessageBubble({
 				size="md"
 				className="shrink-0 rounded-lg"
 			/>
-			<div className="relative min-w-0 flex-1 md:max-w-[660px]">
+			<div className={cn('relative min-w-0 flex-1 md:max-w-[660px]', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (
 					// S2 · agent-side messages can also spawn sessions (an agent that
 					// hands off work to a spawned session); render the same marker
-					// they'd see on their own bubble. Absolute-positioned so it
-					// doesn't reflow the message column.
-					<SpawnBar className="absolute -right-2 top-0 h-full" />
+					// they'd see on their own bubble. Absolute-positioned in a gutter
+					// the column reserves, so it stays inside the column's box.
+					<SpawnBar className="absolute right-0 top-0 h-full" />
 				) : null}
 				<div className="flex items-baseline gap-2">
 					<span className="truncate text-[12.5px] font-bold text-foreground">
@@ -364,8 +396,20 @@ export function MessageBubble({
 					<KeychainAccessRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_access_request}
+					/>
+				) : null}
+				{/* An agent's request_integration_access call: Allow / Not now for an integration that is
+				    connected but not allowed for it. Allowing sets its access on the server. */}
+				{message.metadata?.integration_access_request ? (
+					<IntegrationAccessRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageId={message.id}
+						askingAgentId={message.actorId}
+						request={message.metadata.integration_access_request}
 					/>
 				) : null}
 				{/* An agent's show_computer call: a card that opens the agent's own computer so
@@ -374,6 +418,7 @@ export function MessageBubble({
 					<ComputerRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						agentId={message.actorId}
 						agentName={message.actorName}
 						request={message.metadata.computer_request}
@@ -447,7 +492,12 @@ export function MessageBubble({
 						{canRetryAgent ? (
 							<button
 								type="button"
-								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								onClick={() =>
+									retryMessage.mutate(
+										{ messageId: message.id },
+										{ onSuccess: () => onRetried?.(message) },
+									)
+								}
 								disabled={retryMessage.isPending}
 								aria-label="Retry"
 								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
@@ -459,6 +509,65 @@ export function MessageBubble({
 				) : null}
 			</div>
 		</div>
+	)
+}
+
+const MAX_CHIP_TITLE = 30
+
+function chipTitle(title: string): string {
+	const trimmed = title.trim()
+	return trimmed.length > MAX_CHIP_TITLE
+		? `${trimmed.slice(0, MAX_CHIP_TITLE).trimEnd()}…`
+		: trimmed
+}
+
+/**
+ * A link to an object or file in your own message, drawn inline where it was typed as a chip with
+ * the thing's name (cut at 30 characters; the full name is the tooltip). Until the name is known
+ * the chip says what kind of thing it is, so the link never reads as an address.
+ */
+function OwnLinkChip({
+	workspaceId,
+	segment,
+}: {
+	workspaceId: string
+	segment: { kind: 'object' | 'file'; id: string }
+}) {
+	const isObject = segment.kind === 'object'
+	const { data: object } = useObject(segment.id, { enabled: isObject })
+	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
+	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
+	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
+	const className =
+		'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	const content = (
+		<>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{label}</span>
+		</>
+	)
+	return isObject ? (
+		<Link
+			to="/$workspaceId/objects/$objectId"
+			params={{ workspaceId, objectId: segment.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={className}
+		>
+			{content}
+		</Link>
+	) : (
+		<Link
+			to="/$workspaceId/files/$fileId"
+			params={{ workspaceId, fileId: segment.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={className}
+		>
+			{content}
+		</Link>
 	)
 }
 

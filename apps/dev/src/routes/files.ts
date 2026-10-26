@@ -12,9 +12,21 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import { trackFileSaved } from '../lib/analytics/file-events'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import {
+	FileSaveTimeoutError,
+	FileVersionConflictError,
+	ensureContentHash,
+	saveFile,
+	sha256Hex,
+} from '../lib/file-save'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
@@ -30,6 +42,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		actorType?: string
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
 		storageProvider: StorageProvider
@@ -142,6 +155,7 @@ app.openapi(createFileRoute, (async (c) => {
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
+			contentHash: sha256Hex(bytes),
 			createdBy: actorId,
 		})
 		.returning()
@@ -261,8 +275,8 @@ app.openapi(listFilesRoute, (async (c) => {
 	const cursorOn = Boolean(query.snapshot_at)
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(files.createdAt), asc(files.id)]
-			: [desc(files.createdAt), asc(files.id)]
+			? [asc(msCreatedAt(files.createdAt)), asc(files.id)]
+			: [desc(msCreatedAt(files.createdAt)), asc(files.id)]
 		: [desc(files.createdAt)]
 
 	const skipOffset = useKeysetSeek(query)
@@ -340,10 +354,19 @@ app.openapi(getFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to read file bytes'), 500)
 	}
 
-	return c.json(buildResponse(row, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>, 200)
+	const contentHash = await ensureContentHash(db, row, bytes)
+
+	return c.json(
+		buildResponse({ ...row, contentHash }, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		200,
+	)
 }) as RouteHandler<typeof getFileRoute, Env>)
 
 // -- PATCH /:id — Update file -------------------------------------------------
+
+// 409 body: the standard error envelope plus the hash the file has now, so a
+// client can tell what it is comparing against without guessing.
+const versionConflictSchema = errorSchema.extend({ currentHash: z.string() })
 
 const updateFileRoute = createRoute({
 	method: 'patch',
@@ -368,6 +391,14 @@ const updateFileRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'File not found',
 		},
+		409: {
+			content: { 'application/json': { schema: versionConflictSchema } },
+			description: 'if_match does not match the stored content hash; nothing was written',
+		},
+		503: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Timed out waiting for the file or storage; nothing was written, retry is safe',
+		},
 	},
 })
 
@@ -391,60 +422,78 @@ app.openapi(updateFileRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
-	const contentChanged = body.content !== undefined
-	const newBytes = contentChanged
-		? Buffer.from(body.content as string, body.encoding ?? 'utf8')
-		: null
-	const newSize = newBytes ? newBytes.byteLength : existing.sizeBytes
+	const newBytes =
+		body.content !== undefined ? Buffer.from(body.content, body.encoding ?? 'utf8') : null
 
-	// Metadata update inside a tx with FOR UPDATE to serialize concurrent
-	// patches. S3 put happens after commit — same pattern as create — so
-	// the row lock is released before the (potentially slow) upload.
-	const updated = await db.transaction(async (tx) => {
-		const [locked] = await tx
-			.select()
-			.from(files)
-			.where(eq(files.id, existing.id))
-			.for('update')
-			.limit(1)
-		if (!locked) return undefined
-
-		const [row] = await tx
-			.update(files)
-			.set({
-				name: body.name ?? locked.name,
-				description: body.description !== undefined ? body.description : locked.description,
-				kind: body.kind !== undefined ? body.kind : locked.kind,
-				mimeType: body.mime_type ?? locked.mimeType,
-				annotations: body.annotations ?? locked.annotations,
-				sizeBytes: newSize,
-				updatedAt: new Date(),
-			})
-			.where(eq(files.id, existing.id))
-			.returning()
-		return row
-	})
-
-	if (!updated) {
-		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+	// Lock, version check, upload and commit happen inside saveFile (see
+	// lib/file-save.ts), so the bytes are never uploaded after the lock is gone.
+	let saved: Awaited<ReturnType<typeof saveFile>>
+	try {
+		saved = await saveFile(
+			{ db, storage },
+			{
+				fileId: existing.id,
+				ifMatch: body.if_match,
+				newBytes,
+				name: body.name,
+				description: body.description,
+				kind: body.kind,
+				mimeType: body.mime_type,
+				annotations: body.annotations,
+			},
+		)
+	} catch (err) {
+		if (err instanceof FileVersionConflictError) {
+			return c.json(
+				{
+					...createApiError(
+						'CONFLICT',
+						'File changed since it was loaded',
+						[
+							{
+								field: 'if_match',
+								message: 'if_match does not match the current content hash',
+								expected: err.currentHash,
+								received: body.if_match,
+							},
+						],
+						'Fetch the file again and decide whether to load the new version or overwrite it.',
+					),
+					currentHash: err.currentHash,
+				},
+				409,
+			)
+		}
+		if (err instanceof FileSaveTimeoutError) {
+			logger.warn('File save timed out; rolled back', { fileId: existing.id, stage: err.stage })
+			c.header('Retry-After', '1')
+			return c.json(
+				createApiError('INTERNAL_ERROR', err.message, undefined, 'Retry the save.'),
+				503,
+			)
+		}
+		logger.error('File save failed', {
+			fileId: existing.id,
+			workspaceId: existing.workspaceId,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
 	}
 
-	if (newBytes) {
-		try {
-			await storage.put(updated.storageKey, newBytes)
-		} catch (err) {
-			// The metadata row already committed with the new sizeBytes/mimeType,
-			// but the bytes failed to upload — the row now points at stale or
-			// missing content. Log loud; we can't trivially roll back the row
-			// because we don't know the prior size/mime in scope. Callers will
-			// see the inconsistency on next GET.
-			logger.error('S3 put failed during file update; row metadata may be stale', {
-				fileId: updated.id,
-				storageKey: updated.storageKey,
-				error: String(err),
-			})
-			return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
-		}
+	if (!saved) {
+		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+	}
+	const updated = saved.row
+
+	if (saved.contentChanged) {
+		void trackFileSaved({
+			workspaceId: updated.workspaceId,
+			fileId: updated.id,
+			actorId,
+			actorType: c.get('actorType') === 'agent' ? 'agent' : 'human',
+			fileType: updated.mimeType,
+			sizeBytes: updated.sizeBytes,
+		})
 	}
 
 	try {
@@ -472,9 +521,14 @@ app.openapi(updateFileRoute, (async (c) => {
 
 	// Re-read latest bytes for the response so the caller sees the post-update content.
 	let responseBytes: Buffer = newBytes ?? Buffer.alloc(0)
+	let responseRow = updated
 	if (!newBytes) {
 		try {
 			responseBytes = await storage.get(updated.storageKey)
+			// Rows that predate the content hash get one now, so the caller always
+			// gets a hash to echo as if_match.
+			const contentHash = await ensureContentHash(db, updated, responseBytes)
+			responseRow = { ...updated, contentHash }
 		} catch (err) {
 			logger.error('Failed to read file bytes after update', {
 				fileId: updated.id,
@@ -485,7 +539,7 @@ app.openapi(updateFileRoute, (async (c) => {
 
 	return c.json(
 		buildResponse(
-			updated,
+			responseRow,
 			responseBytes,
 			frontendUrl,
 			newBytes ? htmlViewerWarning(updated.mimeType, newBytes.toString('utf8')) : undefined,

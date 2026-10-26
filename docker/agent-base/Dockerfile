@@ -7,9 +7,25 @@ FROM ghcr.io/github/github-mcp-server:v1.13.0@sha256:15b28878c7d46edf07e16c373e4
 
 FROM node:22-slim
 
-# System tools
+# System tools. fontconfig + DejaVu + Liberation give headless Chromium glyphs
+# to paint when it rasterises inside the session sandbox (qa-deck.sh); without
+# them text renders blank. Add fonts-noto-color-emoji only if emoji are needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ca-certificates openssh-client gettext-base \
+    fontconfig fonts-dejavu-core fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+# Shared libraries headless Chromium needs to start. Sessions run as a
+# non-root user and cannot apt-get, so a Chromium that a session downloads
+# itself (playwright install chromium) exits at launch without these. Libraries
+# only, no browser binary: the session fetches the version the repo under test
+# pins. This is Playwright's chromium list for Debian 12 (the node:22-slim
+# base); recheck it if the base distro changes. Fonts are installed separately.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+    libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+    libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
@@ -40,6 +56,8 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY mcp-scrub-env.jq /mcp-scrub-env.jq
+COPY github-mcp-supervisor.cjs /github-mcp-supervisor.cjs
 COPY strip-images-proxy.js /strip-images-proxy.js
 COPY input-stream.js /input-stream.js
 COPY output-stream.js /output-stream.js

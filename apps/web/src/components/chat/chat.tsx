@@ -10,48 +10,34 @@ import {
 import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
-	type SlashKindId,
-	SlashPicker,
-	type SlashPickerResult,
-} from '@/components/chat/slash-picker'
-import {
 	UnifiedChatSlashPicker,
 	type UnifiedChatSlashPickerHandle,
 } from '@/components/chat/unified-slash-picker'
 import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
-import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
-import {
-	deriveEntryAgentRole,
-	trackChatMentionInserted,
-	trackChatObjectReferenceCreated,
-	trackSpecialistSummonedManually,
-} from '@/lib/analytics'
+import { trackChatMentionInserted, trackChatObjectReferenceCreated } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -59,6 +45,7 @@ import {
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -82,6 +69,26 @@ function makeTempId() {
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
+// A screenshot reaches the clipboard with no real name (Chrome calls it "image.png").
+// Give it a readable one; a copied file that already has a name keeps it.
+const CLIPBOARD_IMAGE_EXTENSIONS: Record<string, string> = { jpeg: 'jpg', 'svg+xml': 'svg' }
+
+export function nameClipboardImage(file: File, now: Date): File {
+	if (!file.type.startsWith('image/')) return file
+	if (file.name !== '' && !/^image\.[a-z0-9]+$/i.test(file.name)) return file
+	const subtype = file.type.slice('image/'.length)
+	const base = subtype.replace(/[^a-z0-9].*$/i, '') || 'png'
+	const ext = CLIPBOARD_IMAGE_EXTENSIONS[subtype] ?? base
+	const pad = (n: number) => String(n).padStart(2, '0')
+	const stamp =
+		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+	return new File([file], `pasted-image-${stamp}.${ext}`, {
+		type: file.type,
+		lastModified: file.lastModified,
+	})
+}
+
 // The three built-in NEWKIND labels that can promote to a type-filter chip when
 // typed as `/task ` / `/bet ` / `/insight `. Any custom workspace type falls
 // through as a normal search query — hardcoded per spec §Create-new rows.
@@ -93,7 +100,7 @@ const UNIFIED_SLASH_TRIGGER_RE = /(?:^|\s)\/([\w-]*)$/
 
 /**
  * Pure state machine for the `/` composer trigger. Called on every keystroke
- * inside the textarea when the `chat-slash-picker-v2` flag is on. Returns one
+ * inside the textarea. Returns one
  * of four verdicts:
  *
  *  - `open`: user just typed `/` at a word boundary. `slashStart` is the
@@ -187,6 +194,13 @@ export interface ComposerProps {
 	externalError?: string | null
 	onDismissExternalError?: () => void
 	/**
+	 * One quiet line under the box, for the group-chat cue ("No agent will reply. Tag one
+	 * with @."). Pass a string, or null when the cue applies but has nothing to say, to
+	 * render the polite live region; leave it undefined for no region at all. The line
+	 * shows once the box has focus, text or a tag, and never next to an error line.
+	 */
+	hint?: string | null
+	/**
 	 * The active conversation's participant actor ids — used to seed the
 	 * `In this conversation` section of the `@` mention picker. Callers wiring
 	 * a brand-new-chat surface pass `[]`; the picker falls through to the
@@ -266,12 +280,11 @@ function writeDraft(key: string, value: string): void {
  * `pending` back to false.
  *
  * Entry points into pickers:
- *  - `/` typed at a word boundary opens the "Turn this into" dropdown.
+ *  - `/` typed at a word boundary opens the unified Reference / Create picker.
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The `+` menu opens the shared `<SlashPicker>` for object references and
- *    "Mention an agent" (an alternate path to the same mention flow).
+ *  - The `+` menu offers "Attach a file"; `/` and `@` cover the rest.
  */
 export function Composer({
 	workspaceId,
@@ -287,6 +300,7 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	hint,
 	conversationParticipantIds,
 	textareaLabel,
 	value: controlledValue,
@@ -367,14 +381,19 @@ export function Composer({
 	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
-	const [pickerOpen, setPickerOpen] = useState(false)
-	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
-	// v2 unified `/` picker state (gated by `chat-slash-picker-v2`). `slashStart`
+	const hintId = useId()
+	const [textareaFocused, setTextareaFocused] = useState(false)
+	const hintText =
+		hint &&
+		!(sendError || externalError) &&
+		(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
+			? hint
+			: null
+	// Unified `/` picker state. `slashStart`
 	// points at the `/` in the textarea; when set, everything after it up to the
 	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
 	// (e.g. 'task') the user promoted by typing `/task ` — it lives outside the
 	// text as a first-class composer chip and narrows both picker sections.
-	const unifiedPickerEnabled = useFeatureFlag('chat-slash-picker-v2')
 	const [unifiedOpen, setUnifiedOpen] = useState(false)
 	const [slashStart, setSlashStart] = useState<number | null>(null)
 	const [typeFilterChip, setTypeFilterChip] = useState<string | null>(null)
@@ -396,7 +415,6 @@ export function Composer({
 	// these are the chips shown while bytes are still transferring or after the
 	// upload failed, removable in either state.
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
-	const slashPosRef = useRef<number | null>(null)
 	// Position of the `@` that opened the mention picker and the query text
 	// after it. Both null when the picker isn't in `@`-typing mode.
 	const [mentionTrigger, setMentionTrigger] = useState<{ atPos: number; query: string } | null>(
@@ -429,13 +447,6 @@ export function Composer({
 	// where it is rendered.
 	const [createOpen, setCreateOpen] = useState(false)
 	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
-	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
-	const objectTypes = useAvailableObjectTypes()
-	// Gates the `+` DropdownMenu collapse (task 6321aecf). OFF preserves the
-	// three-item Reference / Mention / Create menu; ON renders the single
-	// Attach a file row that triggers the same fileInputRef the standalone
-	// Paperclip button uses.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const selfActor = getStoredActor()
@@ -494,6 +505,14 @@ export function Composer({
 		useCallback(
 			(text: string) => {
 				setValue((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+			},
+			[setValue],
+		),
+		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback(
+			(streamed: string, refined: string) => {
+				setValue((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
 			},
 			[setValue],
 		),
@@ -567,9 +586,13 @@ export function Composer({
 				const before = prev.slice(0, trigger.atPos)
 				const after = prev.slice(trigger.atPos + 1 + trigger.query.length)
 				const trimmedAfter = after.startsWith(' ') ? after : ` ${after}`
-				const next = `${before}${trimmedAfter}`
+				const joined = `${before}${trimmedAfter}`
+				// Only whitespace left: keep the box empty so the placeholder (the composer
+				// cue's "Reply to …") stays visible behind the chips.
+				const next = joined.trim() === '' ? '' : joined
 				requestAnimationFrame(() => {
-					const caret = before.length + 1 // land the caret past the leading space we inserted
+					// Land the caret past the leading space we inserted
+					const caret = next === '' ? 0 : before.length + 1
 					textarea?.focus()
 					textarea?.setSelectionRange(caret, caret)
 				})
@@ -615,12 +638,7 @@ export function Composer({
 			}
 			// v2 chip lives outside the text — Backspace on an empty composer
 			// with a chip set clears the chip (spec §Interaction details).
-			if (
-				unifiedPickerEnabled &&
-				e.key === 'Backspace' &&
-				typeFilterChip !== null &&
-				value.length === 0
-			) {
+			if (e.key === 'Backspace' && typeFilterChip !== null && value.length === 0) {
 				e.preventDefault()
 				setTypeFilterChip(null)
 				return
@@ -628,7 +646,7 @@ export function Composer({
 			// While the unified picker is open, ↑↓ move its active row and ↵
 			// selects it — routed through the imperative handle because focus
 			// stays on the textarea and the picker Portal isn't a DOM ancestor.
-			if (unifiedPickerEnabled && unifiedOpen) {
+			if (unifiedOpen) {
 				if (e.key === 'ArrowDown') {
 					e.preventDefault()
 					unifiedPickerRef.current?.moveActive(1)
@@ -642,7 +660,7 @@ export function Composer({
 			}
 			// Escape closes the unified picker without touching the composer text
 			// or the chip; the trigger char stays so the user can continue.
-			if (unifiedPickerEnabled && e.key === 'Escape' && unifiedOpen) {
+			if (e.key === 'Escape' && unifiedOpen) {
 				e.preventDefault()
 				setUnifiedOpen(false)
 				setSlashStart(null)
@@ -654,7 +672,7 @@ export function Composer({
 			// Enter fires the picker's active row while the picker is open. If
 			// there's no active row (empty list), swallow Enter rather than
 			// submitting — the visual state promises a selection is pending.
-			if (unifiedPickerEnabled && unifiedOpen) {
+			if (unifiedOpen) {
 				e.preventDefault()
 				unifiedPickerRef.current?.selectActive()
 				return
@@ -669,7 +687,7 @@ export function Composer({
 		[
 			handleSubmit,
 			isMobile,
-			unifiedPickerEnabled,
+
 			unifiedOpen,
 			typeFilterChip,
 			value.length,
@@ -708,157 +726,50 @@ export function Composer({
 			const mention = detectMentionTrigger(next, pos)
 			if (mention) {
 				setMentionTrigger(mention)
-				setTurnIntoOpen(false)
-				slashPosRef.current = null
-				if (unifiedPickerEnabled) {
-					setUnifiedOpen(false)
-					setSlashStart(null)
-				}
+				setUnifiedOpen(false)
+				setSlashStart(null)
 				return
 			}
 			setMentionTrigger(null)
 
-			// v2: the top-level `/` path routes to `<UnifiedChatSlashPicker>`
-			// (Reference on top, Create-new below). The legacy `turnIntoOpen`
-			// create dropdown stays only under the `+` menu's "Create an object"
-			// entry, so a rollback of the flag flips this composer straight back
-			// to today's shape. Root-cause per Architect tech spec / task body:
-			// the current path opens `turnIntoOpen` at line 215–232 and never
-			// invokes the picker; that's what this branch replaces.
-			if (unifiedPickerEnabled) {
-				const outcome = detectUnifiedSlashTransition({
-					next,
-					pos,
-					slashStart,
-					typeFilterChip,
+			// The top-level `/` path routes to `<UnifiedChatSlashPicker>`
+			// (Reference on top, Create-new below).
+			const outcome = detectUnifiedSlashTransition({
+				next,
+				pos,
+				slashStart,
+				typeFilterChip,
+			})
+			if (outcome.type === 'promote_to_chip') {
+				// `/task ` transformed → the raw label is stripped from the
+				// textarea and the chip is set. Picker stays open with the
+				// query cleared and the type filter narrowing both sections.
+				setValue(outcome.nextValue)
+				setSlashStart(outcome.nextSlashStart)
+				setTypeFilterChip(outcome.objectType)
+				setUnifiedOpen(true)
+				// Restore caret to right after the removed `/label ` so a
+				// follow-up keystroke lands where the user expects.
+				requestAnimationFrame(() => {
+					const el = textareaRef.current
+					if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
 				})
-				if (outcome.type === 'promote_to_chip') {
-					// `/task ` transformed → the raw label is stripped from the
-					// textarea and the chip is set. Picker stays open with the
-					// query cleared and the type filter narrowing both sections.
-					setValue(outcome.nextValue)
-					setSlashStart(outcome.nextSlashStart)
-					setTypeFilterChip(outcome.objectType)
-					setUnifiedOpen(true)
-					// Restore caret to right after the removed `/label ` so a
-					// follow-up keystroke lands where the user expects.
-					requestAnimationFrame(() => {
-						const el = textareaRef.current
-						if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
-					})
-					return
-				}
-				if (outcome.type === 'open') {
-					setSlashStart(outcome.slashStart)
-					setUnifiedOpen(true)
-					return
-				}
-				if (outcome.type === 'close') {
-					setSlashStart(null)
-					setUnifiedOpen(false)
-					return
-				}
-				// `outcome.type === 'noop'` — either not triggering, or already
-				// tracking the same `/` and the user is just typing more chars.
 				return
 			}
-
-			// Legacy path — pre-v2 behaviour, unchanged: `/` at a word boundary
-			// opens the create-only dropdown.
-			if (pos <= 0) return
-			if (next[pos - 1] !== '/') return
-			const prev = pos >= 2 ? next[pos - 2] : ''
-			if (prev !== '' && !/\s/.test(prev)) return
-			slashPosRef.current = pos - 1
-			setTurnIntoOpen(true)
-		},
-		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
-	)
-
-	// A paste that starts with the prefix and has no whitespace, into an empty composer,
-	// goes straight to the vault field. Intercepted before the textarea takes it, so the
-	// secret is never in the composer's value, not even for a frame.
-	const handlePaste = useCallback(
-		(e: ClipboardEvent<HTMLTextAreaElement>) => {
-			if (vaultFlow?.blocking || valueRef.current !== '') return
-			const seed = vaultSeedFrom(e.clipboardData.getData('text'))
-			if (seed === null) return
-			e.preventDefault()
-			enterVault(seed)
-		},
-		[vaultFlow?.blocking, enterVault],
-	)
-
-	const openPickerForKind = useCallback((kind: SlashKindId) => {
-		slashPosRef.current = null
-		setPickerKind(kind)
-		setPickerOpen(true)
-	}, [])
-
-	const consumeSlashTrigger = useCallback(() => {
-		const pos = slashPosRef.current
-		if (pos === null) return
-		slashPosRef.current = null
-		setValue((prev) => {
-			if (prev[pos] !== '/') return prev
-			return prev.slice(0, pos) + prev.slice(pos + 1)
-		})
-	}, [setValue])
-
-	const openCreateFor = useCallback(
-		(subtype: string | undefined) => {
-			setCreateSubtype(subtype)
-			setCreateSeedTitle('')
-			setTurnIntoOpen(false)
-			consumeSlashTrigger()
-			setCreateOpen(true)
-		},
-		[consumeSlashTrigger],
-	)
-
-	const handlePickerSelect = useCallback(
-		(result: SlashPickerResult) => {
-			if (result.kind === 'agent') {
-				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
-				// Thinness event #2: the owner bypassed the default (Chief of
-				// Staff, once T3 wires it) and pulled a specialist in directly.
-				// The parent bet counts any hit as evidence the boundary agent
-				// isn't holding.
-				trackSpecialistSummonedManually({
-					entity_id: result.ref.id,
-					entity_type: 'agent',
-					agent_role: deriveEntryAgentRole(result.ref.name),
-				})
-				// The `+` menu → "Mention an agent" path also counts as a mention insertion.
-				trackChatMentionInserted({
-					entity_id: result.ref.id,
-					entity_type: 'actor',
-					kind: 'agent',
-				})
-			} else if (result.kind === 'object') {
-				onDispatchSelection?.({ type: 'add_object', object: result.ref })
-				trackChatObjectReferenceCreated({
-					entity_id: result.ref.id,
-					object_type: result.ref.type ?? 'object',
-				})
-			} else if (result.kind === 'notification') {
-				onDispatchSelection?.({ type: 'add_notification', notification: result.ref })
-				trackChatObjectReferenceCreated({
-					entity_id: result.ref.id,
-					object_type: 'notification',
-				})
-			} else if (result.kind === 'create') {
-				// The `create` kind is surfaced by the unified `/` picker via a
-				// dedicated handler below — the legacy picker never emits it, so
-				// the legacy path here is a no-op. Keeping the switch exhaustive
-				// keeps the discriminated union honest for future callers.
+			if (outcome.type === 'open') {
+				setSlashStart(outcome.slashStart)
+				setUnifiedOpen(true)
+				return
 			}
-			// The `/` that triggered the picker (if any) is dropped as soon as
-			// the user commits a pick — keeping the rest of the in-progress
-			// message intact.
-			consumeSlashTrigger()
+			if (outcome.type === 'close') {
+				setSlashStart(null)
+				setUnifiedOpen(false)
+				return
+			}
+			// `outcome.type === 'noop'` — either not triggering, or already tracking the
+			// same `/` and the user is just typing more chars.
 		},
-		[onDispatchSelection, consumeSlashTrigger],
+		[setValue, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
 	)
 
 	// Compute the picker's live query — text from the char AFTER the `/` up to
@@ -938,14 +849,6 @@ export function Composer({
 		}
 	}, [])
 
-	const handlePickerOpenChange = useCallback((next: boolean) => {
-		setPickerOpen(next)
-		if (!next) {
-			setPickerKind(null)
-			slashPosRef.current = null
-		}
-	}, [])
-
 	const uploadPickedFile = useCallback(
 		async (tempId: string, file: File) => {
 			const controller = new AbortController()
@@ -1012,11 +915,10 @@ export function Composer({
 		[uploadFile, onDispatchSelection],
 	)
 
-	const handleFileSelection = useCallback(
-		(event: ChangeEvent<HTMLInputElement>) => {
-			const input = event.target
-			const files = Array.from(input.files ?? [])
-			input.value = '' // allow re-picking the same file after removing it
+	// The one entry point for files into the composer: the picker and a clipboard
+	// paste both end here, so a chip behaves the same whichever way it arrived.
+	const attachFiles = useCallback(
+		(files: File[]) => {
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -1032,6 +934,44 @@ export function Composer({
 			})
 		},
 		[uploadPickedFile],
+	)
+
+	const handleFileSelection = useCallback(
+		(event: ChangeEvent<HTMLInputElement>) => {
+			const input = event.target
+			const files = Array.from(input.files ?? [])
+			input.value = '' // allow re-picking the same file after removing it
+			attachFiles(files)
+		},
+		[attachFiles],
+	)
+
+	// A paste that starts with the prefix and has no whitespace, into an empty composer,
+	// goes straight to the vault field. Intercepted before the textarea takes it, so the
+	// secret is never in the composer's value, not even for a frame.
+	// A paste that carries files and no text attaches them. Text always wins: copying
+	// from a web page or spreadsheet puts a rendered image next to the text, and the
+	// text is what the user meant to paste.
+	const handlePaste = useCallback(
+		(e: ClipboardEvent<HTMLTextAreaElement>) => {
+			if (vaultFlow?.blocking) return
+			const text = e.clipboardData.getData('text')
+			if (valueRef.current === '') {
+				const seed = vaultSeedFrom(text)
+				if (seed !== null) {
+					e.preventDefault()
+					enterVault(seed)
+					return
+				}
+			}
+			if (text !== '') return
+			const files = Array.from(e.clipboardData.files)
+			if (files.length === 0) return
+			e.preventDefault()
+			const now = new Date()
+			attachFiles(files.map((file) => nameClipboardImage(file, now)))
+		},
+		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
 	const handleRemovePending = useCallback((tempId: string) => {
@@ -1051,37 +991,20 @@ export function Composer({
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
-			<SlashPicker
+			<UnifiedChatSlashPicker
+				ref={unifiedPickerRef}
 				workspaceId={workspaceId}
-				open={pickerOpen}
-				onOpenChange={handlePickerOpenChange}
-				onSelect={handlePickerSelect}
-				selected={{
-					agents: selection.agents,
-					objects: selection.objects,
-					notifications: selection.notifications,
-				}}
-				initialKindId={pickerKind}
+				open={unifiedOpen}
+				onOpenChange={handleUnifiedOpenChange}
+				query={unifiedQuery}
+				typeFilter={typeFilterChip}
+				onSelect={handleUnifiedSelect}
+				onActiveDescendantChange={setUnifiedActiveDescendant}
 				anchor={
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
-			{unifiedPickerEnabled ? (
-				<UnifiedChatSlashPicker
-					ref={unifiedPickerRef}
-					workspaceId={workspaceId}
-					open={unifiedOpen}
-					onOpenChange={handleUnifiedOpenChange}
-					query={unifiedQuery}
-					typeFilter={typeFilterChip}
-					onSelect={handleUnifiedSelect}
-					onActiveDescendantChange={setUnifiedActiveDescendant}
-					anchor={
-						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
-					}
-				/>
-			) : null}
-			{unifiedPickerEnabled && typeFilterChip !== null ? (
+			{typeFilterChip !== null ? (
 				<ul className="flex list-none flex-wrap items-center gap-1 p-0" aria-label="Type filter">
 					<li className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
 						<Hash size={12} aria-hidden />
@@ -1115,51 +1038,6 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
-			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
-			    so the list has to be reachable from the keyboard. Radix gives the
-			    menu roving focus, arrow keys and typeahead for free — the Popover
-			    this replaced left focus in the textarea with no way in. */}
-			<DropdownMenu
-				open={turnIntoOpen}
-				onOpenChange={(next) => {
-					setTurnIntoOpen(next)
-					if (!next) slashPosRef.current = null
-				}}
-			>
-				<DropdownMenuTrigger asChild>
-					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
-				</DropdownMenuTrigger>
-				<DropdownMenuContent
-					align="start"
-					side="top"
-					sideOffset={8}
-					className="w-[320px]"
-					// The visible DropdownMenuLabel below is not an accessible name
-					// for the menu itself — name it explicitly so the list is
-					// announced (and addressable) as "Turn this into an object".
-					aria-label="Turn this into an object"
-					// Radix returns focus to the trigger, which here is an invisible
-					// anchor — send the caret back to the composer instead.
-					onCloseAutoFocus={(e) => {
-						e.preventDefault()
-						textareaRef.current?.focus()
-					}}
-				>
-					<DropdownMenuLabel className="eyebrow">Turn this into an object</DropdownMenuLabel>
-					{objectTypes.map((type) => (
-						<DropdownMenuItem
-							key={type.value}
-							onSelect={() => openCreateFor(type.value)}
-							className="gap-2.5"
-						>
-							<TypeBadge type={type.value} variant="tile" />
-							<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
-								{type.label}
-							</span>
-						</DropdownMenuItem>
-					))}
-				</DropdownMenuContent>
-			</DropdownMenu>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}
@@ -1279,12 +1157,13 @@ export function Composer({
 					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
 					rows={1}
 					aria-label={textareaLabel}
+					aria-describedby={hint === undefined ? undefined : hintId}
+					onFocus={() => setTextareaFocused(true)}
+					onBlur={() => setTextareaFocused(false)}
 					// Screen readers announce the picker's active row while focus
 					// stays on the textarea (spec §Accessibility). The picker
 					// keeps this in sync via `onActiveDescendantChange`.
-					aria-activedescendant={
-						unifiedPickerEnabled && unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
-					}
+					aria-activedescendant={unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined}
 					aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
 					aria-expanded={mentionTrigger !== null || undefined}
 				/>
@@ -1293,6 +1172,21 @@ export function Composer({
 						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
+				{hint === undefined ? null : (
+					<output
+						id={hintId}
+						aria-live="polite"
+						className={cn(
+							'px-1 text-muted-foreground text-xs',
+							// The icon and the 8 px gap above the control row exist only while there is text,
+							// so the empty live region adds no height.
+							hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
+						)}
+					>
+						{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
+						{hintText}
+					</output>
+				)}
 				<div className="flex items-center gap-2">
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
@@ -1313,41 +1207,20 @@ export function Composer({
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" className="w-[252px]">
-							{plusMenuAttachOnly ? (
-								// Flag-on shape (task 6321aecf, bet f21a): the Reference /
-								// Mention aliases founders reported broken are removed, and
-								// Create-new moves to the `/` picker (sibling task). The
-								// row triggers the same hidden fileInputRef as the visible
-								// Paperclip sibling, so the file-attach handler that is
-								// already wired for this composer is what runs.
-								<DropdownMenuItem
-									onSelect={() => fileInputRef.current?.click()}
-									className="flex-col items-start gap-0.5"
-								>
-									<span className="flex items-center gap-2">
-										<Paperclip size={15} aria-hidden />
-										Attach a file
-									</span>
-									<span className="pl-[23px] text-xs text-muted-foreground">
-										PDF, image, or doc
-									</span>
-								</DropdownMenuItem>
-							) : (
-								<>
-									<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
-										<Box size={15} aria-hidden />
-										Reference an object
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
-										<AtSign size={15} aria-hidden />
-										Mention an agent
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
-										<Sparkles size={15} aria-hidden />
-										Create an object
-									</DropdownMenuItem>
-								</>
-							)}
+							{/* The row triggers the same hidden fileInputRef as the visible
+							    Paperclip sibling, so the file-attach handler that is already
+							    wired for this composer is what runs. `/` and `@` cover
+							    references, mentions and creating objects. */}
+							<DropdownMenuItem
+								onSelect={() => fileInputRef.current?.click()}
+								className="flex-col items-start gap-0.5"
+							>
+								<span className="flex items-center gap-2">
+									<Paperclip size={15} aria-hidden />
+									Attach a file
+								</span>
+								<span className="pl-[23px] text-xs text-muted-foreground">PDF, image, or doc</span>
+							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
 					{/* Attach stays a visible sibling rather than a menu row: it is the
@@ -1375,11 +1248,18 @@ export function Composer({
 								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
 							)}
 							onClick={dictation.toggle}
-							disabled={disabled}
+							disabled={disabled || dictation.transcribing}
 							aria-pressed={dictation.recording}
-							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
+							aria-busy={dictation.transcribing}
+							aria-label={
+								dictation.transcribing
+									? 'Transcribing'
+									: dictation.recording
+										? 'Stop dictating'
+										: 'Dictate a message'
+							}
 						>
-							<Mic size={14} aria-hidden />
+							{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
 						</Button>
 					) : null}
 					{callAgent ? (

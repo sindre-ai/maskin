@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { config } from '../../../../lib/integrations/providers/google-search-console/config'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
+import { integrationScopeGaps } from '../../../../lib/integrations/scope-drift'
 
 describe('Google Search Console provider config', () => {
 	it('uses kebab-case provider name and human-readable display name', () => {
@@ -26,16 +27,16 @@ describe('Google Search Console provider config', () => {
 		}
 	})
 
-	it('locks scopes to exactly webmasters.readonly (no scope creep)', () => {
+	it('locks scopes to exactly webmasters (no scope creep)', () => {
 		expect(config.auth.type).toBe('oauth2')
 		if (config.auth.type === 'oauth2') {
-			expect(config.auth.config.scopes).toEqual([
+			// The full scope, not webmasters.readonly: Google only accepts sitemap
+			// submit and delete under it. Listing sites, search analytics and URL
+			// Inspection accept either, so the daily sync is unchanged.
+			expect(config.auth.config.scopes).toEqual(['https://www.googleapis.com/auth/webmasters'])
+			expect(config.auth.config.scopes).not.toContain(
 				'https://www.googleapis.com/auth/webmasters.readonly',
-			])
-			// Guard against accidentally widening to the umbrella `webmasters`
-			// scope (which grants write) or the URL Inspection scope — both
-			// explicitly out of scope for task 1.
-			expect(config.auth.config.scopes).not.toContain('https://www.googleapis.com/auth/webmasters')
+			)
 			expect(config.auth.config.scopes).not.toContain(
 				'https://www.googleapis.com/auth/webmasters.readonly.urlinspection',
 			)
@@ -46,6 +47,20 @@ describe('Google Search Console provider config', () => {
 			)
 			expect(config.auth.config.scopes).not.toContain('openid')
 		}
+	})
+
+	it('flags a connection made under the read-only scope as needing a reconnect', () => {
+		expect(
+			integrationScopeGaps(config, {
+				scope: 'https://www.googleapis.com/auth/webmasters.readonly',
+			}),
+		).toEqual({
+			missing: ['https://www.googleapis.com/auth/webmasters'],
+			needsReconnect: true,
+		})
+		expect(
+			integrationScopeGaps(config, { scope: 'https://www.googleapis.com/auth/webmasters' }),
+		).toEqual({ missing: [], needsReconnect: false })
 	})
 
 	it('emits the locked scope set on the generated authorization URL', async () => {
@@ -62,9 +77,7 @@ describe('Google Search Console provider config', () => {
 				handler.createAuthorizationUrl('state-token', 'https://maskin/cb', 'pkce-verifier'),
 			)
 
-			expect(url.searchParams.get('scope')).toBe(
-				'https://www.googleapis.com/auth/webmasters.readonly',
-			)
+			expect(url.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/webmasters')
 			expect(url.searchParams.get('access_type')).toBe('offline')
 			expect(url.searchParams.get('prompt')).toBe('consent')
 			expect(url.searchParams.get('code_challenge_method')).toBe('S256')

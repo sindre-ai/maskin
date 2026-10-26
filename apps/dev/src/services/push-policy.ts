@@ -12,6 +12,9 @@
  *   push_delay_seconds  hold the push this long; the fan-out re-checks read state afterwards.
  *   push_force          true lets a digest/tips notification push individually.
  *   priority 'critical' / blocking true   a For You card that bypasses the rollup.
+ *   source, from_agent  'comment_mention' and whether an agent wrote it, on the row an @mention
+ *                       of a person creates.
+ *   due_at              ISO time a needs_you item expires; the push text leads with it.
  *
  * ── The "recent pushes" ledger ──────────────────────────────────────────────
  * Rate limits and the For You rollup need to know what was recently pushed. The ledger is an
@@ -54,6 +57,7 @@ export interface PolicyNotification {
 	targetActorId: string
 	createdAt: Date
 	metadata: Record<string, unknown>
+	objectId?: string | null
 }
 
 /** One thing the ledger remembers about an earlier notification for an actor. */
@@ -123,6 +127,47 @@ export function collapseKeyOf(metadata: Record<string, unknown>): string | null 
 	return typeof k === 'string' && k.trim().length > 0 ? k.trim() : null
 }
 
+/** The deadline a producer put on a notification; null when absent or not a valid time. */
+export function dueAtOf(metadata: Record<string, unknown>): Date | null {
+	const d = metadata.due_at
+	if (typeof d !== 'string' || d.length > 40) return null
+	const at = new Date(d)
+	return Number.isNaN(at.getTime()) ? null : at
+}
+
+/** "Mon 26 Oct 08:00 UTC", in the person's timezone (UTC when none or invalid). */
+export function formatDeadline(at: Date, timezone: string | null): string {
+	const fmt = (tz: string) =>
+		new Intl.DateTimeFormat('en-GB', {
+			timeZone: tz,
+			weekday: 'short',
+			day: 'numeric',
+			month: 'short',
+			hour: '2-digit',
+			minute: '2-digit',
+			hourCycle: 'h23',
+			timeZoneName: 'short',
+		})
+			.format(at)
+			.replace(',', '')
+	try {
+		return fmt(timezone ?? 'UTC')
+	} catch {
+		return fmt('UTC')
+	}
+}
+
+/** Puts the deadline at the front of a push body: "Before Mon 26 Oct 08:00 UTC · <body>". */
+export function withDeadline(
+	body: string | null,
+	due: Date,
+	now: Date,
+	timezone: string | null,
+): string {
+	const lead = `${due.getTime() < now.getTime() ? 'Overdue since' : 'Before'} ${formatDeadline(due, timezone)}`
+	return body ? `${lead} · ${body}` : lead
+}
+
 export function delaySecondsOf(metadata: Record<string, unknown>): number {
 	const d = metadata.push_delay_seconds
 	if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return 0
@@ -162,6 +207,8 @@ export interface EvaluatePushInput {
 	prefs: PushPrefs
 	now: Date
 	recentPushes: RecentPush[]
+	/** The notification is an @mention comment that carries a decision block. */
+	hasDecision?: boolean
 }
 
 export function evaluatePush({
@@ -170,6 +217,7 @@ export function evaluatePush({
 	prefs,
 	now,
 	recentPushes,
+	hasDecision = false,
 }: EvaluatePushInput): PushVerdict {
 	const nowMs = now.getTime()
 	const meta = n.metadata
@@ -180,6 +228,18 @@ export function evaluatePush({
 	const skip = (reason: string): PushVerdict => ({ action: 'skip', interruption: 'active', reason })
 
 	if (prefs.categories[category] === false) return skip('category-disabled')
+
+	// An agent's plain @mention is context, not a decision: it stays in the app. A mention a
+	// person wrote, one that carries a decision block, and every card or chat question still push.
+	if (
+		category === 'needs_you' &&
+		meta.push_category === undefined &&
+		meta.source === 'comment_mention' &&
+		meta.from_agent === true &&
+		!hasDecision
+	) {
+		return skip('mention-without-decision')
+	}
 
 	const muted = prefs.mutedWorkspaceIds.includes(n.workspaceId)
 	if (muted && category !== 'needs_you') return skip('workspace-muted')
@@ -256,11 +316,15 @@ export function evaluatePush({
 		}
 	}
 
+	// A second ask about the same object replaces the first banner instead of stacking.
+	const objectKey =
+		category === 'needs_you' && !collapseKey && n.objectId ? `object:${n.objectId}` : null
+
 	return {
 		action: 'send',
 		interruption,
 		reason: inQuietHours(prefs, now) ? 'quiet-hours' : muted ? 'muted-needs-you' : 'ok',
-		collapseKey,
+		collapseKey: collapseKey ?? objectKey ?? undefined,
 	}
 }
 

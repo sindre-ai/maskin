@@ -161,3 +161,37 @@ struct ChiefOfStaffDeskTests {
 		#expect(desk.takePending() == nil)
 	}
 }
+
+@Suite("ChiefOfStaffThreads watch thread")
+@MainActor
+struct ChiefOfStaffWatchThreadTests {
+	@Test("the first question creates a 'Watch' thread with the Chief of Staff")
+	func createsWatchThread() async throws {
+		let api = CoSAPI()
+		let store = ConversationsStore(api: api, events: nil)
+		let outcome = try await ChiefOfStaffThreads.openWatchThread(conversations: store)
+		guard case .created(let c) = outcome else { Issue.record("expected created"); return }
+		#expect(c.title == "Watch")
+		#expect(await api.created.map(\.ids) == [["cos"]])
+	}
+
+	@Test("later questions reuse it, and an 'About' thread is never mistaken for it")
+	func reusesWatchThread() async throws {
+		let about = chatConvo("c1", title: "About: Onboarding redesign", participants: [chatMe, chief])
+		let watch = chatConvo("c2", title: "Watch", participants: [chatMe, chief])
+		let api = CoSAPI(items: [about, watch])
+		let store = ConversationsStore(api: api, events: nil)
+		let outcome = try await ChiefOfStaffThreads.openWatchThread(conversations: store)
+		#expect(outcome == .existing(watch))
+		#expect(await api.created.isEmpty)
+	}
+
+	@Test("a workspace without a Chief of Staff throws")
+	func noChief() async {
+		let api = CoSAPI(actors: [ChatActor(participant: chatRelay)])
+		let store = ConversationsStore(api: api, events: nil)
+		await #expect(throws: ChiefOfStaffThreads.NoChiefOfStaff.self) {
+			_ = try await ChiefOfStaffThreads.openWatchThread(conversations: store)
+		}
+	}
+}

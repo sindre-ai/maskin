@@ -28,7 +28,9 @@ export const actors = pgTable('actors', {
 	type: text('type').notNull(),
 	name: text('name').notNull(),
 	email: text('email').unique(),
-	apiKey: text('api_key').notNull().unique(),
+	// Legacy plaintext column. Nullable and no longer written (migration 0112); keys live
+	// hashed in api_keys. Emptied and dropped by the contract step.
+	apiKey: text('api_key').unique(),
 	passwordHash: text('password_hash'),
 	description: text('description'),
 	systemPrompt: text('system_prompt'),
@@ -235,8 +237,7 @@ export const relationships = pgTable(
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
-		// Applied live via migration 0074; hook itself gated on
-		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
 			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
@@ -592,11 +593,8 @@ export const triggers = pgTable('triggers', {
 	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
 	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
 	escalateAfterMs: integer('escalate_after_ms'),
-	// D6b idempotency guard: the last time the escalation reconciler posted
-	// an escalation comment for this step. The reconciler skips a step whose
-	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
-	// timestamp for the hands-off actor), so a new wait spell re-arms
-	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
 	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
@@ -784,6 +782,40 @@ export const sessions = pgTable(
 			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
 	],
 )
+
+// ── API Keys ───────────────────────────────────────────────────────────────
+
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+
+/**
+ * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
+ * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
+ * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
+ */
+export const apiKeys = pgTable(
+	'api_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
+		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
+		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+	],
+)
+export type ApiKey = typeof apiKeys.$inferSelect
 
 // ── Session Logs ───────────────────────────────────────────────────────────
 
@@ -1147,6 +1179,12 @@ export const voiceSessions = pgTable('voice_sessions', {
 	transcriptStorageKey: text('transcript_storage_key'),
 	inputAudioSeconds: integer('input_audio_seconds'),
 	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
 	inputTokens: integer('input_tokens'),
 	outputTokens: integer('output_tokens'),
 	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
@@ -1390,6 +1428,10 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
+		// only for rows that predate the column, which are hashed from storage
+		// on first read or first save. Echoed by clients as if_match.
+		contentHash: text('content_hash'),
 		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
 		// marks an HTML page written to be read in For you; nothing else is surfaced
 		// there, so a loop's incidental output files stay out of the row. Null for
@@ -1633,6 +1675,60 @@ export const linkedinToolCalls = pgTable(
 		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
 	],
 )
+
+// ── LinkedIn Actions (permanent action log) ─────────────────────────────────
+// One append-only row per call to any LinkedIn MCP tool, old and new. It is the
+// source for the server-side caps (rolling 24h counts under an advisory lock),
+// the per-person rules, and the outreach measurement join, so unlike
+// `linkedin_tool_calls` above (a 24h duplicate-send guard) it keeps rows 180
+// days. A row is inserted `pending` before the call and moved to its final
+// outcome after it.
+//
+// It carries NO content: no message or post text, no names, no file contents.
+// `target_provider_id` and `ref_id` are opaque provider ids; `data` holds only
+// credits_before / credits_after for InMail. `workspace_id` has no foreign key
+// on purpose (like webhook_deliveries): the log must outlive nothing it does not
+// own, and the workspace purge deletes it explicitly.
+//
+// The unique partial index makes "already withdrawn" / "already liked" a
+// database fact: only one `ok` row can exist per (account, tool, ref_id).
+export const linkedinActions = pgTable(
+	'linkedin_actions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').notNull(),
+		// The connected account row (integrations.id). Caps key on this.
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		// read | write | send
+		kind: text('kind').notNull(),
+		targetProviderId: text('target_provider_id'),
+		refId: text('ref_id'),
+		objectId: uuid('object_id'),
+		approvalId: text('approval_id'),
+		// pending | ok | noop | refused_cap | refused_rule | refused_flag | error
+		outcome: text('outcome').notNull(),
+		errorCode: text('error_code'),
+		data: jsonb('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('linkedin_actions_integration_tool_created_idx').on(t.integrationId, t.tool, t.createdAt),
+		index('linkedin_actions_workspace_target_created_idx').on(
+			t.workspaceId,
+			t.targetProviderId,
+			t.createdAt,
+		),
+		uniqueIndex('linkedin_actions_ok_ref_uniq')
+			.on(t.integrationId, t.tool, t.refId)
+			.where(sql`${t.outcome} = 'ok'`),
+		// The nightly purge deletes by age.
+		index('linkedin_actions_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type LinkedinAction = typeof linkedinActions.$inferSelect
 
 // ── User Display Settings ───────────────────────────────────────────────────
 //
@@ -2031,6 +2127,9 @@ export const fileComments = pgTable(
 		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
 		// pin still round-trips. `'legacy'` is reserved as the migration marker.
 		selector: text('selector'),
+		// Text comments: the quoted passage plus a little context each side, so
+		// the editor can find it again by matching. Null for pin comments.
+		textAnchor: jsonb('text_anchor').$type<{ quote: string; prefix: string; suffix: string }>(),
 		authorId: uuid('author_id')
 			.notNull()
 			.references(() => actors.id),
@@ -2120,6 +2219,10 @@ export const deviceTokens = pgTable(
 		// 'sandbox' | 'production' — selects the APNs host.
 		environment: text('environment').notNull(),
 		appVersion: text('app_version'),
+		// SHA-256 (hex) of the secret the device generated and sent at registration. After sign-out the
+		// phone has no API key; POST /api/devices/unregister takes this secret as its credential. Null
+		// for rows registered by a client that does not send one: those cannot use that route.
+		unregisterSecretHash: text('unregister_secret_hash'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 	},

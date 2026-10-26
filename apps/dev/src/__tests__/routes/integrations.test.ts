@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 				'gmail',
 				'google-calendar',
 				'google-meet',
+				'google-search-console',
 				'linear',
 				'linkedin-unipile',
 				'posthog',
@@ -483,6 +484,56 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(200)
 			const integrationInsert = calls.inserts[0] as { config: unknown }
 			expect(integrationInsert.config).toEqual({ system_actor_id: systemActor.id })
+		})
+
+		it('rejects a resend connect that sends api_key without receive_subdomain, and writes no row', async () => {
+			// The MCP connect_integration tool only forwards api_key. That used to fall
+			// through to an insert with empty credentials: a row that looked connected,
+			// then a webhook 500 on the first delivery.
+			const systemActor = { id: 'resend-system-actor-id', type: 'system', name: 'Resend' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/resend/connect',
+					{ api_key: 're_test_key' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('receive_subdomain')
+			expect(JSON.stringify(body)).not.toContain('re_test_key')
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('rejects an api_key sent to a manual provider that has no use for one, and writes no row', async () => {
+			const systemActor = { id: 'skjald-system-actor-id', type: 'system', name: 'Skjald' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[systemActor], [{ id: 'member-id' }]]
+			mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'skjald', displayName: 'Skjald', auth: { type: 'manual' } },
+			} as unknown as ResolvedProvider)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/skjald/connect',
+					{ api_key: 'sk_test_key' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('does not take an api_key')
+			expect(JSON.stringify(body)).not.toContain('sk_test_key')
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
@@ -1781,6 +1832,77 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(400)
 			fetchSpy.mockRestore()
+		})
+
+		describe('re-mint reason (?reason=)', () => {
+			const callWithReason = async (query: string) => {
+				const { encrypt } = await import('../../lib/crypto')
+				const { logger } = await import('../../lib/logger')
+
+				const integration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					status: 'active',
+					credentials: encrypt(JSON.stringify({ installation_id: '42' })),
+				})
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.select = [integration]
+
+				const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {})
+				const fetchSpy = vi
+					.spyOn(globalThis, 'fetch')
+					.mockResolvedValue(
+						new Response(JSON.stringify({ token: 'ghs_fresh_token' }), { status: 200 }),
+					)
+
+				const res = await app.request(
+					jsonGet(`/api/integrations/${integration.id}/github-token${query}`, {
+						'x-workspace-id': wsId,
+					}),
+				)
+				const body = await res.json()
+				const remintLogs = infoSpy.mock.calls.filter(
+					([msg]) => msg === 'GitHub token re-mint requested',
+				)
+				const everythingLogged = JSON.stringify(infoSpy.mock.calls)
+				infoSpy.mockRestore()
+				fetchSpy.mockRestore()
+				return { integration, res, body, remintLogs, everythingLogged }
+			}
+
+			it.each(['mcp_age', 'mcp_401'])(
+				'logs one line with the reason and integration id for reason=%s',
+				async (reason) => {
+					const { integration, res, body, remintLogs, everythingLogged } = await callWithReason(
+						`?reason=${reason}`,
+					)
+
+					expect(res.status).toBe(200)
+					expect(body).toEqual({ token: 'ghs_fresh_token' })
+					expect(remintLogs).toHaveLength(1)
+					expect(remintLogs[0][1]).toEqual({ integrationId: integration.id, reason })
+					expect(everythingLogged).not.toContain('ghs_fresh_token')
+				},
+			)
+
+			it('ignores an unknown reason: same response, nothing logged, raw value not written', async () => {
+				const { res, body, remintLogs, everythingLogged } = await callWithReason(
+					'?reason=totally_unknown_value',
+				)
+
+				expect(res.status).toBe(200)
+				expect(body).toEqual({ token: 'ghs_fresh_token' })
+				expect(remintLogs).toHaveLength(0)
+				expect(everythingLogged).not.toContain('totally_unknown_value')
+			})
+
+			it('behaves as before and logs nothing when no reason is given', async () => {
+				const { res, body, remintLogs } = await callWithReason('')
+
+				expect(res.status).toBe(200)
+				expect(body).toEqual({ token: 'ghs_fresh_token' })
+				expect(remintLogs).toHaveLength(0)
+			})
 		})
 
 		describe('installation-id recovery (?repo= + GITHUB_APP_INSTALLATION_RECOVERY_ENABLED)', () => {

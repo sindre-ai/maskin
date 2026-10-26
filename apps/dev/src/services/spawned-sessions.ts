@@ -6,7 +6,7 @@ import {
 	messages,
 	sessions,
 } from '@maskin/db/schema'
-import { and, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
 /**
@@ -40,6 +40,8 @@ export interface SpawnedSessionEmbed {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: unknown } | null
+	/** The session this one carries on, when the person wrote to a helper that had ended. */
+	continues_session_id: string | null
 }
 
 export interface SessionStateChangedPayload {
@@ -108,6 +110,11 @@ function toEmbed(row: {
 		currentActivity: row.currentActivity,
 		depends_on_session_ids: row.depends_on_session_ids ?? [],
 		awaiting: readAwaiting(row.config),
+		continues_session_id:
+			typeof (row.config as { continues_session_id?: unknown } | null)?.continues_session_id ===
+			'string'
+				? (row.config as { continues_session_id: string }).continues_session_id
+				: null,
 	}
 }
 
@@ -355,6 +362,94 @@ export async function loadPendingSpawnedSessions(
 		)
 		.orderBy(sessions.createdAt)
 	return rows.map(toEmbed)
+}
+
+const ACTIVE_SESSION_STATUSES = ['pending', 'queued', 'starting', 'running']
+const ACTIVE_SESSIONS_NOTE_LIMIT = 10
+
+/**
+ * Background sessions already on the way for the agents in this chat: queued,
+ * starting or running, whoever started them (the chat, a mention or a trigger).
+ * Chat sessions are left out, so this never shows another conversation. Handed
+ * to the agent with each turn so it checks before it starts a duplicate.
+ * Best effort: a failed lookup leaves the note out rather than delay the turn.
+ */
+export async function loadActiveSessionsNote(
+	db: Database,
+	opts: { conversationId: string; workspaceId: string },
+): Promise<string> {
+	try {
+		const participantIds = db
+			.select({ id: conversationParticipants.actorId })
+			.from(conversationParticipants)
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, opts.conversationId),
+					isNull(conversationParticipants.leftAt),
+				),
+			)
+		const chatSessionIds = db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(eq(sessions.conversationId, opts.conversationId))
+
+		const rows = await db
+			.select({
+				id: sessions.id,
+				status: sessions.status,
+				actorName: actors.name,
+				actionPrompt: sessions.actionPrompt,
+				createdAt: sessions.createdAt,
+			})
+			.from(sessions)
+			.innerJoin(actors, eq(actors.id, sessions.actorId))
+			.where(
+				and(
+					eq(sessions.workspaceId, opts.workspaceId),
+					isNull(sessions.conversationId),
+					inArray(sessions.status, ACTIVE_SESSION_STATUSES),
+					or(
+						inArray(sessions.actorId, participantIds),
+						inArray(sessions.spawnedBySessionId, chatSessionIds),
+					),
+				),
+			)
+			.orderBy(desc(sessions.createdAt))
+			.limit(ACTIVE_SESSIONS_NOTE_LIMIT)
+		return formatActiveSessionsNote(rows)
+	} catch (err) {
+		logger.warn('Could not load active sessions for a chat turn', {
+			conversation_id: opts.conversationId,
+			error: String(err),
+		})
+		return ''
+	}
+}
+
+export function formatActiveSessionsNote(
+	rows: Array<{
+		id: string
+		status: string
+		actorName: string
+		actionPrompt: string
+		createdAt: Date | null
+	}>,
+	now: Date = new Date(),
+): string {
+	if (rows.length === 0) return ''
+	const lines = rows.map((r) => {
+		const minutes = r.createdAt
+			? Math.max(0, Math.round((now.getTime() - r.createdAt.getTime()) / 60000))
+			: null
+		const prompt = r.actionPrompt.replace(/\s+/g, ' ').trim()
+		const snippet = prompt.length > 100 ? `${prompt.slice(0, 100)}…` : prompt
+		const age = minutes === null ? '' : `, started ${minutes} min ago`
+		return `- ${r.actorName} (${r.status}${age}, session ${r.id}): ${snippet}`
+	})
+	return [
+		'Sessions already on the way (queued, starting or running) for the agents in this chat, from any source. If one covers what you are about to start, do not start another; follow it with get_session:',
+		...lines,
+	].join('\n')
 }
 
 /**

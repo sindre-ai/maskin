@@ -310,6 +310,20 @@ setup_mcps() {
     ')
   fi
 
+  # Stdio tool servers inherit the whole container environment, Maskin API key
+  # and GitHub tokens included. Launch each one through env -u for the credential
+  # variables its own env block does not name (mcp-scrub-env.jq has the rules).
+  # MASKIN_MCP_ENV_SCRUB=off is the rollback: it skips the rewrite from the next
+  # session on, no image rebuild (apps/dev forwards it from its own environment).
+  local scrub_filter="${MCP_SCRUB_ENV_FILTER:-/mcp-scrub-env.jq}"
+  if [ "$MASKIN_MCP_ENV_SCRUB" != "off" ]; then
+    if [ -f "$scrub_filter" ]; then
+      merged=$(echo "$merged" | jq -f "$scrub_filter")
+    else
+      echo "[system] WARNING: $scrub_filter missing, stdio tool servers keep the full environment" >&2
+    fi
+  fi
+
   # Only write if there are actual servers configured
   local server_count
   server_count=$(echo "$merged" | jq '.mcpServers | length')

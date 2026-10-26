@@ -170,14 +170,14 @@ describe('useVoiceCall — microphone errors', () => {
 describe('useVoiceCall — session lifecycle', () => {
 	it('disables voice for the server-given retry window when the mint is rate limited', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
-		const err = new ApiError(429, 'Vendor rate limit')
+		const err = new ApiError(429, 'Voice is busy at OpenAI, try again in 120 seconds')
 		err.retryAfterSeconds = 120
 		mockCreate.mockRejectedValue(err)
 		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
 		await act(() => result.current.start())
 		expect(isVoiceUnavailable()).toBe(true)
 		expect(result.current.state).toBe('permission')
-		expect(result.current.notice).toBe('Voice temporarily unavailable — try again in a moment.')
+		expect(result.current.notice).toBe('Voice is busy at OpenAI, try again in 120 seconds')
 		// No session came back, so there is nothing to hang up; the mic is released.
 		expect(mockHangup).not.toHaveBeenCalled()
 		expect(fakeTrack.stop).toHaveBeenCalled()

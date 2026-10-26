@@ -10,7 +10,7 @@ import {
 	S3Client,
 } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
-import type { StorageProvider } from './interface'
+import type { PutOptions, StorageProvider } from './interface'
 
 export interface S3StorageConfig {
 	endpoint: string
@@ -45,7 +45,11 @@ export class S3StorageProvider implements StorageProvider {
 		}
 	}
 
-	async put(key: string, data: Buffer | Uint8Array | Readable): Promise<void> {
+	async put(
+		key: string,
+		data: Buffer | Uint8Array | Readable,
+		options?: PutOptions,
+	): Promise<void> {
 		if (data instanceof Readable) {
 			// Streams of unknown length must use multipart upload — PutObjectCommand
 			// would otherwise emit an undefined `x-amz-decoded-content-length` header.
@@ -62,6 +66,7 @@ export class S3StorageProvider implements StorageProvider {
 				Key: key,
 				Body: data,
 			}),
+			{ abortSignal: options?.signal },
 		)
 	}
 

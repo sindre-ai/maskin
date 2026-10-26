@@ -1,5 +1,10 @@
 import type { Database, Transaction } from '@maskin/db'
-import { actors, conversationParticipants, notifications } from '@maskin/db/schema'
+import {
+	actors,
+	conversationParticipants,
+	notifications,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
@@ -93,6 +98,8 @@ type ChatNotificationArgs = {
 	status: 'pending' | 'seen'
 	objectId?: string | null
 	sessionId?: string | null
+	/** Overrides the per-conversation `chat:<id>` key, which collapses and rate-limits by chat. */
+	collapseKey?: string
 }
 
 /**
@@ -137,7 +144,7 @@ async function createChatNotifications(
 				status: args.status,
 				metadata: {
 					...args.extraMetadata,
-					push_collapse_key: `chat:${args.conversationId}`,
+					push_collapse_key: args.collapseKey ?? `chat:${args.conversationId}`,
 					conversation_id: args.conversationId,
 					message_id: args.messageId,
 				},
@@ -253,6 +260,75 @@ export async function notifyChatReply(
 		})
 	} catch (err) {
 		logger.warn('Failed to create notification for chat reply', {
+			conversationId: msg.conversationId,
+			messageId: msg.messageId,
+			error: String(err),
+		})
+	}
+}
+
+/**
+ * A person was @mentioned in a chat message. Notifies each mentioned human who
+ * is a member of the workspace, except the author. Fires for human-authored
+ * messages and for an agent's mid-turn post (post_conversation_message); an
+ * auto-posted end-of-turn reply is skipped because notifyChatReply already
+ * pushes every human in the chat for it.
+ *
+ * Pushed at once (no delay) and under its own collapse key per message: the
+ * shared `chat:<id>` key would be dropped by the two-minute per-key limit
+ * whenever an agent reply had just pushed for the same chat. Same stored shape
+ * as a chat reply (`good_news`, `seen`, `push_only`), so it never reaches the
+ * inbox or the badge. Mentioned agents are not notified; the responder wakes
+ * them. Best effort: logged and swallowed, never blocks the message.
+ */
+export async function notifyChatMention(
+	db: Db,
+	msg: {
+		workspaceId: string
+		authorId: string
+		conversationId: string
+		messageId: number
+		content: string
+		kind: string | null | undefined
+		metadata: MessageMetadata | null | undefined
+		sessionId: string | null | undefined
+	},
+): Promise<void> {
+	if ((msg.kind ?? 'message') !== 'message') return
+	if (msg.metadata?.source === 'final_output') return
+	const mentioned = Array.from(new Set(msg.metadata?.mentions ?? [])).filter(
+		(id) => id !== msg.authorId,
+	)
+	if (mentioned.length === 0) return
+	try {
+		const author = await actorProfile(db, msg.authorId)
+		const people = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, msg.workspaceId),
+				),
+			)
+			.where(and(inArray(actors.id, mentioned), eq(actors.type, 'human')))
+		await createChatNotifications(db, {
+			workspaceId: msg.workspaceId,
+			authorId: msg.authorId,
+			conversationId: msg.conversationId,
+			messageId: msg.messageId,
+			targets: people.map((p) => p.id),
+			type: 'good_news',
+			status: 'seen',
+			title: `${author?.name ?? 'Someone'} mentioned you`,
+			content: previewText(msg.content),
+			sessionId: msg.sessionId,
+			collapseKey: `chat-mention:${msg.conversationId}:${msg.messageId}`,
+			extraMetadata: { push_category: 'conversation', [PUSH_ONLY_METADATA_KEY]: true },
+		})
+	} catch (err) {
+		logger.warn('Failed to create notification for chat mention', {
 			conversationId: msg.conversationId,
 			messageId: msg.messageId,
 			error: String(err),

@@ -180,17 +180,17 @@ describe('R11 tool input schemas', () => {
 			body: 'Hi.',
 			idempotency_key: 'abc:1',
 		})
-		expect(parsed.attachments).toBeUndefined()
+		expect(parsed).not.toHaveProperty('attachments')
 	})
 
-	it('sendMessageInputSchema passes send_mode through on an attachment', () => {
+	it('sendMessageInputSchema drops attachments: a file goes out only on an approved object', () => {
 		const parsed = sendMessageInputSchema.parse({
 			recipient_urn: 'ACo-abc',
 			body: 'File attached.',
 			idempotency_key: 'abc:2',
-			attachments: [{ ...document(), send_mode: 'file' }],
+			attachments: [document()],
 		})
-		expect(parsed.attachments?.[0]?.send_mode).toBe('file')
+		expect(parsed).not.toHaveProperty('attachments')
 	})
 
 	it('editPostInputSchema accepts a text-only edit', () => {

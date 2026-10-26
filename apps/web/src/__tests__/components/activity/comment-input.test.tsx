@@ -196,7 +196,7 @@ describe('CommentInput', () => {
 		)
 	})
 
-	it('renders no mic when the browser has no SpeechRecognition', () => {
+	it('renders no mic when the browser cannot record audio', () => {
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 		expect(screen.queryByRole('button', { name: /dictate/i })).not.toBeInTheDocument()
 	})

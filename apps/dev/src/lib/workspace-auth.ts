@@ -152,13 +152,23 @@ export async function actorsShareWorkspace(
  * given, the role must be held in that workspace and the target must be a
  * member of it; otherwise any shared workspace counts. Gates writes to another
  * actor's tools and llm_config, which decide what runs in its sessions.
+ * With `humanOnly`, an agent caller never passes, whatever its role.
  */
 export async function isAdminOfSharedWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
 	workspaceId?: string,
+	{ humanOnly = false }: { humanOnly?: boolean } = {},
 ): Promise<boolean> {
+	if (humanOnly) {
+		const [caller] = await db
+			.select({ type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, callerId))
+			.limit(1)
+		if (caller?.type !== 'human') return false
+	}
 	const callerAdminWorkspaces = await db
 		.select({ workspaceId: workspaceMembers.workspaceId })
 		.from(workspaceMembers)

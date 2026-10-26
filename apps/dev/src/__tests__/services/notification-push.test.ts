@@ -37,6 +37,35 @@ function setup(rows: unknown[], enabled = true, queue?: unknown[][]) {
 	return { fanout, sender, bridge }
 }
 
+describe('NotificationPushFanout for human decisions only', () => {
+	it('keeps a plain @mention in the app', async () => {
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input', metadata: { source: 'comment_mention', from_agent: true } })],
+			[], // preferences
+			[], // decision lookup: no decision block
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).not.toHaveBeenCalled()
+	})
+
+	it('leads the push text with the deadline and collapses on the object', async () => {
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input', metadata: { due_at: '2099-10-26T08:00:00Z' } })],
+			[], // preferences
+			[], // decision lookup
+			[{ value: 2 }],
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({
+				body: 'Before Mon 26 Oct 08:00 UTC · World',
+				collapseKey: 'object:obj',
+			}),
+		)
+	})
+})
+
 describe('NotificationPushFanout', () => {
 	it('pushes to the target actor of a created notification', async () => {
 		const { fanout, sender } = setup([notif()])

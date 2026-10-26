@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	type AgentGrantAccess,
@@ -334,7 +333,6 @@ async function bindGithubInstallation(opts: {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()
@@ -1035,7 +1033,6 @@ app.openapi(connectRoute, (async (c) => {
 				.values({
 					type: 'system',
 					name: systemActorName,
-					apiKey: generateApiKey().key,
 					createdBy: actorId,
 				})
 				.returning()
@@ -1094,6 +1091,22 @@ app.openapi(connectRoute, (async (c) => {
 			typeof rawBody.expose_to_agent_sessions === 'boolean'
 				? rawBody.expose_to_agent_sessions
 				: null
+
+		// A key we are about to ignore must fail here, not later. Without this the
+		// fall-through insert below writes empty credentials and the caller gets a
+		// row that looks connected, then a webhook 500 at delivery time.
+		if (resendApiKey && !(providerName === 'resend' && resendSubdomain)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					providerName === 'resend'
+						? 'Resend needs receive_subdomain together with api_key, send both to POST /api/integrations/resend/connect'
+						: `Provider ${providerName} does not take an api_key on connect`,
+					[{ field: 'code', message: 'API_KEY_NOT_ACCEPTED' }],
+				),
+				400,
+			)
+		}
 
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
 			// Server-side guard behind the dialog's advisory pre-check: a malformed
@@ -1827,7 +1840,6 @@ app.openapi(callbackRoute, (async (c) => {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: stateData.actorId,
 			})
 			.returning()
@@ -2487,6 +2499,10 @@ app.openapi(dnsPrecheckRoute, (async (c) => {
 
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 
+// Why a caller is re-minting, so re-mints can be counted per week. Only these
+// two values are ever logged; anything else is ignored and never written out.
+const GITHUB_TOKEN_REMINT_REASONS = ['mcp_age', 'mcp_401'] as const
+
 const githubTokenRoute = createRoute({
 	method: 'get',
 	path: '/{id}/github-token',
@@ -2505,6 +2521,15 @@ const githubTokenRoute = createRoute({
 						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
 						'Ignored when the flag is off — behavior is identical to the legacy path.',
 					example: 'sindre-ai/maskin',
+				}),
+			reason: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; ' +
+						'any other value is ignored and the response is unchanged.',
+					example: 'mcp_age',
 				}),
 		}),
 		headers: workspaceIdHeader,
@@ -2533,7 +2558,7 @@ app.openapi(githubTokenRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { repo } = c.req.valid('query')
+	const { repo, reason } = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [integration] = await db
@@ -2549,6 +2574,14 @@ app.openapi(githubTokenRoute, (async (c) => {
 		)
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
+
+	const remintReason = GITHUB_TOKEN_REMINT_REASONS.find((r) => r === reason)
+	if (remintReason) {
+		logger.info('GitHub token re-mint requested', {
+			integrationId: integration.id,
+			reason: remintReason,
+		})
+	}
 
 	// Recovery path: on stale-cache 404 we re-discover the current install for
 	// the target repo and mint against it, so an App reinstalled mid-session
@@ -3420,11 +3453,33 @@ webhookApp.post('/resend/:token', async (c) => {
 	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
 	// Skjald stores the raw signing secret; Resend needs the API key alongside
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
-	let stored: { accessToken: string; webhookSecret: string }
+	//
+	// A row with no credentials (empty column, or a blob without both keys) is a
+	// permanent misconfiguration, not a transient fault. It answers 409 with a
+	// reason instead of a 500: Resend retries a 5xx on its backoff schedule and
+	// would hit the same failure every time.
+	const credentialsMissing = () => {
+		logger.warn('resend.webhook.credentials_missing', {
+			integration_id: integration.id,
+			workspace_id: integration.workspaceId,
+		})
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This Resend connection has no credentials. Reconnect Resend with POST /api/integrations/resend/connect.',
+				[{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' }],
+				'Reconnect Resend in this workspace, sending api_key and receive_subdomain.',
+			),
+			409,
+		)
+	}
+	if (!integration.credentials) return credentialsMissing()
+
+	let stored: { accessToken?: string; webhookSecret?: string }
 	try {
 		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
-			accessToken: string
-			webhookSecret: string
+			accessToken?: string
+			webhookSecret?: string
 		}
 	} catch {
 		logger.error('Resend webhook: credentials blob is unparseable', {
@@ -3432,9 +3487,11 @@ webhookApp.post('/resend/:token', async (c) => {
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
 	}
+	const { accessToken, webhookSecret } = stored
+	if (!accessToken || !webhookSecret) return credentialsMissing()
 
 	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
-	const verified = verifyResendSvix(body, headers, stored.webhookSecret)
+	const verified = verifyResendSvix(body, headers, webhookSecret)
 	if (!verified) {
 		logger.warn('Resend webhook: signature verification failed', {
 			integrationId: integration.id,
@@ -3549,7 +3606,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// so `events.data` carries the full body when the trigger fires.
 	let enriched: ResendEmailReceived
 	try {
-		enriched = await fetchResendBodyWithRetry(stored.accessToken, emailId, parsed.data)
+		enriched = await fetchResendBodyWithRetry(accessToken, emailId, parsed.data)
 	} catch (err) {
 		logger.error('resend.body_fetch.failed', {
 			email_id: emailId,

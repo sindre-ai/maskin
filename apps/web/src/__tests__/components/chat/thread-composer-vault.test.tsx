@@ -14,21 +14,19 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
 })
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: () => false,
-}))
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
 	useConversation: () => ({
 		data: { participants: [{ actorId: 'agent-1', actorName: 'Infra' }] },
 	}),
+	useConversationMessages: () => ({ data: undefined, hasNextPage: false }),
+	flattenMessagesOldestFirst: () => [],
 }))
 vi.mock('@/hooks/use-sessions', async () => {
 	const actual =
 		await vi.importActual<typeof import('@/hooks/use-sessions')>('@/hooks/use-sessions')
 	return { ...actual, useActiveSessionsForConversation: () => ({ data: sessionsState.data }) }
 })
-vi.mock('@/components/chat/slash-picker', () => ({ SlashPicker: () => null }))
 vi.mock('@/hooks/use-actors', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
 	return {
