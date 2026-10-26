@@ -124,6 +124,7 @@ const ROWS: Record<string, Row> = {
 	list_files: row('List files'),
 	get_file: row('Get file'),
 	update_file: row('Update file', { idempotent: true }),
+	propose_file_changes: row('Propose file changes'),
 	delete_file: row('Delete file', { destructive: true, idempotent: true }),
 	// Events + comments + conversations
 	get_events: row('Get events'),

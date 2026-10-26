@@ -1157,6 +1157,34 @@ export const tools = {
 				.describe('Encoding of `content`. Defaults to "utf8". Use "base64" for binary files.'),
 		}),
 	},
+	propose_file_changes: {
+		description:
+			'Propose text changes to a markdown file instead of overwriting it, so a person can review each change. Pass the file `id` and a list of `changes`, each with `old_text` (the exact text to replace, copied from the file), `new_text` and an optional `reason`. The shape matches the edit tool coding agents already use. Each `old_text` is matched against the raw markdown source and must occur exactly once, so include enough surrounding text to be unique; changes may not overlap. If any change fails the whole call is rejected with the change index and a plain message, and nothing is stored. Limits: 50 changes, `old_text` up to 4000 characters, `new_text` up to 8000. Markdown files only (.md, .markdown or text/markdown). The file is not changed: the proposal is stored and the driver of each object the file is attached to is notified. Returns the proposal id and the file URL. Use update_file instead for a new file or a full rewrite that nobody needs to review.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+			summary: z
+				.string()
+				.max(1000)
+				.optional()
+				.describe('One line on what the proposal does overall.'),
+			changes: z
+				.array(
+					z.object({
+						old_text: z
+							.string()
+							.min(1)
+							.max(4000)
+							.describe('Exact text to replace, from the raw markdown. Must match exactly once.'),
+						new_text: z.string().max(8000).describe('Replacement text. Empty string deletes.'),
+						reason: z.string().max(1000).optional().describe('Why, shown to the reviewer.'),
+					}),
+				)
+				.min(1)
+				.max(50)
+				.describe('The proposed changes, up to 50. Must not overlap.'),
+		}),
+	},
 	delete_file: {
 		description: 'Delete a file from the workspace. Bytes are removed from storage.',
 		inputSchema: z.object({

@@ -5260,6 +5260,32 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'propose_file_changes',
+		{
+			description: tools.propose_file_changes.description,
+			inputSchema: tools.propose_file_changes.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const body: Record<string, unknown> = { changes: args.changes }
+			if (args.summary !== undefined) body.summary = args.summary
+			const result = await apiCall(config, 'POST', `/api/files/${args.id}/proposals`, body, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta(
+					'propose_file_changes',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_file',
 		{
 			description: tools.delete_file.description,

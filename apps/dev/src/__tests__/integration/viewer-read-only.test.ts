@@ -24,6 +24,7 @@ const { default: relationshipsRoutes } = await import('../../routes/relationship
 const { default: graphRoutes } = await import('../../routes/graph')
 const { default: filesRoutes } = await import('../../routes/files')
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
+const { default: fileProposalsRoutes } = await import('../../routes/file-proposals')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
 const { default: voiceSessionsRoutes } = await import('../../routes/voice-sessions')
@@ -54,6 +55,7 @@ function createApp() {
 	app.route('/api/graph', graphRoutes as never)
 	app.route('/api/files', filesRoutes as never)
 	app.route('/api/files', fileCommentsRoutes as never)
+	app.route('/api/files', fileProposalsRoutes as never)
 	app.route('/api/events', eventsRoutes as never)
 	app.route('/api/imports', importsRoutes as never)
 	app.route('/api/voice-sessions', voiceSessionsRoutes as never)
@@ -205,6 +207,23 @@ describe('Viewer role is read-only', () => {
 
 		const read = await app.request(jsonGet(base, bearerOnly))
 		expect(read.status).toBe(200)
+	})
+
+	it('returns 403 to a viewer on submitting a file proposal', async () => {
+		const app = createApp()
+		const [file] = await db
+			.insert(files)
+			.values(buildFile({ workspaceId, createdBy: getTestActorId() }) as never)
+			.returning()
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/files/${file?.id}/proposals`,
+				{ changes: [{ old_text: 'a', new_text: 'b' }] },
+				{ Authorization: `Bearer ${viewerKey}` },
+			),
+		)
+		expect(res.status).toBe(403)
 	})
 
 	it('returns 403 to a viewer on POST /api/events and 200 on event history', async () => {

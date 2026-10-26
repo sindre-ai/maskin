@@ -470,6 +470,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Files
 	create_file: 'file_create',
 	update_file: 'file_update',
+	propose_file_changes: 'file_propose',
 	delete_file: 'file_delete',
 	// Extensions / modules
 	create_extension: 'extension_create',

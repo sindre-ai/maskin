@@ -40,6 +40,8 @@ const KEPT: Record<string, string> = {
 	conversation_pending_turns: 'agent turn queue of a kept conversation (agent actor, not a person)',
 	files: 'content authored by the person is kept',
 	file_comments: 'content authored by the person is kept',
+	file_proposals: 'content authored by the person is kept, attributed to the deleted user',
+	file_proposal_changes: 'decided_by on a kept proposal; the decision stays with the deleted user',
 	workspace_skills: 'created_by on workspace content',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
