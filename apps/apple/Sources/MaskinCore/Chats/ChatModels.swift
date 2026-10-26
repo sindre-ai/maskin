@@ -193,6 +193,10 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 		metadata?["source"]?.stringValue == "final_output" || metadata?["final_output"] != nil
 	}
 
+	/// A spoken line of a live voice call, which the server saves into the thread as the call runs
+	/// (`metadata.source == 'voice'`).
+	public var isVoiceTranscript: Bool { metadata?["source"]?.stringValue == "voice" }
+
 	/// One to three emoji and nothing else: shown large, without a bubble, as chat apps do.
 	public var isEmojiOnly: Bool {
 		let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
