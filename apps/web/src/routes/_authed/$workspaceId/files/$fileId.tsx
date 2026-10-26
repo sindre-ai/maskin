@@ -1,3 +1,4 @@
+import { useEditableMarkdown } from '@/components/files/editable-markdown-stage'
 import { isHtml } from '@/components/files/file-body'
 import { PinFileButton } from '@/components/files/pin-file-button'
 import { ProvenanceStrip } from '@/components/files/provenance-strip'
@@ -44,6 +45,12 @@ import {
 import { decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
 import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import {
+	type TextCommentScrollRequest,
+	type TextCommentsContextValue,
+	TextCommentsProvider,
+	textCommentCardId,
+} from '@/lib/text-comments-context'
+import {
 	MOCKUP_VIEWPORT_PRESETS,
 	type MockupViewportPreset,
 	type ViewerVariantOverride,
@@ -51,9 +58,10 @@ import {
 } from '@/lib/viewer-detect'
 import { pickTarget, resolveProvenance } from '@/lib/viewer-provenance'
 import { useWorkspace } from '@/lib/workspace-context'
+import type { TextCommentHighlight } from '@maskin/markdown/react/editor'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Download, Link2, MapPin, MessageSquare, MoreHorizontal } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 // URL search params for the deep-link contract (spec §Solution sketch):
 //   /files/$fileId?round=<uuid>&panel=open
@@ -126,6 +134,14 @@ function FileViewerPage() {
 	const [linkedOpen, setLinkedOpen] = useState(false)
 	const [filter, setFilter] = useState<ReviewFilter>('open')
 	const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+
+	// Comments on selected text. The document editor draws the highlights; this
+	// page owns which card is open, which quotes no longer match, and the
+	// request for the editor to scroll to a highlight.
+	const textMode = useEditableMarkdown(file)
+	const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
+	const [orphanedIds, setOrphanedIds] = useState<ReadonlySet<string>>(() => new Set())
+	const [scrollRequest, setScrollRequest] = useState<TextCommentScrollRequest | null>(null)
 
 	// Slice 4 responsive layout (spec §Responsive, 4 breakpoints):
 	// - lg+ (≥1024): panel is an inline right rail; thumbnail rail visible on xl+.
@@ -225,6 +241,7 @@ function FileViewerPage() {
 					page: draft.page,
 					positionDoc: draft.positionDoc,
 					selector: draft.selector,
+					textAnchor: draft.textAnchor,
 					parentId: draft.parentId,
 				},
 				{
@@ -253,12 +270,15 @@ function FileViewerPage() {
 				const postedTempIds: string[] = []
 				for (const draft of drafts) {
 					if (draft.body.trim().length === 0) continue
+					// Text comments never go into a round: nothing hands the quote to an agent.
+					if (draft.textAnchor) continue
 					try {
 						const posted = await createComment.mutateAsync({
 							body: draft.body,
 							page: draft.page,
 							positionDoc: draft.positionDoc,
 							selector: draft.selector,
+							textAnchor: draft.textAnchor,
 							parentId: draft.parentId,
 						})
 						commentIds.push(posted.id)
@@ -273,7 +293,7 @@ function FileViewerPage() {
 					}
 				}
 				for (const row of comments) {
-					if (row.roundId === null) commentIds.push(row.id)
+					if (row.roundId === null && !row.textAnchor) commentIds.push(row.id)
 				}
 				if (commentIds.length === 0) {
 					setSendPhase('idle')
@@ -315,6 +335,79 @@ function FileViewerPage() {
 			actors,
 			completeRound,
 			removeDraft,
+		],
+	)
+
+	// Highlights for the document editor: saved comments and unsent drafts that
+	// carry a text anchor. Resolved ones stay clickable but lose their background.
+	const textHighlights = useMemo<TextCommentHighlight[]>(() => {
+		const saved: TextCommentHighlight[] = comments.flatMap((c) =>
+			c.textAnchor && !c.parentId
+				? [{ id: c.id, anchor: c.textAnchor, resolved: Boolean(c.resolvedAt) }]
+				: [],
+		)
+		const unsent: TextCommentHighlight[] = drafts.flatMap((d) =>
+			d.textAnchor && d.fileId === fileId ? [{ id: d.tempId, anchor: d.textAnchor }] : [],
+		)
+		return [...saved, ...unsent]
+	}, [comments, drafts, fileId])
+
+	const scrollNonce = useRef(0)
+	// A card was clicked (or its quote): mark it and ask the editor for its highlight.
+	const handleActivateComment = useCallback((id: string, options?: { focus?: boolean }) => {
+		setActiveCommentId(id)
+		scrollNonce.current += 1
+		setScrollRequest({ id, focus: options?.focus ?? false, nonce: scrollNonce.current })
+	}, [])
+	// A highlight was clicked: mark its card, open the panel and bring the card into view.
+	const handleHighlightClick = useCallback((id: string | null) => {
+		setActiveCommentId(id)
+		if (id) setPanelOpen(true)
+	}, [])
+	useEffect(() => {
+		if (!activeCommentId || !panelOpen) return
+		const frame = requestAnimationFrame(() => {
+			document
+				.getElementById(textCommentCardId(activeCommentId))
+				?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+		})
+		return () => cancelAnimationFrame(frame)
+	}, [activeCommentId, panelOpen])
+
+	const handleTextCompose = useCallback<TextCommentsContextValue['onCompose']>(
+		({ anchor, position, body }) => {
+			const draft = addDraft({
+				fileId,
+				page: null,
+				positionDoc: position,
+				textAnchor: anchor,
+				body,
+			})
+			// Below lg the panel is a sheet that would cover the document right after
+			// saving; the Comments count in the header already shows the new draft.
+			if (panelLayout === 'inline') setPanelOpen(true)
+			setActiveCommentId(draft.tempId)
+		},
+		[addDraft, fileId, panelLayout],
+	)
+	const handleOrphansChange = useCallback((ids: string[]) => setOrphanedIds(new Set(ids)), [])
+
+	const textCommentsValue = useMemo<TextCommentsContextValue>(
+		() => ({
+			highlights: textHighlights,
+			activeId: activeCommentId,
+			onCompose: handleTextCompose,
+			onHighlightClick: handleHighlightClick,
+			onOrphansChange: handleOrphansChange,
+			scrollRequest,
+		}),
+		[
+			textHighlights,
+			activeCommentId,
+			handleTextCompose,
+			handleHighlightClick,
+			handleOrphansChange,
+			scrollRequest,
 		],
 	)
 
@@ -429,6 +522,10 @@ function FileViewerPage() {
 			updateComment.mutate({ commentId: c.id, data: { resolved: true } }),
 		onReopenComment: (c: (typeof comments)[number]) =>
 			updateComment.mutate({ commentId: c.id, data: { resolved: false } }),
+		textMode,
+		activeCommentId,
+		orphanedIds,
+		onActivateComment: handleActivateComment,
 		roundFilter: search.round ?? null,
 		onClearRoundFilter: () =>
 			navigate({
@@ -464,20 +561,28 @@ function FileViewerPage() {
 							setAnnotateMode(!annotateMode)
 							if (!annotateMode) setPanelOpen(true)
 						}}
+						commentCount={
+							textMode
+								? comments.filter((c) => !c.resolvedAt).length +
+									drafts.filter((d) => d.fileId === fileId).length
+								: null
+						}
 					/>
 				}
 			/>
 			<ViewerShell panelOpen={panelOpen} strip={strip}>
 				<div className="flex min-h-0 flex-1 overflow-hidden">
 					<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-						<ViewerStage
-							file={file}
-							variantOverride={variantOverride}
-							mockupPreset={mockupPreset}
-							annotateMode={annotateMode}
-							pins={stagePins}
-							onPinPlace={handlePinPlace}
-						/>
+						<TextCommentsProvider value={textCommentsValue}>
+							<ViewerStage
+								file={file}
+								variantOverride={variantOverride}
+								mockupPreset={mockupPreset}
+								annotateMode={annotateMode}
+								pins={stagePins}
+								onPinPlace={handlePinPlace}
+							/>
+						</TextCommentsProvider>
 					</div>
 					{panelOpen && panelLayout === 'inline' && (
 						<ReviewPanel {...commonPanelProps} layout="inline" />
@@ -559,6 +664,7 @@ function TopBarActions({
 	onOpenLinked,
 	annotateMode,
 	onToggleAnnotate,
+	commentCount,
 }: {
 	file: FileDetail
 	isPinned: boolean
@@ -572,6 +678,9 @@ function TopBarActions({
 	onOpenLinked: () => void
 	annotateMode: boolean
 	onToggleAnnotate: () => void
+	// Set when the file opens in the document editor: the panel button then reads
+	// "Comments {n}" at every width, since comments are made by selecting text.
+	commentCount: number | null
 }) {
 	return (
 		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
@@ -607,12 +716,20 @@ function TopBarActions({
 				variant={panelOpen ? 'secondary' : 'ghost'}
 				size="sm"
 				onClick={onTogglePanel}
-				aria-label="Toggle review panel"
+				aria-label={
+					commentCount === null
+						? 'Toggle review panel'
+						: `Comments ${commentCount}, toggle review panel`
+				}
 				aria-pressed={panelOpen}
 				title="Toggle review panel (C)"
 			>
 				<MessageSquare size={14} />
-				<span className="hidden md:inline">Review</span>
+				{commentCount === null ? (
+					<span className="hidden md:inline">Review</span>
+				) : (
+					<span>Comments {commentCount}</span>
+				)}
 			</Button>
 			<ViewerMoreMenu
 				file={file}

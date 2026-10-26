@@ -204,6 +204,15 @@ function makeFakeDb(
 }
 
 /**
+ * settleSession revokes the session's API keys after its terminal write. That query runs against
+ * the api_keys table, which the schema and drizzle stubs below don't model, so it is stubbed out
+ * here; its own behaviour is covered in packages/auth.
+ */
+vi.mock('@maskin/auth', () => ({
+	revokeSessionKeys: vi.fn(async () => []),
+}))
+
+/**
  * Replace drizzle's opaque predicate types with a `__pred` function the fake
  * DB can evaluate against rows in memory. Real drizzle ignores the body — only
  * the fake reads `__pred`.

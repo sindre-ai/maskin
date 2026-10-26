@@ -1,7 +1,10 @@
 import Foundation
+import HTTPTypes
 import MaskinAPI
+import OpenAPIRuntime
 import Testing
 
+@testable import MaskinAPI
 @testable import MaskinCore
 
 @Suite("RealtimeCallMachine") struct RealtimeCallMachineTests {
@@ -126,46 +129,127 @@ import Testing
 	}
 }
 
-@Suite("URLSessionVoiceCalls") struct URLSessionVoiceCallsTests {
-	private let calls = URLSessionVoiceCalls(
-		baseURL: URL(string: "https://example.test")!, clientSource: "ios",
-		credentials: { MaskinCredentials(apiKey: "ank_test", workspaceId: "ws-1") })
+/// Answers every request with one scripted status and body, and records what was sent.
+private final class VoiceWire: ClientTransport, @unchecked Sendable {
+	struct Seen { var method: String; var path: String; var headers: [String: String]; var body: Data }
+	private let lock = NSLock()
+	private var _seen: [Seen] = []
+	var seen: [Seen] { lock.withLock { _seen } }
+	let status: Int
+	let json: String
 
-	@Test("requests carry the key, the workspace and the client source")
-	func request() throws {
-		let request = try calls.makeRequest(
-			path: "voice-sessions", body: ["agent_actor_id": "a-1"],
-			credentials: MaskinCredentials(apiKey: "ank_test", workspaceId: "ws-1"))
-		#expect(request.url?.absoluteString == "https://example.test/api/voice-sessions")
-		#expect(request.httpMethod == "POST")
-		#expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ank_test")
-		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == "ws-1")
-		#expect(request.value(forHTTPHeaderField: "X-Client-Source") == "ios")
+	init(status: Int, json: String) {
+		self.status = status
+		self.json = json
+	}
+
+	func send(
+		_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String
+	) async throws -> (HTTPResponse, HTTPBody?) {
+		var bytes = Data()
+		if let body { for try await chunk in body { bytes.append(contentsOf: chunk) } }
+		var headers: [String: String] = [:]
+		for field in request.headerFields { headers[field.name.canonicalName] = field.value }
+		lock.withLock {
+			_seen.append(Seen(method: request.method.rawValue, path: request.path ?? "", headers: headers, body: bytes))
+		}
+		var response = HTTPResponse(status: .init(code: status))
+		response.headerFields[.contentType] = "application/json"
+		return (response, HTTPBody(json))
+	}
+}
+
+private let errorBody = #"{"error":{"code":"x","message":"x"}}"#
+
+@Suite("URLSessionVoiceCalls") struct URLSessionVoiceCallsTests {
+	private func calls(_ transport: VoiceWire) -> URLSessionVoiceCalls {
+		URLSessionVoiceCalls(
+			client: Client(
+				serverURL: URL(string: "https://example.test")!, transport: transport,
+				middlewares: [
+					MaskinAuthMiddleware(
+						credentials: { MaskinCredentials(apiKey: "ank_test", workspaceId: "ws-1") },
+						clientSource: "ios")
+				]))
+	}
+
+	private func failure(_ status: Int, json: String = errorBody) async -> VoiceCallFailure? {
+		do {
+			_ = try await calls(VoiceWire(status: status, json: json)).create(agentActorID: "a-1", conversationID: nil)
+			return nil
+		} catch { return error as? VoiceCallFailure }
+	}
+
+	@Test("create posts to the voice route with the key, the workspace and the client source")
+	func request() async throws {
+		let transport = VoiceWire(status: 201, json: #"{"voice_session_id":"vs-1"}"#)
+		let id = try await calls(transport).create(agentActorID: "a-1", conversationID: "c-1")
+		#expect(id == "vs-1")
+		let seen = try #require(transport.seen.first)
+		#expect(seen.method == "POST" && seen.path == "/api/voice-sessions")
+		#expect(seen.headers["authorization"] == "Bearer ank_test")
+		#expect(seen.headers["x-workspace-id"] == "ws-1")
+		#expect(seen.headers["x-client-source"] == "ios")
 	}
 
 	@Test("the create body carries the chat the call was started from, and leaves it out otherwise")
-	func createBody() throws {
-		func json(_ body: URLSessionVoiceCalls.CreateBody) throws -> [String: String] {
-			let data = try JSONEncoder().encode(body)
-			return try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
+	func createBody() async throws {
+		func sent(_ conversationID: String?) async throws -> [String: String] {
+			let transport = VoiceWire(status: 201, json: #"{"voice_session_id":"vs-1"}"#)
+			_ = try await calls(transport).create(agentActorID: "a-1", conversationID: conversationID)
+			let body = try #require(transport.seen.first?.body)
+			return try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
 		}
-		let fromChat = try json(.init(agent_actor_id: "a-1", conversation_id: "c-1"))
-		#expect(fromChat == ["agent_actor_id": "a-1", "conversation_id": "c-1"])
-		let fresh = try json(.init(agent_actor_id: "a-1", conversation_id: nil))
-		#expect(fresh == ["agent_actor_id": "a-1"])
+		#expect(try await sent("c-1") == ["agent_actor_id": "a-1", "conversation_id": "c-1"])
+		#expect(try await sent(nil) == ["agent_actor_id": "a-1"])
+	}
+
+	@Test("offer and hangup go to the session's own routes and read the answers")
+	func offerAndHangup() async throws {
+		let offerWire = VoiceWire(
+			status: 200, json: #"{"sdp":"answer","tools_available":false,"persist_transcripts":true}"#)
+		let answer = try await calls(offerWire).offer(voiceSessionID: "vs-1", sdp: "offer")
+		#expect(answer == VoiceCallAnswer(sdp: "answer", toolsAvailable: false, persistTranscripts: true))
+		#expect(offerWire.seen.first?.path == "/api/voice-sessions/vs-1/offer")
+
+		let hangupWire = VoiceWire(
+			status: 200,
+			json:
+				#"{"voice_session_id":"vs-1","status":"ended","ended_reason":"user_hangup","ended_at":null,"duration_ms":1000,"total_cost_usd":null,"conversation_id":"c-9"}"#
+		)
+		let conversationID = try await calls(hangupWire).hangup(
+			voiceSessionID: "vs-1", reason: .userHangup, inputAudioSeconds: -3, outputAudioSeconds: 7)
+		#expect(conversationID == "c-9")
+		let seen = try #require(hangupWire.seen.first)
+		#expect(seen.path == "/api/voice-sessions/vs-1/hangup")
+		let body = try #require(try JSONSerialization.jsonObject(with: seen.body) as? [String: Any])
+		#expect(body["reason"] as? String == "user_hangup")
+		#expect(body["input_audio_seconds"] as? Int == 0)
+		#expect(body["output_audio_seconds"] as? Int == 7)
 	}
 
 	@Test("status codes map to the failure the call screen reacts to")
-	func failures() {
-		let rate = Data(#"{"error":{"code":"RATE_LIMITED","message":"x"},"retry_after_seconds":120}"#.utf8)
-		let message = Data(#"{"error":{"code":"INTERNAL_ERROR","message":"Vendor connect failed (status 500)"}}"#.utf8)
-		#expect(URLSessionVoiceCalls.failure(status: 404, body: Data()) == .unavailable)
-		#expect(URLSessionVoiceCalls.failure(status: 400, body: Data()) == .notAnAgent)
-		#expect(URLSessionVoiceCalls.failure(status: 409, body: Data()) == .alreadyInCall)
-		#expect(URLSessionVoiceCalls.failure(status: 429, body: rate) == .rateLimited(retryAfterSeconds: 120))
+	func failures() async {
+		#expect(await failure(404) == .unavailable)
+		#expect(await failure(400) == .notAnAgent)
+		#expect(await failure(409) == .alreadyInCall)
 		#expect(
-			URLSessionVoiceCalls.failure(status: 500, body: message)
+			await failure(500, json: #"{"error":{"code":"INTERNAL_ERROR","message":"Vendor connect failed (status 500)"}}"#)
 				== .server("Vendor connect failed (status 500)"))
+		#expect(await failure(502, json: "{}") == .server("Voice call failed (502)."))
+	}
+
+	@Test("a rate limit on the offer carries the wait the server asked for")
+	func rateLimited() async {
+		let wire = VoiceWire(
+			status: 429,
+			json: #"{"error":{"code":"RATE_LIMITED","message":"x"},"retry_after_seconds":120}"#)
+		do {
+			_ = try await calls(wire).offer(voiceSessionID: "vs-1", sdp: "offer")
+			Issue.record("expected the offer to fail")
+		} catch {
+			#expect(error as? VoiceCallFailure == .rateLimited(retryAfterSeconds: 120))
+		}
 	}
 
 	@Test("only the failures where the dictation call still works fall back to it")

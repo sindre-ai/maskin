@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { issueApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -133,6 +134,9 @@ export function setVoiceInvokeToolFactory(fn: VoiceInvokeToolFactory | null): vo
 // ── Insert-failure + cleanup helpers ─────────────────────────────────
 
 const PG_UNIQUE_VIOLATION = '23505'
+
+/** Lifetime of the key a voice call uses to run the agent's tools. */
+const VOICE_AGENT_KEY_TTL_MS = 2 * 60 * 60 * 1000
 
 /**
  * Drizzle wraps driver errors, so the Postgres code lives on err.cause.code
@@ -439,18 +443,17 @@ app.openapi(postOfferRoute, async (c) => {
 		.select({
 			name: actors.name,
 			systemPrompt: actors.systemPrompt,
-			apiKey: actors.apiKey,
 			tools: actors.tools,
 		})
 		.from(actors)
 		.where(eq(actors.id, session.agentActorId))
 		.limit(1)
-	if (!agent?.apiKey) {
-		logger.error('Voice session agent has no API key', {
+	if (!agent) {
+		logger.error('Voice session agent not found', {
 			voice_session_id: session.id,
 			agent_actor_id: session.agentActorId,
 		})
-		captureVoiceException(session.id, new Error('Voice session agent has no API key'))
+		captureVoiceException(session.id, new Error('Voice session agent not found'))
 		await releasePendingSession(db, session.id)
 		return c.json(createApiError('INTERNAL_ERROR', 'Voice session cannot run tools'), 500)
 	}
@@ -509,9 +512,16 @@ app.openapi(postOfferRoute, async (c) => {
 
 	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
 	try {
+		// Stored keys are hashed, so the call gets its own. The daily cap keeps one call under an
+		// hour; the expiry is the backstop that closes the key if the call never ends cleanly.
+		const { key: agentApiKey } = await issueApiKey(db, {
+			actorId: session.agentActorId,
+			kind: 'session',
+			expiresAt: new Date(Date.now() + VOICE_AGENT_KEY_TTL_MS),
+		})
 		toolkit = await invokeToolFactory({
 			db,
-			apiKey: agent.apiKey,
+			apiKey: agentApiKey,
 			workspaceId: session.workspaceId,
 			agentTools: agent.tools,
 		})

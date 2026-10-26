@@ -1,5 +1,5 @@
 import { NotificationInput } from '@/components/pulse/notification-input'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 describe('NotificationInput', () => {
@@ -247,5 +247,36 @@ describe('NotificationInput', () => {
 			await user.click(screen.getByRole('button', { name: 'Confirm' }))
 			expect(onSubmit).toHaveBeenCalledWith(expect.arrayContaining(['one', 'three']))
 		})
+	})
+})
+
+describe('NotificationInput behind rich-markdown-editor', () => {
+	const multiline = { input_type: 'text', multiline: true }
+
+	afterEach(() => {
+		localStorage.removeItem('ff:rich-markdown-editor')
+	})
+
+	it('keeps the textarea for multiline text when the flag is off', () => {
+		render(<NotificationInput metadata={multiline} onSubmit={vi.fn()} />)
+		expect(screen.getByPlaceholderText('Type your response...').tagName).toBe('TEXTAREA')
+	})
+
+	it('mounts the notification-variant editor for multiline text when the flag is on', async () => {
+		localStorage.setItem('ff:rich-markdown-editor', 'on')
+		const { container } = render(<NotificationInput metadata={multiline} onSubmit={vi.fn()} />)
+		await waitFor(() => expect(container.querySelector('.ProseMirror')).not.toBeNull(), {
+			timeout: 10000,
+		})
+		expect(container.querySelector('textarea')).toBeNull()
+	})
+
+	it('leaves the single-line input alone when the flag is on', () => {
+		localStorage.setItem('ff:rich-markdown-editor', 'on')
+		const { container } = render(
+			<NotificationInput metadata={{ input_type: 'text' }} onSubmit={vi.fn()} />,
+		)
+		expect(screen.getByPlaceholderText('Type your response...').tagName).toBe('INPUT')
+		expect(container.querySelector('.ProseMirror')).toBeNull()
 	})
 })

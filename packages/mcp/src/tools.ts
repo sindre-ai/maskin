@@ -1785,7 +1785,7 @@ export const tools = {
 			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags, due_at. Other keys pass through. Set due_at (ISO 8601 time, e.g. 2026-10-26T08:00:00Z) when the human must decide before a time: their push then starts with "Before <time>". Leave it out when nothing expires.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z

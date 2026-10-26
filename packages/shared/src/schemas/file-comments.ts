@@ -13,11 +13,26 @@ export type PositionDoc = z.infer<typeof positionDocSchema>
 
 export const MAX_FILE_COMMENT_BODY = 4000
 
+// Text comments anchor to the quoted passage plus a little context on each
+// side (about 24 characters) so a duplicate quote can be told apart. The
+// context fields are capped so the jsonb column stays bounded.
+export const MAX_TEXT_ANCHOR_QUOTE = 500
+export const MAX_TEXT_ANCHOR_CONTEXT = 100
+
+export const textAnchorSchema = z.object({
+	quote: z.string().min(1).max(MAX_TEXT_ANCHOR_QUOTE),
+	prefix: z.string().max(MAX_TEXT_ANCHOR_CONTEXT),
+	suffix: z.string().max(MAX_TEXT_ANCHOR_CONTEXT),
+})
+
+export type TextAnchor = z.infer<typeof textAnchorSchema>
+
 export const createFileCommentSchema = z.object({
 	body: z.string().min(1).max(MAX_FILE_COMMENT_BODY),
 	page: z.number().int().nonnegative().nullable().optional(),
 	positionDoc: positionDocSchema,
 	selector: z.string().max(1000).nullable().optional(),
+	textAnchor: textAnchorSchema.nullable().optional(),
 	parentId: z.string().uuid().nullable().optional(),
 })
 
@@ -54,6 +69,9 @@ export const fileCommentSchema = z.object({
 	page: z.number().int().nullable(),
 	positionDoc: positionDocSchema,
 	selector: z.string().nullable(),
+	// Always present in API responses (null for pin comments); optional in the
+	// type so existing DTO fixtures stay valid.
+	textAnchor: textAnchorSchema.nullable().optional(),
 	authorId: z.string().uuid(),
 	body: z.string(),
 	parentId: z.string().uuid().nullable(),
