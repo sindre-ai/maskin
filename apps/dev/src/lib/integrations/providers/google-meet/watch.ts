@@ -61,6 +61,50 @@ interface WorkspaceEventsSubscription {
 	uid?: string
 }
 
+/**
+ * `subscriptions.create` is a long-running operation: the POST answers with
+ * `{ name: "operations/...", done, response? }`, not the subscription. Storing
+ * that `name` as the subscription name made every renewal hit
+ * `operations/...:reactivate` (404) and then a DELETE on the same path.
+ */
+interface WorkspaceEventsOperation {
+	name: string
+	done?: boolean
+	response?: WorkspaceEventsSubscription
+	error?: { code?: number; message?: string }
+}
+
+const OPERATION_POLL_ATTEMPTS = 5
+const OPERATION_POLL_DELAY_MS = 1_000
+
+export function isOperationName(name: string | undefined): boolean {
+	return !!name && name.startsWith('operations/')
+}
+
+/** Unwrap a create response into the subscription, polling the operation if needed. */
+export async function resolveSubscription(
+	accessToken: string,
+	created: WorkspaceEventsSubscription | WorkspaceEventsOperation,
+	sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<WorkspaceEventsSubscription> {
+	if (!isOperationName(created.name)) return created as WorkspaceEventsSubscription
+	let op = created as WorkspaceEventsOperation
+	for (let attempt = 0; !op.done && attempt < OPERATION_POLL_ATTEMPTS; attempt++) {
+		await sleep(OPERATION_POLL_DELAY_MS)
+		op = await callGoogleApi<WorkspaceEventsOperation>(
+			`https://workspaceevents.googleapis.com/v1/${op.name}`,
+			accessToken,
+		)
+	}
+	if (!op.done) throw new Error(`Meet subscription operation ${op.name} did not finish in time`)
+	if (op.error || !op.response?.name) {
+		throw new Error(
+			`Meet subscription operation ${op.name} failed: ${op.error?.message ?? 'no subscription in response'}`,
+		)
+	}
+	return op.response
+}
+
 async function createSubscription(
 	accessToken: string,
 	peopleId: string,
@@ -76,10 +120,12 @@ async function createSubscription(
 	// Workspace Events uses a POST with no wait — returns the subscription
 	// resource inline. If Google surfaces a validation error we hand it back as
 	// a normalized MeetToolError so callers upstream can log a stable code.
-	return callGoogleApi<WorkspaceEventsSubscription>(WORKSPACE_EVENTS_BASE, accessToken, {
-		method: 'POST',
-		body,
-	})
+	const created = await callGoogleApi<WorkspaceEventsSubscription | WorkspaceEventsOperation>(
+		WORKSPACE_EVENTS_BASE,
+		accessToken,
+		{ method: 'POST', body },
+	)
+	return resolveSubscription(accessToken, created)
 }
 
 async function reactivateOrRecreate(
@@ -201,9 +247,12 @@ export async function renewMeetWatch(db: Database, integrationId: string): Promi
 	const accessToken = await tokenManager.getValidToken(db, integrationId, provider)
 
 	const existingName = cfg.meet?.subscriptionName
-	const subscription = existingName
-		? await reactivateOrRecreate(accessToken, existingName, peopleId, topic)
-		: await createSubscription(accessToken, peopleId, topic)
+	// A stored "operations/..." name is the create operation saved by mistake, not
+	// a subscription, so reactivate and delete cannot work on it. Create a new one.
+	const subscription =
+		existingName && !isOperationName(existingName)
+			? await reactivateOrRecreate(accessToken, existingName, peopleId, topic)
+			: await createSubscription(accessToken, peopleId, topic)
 	const expiresAt = parseExpireTime(subscription.expireTime)
 	await db
 		.update(integrations)
