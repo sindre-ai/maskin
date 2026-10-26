@@ -5,6 +5,7 @@ import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytic
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
+import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -194,30 +195,47 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			// workspace_id the model passes can never point a tool at another workspace.
 			const { [VOICE_CONFIRM_ARG]: confirmation, ...toolArgs } = rawArgs as Record<string, unknown>
 			const args = { ...toolArgs, workspace_id: session.workspaceId }
-			const review = await writeGate.review(
-				msg.name,
-				args,
-				typeof confirmation === 'string' ? confirmation : null,
-			)
-			if (review.kind !== 'run') {
-				errorCode =
-					review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
-				output = JSON.stringify({
-					error: heldMessage(msg.name, review),
-					error_code: errorCode,
-				})
-			} else {
-				const result = await invokeTool(msg.name, args, {
-					actorId: session.agentActorId,
-					workspaceId: session.workspaceId,
-				})
-				const { text, isError } = toolResultText(result)
-				if (isError) {
-					errorCode = 'voice_tool_failed'
-					output = JSON.stringify({ error: cap(text), error_code: errorCode })
-				} else {
+			if (msg.name === VOICE_SHOW_IN_CHAT_TOOL) {
+				// Handled here, not by the MCP server: it only ever writes into this call's own chat.
+				try {
+					const shown = await showInChat({ db, session, agentName, args: toolArgs })
+					if (shown.conversationId !== knownConversationId) {
+						knownConversationId = shown.conversationId
+						send({ type: 'conversation', conversation_id: shown.conversationId })
+					}
 					ok = true
-					output = cap(text)
+					output = JSON.stringify({ shown: true })
+				} catch (err) {
+					if (!(err instanceof VoiceShowInChatError)) throw err
+					errorCode = 'voice_tool_failed'
+					output = JSON.stringify({ error: err.message, error_code: errorCode })
+				}
+			} else {
+				const review = await writeGate.review(
+					msg.name,
+					args,
+					typeof confirmation === 'string' ? confirmation : null,
+				)
+				if (review.kind !== 'run') {
+					errorCode =
+						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					output = JSON.stringify({
+						error: heldMessage(msg.name, review),
+						error_code: errorCode,
+					})
+				} else {
+					const result = await invokeTool(msg.name, args, {
+						actorId: session.agentActorId,
+						workspaceId: session.workspaceId,
+					})
+					const { text, isError } = toolResultText(result)
+					if (isError) {
+						errorCode = 'voice_tool_failed'
+						output = JSON.stringify({ error: cap(text), error_code: errorCode })
+					} else {
+						ok = true
+						output = cap(text)
+					}
 				}
 			}
 		} catch (err) {
