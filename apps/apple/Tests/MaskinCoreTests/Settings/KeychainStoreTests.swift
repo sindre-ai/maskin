@@ -122,3 +122,19 @@ struct KeychainStoreTests {
 		#expect(ProfileMenuItem.keychain.title == "Keychain")
 	}
 }
+
+@Suite("APIKeychainSource")
+struct APIKeychainSourceTests {
+	/// The routes reject unknown fields (`.strict()`), so an extra one fails every add with a 400.
+	@Test func anApiKeyIsSentWithExactlyTheFieldsTheServerAccepts() {
+		let (path, body) = APIKeychainSource.addRequest(name: "Stripe", value: .apiKey("sk"))
+		#expect(path == "api/integrations/byo-apikey")
+		#expect(Set(body.keys) == ["displayName", "rawSecret"])
+	}
+
+	@Test func aLoginIsSentWithExactlyTheFieldsTheServerAccepts() {
+		let (path, body) = APIKeychainSource.addRequest(name: "e-conomic", value: .login(username: "u", password: "p"))
+		#expect(path == "api/integrations/byo-login")
+		#expect(Set(body.keys) == ["displayName", "username", "password"])
+	}
+}

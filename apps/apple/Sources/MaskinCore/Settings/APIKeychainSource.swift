@@ -81,19 +81,19 @@ public struct APIKeychainSource: KeychainAPI {
 			}, nextBeforeID: page.nextBeforeId)
 	}
 
-	public func add(name: String, value: KeychainNewValue) async throws -> String {
-		var body: [String: Any] = ["displayName": name]
-		let path: String
+	/// The path and JSON body for adding a credential. The server's body schemas are strict, so each
+	/// carries exactly the fields it names and nothing more: an extra field is a 400.
+	static func addRequest(name: String, value: KeychainNewValue) -> (path: String, body: [String: Any]) {
 		switch value {
 		case .apiKey(let secret):
-			path = "api/integrations/byo-apikey"
-			body["detectedProvider"] = "manual"
-			body["rawSecret"] = secret
+			return ("api/integrations/byo-apikey", ["displayName": name, "rawSecret": secret])
 		case .login(let username, let password):
-			path = "api/integrations/byo-login"
-			body["username"] = username
-			body["password"] = password
+			return ("api/integrations/byo-login", ["displayName": name, "username": username, "password": password])
 		}
+	}
+
+	public func add(name: String, value: KeychainNewValue) async throws -> String {
+		let (path, body) = Self.addRequest(name: name, value: value)
 		var request = URLRequest(url: baseURL.appendingPathComponent(path))
 		request.httpMethod = "POST"
 		request.timeoutInterval = 30
