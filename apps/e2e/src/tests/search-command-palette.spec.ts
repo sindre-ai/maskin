@@ -122,6 +122,12 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.keyboard.press('Control+KeyK')
 			await page.getByPlaceholder('Run a command or jump to…').fill('asteroid')
 
+			// The Search row waits for the top row to settle (progress line gone), so
+			// let the object results land before handing off.
+			await expect(page.getByRole('option', { name: /Asteroid Insight/ })).toBeVisible({
+				timeout: 10000,
+			})
+			await expect(page.getByTestId('palette-progress')).toHaveCount(0)
 			// The v2 palette ends in a terminal Search row (`Search everything for
 			// “…”`) rather than a See-all footer button — that row is the handoff
 			// to /search. Anchor to its own label so nothing else in the panel matches.
