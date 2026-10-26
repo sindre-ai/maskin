@@ -71,13 +71,13 @@ function mapSecrets(settings: unknown, fn: (value: string, field: string) => str
 	}
 
 	if (isRecord(settings.custom_llm)) {
-		const custom: JsonRecord = { ...settings.custom_llm }
-		if (typeof custom.api_key === 'string' && custom.api_key !== '') {
-			const mapped = fn(custom.api_key, 'custom_llm.api_key')
-			if (mapped === undefined) delete custom.api_key
-			else custom.api_key = mapped
+		const { api_key, ...rest } = settings.custom_llm
+		if (typeof api_key !== 'string' || api_key === '') {
+			next.custom_llm = { ...settings.custom_llm }
+		} else {
+			const mapped = fn(api_key, 'custom_llm.api_key')
+			next.custom_llm = mapped === undefined ? rest : { ...rest, api_key: mapped }
 		}
-		next.custom_llm = custom
 	}
 
 	return next
