@@ -109,8 +109,14 @@ describe('quoted words, reverted words and dismissal', () => {
 		const dismissed = dismissSuggestion(parts, vocab) as SearchParts
 		expect(suggest(dismissed, vocab)).toBeNull()
 		expect(dismissSuggestion(dismissed, vocab)).toBeNull()
-		expect(suggest(setText(dismissed, 'hans'), vocab)).toBeNull()
-		expect(suggest(setText(dismissed, 'hans loop'), vocab)).not.toBeNull()
+
+		// Retyping the same word without editing it out stays quiet.
+		expect(suggest(setText(dismissed, 'hans loop'), vocab)).toBeNull()
+
+		// Editing the word out lifts the suppression, so typing it again suggests it.
+		const edited = setText(dismissed, 'hans')
+		expect(suggest(edited, vocab)).toBeNull()
+		expect(suggest(setText(edited, 'hans loop'), vocab)).not.toBeNull()
 	})
 
 	it('skips detection while an IME composition is active', () => {
