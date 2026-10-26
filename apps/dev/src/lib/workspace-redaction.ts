@@ -1,3 +1,5 @@
+import { openWorkspaceLlmSecrets } from './workspace-secrets'
+
 /**
  * Settings keys that hold credentials or billing internals (Stripe ids, plan,
  * spend cap). Only a human workspace admin or owner gets them back in a
@@ -44,8 +46,9 @@ export function llmConfigured(settings: unknown) {
 }
 
 /**
- * The workspace row a caller may see: settings as stored for a human admin or
- * owner, without the admin-only keys for anyone else, plus llm_configured.
+ * The workspace row a caller may see: settings for a human admin or owner (the
+ * LLM keys opened, since they are sealed at rest; one that cannot be opened is
+ * left out), without the admin-only keys for anyone else, plus llm_configured.
  */
 export function workspaceForCaller<T extends { settings: unknown }>(
 	row: T,
@@ -53,7 +56,9 @@ export function workspaceForCaller<T extends { settings: unknown }>(
 ) {
 	return {
 		...row,
-		settings: callerIsHumanAdminOrOwner ? row.settings : redactWorkspaceSettings(row.settings),
+		settings: callerIsHumanAdminOrOwner
+			? openWorkspaceLlmSecrets(row.settings, { omitUnreadable: true })
+			: redactWorkspaceSettings(row.settings),
 		llm_configured: llmConfigured(row.settings),
 	}
 }
