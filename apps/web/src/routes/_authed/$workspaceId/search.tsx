@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { SearchPageV2 } from '@/components/search/search-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
@@ -7,6 +8,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import {
 	SEARCH_GROUPS,
@@ -47,23 +49,42 @@ const TYPE_FILTERS = ['insight', 'bet', 'task'] as const
 
 const GROUP_VALUES = new Set<string>(SEARCH_GROUPS)
 
+// q, type, status and group are the params the old page reads. types, statuses, updated
+// and sort are the v2 page's. Both sets are accepted here, outside the flag boundary, so
+// an old link still opens the old page and a new link survives a flag switch.
 interface SearchParams {
 	q?: string
 	type?: string
 	status?: string
 	group?: string
+	types?: string
+	statuses?: string
+	updated?: string
+	sort?: string
 }
 
+const optionalString = (value: unknown) => (typeof value === 'string' ? value : undefined)
+
 export const Route = createFileRoute('/_authed/$workspaceId/search')({
-	component: SearchRoute,
+	component: SearchRouteGate,
 	validateSearch: (search: Record<string, unknown>): SearchParams => ({
-		q: typeof search.q === 'string' ? search.q : undefined,
-		type: typeof search.type === 'string' ? search.type : undefined,
-		status: typeof search.status === 'string' ? search.status : undefined,
+		q: optionalString(search.q),
+		type: optionalString(search.type),
+		status: optionalString(search.status),
 		group:
 			typeof search.group === 'string' && GROUP_VALUES.has(search.group) ? search.group : undefined,
+		types: optionalString(search.types),
+		statuses: optionalString(search.statuses),
+		updated: optionalString(search.updated),
+		sort: optionalString(search.sort),
 	}),
 })
+
+// The one read of the search-v2 flag: flag on swaps in the v2 page, off keeps the old one.
+function SearchRouteGate() {
+	const searchV2 = useFeatureFlag('search-v2')
+	return searchV2 ? <SearchPageV2 /> : <SearchRoute />
+}
 
 function SearchRoute() {
 	useDocumentTitle('Search')

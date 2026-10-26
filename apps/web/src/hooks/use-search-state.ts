@@ -2,6 +2,7 @@
 // status chips and the Display menu all read and write this reducer: chips and
 // Display add or remove pills, so the field and the chips can never disagree.
 
+import { type WordHit, applyWord } from '@/lib/search/empty-state'
 import {
 	EMPTY_PARTS,
 	type SearchParts,
@@ -43,6 +44,7 @@ export type SearchAction =
 	| { type: 'dismiss' }
 	| { type: 'backspace' }
 	| { type: 'removePill'; index: number }
+	| { type: 'applyWord'; hit: WordHit }
 	| { type: 'toggleType'; value: string }
 	| { type: 'toggleStatus'; value: string }
 	| { type: 'setUpdated'; value: UpdatedFilter }
@@ -77,6 +79,8 @@ export function createSearchReducer(vocab: Vocabulary) {
 				return { ...state, parts: backspaceToWord(parts) ?? parts }
 			case 'removePill':
 				return { ...state, parts: removePill(parts, action.index) }
+			case 'applyWord':
+				return { ...state, parts: applyWord(parts, action.hit) }
 			case 'toggleType':
 				return { ...state, parts: toggle(parts, 'type', action.value) }
 			case 'toggleStatus':

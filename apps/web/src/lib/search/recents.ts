@@ -40,3 +40,27 @@ export function getRecentSearchEntries(workspaceId: string): RecentSearch[] {
 		return []
 	}
 }
+
+const sameEntry = (a: RecentSearch, b: RecentSearch) =>
+	a.q === b.q &&
+	a.types.join(',') === b.types.join(',') &&
+	a.statuses.join(',') === b.statuses.join(',')
+
+/**
+ * Remembers a search that ended in an opened result: words and pills. The same
+ * search moves to the front instead of repeating. The old page reads this key as
+ * strings only and skips objects, so switching the flag off again is safe.
+ */
+export function pushRecentSearchEntry(workspaceId: string, entry: RecentSearch): void {
+	const next = normalizeRecentSearch(entry)
+	if (!next) return
+	try {
+		const rest = getRecentSearchEntries(workspaceId).filter((r) => !sameEntry(r, next))
+		localStorage.setItem(
+			`maskin-recent-searches-${workspaceId}`,
+			JSON.stringify([next, ...rest].slice(0, RECENT_SEARCHES_MAX)),
+		)
+	} catch {
+		// Recents are best-effort; full or private storage must never throw.
+	}
+}
