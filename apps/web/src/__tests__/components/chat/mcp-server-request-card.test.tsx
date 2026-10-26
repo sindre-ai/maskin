@@ -43,6 +43,7 @@ import { McpServerRequestCard, buildMcpServer } from '@/components/chat/mcp-serv
 
 const SESSION_ID = '11111111-1111-1111-1111-111111111111'
 const SERVER_ID = '33333333-3333-3333-3333-333333333333'
+const AGENT = 'agent-1'
 
 const request: MessageMcpServerRequest = {
 	session_id: SESSION_ID,
@@ -62,6 +63,7 @@ function renderCard(req: MessageMcpServerRequest = request) {
 				conversationId="conv-1"
 				messageId={7}
 				messageCreatedAt="2026-10-26T10:00:00.000Z"
+				askingAgentId={AGENT}
 				request={req}
 			/>
 		</TestWrapper>,
@@ -161,8 +163,9 @@ describe('McpServerRequestCard', () => {
 		await user.click(screen.getByRole('button', { name: 'Add' }))
 		expect(await screen.findByText(/Couldn't add: Boom/)).toBeInTheDocument()
 
-		await user.type(screen.getByLabelText('LINEAR_API_KEY'), 'lin_123')
-		await user.click(screen.getByRole('button', { name: 'Add' }))
+		// Saved already: only giving access is left, so no secret is asked for again.
+		expect(screen.queryByLabelText('LINEAR_API_KEY')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Give to this agent' }))
 
 		await waitFor(() => expect(sendMutate).toHaveBeenCalledTimes(1))
 		expect(mockCreate).toHaveBeenCalledTimes(1)
@@ -192,18 +195,55 @@ describe('McpServerRequestCard', () => {
 		expect(screen.getByText(/Declined/)).toBeInTheDocument()
 	})
 
-	it('reads as added, with no form, when the person already added it', () => {
+	it('reads as added, with no form, when the person already added it and gave it to the agent', () => {
 		integrations = [
 			buildIntegrationResponse({
+				id: SERVER_ID,
 				provider: 'custom-mcp',
 				status: 'active',
 				displayName: 'Linear',
 				createdAt: '2026-10-26T10:05:00.000Z',
+				agentGrants: [{ actorId: AGENT, access: 'read_write' }],
 			}),
 		]
 		renderCard()
 		expect(screen.getByText(/gave it to this agent/)).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
+	})
+
+	it('offers only to give the agent a server that was saved but never given (a failed grant, then a reload)', async () => {
+		integrations = [
+			buildIntegrationResponse({
+				id: SERVER_ID,
+				provider: 'custom-mcp',
+				status: 'active',
+				displayName: 'Linear',
+				createdAt: '2026-10-26T10:05:00.000Z',
+				agentGrants: [],
+			}),
+		]
+		const user = userEvent.setup()
+		renderCard()
+		expect(screen.queryByText(/gave it to this agent/)).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('LINEAR_API_KEY')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Give to this agent' }))
+
+		await waitFor(() =>
+			expect(mockAllow).toHaveBeenCalledWith(SERVER_ID, 'ws-1', SESSION_ID, 'read_write'),
+		)
+		// The server is already saved: nothing is saved a second time.
+		expect(mockCreate).not.toHaveBeenCalled()
+	})
+
+	it('shows both the command and the address when a request has both', () => {
+		renderCard({ ...request, url: 'https://mcp.linear.app/mcp' })
+		expect(screen.getByText('npx -y @linear/mcp-server')).toBeInTheDocument()
+		expect(screen.getByText('https://mcp.linear.app/mcp')).toBeInTheDocument()
+	})
+
+	it('says the access it gives is read and write', () => {
+		renderCard()
+		expect(screen.getByText(/with read and write access/)).toBeInTheDocument()
 	})
 
 	it('cannot be added by an agent', () => {

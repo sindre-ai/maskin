@@ -23,8 +23,8 @@ struct McpServerRequestTests {
 		let request = try #require(McpServerRequest(message: message(stdio)))
 		#expect(request.name == "Linear")
 		#expect(request.hint == "To read your issues.")
-		#expect(request.target == "npx -y @linear/mcp-server")
-		#expect(request.isRemote == false)
+		#expect(request.commandLine == "npx -y @linear/mcp-server")
+		#expect(request.url == nil)
 		#expect(request.givenValues == ["REGION=eu"])
 		#expect(request.secretEnv == ["LINEAR_API_KEY"])
 	}
@@ -37,9 +37,22 @@ struct McpServerRequestTests {
 			])
 		])
 		let request = try #require(McpServerRequest(message: message(remote)))
-		#expect(request.isRemote)
-		#expect(request.target == "https://mcp.notion.com/mcp")
+		#expect(request.url == "https://mcp.notion.com/mcp")
+		#expect(request.commandLine == nil)
 		#expect(request.secretHeaders == ["Authorization"])
+	}
+
+	@Test func keepsTheCommandWhenARequestAlsoHasAnAddress() throws {
+		let both: JSONValue = .object([
+			"mcp_server_request": .object([
+				"session_id": .string("s"), "name": .string("Linear"), "command": .string("npx"),
+				"args": .array([.string("-y"), .string("x")]), "url": .string("https://mcp.linear.app/mcp"),
+			])
+		])
+		let request = try #require(McpServerRequest(message: message(both)))
+		// The card lists both, so it never shows an address while a command is what runs.
+		#expect(request.commandLine == "npx -y x")
+		#expect(request.url == "https://mcp.linear.app/mcp")
 	}
 
 	@Test func ignoresMessagesWithoutACompleteRequest() {

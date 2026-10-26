@@ -421,6 +421,7 @@ export function MessageBubble({
 						conversationId={message.conversationId}
 						messageId={message.id}
 						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
 						request={message.metadata.mcp_server_request}
 					/>
 				) : null}

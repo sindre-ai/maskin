@@ -404,7 +404,8 @@ struct MessageRow: View {
 			}
 			if let server = McpServerRequest(message: message) {
 				McpServerRequestCard(
-					request: server, messageCreatedAt: message.createdAt, messageID: message.serverID,
+					request: server, agentID: message.actorID, messageCreatedAt: message.createdAt,
+					messageID: message.serverID,
 					answered: cardOutcome, onReply: onKeychainReply)
 			}
 			footer

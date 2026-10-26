@@ -10,6 +10,8 @@ import SwiftUI
 /// server's settings: they never pass through the agent or the message.
 struct McpServerRequestCard: View {
 	let request: McpServerRequest
+	/// The agent that asked: the one the server is given to.
+	let agentID: String
 	let messageCreatedAt: Date?
 	/// The card's own message id, so the answer can be recorded against it.
 	let messageID: Int?
@@ -27,14 +29,17 @@ struct McpServerRequestCard: View {
 	/// Saved but not yet given to the agent (the second step failed): a retry only gives access.
 	@State private var savedID: String?
 	@State private var addedName: String?
+	/// Added earlier (a reload, another device) and whether the agent has it: see `addedServer`.
+	@State private var earlier: AddedMcpServer?
 	@State private var declinedNow = false
 	@State private var stillRunning = false
 
 	init(
-		request: McpServerRequest, messageCreatedAt: Date?, messageID: Int?, answered: ChatCardAnswer.Outcome?,
-		onReply: @escaping (String, ChatSendMetadata) -> Void
+		request: McpServerRequest, agentID: String, messageCreatedAt: Date?, messageID: Int?,
+		answered: ChatCardAnswer.Outcome?, onReply: @escaping (String, ChatSendMetadata) -> Void
 	) {
 		self.request = request
+		self.agentID = agentID
 		self.messageCreatedAt = messageCreatedAt
 		self.messageID = messageID
 		self.answered = answered
@@ -66,7 +71,7 @@ struct McpServerRequestCard: View {
 		.accessibilityElement(children: .contain)
 		.task(id: request.sessionID) {
 			guard let source = source() else { return }
-			if let earlier = await source.addedName(for: request, after: messageCreatedAt) { addedName = earlier }
+			earlier = await source.addedServer(for: request, agentID: agentID, after: messageCreatedAt)
 		}
 	}
 
@@ -76,9 +81,14 @@ struct McpServerRequestCard: View {
 
 	private var declined: Bool { declinedNow || answered == .declined }
 
+	/// Saved but not given to the agent: only the grant is left, so no secrets are asked for again.
+	private var savedServerID: String? { savedID ?? (earlier.flatMap { $0.givenToAgent ? nil : $0.id }) }
+
 	/// What to say once the card has been answered; nil while it asks.
 	private var settledLine: String? {
 		if let addedName { return "Added \(addedName) and gave it to this agent." }
+		// Only "given" counts as done: a server saved whose grant failed offers to give it instead.
+		if let earlier, earlier.givenToAgent { return "Added \(earlier.name) and gave it to this agent." }
 		if answered == .done { return "Added \(request.name) and gave it to this agent." }
 		if declined { return "Declined \(request.name)." }
 		return nil
@@ -92,45 +102,60 @@ struct McpServerRequestCard: View {
 				.fixedSize(horizontal: false, vertical: true)
 			Text(
 				(request.hint.map { $0 + " " } ?? "")
-					+ "It is saved for this workspace and given to this agent only. You can change who can use it in Settings."
+					+ "It is saved for this workspace and given to this agent only, with read and write access. You can change that in Settings."
 			)
 			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 			.fixedSize(horizontal: false, vertical: true)
 		}
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text(request.isRemote ? "Connects to" : "Runs this command inside the agent")
-				.maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-			Text(request.target)
-				.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-				.textSelection(.enabled)
-				.fixedSize(horizontal: false, vertical: true)
+			if let commandLine = request.commandLine {
+				Text("Runs this command inside the agent").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+				Text(commandLine)
+					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
+					.textSelection(.enabled)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+			if let url = request.url {
+				Text("Connects to").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+				Text(url)
+					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
+					.textSelection(.enabled)
+					.fixedSize(horizontal: false, vertical: true)
+			}
 			ForEach(request.givenValues, id: \.self) { line in
 				Text(line).maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink4)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 		}
-		field("Name") {
-			TextField("Name", text: $name).plainInput()
-		}
-		ForEach(request.secretEnv, id: \.self) { key in
-			field(key) {
-				SecureField("Paste the value", text: binding($secretEnv, key)).textContentType(.password)
-			}
-		}
-		ForEach(request.secretHeaders, id: \.self) { key in
-			field(key) {
-				SecureField("Paste the value", text: binding($secretHeaders, key)).textContentType(.password)
-			}
-		}
-		if !request.secretEnv.isEmpty || !request.secretHeaders.isEmpty {
-			Text("What you type goes straight into the server's settings, so the agent never sees it.")
+		if savedServerID != nil {
+			Text("The server is added. Give it to this agent to finish; nothing more to type.")
 				.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+		} else {
+			field("Name") {
+				TextField("Name", text: $name).plainInput()
+			}
+			ForEach(request.secretEnv, id: \.self) { key in
+				field(key) {
+					SecureField("Paste the value", text: binding($secretEnv, key)).textContentType(.password)
+				}
+			}
+			ForEach(request.secretHeaders, id: \.self) { key in
+				field(key) {
+					SecureField("Paste the value", text: binding($secretHeaders, key)).textContentType(.password)
+				}
+			}
+			if !request.secretEnv.isEmpty || !request.secretHeaders.isEmpty {
+				Text("What you type goes straight into the server's settings, so the agent never sees it.")
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			}
 		}
 		if let error {
 			Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 		}
 		VStack(spacing: MaskinSpace.s4) {
-			choice(busy ? "Adding…" : "Add", primary: true, enabled: canAdd) { await add() }
+			choice(busy ? "Adding…" : (savedServerID != nil ? "Give to this agent" : "Add"), primary: true, enabled: canAdd) {
+				await add()
+			}
 			choice("Not now", primary: false, enabled: !busy) { await decline() }
 		}
 	}
@@ -177,7 +202,7 @@ struct McpServerRequestCard: View {
 	private var canAdd: Bool {
 		// Once saved the secrets are cleared, so a retry after a failed grant only needs a name.
 		!busy && !name.trimmingCharacters(in: .whitespaces).isEmpty
-			&& (savedID != nil || request.isComplete(env: secretEnv, headers: secretHeaders))
+			&& (savedServerID != nil || request.isComplete(env: secretEnv, headers: secretHeaders))
 	}
 
 	private func source() -> McpServerAdding? {
@@ -201,8 +226,8 @@ struct McpServerRequestCard: View {
 		let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
 		do {
 			let id: String
-			if let savedID {
-				id = savedID
+			if let savedServerID {
+				id = savedServerID
 			} else {
 				id = try await source.save(
 					name: displayName, server: request.server(env: secretEnv, headers: secretHeaders))

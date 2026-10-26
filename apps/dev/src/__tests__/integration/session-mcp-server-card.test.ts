@@ -162,12 +162,37 @@ describe('POST /sessions/:id/mcp-server-card', () => {
 		).toMatchObject({ url: 'https://mcp.linear.app/mcp', secret_headers: ['Authorization'] })
 	})
 
+	it('accepts a Keychain reference as a value under a secret-looking name', async () => {
+		const session = await chatSession()
+		const app = createSessionsApp(agentId)
+
+		const res = await app.request(
+			mcpServerCard(session.id, workspaceId, {
+				name: 'Linear',
+				command: 'npx',
+				env: { LINEAR_API_KEY: '${KEYCHAIN_BYO_APIKEY_LINEAR}' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+	})
+
 	it.each([
 		['no command or url', { name: 'Linear' }],
 		['a name that is both a value and a secret', { ...LINEAR, env: { LINEAR_API_KEY: 'abc' } }],
 		['a key in args', { name: 'Linear', command: 'npx', args: ['--api-key', 'sk_live_123'] }],
 		['a key in an arg value', { name: 'Linear', command: 'npx', args: ['--token=abc123'] }],
 		['an env name that is not valid', { ...LINEAR, secret_env: ['not valid'] }],
+		['both a command and a url', { ...LINEAR, url: 'https://mcp.linear.app/mcp' }],
+		['a key-looking env name with a literal value', { ...LINEAR, env: { API_TOKEN: 'abc123' } }],
+		[
+			'an Authorization header with a literal value',
+			{
+				name: 'Linear',
+				url: 'https://mcp.linear.app/mcp',
+				headers: { Authorization: 'Bearer abc' },
+			},
+		],
 		['a url that is not http(s)', { name: 'Linear', url: 'file:///etc/passwd' }],
 	])('rejects %s and posts nothing', async (_name, body) => {
 		const session = await chatSession()

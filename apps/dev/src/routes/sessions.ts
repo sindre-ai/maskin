@@ -41,7 +41,11 @@ import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
 import { providerLabel } from '../lib/integrations/access-preamble'
 import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
-import { customMcpServerSchema, isGatedRow } from '../lib/integrations/custom-mcp'
+import {
+	customMcpServerSchema,
+	isCredentialReference,
+	isGatedRow,
+} from '../lib/integrations/custom-mcp'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -2310,6 +2314,17 @@ app.openapi(mcpServerCardRoute, (async (c) => {
 	const target = cardTarget(session)
 	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
+	// One or the other: with both, the card could show an address while a command is what runs.
+	if (body.command && body.url) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'Give either command (a server that runs inside you) or url (a remote server), not both.',
+			),
+			400,
+		)
+	}
+
 	const secretEnv = [...new Set(body.secret_env ?? [])]
 	const secretHeaders = [...new Set(body.secret_headers ?? [])]
 	if (
@@ -2320,6 +2335,26 @@ app.openapi(mcpServerCardRoute, (async (c) => {
 			createApiError(
 				'BAD_REQUEST',
 				'A name is in both the values and the secrets. Put a secret only in secret_env or secret_headers, with no value.',
+			),
+			400,
+		)
+	}
+
+	// A value under a secret-looking name is the secret itself: the person types those, and only a
+	// Keychain reference may be given here (the message is readable by everyone in the chat).
+	const looksSecret = (name: string) =>
+		/authorization|token|secret|passw(or)?d|api[-_]?key|apikey|credential|private[-_]?key/i.test(
+			name,
+		)
+	const literalSecret = [
+		...Object.entries(body.env ?? {}),
+		...Object.entries(body.headers ?? {}),
+	].find(([name, value]) => looksSecret(name) && !isCredentialReference(value))
+	if (literalSecret) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`${literalSecret[0]} looks like a secret, so it cannot be given as a value. Name it in secret_env or secret_headers so the person types it into the card, or give a Keychain reference like \${KEYCHAIN_BYO_APIKEY_NAME}.`,
 			),
 			400,
 		)

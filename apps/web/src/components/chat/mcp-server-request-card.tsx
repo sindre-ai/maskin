@@ -21,6 +21,8 @@ interface McpServerRequestCardProps {
 	messageId: number
 	/** When the message was posted, so a server added since can be matched back to it. */
 	messageCreatedAt: string | null
+	/** The agent that asked: the one the server is given to. */
+	askingAgentId: string
 	request: MessageMcpServerRequest
 }
 
@@ -57,6 +59,7 @@ export function McpServerRequestCard({
 	conversationId,
 	messageId,
 	messageCreatedAt,
+	askingAgentId,
 	request,
 }: McpServerRequestCardProps) {
 	const queryClient = useQueryClient()
@@ -94,8 +97,9 @@ export function McpServerRequestCard({
 	const secretEnvNames = request.secret_env ?? []
 	const secretHeaderNames = request.secret_headers ?? []
 	const filled =
-		secretEnvNames.every((n) => (secretEnv[n] ?? '').length > 0) &&
-		secretHeaderNames.every((n) => (secretHeaders[n] ?? '').length > 0)
+		savedServerId !== null ||
+		(secretEnvNames.every((n) => (secretEnv[n] ?? '').length > 0) &&
+			secretHeaderNames.every((n) => (secretHeaders[n] ?? '').length > 0))
 	const me = getStoredActor()
 	const canAdd = me?.type === 'human'
 	const canSubmit = !busy && canAdd && name.trim().length > 0 && filled
@@ -106,7 +110,7 @@ export function McpServerRequestCard({
 		setError(null)
 		const displayName = name.trim()
 		try {
-			let id = savedId
+			let id = savedServerId
 			if (!id) {
 				const created = await api.customMcpServers.create(workspaceId, {
 					name: displayName,
@@ -211,7 +215,11 @@ export function McpServerRequestCard({
 		)
 	}
 
-	const target = request.url ?? [request.command, ...(request.args ?? [])].filter(Boolean).join(' ')
+	const command = [request.command, ...(request.args ?? [])].filter(Boolean).join(' ')
+	const secretFields = [
+		...secretEnvNames.map((n) => ({ kind: 'env' as const, name: n })),
+		...secretHeaderNames.map((n) => ({ kind: 'header' as const, name: n })),
+	]
 	const givenValues = [
 		...Object.entries(request.env ?? {}).map(([key, value]) => ({ key, value })),
 		...Object.entries(request.headers ?? {}).map(([key, value]) => ({ key, value })),
@@ -232,18 +240,28 @@ export function McpServerRequestCard({
 					<h3 className="text-sm font-semibold">Add the {request.name} tool server?</h3>
 					<p className="mt-0.5 text-xs text-muted-foreground">
 						{request.hint ? `${request.hint} ` : ''}It is saved for this workspace and given to this
-						agent only. You can change who can use it in Settings → Integrations.
+						agent only, with read and write access. You can change that in Settings → Integrations.
 					</p>
 				</div>
 			</div>
 
 			<div className="space-y-1">
-				<p className="text-xs font-medium">
-					{request.url ? 'Connects to' : 'Runs this command inside the agent'}
-				</p>
-				<code className="block break-all rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
-					{target}
-				</code>
+				{command ? (
+					<>
+						<p className="text-xs font-medium">Runs this command inside the agent</p>
+						<code className="block break-all rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
+							{command}
+						</code>
+					</>
+				) : null}
+				{request.url ? (
+					<>
+						<p className="text-xs font-medium">Connects to</p>
+						<code className="block break-all rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
+							{request.url}
+						</code>
+					</>
+				) : null}
 				{givenValues.length > 0 ? (
 					<ul className="font-mono text-xs text-muted-foreground">
 						{givenValues.map(({ key, value }) => (
@@ -255,41 +273,46 @@ export function McpServerRequestCard({
 				) : null}
 			</div>
 
-			<div className="space-y-1.5">
-				<Label htmlFor={`mcp-name-${messageId}`}>Name</Label>
-				<Input
-					id={`mcp-name-${messageId}`}
-					value={name}
-					onChange={(e) => setName(e.target.value)}
-					maxLength={60}
-					autoComplete="off"
-					required
-				/>
-			</div>
-
-			{[
-				...secretEnvNames.map((n) => ({ kind: 'env' as const, name: n })),
-				...secretHeaderNames.map((n) => ({ kind: 'header' as const, name: n })),
-			].map((field) => {
-				const values = field.kind === 'env' ? secretEnv : secretHeaders
-				const setValues = field.kind === 'env' ? setSecretEnv : setSecretHeaders
-				const id = `mcp-${field.kind}-${messageId}-${field.name}`
-				return (
-					<div key={id} className="space-y-1.5">
-						<Label htmlFor={id}>{field.name}</Label>
-						<SecretInput
-							id={id}
-							value={values[field.name] ?? ''}
-							onChange={(v) => setValues((prev) => ({ ...prev, [field.name]: v }))}
+			{savedServerId ? (
+				<p className="text-xs text-muted-foreground">
+					The server is added. Give it to this agent to finish; nothing more to type.
+				</p>
+			) : (
+				<>
+					<div className="space-y-1.5">
+						<Label htmlFor={`mcp-name-${messageId}`}>Name</Label>
+						<Input
+							id={`mcp-name-${messageId}`}
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							maxLength={60}
+							autoComplete="off"
+							required
 						/>
 					</div>
-				)
-			})}
-			{secretEnvNames.length + secretHeaderNames.length > 0 ? (
-				<p className="text-xs text-muted-foreground">
-					What you type goes straight into the server's settings, so the agent never sees it.
-				</p>
-			) : null}
+
+					{secretFields.map((field) => {
+						const values = field.kind === 'env' ? secretEnv : secretHeaders
+						const setValues = field.kind === 'env' ? setSecretEnv : setSecretHeaders
+						const id = `mcp-${field.kind}-${messageId}-${field.name}`
+						return (
+							<div key={id} className="space-y-1.5">
+								<Label htmlFor={id}>{field.name}</Label>
+								<SecretInput
+									id={id}
+									value={values[field.name] ?? ''}
+									onChange={(v) => setValues((prev) => ({ ...prev, [field.name]: v }))}
+								/>
+							</div>
+						)
+					})}
+					{secretFields.length > 0 ? (
+						<p className="text-xs text-muted-foreground">
+							What you type goes straight into the server's settings, so the agent never sees it.
+						</p>
+					) : null}
+				</>
+			)}
 
 			{!canAdd ? (
 				<p className="text-xs text-muted-foreground">Only a person can add a tool server.</p>
@@ -297,7 +320,7 @@ export function McpServerRequestCard({
 			<FormError error={error ?? undefined} />
 			<div className="flex flex-wrap items-center gap-2">
 				<Button type="submit" size="sm" disabled={!canSubmit}>
-					{busy ? 'Adding…' : 'Add'}
+					{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
 				</Button>
 				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
 					Not now

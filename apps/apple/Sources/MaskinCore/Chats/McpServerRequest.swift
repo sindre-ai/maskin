@@ -60,13 +60,11 @@ public struct McpServerRequest: Equatable, Sendable {
 			secretHeaders: strings("secret_headers"), replyToSession: raw["reply_to_session"]?.boolValue == true)
 	}
 
-	/// True for a server reached at an address, false for one that runs a command in the agent's container.
-	public var isRemote: Bool { url != nil }
-
-	/// What would run or be reached, for the person to check before adding.
-	public var target: String {
-		if let url { return url }
-		return ([command].compactMap { $0 } + args).joined(separator: " ")
+	/// The command that would run inside the agent, for the person to check before adding. Always
+	/// shown when there is one, so the card never hides what Add saves.
+	public var commandLine: String? {
+		guard let command else { return nil }
+		return ([command] + args).joined(separator: " ")
 	}
 
 	/// The values the agent gave, as `NAME=value` lines (sorted, so the card does not reorder).
@@ -105,9 +103,23 @@ public struct McpServerRequest: Equatable, Sendable {
 	}
 }
 
+/// A server already added for a request (a reload, another device), and whether the asking agent has it.
+public struct AddedMcpServer: Equatable, Sendable {
+	public var id: String
+	public var name: String
+	/// False when saving worked but giving it to the agent did not: only that step is left.
+	public var givenToAgent: Bool
+
+	public init(id: String, name: String, givenToAgent: Bool) {
+		self.id = id
+		self.name = name
+		self.givenToAgent = givenToAgent
+	}
+}
+
 public protocol McpServerAdding: Sendable {
-	/// The name of a server already added since this card was posted (a reload, another device), if any.
-	func addedName(for request: McpServerRequest, after: Date?) async -> String?
+	/// The server added for this request since the card was posted, if any.
+	func addedServer(for request: McpServerRequest, agentID: String, after: Date?) async -> AddedMcpServer?
 	/// Saves the server (a person only) and returns its id. The typed secrets are in `server`.
 	func save(name: String, server: JSONValue) async throws -> String
 	/// Gives the asking agent the server; true when the idle session was stopped so the reply
@@ -138,19 +150,25 @@ public struct APIMcpServerSource: McpServerAdding {
 		self.session = session
 	}
 
-	public func addedName(for request: McpServerRequest, after: Date?) async -> String? {
+	public func addedServer(for request: McpServerRequest, agentID: String, after: Date?) async
+		-> AddedMcpServer?
+	{
 		guard
 			let output = try? await client.get_sol_api_sol_integrations(
 				.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID))),
 			case .ok(let ok) = output, let rows = try? ok.body.json
 		else { return nil }
-		return rows.first { row in
-			guard row.provider == "custom-mcp", row.status == "active", row.displayName == request.name else {
-				return false
-			}
-			guard let after else { return true }
-			return ChatDates.parse(row.createdAt).map { $0 >= after } ?? false
-		}?.displayName
+		guard
+			let row = rows.first(where: { row in
+				guard row.provider == "custom-mcp", row.status == "active", row.displayName == request.name else {
+					return false
+				}
+				guard let after else { return true }
+				return ChatDates.parse(row.createdAt).map { $0 >= after } ?? false
+			})
+		else { return nil }
+		let given = row.agentGrants?.contains { $0.actorId == agentID && $0.access.rawValue != "none" } == true
+		return AddedMcpServer(id: row.id, name: row.displayName ?? request.name, givenToAgent: given)
 	}
 
 	public func save(name: String, server: JSONValue) async throws -> String {
