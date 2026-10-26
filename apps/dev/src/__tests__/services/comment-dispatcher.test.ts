@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
-import { PlanCapExceededError } from '../../lib/llm-routing'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { PlanCapExceededError } from '../../lib/llm-routing'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
