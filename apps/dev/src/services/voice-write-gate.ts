@@ -43,6 +43,26 @@ const LEAD_WORDS = new Set([
 	'fine',
 	'please',
 ])
+/**
+ * Lead words that are a yes on their own. "please", "fine", "great", "alright" and "exactly"
+ * are not: they are as often a reaction or a polite opener as an approval, so they only count
+ * in front of an approval phrase ("great, send it").
+ */
+const AFFIRM_ALONE = new Set([
+	'yes',
+	'yeah',
+	'yep',
+	'yup',
+	'ja',
+	'jep',
+	'sure',
+	'ok',
+	'okay',
+	'absolutely',
+	'definitely',
+	'agreed',
+	'perfect',
+])
 /** Words that may close a yes: "go ahead please", "send it now". */
 const TAIL_WORDS = new Set(['please', 'now', 'thanks'])
 /**
@@ -68,7 +88,6 @@ const APPROVAL_PHRASES = [
 	'approved',
 	'i approve',
 	'i agree',
-	'confirm',
 	'confirmed',
 	'sounds good',
 	'sounds great',
@@ -79,7 +98,6 @@ const APPROVAL_PHRASES = [
 	'that is right',
 	'thats correct',
 	'that is correct',
-	'correct',
 	'lets do it',
 	'lets do that',
 	'let us do it',
@@ -161,8 +179,9 @@ export function isYes(text: string): boolean {
 	// "thank you" is two words; the loop above removes "you" only if "thank" is not a tail word.
 	if (end > start && words[end - 1] === 'you' && words[end - 2] === 'thank') end -= 2
 	const core = words.slice(start, end)
-	// Lead words alone ("yes", "okay sure") are a yes; otherwise the rest must be approvals.
-	return start > 0 ? isApprovalRun(core) : core.length > 0 && isApprovalRun(core)
+	// Lead words alone are a yes only if one of them is a plain affirmative ("yes", "okay sure").
+	if (core.length === 0) return words.slice(0, start).some((word) => AFFIRM_ALONE.has(word))
+	return isApprovalRun(core)
 }
 
 /** True when the line turns the ask down. A line that is neither this nor a yes leaves the ask open. */
