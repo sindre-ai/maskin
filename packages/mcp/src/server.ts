@@ -5248,6 +5248,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
+			if (args.if_match !== undefined) body.if_match = args.if_match
 			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
 			})
