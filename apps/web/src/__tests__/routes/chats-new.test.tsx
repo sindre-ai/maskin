@@ -176,6 +176,21 @@ describe('New chat', () => {
 		expect(mockCreateConversation).not.toHaveBeenCalled()
 	})
 
+	it('replaces the message box when the ?text= param changes on the mounted page', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'first question' })
+		const { rerender } = render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('first question')
+
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'second question' })
+		rerender(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(screen.getByLabelText('Message this conversation')).toHaveValue('second question'),
+		)
+		expect(mockCreateConversation).not.toHaveBeenCalled()
+	})
+
 	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {
 		mockConversationsInfinite.mockReturnValue(
 			conversationsPage([

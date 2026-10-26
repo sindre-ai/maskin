@@ -519,6 +519,16 @@ describe('CommandPalette', () => {
 		expect(screen.queryByText('Recent')).not.toBeInTheDocument()
 	})
 
+	it('does not offer Settings › Keys to a workspace that does not show that page', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'keys')
+
+		expect(screen.queryByText('Settings › Keys')).not.toBeInTheDocument()
+	})
+
 	it('adds a Settings row for a settings page name, and no more than four', async () => {
 		const user = userEvent.setup()
 		render(<CommandPalette />)

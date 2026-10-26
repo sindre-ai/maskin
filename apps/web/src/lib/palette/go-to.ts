@@ -9,6 +9,8 @@ export interface SettingsPage {
 	label: string
 	/** Path below the workspace, e.g. "settings/keychain". */
 	path: string
+	/** Only shown in settings.tsx for enterprise workspaces, so only offered there. */
+	enterpriseOnly?: boolean
 }
 
 export const SETTINGS_PAGES: SettingsPage[] = [
@@ -20,7 +22,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
 	{ label: 'Skills', path: 'settings/skills' },
 	{ label: 'MCP', path: 'settings/mcp' },
 	{ label: 'Billing', path: 'settings/billing' },
-	{ label: 'Keys', path: 'settings/keys' },
+	{ label: 'Keys', path: 'settings/keys', enterpriseOnly: true },
 	{ label: 'Keychain', path: 'settings/keychain' },
 ]
 
@@ -36,9 +38,14 @@ export function settingsTitle(page: SettingsPage): string {
 }
 
 /** Settings pages whose name matches the query, at most four. Empty for an empty query. */
-export function matchSettingsPages(query: string): GoToEntry[] {
+export function matchSettingsPages(
+	query: string,
+	{ enterprise = false }: { enterprise?: boolean } = {},
+): GoToEntry[] {
 	if (!query.trim()) return []
-	return SETTINGS_PAGES.filter((page) => matches(query, page.label))
+	return SETTINGS_PAGES.filter(
+		(page) => (enterprise || !page.enterpriseOnly) && matches(query, page.label),
+	)
 		.slice(0, SETTINGS_ROWS_MAX)
 		.map((page) => ({ title: settingsTitle(page), path: page.path }))
 }

@@ -108,7 +108,7 @@ const VIEWS: { title: string; path: (workspaceId: string) => string; icon: Lucid
 
 export function CommandPalette() {
 	const { open, setOpen } = useCommandPalette()
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const panelRef = useRef<HTMLDivElement>(null)
 	const triggerRef = useRef<HTMLElement | null>(null)
@@ -425,16 +425,18 @@ export function CommandPalette() {
 			run: () => navigateTo(view.path(workspaceId)),
 		}))
 		// Typing a settings page name ("keychain") adds a Settings › Keychain row.
-		const settings = matchSettingsPages(trimmedQuery).map((page) => ({
-			id: `go-${page.path}`,
-			group: 'Go to',
-			kind: 'GO TO',
-			title: page.title,
-			icon: <GlyphTile icon={Settings} />,
-			run: () => navigateTo(`/${workspaceId}/${page.path}`),
-		}))
+		const settings = matchSettingsPages(trimmedQuery, { enterprise: workspace?.enterprise }).map(
+			(page) => ({
+				id: `go-${page.path}`,
+				group: 'Go to',
+				kind: 'GO TO',
+				title: page.title,
+				icon: <GlyphTile icon={Settings} />,
+				run: () => navigateTo(`/${workspaceId}/${page.path}`),
+			}),
+		)
 		return [...views, ...settings]
-	}, [matchesQuery, navigateTo, trimmedQuery, workspaceId])
+	}, [matchesQuery, navigateTo, trimmedQuery, workspace?.enterprise, workspaceId])
 
 	// Opening a Jump to row reports which row it was (1-based, rendered order)
 	// and the list it sat in. Recent rows (empty field) carry
