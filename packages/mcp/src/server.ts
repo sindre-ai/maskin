@@ -5710,7 +5710,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, mention_names, wait, ...body } = args
+			const { workspace_id, conversation_id, mention_names, wait, sub_chat_session_id, ...body } =
+				args
 			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
@@ -5741,11 +5742,33 @@ export function createMcpServer(config: McpConfig) {
 			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
+			// A sub-chat hangs from a message of this chat. Replying in that message's thread is
+			// what sends the words to its agent, so the message is looked up from the sub-chat.
+			let threadRootId = body.thread_root_id
+			if (sub_chat_session_id && threadRootId === undefined) {
+				const subChat = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sub_chat_session_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { spawnedByMessageId?: number | null }
+				if (typeof subChat.spawnedByMessageId !== 'number') {
+					throw new Error(
+						`Sub-chat ${sub_chat_session_id} is not attached to a message in a chat yet, so there is no thread to reply in. Talk to it with send_session_message instead.`,
+					)
+				}
+				threadRootId = subChat.spawnedByMessageId
+			}
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
+				{
+					...body,
+					thread_root_id: threadRootId,
+					session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+				},
 				{ workspaceId: workspace_id },
 			)
 			const withMentionReport =

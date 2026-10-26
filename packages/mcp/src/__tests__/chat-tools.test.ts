@@ -378,6 +378,70 @@ describe('chat tools', () => {
 		})
 	})
 
+	describe('post_conversation_message to a sub-chat', () => {
+		it('replies in the thread the sub-chat hangs from', async () => {
+			responses['GET /api/sessions/sub1'] = { id: 'sub1', spawnedByMessageId: 42 }
+			responses[`POST /api/conversations/${chatId}/messages`] = {
+				id: 100,
+				actorId: meId,
+				delivered_to_session: { mode: 'live', session_id: 'sub1' },
+			}
+			const result = parsed(
+				await call('post_conversation_message', {
+					workspace_id: wsId,
+					conversation_id: chatId,
+					content: 'also check the invoices',
+					sub_chat_session_id: 'sub1',
+				}),
+			)
+			const [posted] = callsTo('POST', `/api/conversations/${chatId}/messages`)
+			expect(posted?.body).toMatchObject({
+				content: 'also check the invoices',
+				thread_root_id: 42,
+			})
+			// The sub-chat id is a lookup key, not part of the message.
+			expect(posted?.body).not.toHaveProperty('sub_chat_session_id')
+			expect(result.delivered_to_session).toEqual({ mode: 'live', session_id: 'sub1' })
+		})
+
+		it('says so when the sub-chat is not attached to a message yet', async () => {
+			responses['GET /api/sessions/sub1'] = { id: 'sub1', spawnedByMessageId: null }
+			await expect(
+				call('post_conversation_message', {
+					workspace_id: wsId,
+					conversation_id: chatId,
+					content: 'hello',
+					sub_chat_session_id: 'sub1',
+				}),
+			).rejects.toThrow(/send_session_message/)
+			expect(callsTo('POST', `/api/conversations/${chatId}/messages`)).toHaveLength(0)
+		})
+
+		it('passes a thread_root_id through as given', async () => {
+			responses[`POST /api/conversations/${chatId}/messages`] = { id: 100, actorId: meId }
+			await call('post_conversation_message', {
+				workspace_id: wsId,
+				conversation_id: chatId,
+				content: 'in the thread',
+				thread_root_id: 7,
+			})
+			const [posted] = callsTo('POST', `/api/conversations/${chatId}/messages`)
+			expect(posted?.body).toMatchObject({ thread_root_id: 7 })
+			expect(calls.some((c) => c.path.startsWith('/api/sessions'))).toBe(false)
+		})
+
+		it('posts at the top level when neither is given', async () => {
+			responses[`POST /api/conversations/${chatId}/messages`] = { id: 100, actorId: meId }
+			await call('post_conversation_message', {
+				workspace_id: wsId,
+				conversation_id: chatId,
+				content: 'plain',
+			})
+			const [posted] = callsTo('POST', `/api/conversations/${chatId}/messages`)
+			expect(posted?.body).not.toHaveProperty('thread_root_id')
+		})
+	})
+
 	describe('list_chats subject filter', () => {
 		it('passes subject_type and subject_id to the API', async () => {
 			responses['GET /api/conversations'] = { conversations: [], has_more: false }

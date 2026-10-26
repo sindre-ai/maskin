@@ -1336,6 +1336,21 @@ export const tools = {
 				.describe(
 					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
 				),
+			sub_chat_session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Talk to a sub-chat you started with create_sub_chat: the message goes in its thread and to its agent, which takes it while it runs or starts a follow-up if it has ended. `conversation_id` is the chat the sub-chat lives in. The response says how it got there (`delivered_to_session`: live, continued or not_delivered). Fails if the sub-chat is not attached to a message yet; it is once the reply that started it has been posted.',
+				),
+			thread_root_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Reply inside the thread under this message of the chat instead of posting at the top level. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1885,7 +1900,7 @@ export const tools = {
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
