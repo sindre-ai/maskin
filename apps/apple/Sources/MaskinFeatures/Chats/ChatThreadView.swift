@@ -89,6 +89,8 @@ struct ChatThreadView: View {
 	/// How long a thread stays hidden after it appears, while its rows measure and the scroll pins.
 	/// Held back too long it reads as a blank screen on open (it was 320ms).
 	private static let revealDelay = 120
+	/// Pauses before each re-anchor of a thread opened on its NEW divider; it stays hidden until the last.
+	private static let reanchorDelays = [200, 300]
 	/// How long the thread waits for its read cursor before opening at the bottom (offline).
 	private static let openTimeout: Duration = .milliseconds(1500)
 
@@ -812,19 +814,21 @@ struct ChatThreadView: View {
 			Task {
 				try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 				if !userScrolled { proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset)) }
-				revealed = true
-				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
-				// callback never fires and it would stay unread however far it is read.
-				if usesGeometryTracking, !userScrolled, distanceFromBottom < MaskinSpace.touchMin {
-					store.isAtBottom = true
-					await store.markReadIfNeeded()
-				}
 				// The rows above the divider are estimates until the lazy stack has drawn them, so
-				// the first scrolls land short. Re-anchor as they measure, until the reader moves.
-				for delay in [250, 600] {
+				// the first scrolls land short. Re-anchor as they measure, until the reader moves,
+				// and only then show the thread: revealed first, each correction was a visible jump.
+				for delay in Self.reanchorDelays {
 					try? await Task.sleep(for: .milliseconds(delay))
 					if userScrolled { break }
 					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
+				revealed = true
+				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
+				// callback never fires and it would stay unread however far it is read. Checked at
+				// the final position, not the one before the rows measured.
+				if usesGeometryTracking, !userScrolled, distanceFromBottom < MaskinSpace.touchMin {
+					store.isAtBottom = true
+					await store.markReadIfNeeded()
 				}
 			}
 			return
@@ -1078,6 +1082,10 @@ struct ThreadTranscript: View {
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
+				cardOutcome: message.metadata?["keychain_access_request"] == nil
+					? nil : message.serverID.flatMap { store.cardAnswerIndex[$0] },
+				chatAgents: store.participants.filter { $0.kind == .agent },
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
