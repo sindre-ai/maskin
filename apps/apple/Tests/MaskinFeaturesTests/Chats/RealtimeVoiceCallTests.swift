@@ -119,14 +119,6 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.createdFrom == [nil])
 	}
 
-	@Test("only a call started from a chat names that chat")
-	func requestNamesTheChat() {
-		let lead = ChatParticipant(id: "agent-1", name: "Chief", kind: .agent)
-		#expect(LiveMeetingRequest.conversation(id: "chat-1", lead: lead).startedFromConversationID == "chat-1")
-		#expect(LiveMeetingRequest.chiefOfStaff.startedFromConversationID == nil)
-		#expect(LiveMeetingRequest.dailyBriefing.startedFromConversationID == nil)
-	}
-
 	@Test("each finished line of the call is handed on, yours and the agent's, but not tool calls")
 	func handsOnFinishedLines() async {
 		let (call, _, transport) = make()

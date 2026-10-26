@@ -73,3 +73,59 @@ export function capVoiceSkills<T extends VoiceSkill>(
 	})
 	return skills.filter((s) => !dropped.has(s))
 }
+
+/**
+ * Who the caller is is already given by formatVoiceCallerContext. This adds the part that
+ * stops the agent asking and keeps it on their own items: the id is what the lookups key on.
+ */
+export function formatVoiceCallerRules(args: { callerName: string | null; callerId: string }) {
+	const who = args.callerName?.trim() || 'the caller'
+	return `${who} is signed in (actor id ${args.callerId}) and already known to you: never ask who they are. When you look up approvals, For You items, tasks or anything waiting on someone, use ${who}'s own, and do not read out other people's.`
+}
+
+/**
+ * Ordinary changes inside the workspace run at once. Risky ones (sending outside, starting
+ * work, deleting, access and credentials, tools of attached servers) are held until the
+ * person says yes, and the server only counts a yes spoken AFTER the hold
+ * (services/voice-write-gate.ts). So the agent must not ask first: a yes given before the
+ * hold is thrown away and the person is asked a second time.
+ */
+export const VOICE_WRITE_CONFIRMATION =
+	'Reading, searching and ordinary changes inside the workspace (updating a task or status, adding a comment, creating a task, marking something read) run at once: just do them, then say in a few words what you did. Anything that sends outside the workspace, starts work, deletes, or changes access or credentials is held by the system until the person says yes out loud. Make that call straight away, without asking first: a yes spoken before the call is held does not count. When the call comes back as not done yet, say in one plain sentence who or what it will affect, ask for a yes once, wait for their answer, then repeat the same call with the confirmation_id you were given. Never ask twice for the same thing.'
+
+export const VOICE_CALL_CONDUCT = `How to run this call:
+- Lead with the point. For a list, say how many there are, then start on the first one with your recommendation. One short hello at most, and no "let me think about...", no narrating what you are about to do. If a tool call will take a moment, make it and speak when you have the result.
+- Do one item at a time, with the full content ready before you speak. Read drafts and messages word for word, in the language they are written in, not translated.
+- Say what you cannot do in your first sentence about it, and who does it instead.
+- Speech recognition on a call is imperfect. If a sentence is garbled, off topic or in a language the call was not using, say "Sorry, I didn't catch that" and wait. Do not act on it or build an answer around it.
+- If the caller says something is generic, wrong or not worth doing, move on or fix it. Look in the records you can read for the specifics before asking them to supply it.
+- Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
+
+export interface VoiceInstructionsInput {
+	systemPrompt: string | null
+	workspaceId: string
+	voiceSessionId: string
+	caller: { id: string; name: string | null; timezone: string | null }
+	skills: VoiceSkill[]
+	/** The earlier messages of the chat the call was started from, already formatted. */
+	chatHistory: string
+	now?: Date
+}
+
+/** The whole briefing for a call, in the order the agent should weigh it. */
+export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
+	return [
+		input.systemPrompt ?? '',
+		`\n\n${formatVoiceCallerContext({ callerName: input.caller.name, timezone: input.caller.timezone, now: input.now })}`,
+		`\n\n${formatVoiceCallerRules({ callerName: input.caller.name, callerId: input.caller.id })}`,
+		`\n\nThe current workspace id is ${input.workspaceId}. Pass it as workspace_id to tools that take one.`,
+		`\n\n${VOICE_WRITE_CONFIRMATION}`,
+		`\n\n${VOICE_CALL_CONDUCT}`,
+		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(
+			(row) => `\n\n## Skill: ${row.name}\n\n${row.content}`,
+		),
+		input.chatHistory ? `\n\n${input.chatHistory}` : '',
+	]
+		.join('')
+		.trim()
+}

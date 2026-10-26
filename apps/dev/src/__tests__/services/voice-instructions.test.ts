@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+	VOICE_CALL_CONDUCT,
 	VOICE_SKILLS_TOTAL_MAX_CHARS,
+	VOICE_WRITE_CONFIRMATION,
+	buildVoiceInstructions,
 	capVoiceSkills,
 	formatVoiceCallerContext,
 } from '../../services/voice-instructions'
@@ -72,5 +75,49 @@ describe('capVoiceSkills', () => {
 		expect(kept.reduce((n, s) => n + s.content.length, 0)).toBeLessThanOrEqual(
 			VOICE_SKILLS_TOTAL_MAX_CHARS,
 		)
+	})
+})
+
+describe('buildVoiceInstructions', () => {
+	const base = {
+		systemPrompt: 'You are the agent.',
+		workspaceId: 'ws-1',
+		voiceSessionId: 'vs-1',
+		caller: { id: 'actor-1', name: 'Sam Caller', timezone: null },
+		skills: [],
+		chatHistory: '',
+		now: NOW,
+	}
+
+	it('names the caller, gives their id and tells the agent not to ask who they are', () => {
+		const text = buildVoiceInstructions(base)
+		expect(text).toContain('You are speaking with Sam Caller.')
+		expect(text).toContain('actor-1')
+		expect(text).toContain('never ask who they are')
+	})
+
+	it('gives every agent the call conduct rules, with or without a system prompt', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_CALL_CONDUCT)
+		expect(buildVoiceInstructions({ ...base, systemPrompt: null })).toContain(VOICE_CALL_CONDUCT)
+	})
+
+	it('tells the agent to just do ordinary changes, and for a held one to call first and ask once', () => {
+		const text = buildVoiceInstructions(base)
+		expect(text).toContain(VOICE_WRITE_CONFIRMATION)
+		expect(VOICE_WRITE_CONFIRMATION).toContain('run at once')
+		expect(VOICE_WRITE_CONFIRMATION).toContain('without asking first')
+		expect(VOICE_WRITE_CONFIRMATION).toContain('confirmation_id')
+	})
+
+	it('keeps the agent prompt first, then skills, then the earlier chat', () => {
+		const text = buildVoiceInstructions({
+			...base,
+			skills: [{ name: 'triage', content: 'Triage rules.' }],
+			chatHistory: 'Earlier in this chat: hello',
+		})
+		expect(text.startsWith('You are the agent.')).toBe(true)
+		expect(text.indexOf(VOICE_CALL_CONDUCT)).toBeLessThan(text.indexOf('## Skill: triage'))
+		expect(text.indexOf('## Skill: triage')).toBeLessThan(text.indexOf('Earlier in this chat'))
+		expect(text).toContain('workspace_id')
 	})
 })
