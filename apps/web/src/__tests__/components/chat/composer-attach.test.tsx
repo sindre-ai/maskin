@@ -218,3 +218,47 @@ describe('nameClipboardImage', () => {
 		expect(nameClipboardImage(file, at)).toBe(file)
 	})
 })
+
+describe('Composer drag and drop', () => {
+	function dropData(files: File[]) {
+		return { files, types: files.length ? ['Files'] : ['text/plain'] }
+	}
+
+	it('attaches files dropped on the composer and stops the browser opening them', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockResolvedValueOnce({ id: 'file-drop-1' })
+		const onDispatchSelection = vi.fn()
+		renderComposer({ onDispatchSelection })
+
+		const pdf = new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' })
+		const box = screen.getByRole('textbox')
+		const overNotPrevented = fireEvent.dragOver(box, { dataTransfer: dropData([pdf]) })
+		const dropNotPrevented = fireEvent.drop(box, { dataTransfer: dropData([pdf]) })
+
+		expect(overNotPrevented).toBe(false)
+		expect(dropNotPrevented).toBe(false)
+		await waitFor(() =>
+			expect(onDispatchSelection).toHaveBeenCalledWith({
+				type: 'add_file',
+				file: expect.objectContaining({ fileId: 'file-drop-1', name: 'brief.pdf' }),
+			}),
+		)
+	})
+
+	it('ignores drags that carry no files', () => {
+		uploadFileMock.mockReset()
+		renderComposer()
+		const box = screen.getByRole('textbox')
+		expect(fireEvent.dragOver(box, { dataTransfer: dropData([]) })).toBe(true)
+		expect(fireEvent.drop(box, { dataTransfer: dropData([]) })).toBe(true)
+		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+
+	it('does not attach when the composer is disabled', () => {
+		uploadFileMock.mockReset()
+		renderComposer({ disabled: true })
+		const pdf = new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' })
+		fireEvent.drop(screen.getByRole('textbox'), { dataTransfer: dropData([pdf]) })
+		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+})
