@@ -229,7 +229,7 @@ describe('launcher content from the shared module', () => {
 		await user.type(field(), 'trigg')
 		expect(
 			await within(await screen.findByRole('group', { name: 'Go to' })).findByRole('option', {
-				name: /Triggers/,
+				name: /Trigg\s*ers/,
 			}),
 		).toBeInTheDocument()
 	})
@@ -244,7 +244,7 @@ describe('launcher content from the shared module', () => {
 		expect(
 			await screen.findByText('Nothing matches “zzzz”. Try fewer words, or ask an agent.'),
 		).toBeInTheDocument()
-		await user.click(screen.getByRole('option', { name: /Ask Chief of Staff: “zzzz”/ }))
+		await user.click(screen.getByRole('option', { name: /Ask Chief of Staff: “\s*zzzz\s*”/ }))
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: '/$workspaceId/chats/new',
 			params: { workspaceId: 'ws-1' },
