@@ -20,7 +20,8 @@ export interface SearchUrlState {
 	sort: SearchSort
 }
 
-export interface SearchUrlParams {
+// A type alias, not an interface, so it is assignable to Record<string, unknown>.
+export type SearchUrlParams = {
 	q?: string
 	types?: string
 	statuses?: string
