@@ -44,6 +44,9 @@ export function ObjectDetailBody({
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
 					editorLabel="Description"
+					preserveSource
+					surface="description"
+					objectId={object.id}
 				/>
 			) : null}
 

@@ -15,6 +15,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig fonts-dejavu-core fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
+# Shared libraries headless Chromium needs to start. Sessions run as a
+# non-root user and cannot apt-get, so a Chromium that a session downloads
+# itself (playwright install chromium) exits at launch without these. Libraries
+# only, no browser binary: the session fetches the version the repo under test
+# pins. This is Playwright's chromium list for Debian 12 (the node:22-slim
+# base); recheck it if the base distro changes. Fonts are installed separately.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+    libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+    libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 

@@ -134,6 +134,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ### Objects (`/api/objects`) — unified CRUD for insight/bet/task
 - `POST /api/objects` — create object
 - `GET /api/objects` — list objects (filter by type, status, owner)
+- `GET /api/objects/facets` — exact counts (by type/status/driver, quick filters, group totals) under the same filters as the list; the Objects page reads every number from here, never from loaded rows. The list also takes `group_by`/`group_value`, `starred`, `working`, `attention_ids` and `q`
 - `GET /api/objects/search` — search objects by text in title/content
 - `GET /api/objects/:id` — get object by ID
 - `GET /api/objects/:id/graph` — get object with all relationships and connected objects

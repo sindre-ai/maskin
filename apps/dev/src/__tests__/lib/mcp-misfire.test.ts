@@ -198,6 +198,19 @@ describe('recordMcpMisfire error_message on a real schema-validation failure', (
 		)
 	})
 
+	it('still classifies a create_objects missing-key error as schema validation, with the key path and no example text in error_message', async () => {
+		const rawMessage = await callToolExpectingValidationError('create_objects', {})
+		// Guard against a vacuous pass: the raw SDK message carries the new text.
+		expect(rawMessage).toContain('Missing required key')
+		const kind = classifyMcpError({ code: -32602, message: rawMessage })
+		expect(kind).toBe('schema_validation_error')
+
+		const redacted = redactErrorMessage(rawMessage)
+		expect(redacted).toContain('workspace_id: invalid_type expected string')
+		expect(redacted).toContain('nodes: invalid_type expected array')
+		expect(redacted).not.toContain('Correct call')
+	})
+
 	it('never lets a failing input value into error_message', async () => {
 		const secret = 'SECRET-ENUM-VALUE-d41d8cd9'
 		const rawMessage = await callToolExpectingValidationError('list_files', { kind: secret })

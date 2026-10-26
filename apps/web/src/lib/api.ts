@@ -10,6 +10,7 @@ import type {
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	ObjectFacetsResponse,
 	SafeMetadata,
 	SendRoundInput,
 	SendRoundResponse,
@@ -286,6 +287,11 @@ export const api = {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		// Exact totals under the list's filters — tab counts, group headers, filter chips.
+		facets: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<ObjectFacetsResponse>(`/objects/facets${qs}`, { workspaceId })
 		},
 		board: (workspaceId: string, params: Record<string, string>) => {
 			const qs = `?${new URLSearchParams(params)}`
@@ -2277,6 +2283,8 @@ export interface FileDetail extends FileListItem {
 	encoding: 'base64' | 'utf8'
 	url: string
 	annotations: FileAnnotation[]
+	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
+	contentHash?: string | null
 }
 
 export interface CreateFileInput {
@@ -2294,6 +2302,8 @@ export interface UpdateFileInput {
 	content?: string
 	encoding?: 'base64' | 'utf8'
 	annotations?: FileAnnotation[]
+	/** The contentHash the caller loaded; a mismatch is refused with 409 and nothing is written. */
+	if_match?: string
 }
 
 // Conversation entity fields are camelCase (Drizzle column names passed

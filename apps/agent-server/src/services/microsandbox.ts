@@ -321,8 +321,24 @@ export async function spawnSession(
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
+	// Set when the name belongs to a live sandbox, which the cleanup below must not remove.
+	let nameHeldByRunning = false
 	try {
-		await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		try {
+			await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		} catch (err) {
+			// A killed first attempt can leave its name registered, so the retry for
+			// the same session id dies on the unique-name constraint. Clear the
+			// leftover (never a running one) and create once more.
+			if (!isNameTakenError(err)) throw err
+			const cleared = await clearStaleSandbox(input.sessionId, deps.msbBin, { run, sleep })
+			if (cleared === 'running') nameHeldByRunning = true
+			if (cleared !== 'cleared') throw err
+			logger.warn('removed stale sandbox with the same name, retrying msb create', {
+				sessionId: input.sessionId,
+			})
+			await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		}
 	} catch (err) {
 		const e = err as { stderr?: unknown; stdout?: unknown; message?: string }
 		// execFile's message embeds the full command line, including every
@@ -339,7 +355,11 @@ export async function spawnSession(
 		// the same name on retry. Non-fatal — the original create error is the
 		// real signal — but a failed cleanup is still logged, not swallowed.
 		try {
-			await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], { timeoutMs: 15_000 })
+			if (!nameHeldByRunning) {
+				await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], {
+					timeoutMs: 15_000,
+				})
+			}
 		} catch (cleanupErr) {
 			logger.warn('session cleanup after create failure did not confirm removal', {
 				sessionId: input.sessionId,
@@ -378,6 +398,47 @@ export async function spawnSession(
 		envOverflowSpilled: overflow.length,
 		envSanitized: sanitizedCount,
 	}
+}
+
+const NAME_TAKEN_RE = /already exists/i
+const STALE_REMOVAL_POLL_ATTEMPTS = 10
+
+function isNameTakenError(err: unknown): boolean {
+	const e = err as { stderr?: unknown; message?: string }
+	return NAME_TAKEN_RE.test(`${e.stderr ?? ''} ${e.message ?? ''}`)
+}
+
+/**
+ * Frees a sandbox name left behind by a failed or killed create. Returns
+ * 'running' (name left alone) when the sandbox is Running, since that is a live
+ * session and not a leftover, and 'failed' when the name cannot be confirmed
+ * gone. `remove -f` can return before the name is actually released, so poll
+ * the list for it.
+ */
+async function clearStaleSandbox(
+	sessionId: string,
+	msbBin: string,
+	deps: { run: CommandRunner; sleep: (ms: number) => Promise<void> },
+): Promise<'cleared' | 'running' | 'failed'> {
+	const listNames = async (): Promise<MsbStatusRow[]> => {
+		const { stdout } = await deps.run(msbBin, ['list', '--format', 'json'], { timeoutMs: 5_000 })
+		return JSON.parse(stdout) as MsbStatusRow[]
+	}
+	try {
+		const existing = (await listNames()).find((s) => s.name === sessionId)
+		if (existing?.status?.toLowerCase() === 'running') return 'running'
+		await deps.run(msbBin, ['remove', '-f', '--quiet', sessionId], { timeoutMs: 15_000 })
+		for (let i = 0; i < STALE_REMOVAL_POLL_ATTEMPTS; i++) {
+			if (!(await listNames()).some((s) => s.name === sessionId)) return 'cleared'
+			await deps.sleep(STATUS_POLL_INTERVAL_MS)
+		}
+	} catch (err) {
+		logger.warn('could not clear stale sandbox before retrying create', {
+			sessionId,
+			error: String(err),
+		})
+	}
+	return 'failed'
 }
 
 export async function waitForRunning(

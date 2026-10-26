@@ -15,6 +15,7 @@ import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth
 import { isEnterprise } from './enterprise'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
+import { SecretUnreadableError, openSecret } from './workspace-secrets'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	anthropic: 'claude-haiku-4-5-20251001',
@@ -510,9 +511,12 @@ export async function checkPlanCap(params: {
 function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<string, string> | null {
 	if (!custom?.enabled) return null
 	const baseUrl = custom.base_url?.trim()
-	const apiKey = custom.api_key?.trim()
+	const storedKey = custom.api_key?.trim()
 	const model = custom.model?.trim()
-	if (!baseUrl || !apiKey || !model) return null
+	if (!baseUrl || !storedKey || !model) return null
+	// Opened only once the config is complete, so a workspace that is not using
+	// this route never needs the encryption key. Throws SecretUnreadableError.
+	const apiKey = openSecret(storedKey, 'custom_llm.api_key').trim()
 	const smallModel = custom.small_fast_model?.trim() || model
 	return {
 		ANTHROPIC_BASE_URL: baseUrl,
@@ -779,20 +783,29 @@ export async function resolveLlmRoute(params: {
 			})
 		}
 
-		// 3. Workspace custom_llm
-		const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
-		if (customEnv) {
-			return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
-		}
-
-		// 4. Workspace anthropic api key
-		const wsAnthropic = wsSettings.llm_keys?.anthropic
-		if (wsAnthropic) {
-			const envVars: Record<string, string> = {
-				ANTHROPIC_API_KEY: wsAnthropic,
-				ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+		// Routes 3 and 4 read stored secrets, which are sealed at rest. A value
+		// that cannot be opened ends the lookup here: carrying on to a later
+		// route would quietly run the session on credentials the workspace did
+		// not choose, on a different bill.
+		try {
+			// 3. Workspace custom_llm
+			const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
+			if (customEnv) {
+				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 			}
-			return { route: LLM_ROUTE_API_KEY, envVars }
+
+			// 4. Workspace anthropic api key
+			const storedAnthropic = wsSettings.llm_keys?.anthropic
+			if (storedAnthropic) {
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+				}
+				return { route: LLM_ROUTE_API_KEY, envVars }
+			}
+		} catch (err) {
+			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+			throw err
 		}
 	}
 
@@ -850,11 +863,19 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly transient: boolean
 
-	constructor(detail: string, transient = false) {
+	/**
+	 * True when a key is saved for the workspace but cannot be read back (the
+	 * encryption key is missing or changed). The fix is to enter the key again,
+	 * not to connect a Claude subscription, so the user is told that.
+	 */
+	readonly storedKeyUnreadable: boolean
+
+	constructor(detail: string, transient = false, options?: { storedKeyUnreadable?: boolean }) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
 		this.detail = detail
 		this.transient = transient
+		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -870,18 +891,33 @@ export class LlmCredentialsUnavailableError extends Error {
 	static readonly transientHumanMessage =
 		'This session could not start because Maskin could not reach Anthropic to verify the credentials for this workspace. This is usually temporary — try starting the session again in a few minutes.'
 
+	/** Shown when a saved key exists but Maskin cannot read it back. */
+	static readonly unreadableKeyHumanMessage =
+		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
+
 	toFailureReason(): SessionResultFailureReason {
 		return {
 			provider: 'maskin',
 			reason_code: 'not_logged_in',
-			human_message: this.transient
-				? LlmCredentialsUnavailableError.transientHumanMessage
-				: LlmCredentialsUnavailableError.humanMessage,
+			human_message: this.storedKeyUnreadable
+				? LlmCredentialsUnavailableError.unreadableKeyHumanMessage
+				: this.transient
+					? LlmCredentialsUnavailableError.transientHumanMessage
+					: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
 			verbatim_output: this.detail,
 		}
 	}
+}
+
+/** The terminal error for a saved key that cannot be opened. Names the field, never the value. */
+export function unreadableKeyError(err: SecretUnreadableError): LlmCredentialsUnavailableError {
+	return new LlmCredentialsUnavailableError(
+		`The saved ${err.field} for this workspace cannot be decrypted (the encryption key is missing or has changed). Enter the key again to replace it.`,
+		false,
+		{ storedKeyUnreadable: true },
+	)
 }
 
 /**
@@ -1054,24 +1090,39 @@ export function resolveChatCredentials(params: {
 		}
 	}
 
-	const custom = wsSettings.custom_llm
-	if (
-		custom?.enabled &&
-		custom.base_url?.trim() &&
-		custom.api_key?.trim() &&
-		custom.model?.trim()
-	) {
-		return {
-			provider: 'openai',
-			apiKey: custom.api_key.trim(),
-			baseUrl: custom.base_url.trim(),
-			model: custom.small_fast_model?.trim() || custom.model.trim(),
+	// Stored keys are sealed at rest. This path is a best-effort heuristic, so a
+	// key that cannot be opened is logged and reported as "unavailable" (null),
+	// never thrown: only resolveLlmRoute raises the credentials error.
+	try {
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return {
+				provider: 'openai',
+				apiKey: openSecret(custom.api_key.trim(), 'custom_llm.api_key').trim(),
+				baseUrl: custom.base_url.trim(),
+				model: custom.small_fast_model?.trim() || custom.model.trim(),
+			}
 		}
-	}
 
-	const wsAnthropic = wsSettings.llm_keys?.anthropic
-	if (wsAnthropic) {
-		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
+		const wsAnthropic = wsSettings.llm_keys?.anthropic
+		if (wsAnthropic) {
+			return {
+				provider: 'anthropic',
+				apiKey: openSecret(wsAnthropic, 'llm_keys.anthropic'),
+				model: DEFAULT_CHAT_MODEL.anthropic,
+			}
+		}
+	} catch (err) {
+		if (!(err instanceof SecretUnreadableError)) throw err
+		logger.warn('Saved LLM key cannot be decrypted; chat credentials unavailable', {
+			field: err.field,
+		})
+		return null
 	}
 
 	// System fallback — Maskin's own funded OpenRouter account. Only workspaces

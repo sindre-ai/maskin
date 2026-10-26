@@ -1671,8 +1671,8 @@ describe('Conversations Integration', () => {
 			// Regression test: a fresh 1:1 chat with an agent whose only LLM
 			// route is Claude OAuth (not chat-callable via resolveChatCredentials)
 			// used to silently never spawn a session for a plain, non-mentioning
-			// first message — checkRelevance failed closed and nothing surfaced
-			// it. Direct conversations now skip the relevance heuristic entirely.
+			// first message — the old model check failed closed and nothing surfaced
+			// it. Direct conversations always respond.
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
 			const { app: ownerApp } = createConversationsApp(ownerId)
@@ -1712,11 +1712,9 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
-		it('fails open in a group chat with no mention and no chat credentials configured', async () => {
-			// The relevance heuristic itself being uncallable (no chat-callable
-			// credential) is not proof the agent has no credentials at all — the
-			// real session launch supports Claude OAuth. So a missing heuristic
-			// credential should default to responding, not silently declining.
+		it('wakes nobody for the first untagged message in a group chat with two agents', async () => {
+			// The wake rule is plain and needs no credentials: with two agents and no tag
+			// there is nobody to pick, so nobody is woken (group chat wake rule).
 			const agent = await insertActor(db, { type: 'agent' })
 			const otherAgent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1761,7 +1759,7 @@ describe('Conversations Integration', () => {
 				messageId: triggering.id,
 			})
 
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips every agent once the consecutive-agent-reply cap is reached, even a @mentioned one', async () => {

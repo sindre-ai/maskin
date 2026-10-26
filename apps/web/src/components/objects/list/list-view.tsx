@@ -3,10 +3,11 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
 import { useObjectLoops } from '@/hooks/use-object-loops'
+import { GROUP_PAGE_SIZE } from '@/hooks/use-objects'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
-import { getObjectGroupLabel, getObjectGroupValue } from '@/lib/objects-grouping'
+import { NO_VALUE_GROUP, getObjectGroupLabel, getObjectGroupValue } from '@/lib/objects-grouping'
 import { useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import type { OnChangeFn } from '@tanstack/react-table'
@@ -53,6 +54,13 @@ interface ListViewProps {
 	 *  overflow suffix `+ N more` on multi-ask rows. Absent = 1 per row that
 	 *  has an ask. */
 	pendingAskCountByObjectId?: Map<string, number>
+	/** Exact group headers from the server, in display order. When given, `data`
+	 *  holds only the rows loaded so far: each header shows its server total and
+	 *  "Show more" asks for that group's next page instead of revealing rows
+	 *  already in hand. `value` is the server's spelling (`''` = no value). */
+	groupTotals?: ReadonlyArray<{ value: string; total: number }>
+	onLoadMoreInGroup?: (serverValue: string) => void
+	loadingGroups?: ReadonlySet<string>
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
@@ -83,6 +91,9 @@ interface ListGroup {
 	key: string
 	value: string
 	rows: ObjectResponse[]
+	/** Server total — set only when the headers come from the server. */
+	total?: number
+	serverValue?: string
 }
 
 export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListView(
@@ -98,6 +109,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		showBetStatusIndicator,
 		asksByObjectId,
 		pendingAskCountByObjectId,
+		groupTotals,
+		onLoadMoreInGroup,
+		loadingGroups,
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
@@ -145,6 +159,25 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	// visible order follows the sort/order the shared filter model emitted.
 	const groups = useMemo<ListGroup[] | null>(() => {
 		if (!groupBy) return null
+		if (groupTotals) {
+			const rowsByValue = new Map<string, ObjectResponse[]>()
+			for (const object of rows) {
+				const value = getObjectGroupValue(object, groupBy)
+				const bucket = rowsByValue.get(value)
+				if (bucket) bucket.push(object)
+				else rowsByValue.set(value, [object])
+			}
+			return groupTotals.map((group) => {
+				const value = group.value === '' ? NO_VALUE_GROUP : group.value
+				return {
+					key: `${groupBy}:${value}`,
+					value,
+					rows: rowsByValue.get(value) ?? [],
+					total: group.total,
+					serverValue: group.value,
+				}
+			})
+		}
 		const byValue = new Map<string, ListGroup>()
 		const order: ListGroup[] = []
 		for (const object of rows) {
@@ -158,7 +191,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			}
 		}
 		return order
-	}, [rows, groupBy])
+	}, [rows, groupBy, groupTotals])
 
 	// Per-group "Show N more" reveals are view-local and intentionally not
 	// persisted — they are transient scrolling affordances, not view state.
@@ -312,7 +345,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	// isFetchingNextPage / isError so a failure doesn't retry-loop. `isEmpty` is
 	// a dep because the empty branch renders its own sentinel node: without it
 	// the observer would keep watching the unmounted one and stall paging.
-	const isEmpty = data.length === 0
+	const isEmpty = groupTotals ? groupTotals.length === 0 : data.length === 0
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `isEmpty` re-arms the observer when the empty branch swaps in its own sentinel node
 	useEffect(() => {
 		if (!sentinelRef.current || !hasNextPage || isFetchingNextPage || isError) return
@@ -354,7 +387,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		return <ListSkeleton />
 	}
 
-	if (isError && data.length === 0) {
+	if (isError && isEmpty) {
 		return (
 			<QueryStateError
 				title="Couldn't load objects"
@@ -363,7 +396,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		)
 	}
 
-	if (data.length === 0) {
+	if (isEmpty) {
 		// The sentinel stays mounted even with nothing to show. Client-side
 		// narrowing (the Attention axis) can empty the loaded pages while
 		// matches remain unloaded — dropping the sentinel here would stop the
@@ -406,10 +439,17 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 							// Groups render open (mockup 995 `g.open` defaults true) — the
 							// expanded map only ever records an explicit collapse.
 							const open = expanded[group.key] !== false
-							const capped = revealedGroups.has(group.key)
-								? group.rows
-								: group.rows.slice(0, LIST_GROUP_ROW_CAP)
-							const hiddenCount = group.rows.length - LIST_GROUP_ROW_CAP
+							// Server-headed groups show every row in hand and page for more;
+							// client-headed ones cap and reveal what is already loaded.
+							const serverPaged = group.total !== undefined
+							const capped =
+								serverPaged || revealedGroups.has(group.key)
+									? group.rows
+									: group.rows.slice(0, LIST_GROUP_ROW_CAP)
+							const hiddenCount = serverPaged
+								? (group.total ?? 0) - group.rows.length
+								: group.rows.length - LIST_GROUP_ROW_CAP
+							const loadingMore = loadingGroups?.has(group.serverValue ?? group.value) ?? false
 							return (
 								<li key={group.key}>
 									{/* Sticky so the group a row belongs to stays readable while
@@ -436,7 +476,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
 											<span className="font-mono text-[10.5px] font-medium tabular-nums text-muted-foreground/50">
-												{group.rows.length}
+												{group.total ?? group.rows.length}
 											</span>
 											{/* The hairline runs from the count to the right edge — a long
 											    scroll then always has a horizontal rule to break on. */}
@@ -446,16 +486,34 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 									{open && (
 										<>
 											{renderRows(capped)}
-											{hiddenCount > 0 && !revealedGroups.has(group.key) && (
-												<button
-													type="button"
-													onClick={() => revealGroup(group.key)}
-													className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-												>
-													Show {hiddenCount} more
-													<ChevronRight size={12} aria-hidden="true" className="rotate-90" />
-												</button>
-											)}
+											{/* Rows still on their way: hold the space the group's total
+											    already promises, so nothing shifts when they land. */}
+											{serverPaged &&
+												hiddenCount > 0 &&
+												(group.rows.length === 0 || loadingMore) && (
+													<div className="py-1">
+														<ListSkeleton rows={Math.min(hiddenCount, 3)} />
+													</div>
+												)}
+											{hiddenCount > 0 &&
+												!(serverPaged
+													? group.rows.length === 0 || loadingMore
+													: revealedGroups.has(group.key)) && (
+													<button
+														type="button"
+														onClick={() =>
+															serverPaged
+																? onLoadMoreInGroup?.(group.serverValue ?? '')
+																: revealGroup(group.key)
+														}
+														className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+													>
+														Show{' '}
+														{serverPaged ? Math.min(hiddenCount, GROUP_PAGE_SIZE) : hiddenCount}{' '}
+														more
+														<ChevronRight size={12} aria-hidden="true" className="rotate-90" />
+													</button>
+												)}
 										</>
 									)}
 								</li>

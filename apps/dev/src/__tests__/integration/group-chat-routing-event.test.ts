@@ -7,12 +7,11 @@ import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-const { track, chat } = vi.hoisted(() => ({ track: vi.fn(), chat: vi.fn() }))
+const { track } = vi.hoisted(() => ({ track: vi.fn() }))
 
 vi.mock('../../lib/analytics/group-chat-routing-events', () => ({
 	trackGroupChatMessageRouted: track,
 }))
-vi.mock('../../lib/llm/index', () => ({ createLLMAdapter: () => ({ chat }) }))
 
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -54,8 +53,8 @@ describe('group_chat_message_routed', () => {
 		workspaceId = (await insertWorkspace(db, ownerId)).id
 	})
 
-	async function actor(type: 'agent' | 'human', overrides: Record<string, unknown> = {}) {
-		const row = await insertActor(db, { type, ...overrides })
+	async function actor(type: 'agent' | 'human') {
+		const row = await insertActor(db, { type })
 		if (!row) throw new Error('actor insert failed')
 		await db.insert(workspaceMembers).values({ workspaceId, actorId: row.id, role: 'member' })
 		return row
@@ -130,7 +129,7 @@ describe('group_chat_message_routed', () => {
 	) => app.request(jsonRequest(method, path, body, { 'x-workspace-id': workspaceId }))
 
 	describe('what it records', () => {
-		it('emits one event per message with ids and counts only, including the legacy default-yes wakes', async () => {
+		it('emits one event per message with ids and counts only', async () => {
 			const [a, b] = [await actor('agent'), await actor('agent')]
 			const person = await actor('human')
 			const { sessionManager, conversationId } = await chatWith([a, b, person])
@@ -156,17 +155,12 @@ describe('group_chat_message_routed', () => {
 			})
 			expect(e.taggedActorIds.sort()).toEqual([b.id, person.id].sort())
 			const reasons = Object.fromEntries(e.outcomes.map((o) => [o.agentId, o.reason]))
-			// A is not tagged and has no chat-callable key, so the check fails open.
-			expect(reasons).toEqual({ [a.id]: 'default_yes_no_credentials', [b.id]: 'tagged' })
+			expect(reasons).toEqual({ [a.id]: 'skip_not_addressed', [b.id]: 'rule_tagged' })
 			expect(JSON.stringify(e)).not.toContain('secret text')
 		})
 
-		it('emits when the model says no and nobody is woken', async () => {
-			const keyed = { llmProvider: 'anthropic', llmConfig: { api_key: 'sk-test' } }
-			const [a, b] = [await actor('agent', keyed), await actor('agent', keyed)]
-			chat.mockResolvedValue({
-				tool_calls: [{ name: 'decide_response', arguments: { should_respond: false } }],
-			})
+		it('emits when the rule wakes nobody', async () => {
+			const [a, b] = [await actor('agent'), await actor('agent')]
 			const { sessionManager, conversationId } = await chatWith([a, b])
 			const messageId = await post(conversationId, ownerId, 'just thinking out loud')
 
@@ -174,8 +168,8 @@ describe('group_chat_message_routed', () => {
 			await vi.waitFor(() => expect(track).toHaveBeenCalledTimes(1))
 
 			expect(lastRouted().outcomes).toEqual([
-				expect.objectContaining({ decision: 'skip', reason: 'model_no', delivery: 'none' }),
-				expect.objectContaining({ decision: 'skip', reason: 'model_no', delivery: 'none' }),
+				expect.objectContaining({ decision: 'skip', reason: 'skip_no_target', delivery: 'none' }),
+				expect.objectContaining({ decision: 'skip', reason: 'skip_no_target', delivery: 'none' }),
 			])
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
@@ -246,7 +240,7 @@ describe('group_chat_message_routed', () => {
 
 		await api(app, 'POST', `${messagePath}/retry`)
 		expect(await triggers(4)).toBe('retry')
-		expect(lastRouted().outcomes.map((o) => o.reason)).toEqual(['forced_retry', 'forced_retry'])
+		expect(lastRouted().outcomes.map((o) => o.reason)).toEqual(['skip_no_target', 'skip_no_target'])
 
 		await api(app, 'POST', `${messagePath}/retry?agent_id=${x.id}`)
 		expect(await triggers(5)).toBe('redo')
@@ -309,7 +303,7 @@ describe('group_chat_message_routed', () => {
 			await vi.waitFor(() => expect(track).toHaveBeenCalledTimes(1))
 
 			expect(lastRouted().outcomes.map((o) => `${o.reason}|${o.delivery}`)).toEqual([
-				`tagged|${delivery}`,
+				`rule_tagged|${delivery}`,
 			])
 		})
 	})
