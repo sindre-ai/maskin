@@ -7,18 +7,37 @@ const actorsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const triggersRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const conversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
 const searchObjectsSpy = vi.hoisted(() => vi.fn())
+const listOptionsSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-objects', () => ({
-	useSearchObjects: (workspaceId: string, params: unknown) => {
-		searchObjectsSpy(workspaceId, params)
+	useSearchObjects: (workspaceId: string, params: unknown, options?: unknown) => {
+		searchObjectsSpy(workspaceId, params, options)
 		return objectsRef.current
 	},
 }))
-vi.mock('@/hooks/use-loops', () => ({ useLoops: () => loopsRef.current }))
-vi.mock('@/hooks/use-actors', () => ({ useActors: () => actorsRef.current }))
-vi.mock('@/hooks/use-triggers', () => ({ useTriggers: () => triggersRef.current }))
+vi.mock('@/hooks/use-loops', () => ({
+	useLoops: (_ws: string, options?: unknown) => {
+		listOptionsSpy('loops', options)
+		return loopsRef.current
+	},
+}))
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: (_ws: string, options?: unknown) => {
+		listOptionsSpy('actors', options)
+		return actorsRef.current
+	},
+}))
+vi.mock('@/hooks/use-triggers', () => ({
+	useTriggers: (_ws: string, options?: unknown) => {
+		listOptionsSpy('triggers', options)
+		return triggersRef.current
+	},
+}))
 vi.mock('@/hooks/use-conversations', () => ({
-	useConversationsInfinite: () => conversationsRef.current,
+	useConversationsInfinite: (_ws: string, _filters?: unknown, options?: unknown) => {
+		listOptionsSpy('chats', options)
+		return conversationsRef.current
+	},
 }))
 
 import { matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
@@ -30,6 +49,7 @@ beforeEach(() => {
 	triggersRef.current = { data: [] }
 	conversationsRef.current = { data: undefined }
 	searchObjectsSpy.mockClear()
+	listOptionsSpy.mockClear()
 })
 
 function seedAll() {
@@ -65,6 +85,42 @@ function seedAll() {
 }
 
 describe('useWorkspaceSearch', () => {
+	it('turns every request off while the surface is closed', () => {
+		seedAll()
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay', enabled: false }))
+
+		expect(searchObjectsSpy).toHaveBeenCalledWith(
+			'ws-1',
+			expect.anything(),
+			expect.objectContaining({ enabled: false }),
+		)
+		for (const list of ['loops', 'actors', 'triggers', 'chats']) {
+			expect(listOptionsSpy).toHaveBeenCalledWith(list, { enabled: false })
+		}
+		expect(result.current.rows).toEqual([])
+		expect(result.current.isSettled).toBe(false)
+	})
+
+	it('filters local lists by q while the object search runs on serverQ, unsettled until they meet', () => {
+		seedAll()
+		const { result, rerender } = renderHook(
+			({ serverQ }) => useWorkspaceSearch('ws-1', { q: 'relay', serverQ }),
+			{ initialProps: { serverQ: 'rel' } },
+		)
+
+		expect(searchObjectsSpy).toHaveBeenLastCalledWith(
+			'ws-1',
+			{ q: 'rel', type: undefined, status: undefined },
+			expect.objectContaining({ keepPrevious: true }),
+		)
+		// Chats, loops, agents, people and automations already answer to "relay".
+		expect(result.current.countsByGroup.loops).toBe(1)
+		expect(result.current.isSettled).toBe(false)
+
+		rerender({ serverQ: 'relay' })
+		expect(result.current.isSettled).toBe(true)
+	})
+
 	it('buckets every entity into its own group with per-group counts', () => {
 		seedAll()
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))

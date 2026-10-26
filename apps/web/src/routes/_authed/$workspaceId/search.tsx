@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFindShortcut } from '@/hooks/use-find-shortcut'
 import { useObjects } from '@/hooks/use-objects'
 import {
 	SEARCH_GROUPS,
@@ -73,6 +74,7 @@ function SearchRoute() {
 	const search = useSearch({ from: '/_authed/$workspaceId/search' })
 	const { setOpen: setPaletteOpen } = useCommandPalette()
 	const inputRef = useRef<HTMLInputElement>(null)
+	useFindShortcut(inputRef)
 
 	// Input syncs from URL `q` so deep links, the palette's See-all footer, and
 	// back/forward all restore the box. URL is source of truth; local state
@@ -259,6 +261,16 @@ function SearchRoute() {
 		[updateSearch, workspaceId],
 	)
 
+	// A deep link or a fresh tab has no in-app page to step back to; send those
+	// to For you instead of leaving the user on a page they cannot leave.
+	const goBack = useCallback(() => {
+		if (router.history.canGoBack()) {
+			router.history.back()
+			return
+		}
+		navigate({ to: `/${workspaceId}` })
+	}, [navigate, router, workspaceId])
+
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			if (e.key !== 'Escape') return
@@ -267,10 +279,10 @@ function SearchRoute() {
 			} else {
 				// Second Esc (or Esc on an empty box) steps back to wherever the
 				// search view was opened from.
-				router.history.back()
+				goBack()
 			}
 		},
-		[input, router],
+		[input, goBack],
 	)
 
 	const visibleRows = activeGroup ? rows.filter((row) => row.group === activeGroup) : rows
@@ -324,7 +336,7 @@ function SearchRoute() {
 					variant="ghost"
 					size="icon"
 					aria-label="Back"
-					onClick={() => router.history.back()}
+					onClick={goBack}
 					className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
 				>
 					<ArrowLeft aria-hidden="true" className="size-4" />

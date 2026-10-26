@@ -8,9 +8,10 @@ import { type TaxonomyEntityType, trackCommandPaletteOpened } from '@/lib/analyt
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { isApplePlatform } from '@/lib/platform'
 import { pushRecentObject, pushRecentSearch } from '@/lib/search-recents'
 import {
-	SEARCH_DEBOUNCE_MS,
+	PALETTE_SERVER_DEBOUNCE_MS,
 	searchRowEntityType,
 	trackSearchRowOpened,
 	useTrackSettledSearch,
@@ -106,19 +107,25 @@ export function CommandPalette() {
 		queryRef.current = query
 	}, [query])
 	useEffect(() => {
-		const t = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS)
+		const t = setTimeout(() => setDebouncedQuery(query), PALETTE_SERVER_DEBOUNCE_MS)
 		return () => clearTimeout(t)
 	}, [query])
 
 	// The workspace index behind "Jump to" — chats, loops, agents, objects and
-	// automations, the same hook the /search view ranks with.
+	// automations, the same hook the /search view ranks with. The local lists
+	// follow the keystroke; only the object search waits for the debounce, and
+	// nothing is fetched while the palette is closed.
 	const {
 		rows: searchRows,
 		total: searchTotal,
 		isSettled,
 		isError,
 		isPartial,
-	} = useWorkspaceSearch(workspaceId, { q: debouncedQuery })
+	} = useWorkspaceSearch(workspaceId, {
+		q: query,
+		serverQ: debouncedQuery,
+		enabled: open,
+	})
 	const { data: objects } = useObjects(workspaceId)
 	const objectTypes = useAvailableObjectTypes()
 
@@ -238,14 +245,19 @@ export function CommandPalette() {
 		})
 	}, [navigate, setOpen, trimmedQuery, workspaceId])
 
+	// Until the top row has settled, ↵ on the Search row would hand off a query
+	// whose matches are still arriving, so it waits.
+	const searchPending = hasQuery && !isSettled
+
 	const openSearchView = useCallback(() => {
+		if (searchPending) return
 		if (trimmedQuery) {
 			seeAll()
 			return
 		}
 		setOpen(false)
 		navigate({ to: '/$workspaceId/search', params: { workspaceId }, search: { q: '' } })
-	}, [navigate, seeAll, setOpen, trimmedQuery, workspaceId])
+	}, [navigate, searchPending, seeAll, setOpen, trimmedQuery, workspaceId])
 
 	// The global key handler is registered once; reading seeAll through a ref
 	// keeps it current without re-binding the listener on every keystroke.
@@ -259,11 +271,6 @@ export function CommandPalette() {
 			if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
 				setOpen((o) => !o)
-			}
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
-				// ⌘F opens search instead of the browser's find-in-page.
-				e.preventDefault()
-				setOpen(true)
 			}
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
@@ -515,7 +522,7 @@ export function CommandPalette() {
 							onValueChange={setSelected}
 							className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"
 						>
-							<div className="flex items-center gap-2 border-b border-border px-3.5">
+							<div className="relative flex items-center gap-2 border-b border-border px-3.5">
 								<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
 								<Command.Input
 									value={query}
@@ -527,6 +534,13 @@ export function CommandPalette() {
 								<kbd className="hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
 									Esc
 								</kbd>
+								{searchPending && (
+									<div
+										aria-hidden="true"
+										data-testid="palette-progress"
+										className="absolute inset-x-0 bottom-0 h-px animate-pulse bg-primary"
+									/>
+								)}
 							</div>
 							<Command.List className="max-h-[360px] overflow-auto p-1.5 max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1">
 								<Command.Empty className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">
@@ -567,7 +581,7 @@ export function CommandPalette() {
 							<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
 								<span>↑↓ navigate</span>
 								<span>↵ run</span>
-								<span>⌘↵ search everything</span>
+								<span>{isApplePlatform() ? '⌘↵' : 'Ctrl+↵'} search everything</span>
 								<span className="ml-auto">esc closes</span>
 							</div>
 						</Command>

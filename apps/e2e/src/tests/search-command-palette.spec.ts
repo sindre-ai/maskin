@@ -5,7 +5,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // /search view share one query engine. These specs pin the interaction
 // contract at the three ship-gate viewports — palette open/find/Enter-through,
 // the See-all handoff to /search, filter chips, <mark> highlighting, recents,
-// and keyboard hygiene (⌘F override, Esc clear-then-close).
+// and keyboard hygiene (Ctrl+F on /search, Esc clear-then-close).
 
 // On-wire probe for the success-metric funnel. Mirrors the console-fallback
 // approach used by nav-item-clicked.spec.ts / scroll-to-top.spec.ts: the dev
@@ -183,7 +183,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByText('"asteroid"')).toBeVisible()
 		})
 
-		test('opened objects surface in /search recents; ⌘F reopens; Esc clears then closes', async ({
+		test('opened objects surface in /search recents; Ctrl+F focuses the page box; Esc clears then closes', async ({
 			page,
 			account,
 		}) => {
@@ -210,9 +210,14 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				page.getByRole('region', { name: 'Recent objects' }).getByText('Comet Task'),
 			).toBeVisible()
 
-			// ⌘F override: opens search instead of find-in-page.
+			// On /search, Ctrl+F focuses the page's own search box and leaves the
+			// launcher closed; ⌘K still opens it.
+			await page.getByRole('textbox', { name: 'Search' }).blur()
 			await page.keyboard.press('Control+KeyF')
+			await expect(page.getByRole('textbox', { name: 'Search' })).toBeFocused()
 			const input = page.getByPlaceholder('Run a command or jump to…')
+			await expect(input).not.toBeVisible()
+			await page.keyboard.press('Control+KeyK')
 			await expect(input).toBeVisible()
 
 			// First Esc clears a query, second closes (the SearchView input has

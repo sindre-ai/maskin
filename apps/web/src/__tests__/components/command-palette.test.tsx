@@ -43,7 +43,7 @@ vi.mock('@/hooks/use-objects', () => ({
 }))
 
 vi.mock('@/hooks/use-workspace-search', () => ({
-	useWorkspaceSearch: vi.fn(() => ({ rows: [] })),
+	useWorkspaceSearch: vi.fn(() => ({ rows: [], isSettled: true })),
 	matches: (query: string, ...fields: (string | null | undefined)[]) => {
 		if (!query) return true
 		const needle = query.toLowerCase()
@@ -117,9 +117,10 @@ describe('CommandPalette', () => {
 		vi.clearAllMocks()
 		installGlobalDomMocks()
 		vi.mocked(useObjects).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useObjects>)
-		vi.mocked(useWorkspaceSearch).mockReturnValue({ rows: [] } as unknown as ReturnType<
-			typeof useWorkspaceSearch
-		>)
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [],
+			isSettled: true,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
 		vi.mocked(useUnread).mockReturnValue({ data: { items: [] } } as unknown as ReturnType<
 			typeof useUnread
 		>)
@@ -490,8 +491,101 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 
 		expect(screen.getByText('↑↓ navigate')).toBeInTheDocument()
-		expect(screen.getByText('⌘↵ search everything')).toBeInTheDocument()
+		expect(screen.getByText('Ctrl+↵ search everything')).toBeInTheDocument()
 		expect(screen.getByText('esc closes')).toBeInTheDocument()
+	})
+
+	it('shows the Mac key in the footer on a Mac', async () => {
+		const user = userEvent.setup()
+		vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+			'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+		)
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+
+		expect(screen.getByText('⌘↵ search everything')).toBeInTheDocument()
+		vi.restoreAllMocks()
+	})
+
+	it('leaves Ctrl+F and Meta+F to the browser find', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+		const seen: boolean[] = []
+		const record = (e: KeyboardEvent) => seen.push(e.defaultPrevented)
+		// Registered after the palette's own listener, so it sees the final state.
+		document.addEventListener('keydown', record)
+
+		await user.keyboard('{Control>}f{/Control}')
+		await user.keyboard('{Meta>}f{/Meta}')
+		document.removeEventListener('keydown', record)
+
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
+		expect(seen.every((prevented) => !prevented)).toBe(true)
+	})
+
+	it('fetches nothing until the palette opens', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+		expect(useWorkspaceSearch).toHaveBeenLastCalledWith(
+			'ws-1',
+			expect.objectContaining({ enabled: false }),
+		)
+
+		await user.keyboard('{Control>}k{/Control}')
+
+		expect(useWorkspaceSearch).toHaveBeenLastCalledWith(
+			'ws-1',
+			expect.objectContaining({ enabled: true }),
+		)
+	})
+
+	it('filters the local lists on the keystroke and debounces only the server query', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+		await user.keyboard('{Control>}k{/Control}')
+
+		// Fire-and-forget so the debounce has no time to land.
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'mark', {
+			delay: null,
+		})
+
+		const calls = vi.mocked(useWorkspaceSearch).mock.calls
+		const last = calls[calls.length - 1]?.[1]
+		expect(last).toMatchObject({ q: 'mark' })
+		expect(calls.some(([, params]) => params.q === 'mark' && params.serverQ !== 'mark')).toBe(true)
+		// The Commands group already narrowed to the matching row.
+		expect(screen.getByText('Mark all read')).toBeInTheDocument()
+		expect(screen.queryByText('New chat')).not.toBeInTheDocument()
+	})
+
+	it('does nothing on Enter for the Search row until the results have settled', async () => {
+		const user = userEvent.setup()
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [],
+			isSettled: false,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		render(<CommandPalette />)
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'alpha')
+
+		expect(screen.getByTestId('palette-progress')).toBeInTheDocument()
+		await user.keyboard('{Enter}')
+		expect(mockNavigate).not.toHaveBeenCalled()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
+
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [],
+			isSettled: true,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'x')
+		expect(screen.queryByTestId('palette-progress')).not.toBeInTheDocument()
+		await user.keyboard('{Enter}')
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/search',
+			params: { workspaceId: 'ws-1' },
+			search: { q: 'alphax' },
+		})
 	})
 
 	it('does not bind Ctrl+N or Meta+N to anything (reserved by the browser for New Window)', async () => {

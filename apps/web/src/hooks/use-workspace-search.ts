@@ -204,34 +204,58 @@ export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchR
 	return scored.map(({ row }) => row)
 }
 
+/**
+ * `q` filters the local lists (chats, loops, agents, people, automations) on
+ * every call, so a surface can pass the live keystroke. `serverQ` is the query
+ * the `/objects/search` call runs with; a surface that debounces it passes the
+ * debounced text there and gets the previous object rows back until the new
+ * ones settle. Left out, it follows `q`. `enabled: false` fires no request
+ * at all, for a surface that is mounted but closed.
+ */
 export function useWorkspaceSearch(
 	workspaceId: string,
-	{ q, type, status }: { q: string; type?: string; status?: string },
+	{
+		q,
+		serverQ,
+		type,
+		status,
+		enabled: queriesEnabled = true,
+	}: { q: string; serverQ?: string; type?: string; status?: string; enabled?: boolean },
 ): WorkspaceSearchResult {
 	const query = q.trim()
-	const enabled = query.length > 0
+	const serverQuery = (serverQ ?? q).trim()
+	const enabled = queriesEnabled && query.length > 0
 
 	const {
 		data: objectResults,
 		isError: objectsFailed,
 		isPending: objectsPending,
-	} = useSearchObjects(workspaceId, {
-		q: query,
-		type,
-		status,
-	})
-	const { data: loops, isError: loopsFailed, isPending: loopsPending } = useLoops(workspaceId)
-	const { data: actors, isError: actorsFailed, isPending: actorsPending } = useActors(workspaceId)
+		isPlaceholderData: objectsStale,
+	} = useSearchObjects(
+		workspaceId,
+		{ q: serverQuery, type, status },
+		{ enabled: queriesEnabled, keepPrevious: serverQ !== undefined },
+	)
+	const {
+		data: loops,
+		isError: loopsFailed,
+		isPending: loopsPending,
+	} = useLoops(workspaceId, { enabled: queriesEnabled })
+	const {
+		data: actors,
+		isError: actorsFailed,
+		isPending: actorsPending,
+	} = useActors(workspaceId, { enabled: queriesEnabled })
 	const {
 		data: triggers,
 		isError: triggersFailed,
 		isPending: triggersPending,
-	} = useTriggers(workspaceId)
+	} = useTriggers(workspaceId, { enabled: queriesEnabled })
 	const {
 		data: conversations,
 		isError: chatsFailed,
 		isPending: chatsPending,
-	} = useConversationsInfinite(workspaceId)
+	} = useConversationsInfinite(workspaceId, undefined, { enabled: queriesEnabled })
 
 	// Secondary sources are consumed as `?? []` below, so a failure would drop a
 	// whole group to zero and hide its chip while the header still claimed a
@@ -240,6 +264,8 @@ export function useWorkspaceSearch(
 
 	const isSettled =
 		enabled &&
+		serverQuery === query &&
+		!objectsStale &&
 		!objectsPending &&
 		!loopsPending &&
 		!actorsPending &&
