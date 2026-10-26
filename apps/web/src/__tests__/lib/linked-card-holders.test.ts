@@ -52,7 +52,9 @@ describe('decideLinkedDraws', () => {
 
 	it('measures a revision against the message that holds the card now', () => {
 		// edited once, between messages 1 and 2: message 3 links it unchanged since message 2
-		const events = [{ action: 'updated', createdAt: at(1), data: { changes: [{ field: 'title' }] } }]
+		const events = [
+			{ action: 'updated', createdAt: at(1), data: { changes: [{ field: 'title' }] } },
+		]
 		const draws = decideLinkedDraws(
 			[msg(1, 1, DRAFT), msg(2, 2, DRAFT), msg(3, 3, DRAFT)],
 			drafts,
@@ -71,10 +73,11 @@ describe('decideLinkedDraws', () => {
 
 	it('asks about an id only when it is linked again', () => {
 		const asked: string[] = []
-		decideLinkedDraws([msg(1, 1, DRAFT, PAGE), msg(2, 2, PAGE)], (id) => {
+		const isDraft = (id: string) => {
 			asked.push(id)
 			return false
-		}, () => false)
+		}
+		decideLinkedDraws([msg(1, 1, DRAFT, PAGE), msg(2, 2, PAGE)], isDraft, () => false)
 		expect(asked).toEqual([PAGE])
 	})
 })
@@ -93,7 +96,10 @@ describe('editedSince', () => {
 	})
 
 	it('counts a text edit made together with a status move', () => {
-		const event = { ...edit('status', 2, 'status_changed'), data: { changes: [{ field: 'status' }, { field: 'content' }] } }
+		const event = {
+			...edit('status', 2, 'status_changed'),
+			data: { changes: [{ field: 'status' }, { field: 'content' }] },
+		}
 		expect(editedSince([event], '2026-10-26T10:01:00.000Z')).toBe(true)
 	})
 

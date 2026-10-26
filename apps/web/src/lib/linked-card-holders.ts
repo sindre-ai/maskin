@@ -58,7 +58,11 @@ const CONTENT_FIELDS = new Set(['title', 'content', 'metadata'])
  * (Object `updatedAt` cannot tell these apart: a status move bumps it.)
  */
 export function editedSince(
-	events: readonly { action: string; createdAt: string | null; data: Record<string, unknown> | null }[],
+	events: readonly {
+		action: string
+		createdAt: string | null
+		data: Record<string, unknown> | null
+	}[],
 	sinceIso: string,
 ): boolean {
 	const since = Date.parse(sinceIso)
