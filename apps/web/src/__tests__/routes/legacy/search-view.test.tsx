@@ -16,6 +16,7 @@ const searchState = vi.hoisted(() => ({
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
 const historyBackMock = vi.hoisted(() => vi.fn())
+const canGoBackMock = vi.hoisted(() => vi.fn(() => true))
 const paletteOpenMock = vi.hoisted(() => vi.fn())
 const searchResultsRef = vi.hoisted(() => ({
 	current: { data: undefined as unknown, isFetching: false },
@@ -35,7 +36,7 @@ vi.mock('@tanstack/react-router', async () => {
 		createFileRoute: () => (options: Record<string, unknown>) => options,
 		useSearch: () => searchState.current,
 		useNavigate: () => navigateMock,
-		useRouter: () => ({ history: { back: historyBackMock } }),
+		useRouter: () => ({ history: { back: historyBackMock, canGoBack: canGoBackMock } }),
 	}
 })
 
@@ -98,6 +99,7 @@ beforeEach(() => {
 	searchState.current = { q: undefined, type: undefined, status: undefined, group: undefined }
 	navigateMock.mockClear()
 	historyBackMock.mockClear()
+	canGoBackMock.mockReturnValue(true)
 	paletteOpenMock.mockClear()
 	vi.mocked(trackCommandPaletteOpened).mockClear()
 	vi.mocked(trackSearchResultOpened).mockClear()
@@ -202,11 +204,13 @@ describe('SearchView', () => {
 
 		render(<SearchView />)
 
-		// Humans never enter the agents group, so the count is 2, not 3.
+		// Humans never enter the agents group (2, not 3); they get their own People group.
 		expect(screen.getByText('Agents · 2')).toBeInTheDocument()
+		expect(screen.getByText('People · 1')).toBeInTheDocument()
 		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /^Agents \(2\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^All \(3\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^People \(1\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^All \(4\)$/ })).toBeInTheDocument()
 	})
 
 	it('commits a group chip selection to the URL and hides the object filters', async () => {
@@ -354,6 +358,31 @@ describe('SearchView', () => {
 
 		await user.keyboard('{Escape}')
 		expect(historyBackMock).toHaveBeenCalled()
+		expect(navigateMock).not.toHaveBeenCalledWith({ to: '/ws-1' })
+	})
+
+	it('Esc lands on For you when there is no in-app history to go back to', async () => {
+		const user = userEvent.setup()
+		canGoBackMock.mockReturnValue(false)
+		render(<SearchView />)
+
+		screen.getByRole('textbox', { name: 'Search' })
+		await user.keyboard('{Escape}')
+
+		expect(historyBackMock).not.toHaveBeenCalled()
+		expect(navigateMock).toHaveBeenCalledWith({ to: '/ws-1' })
+	})
+
+	it('Ctrl+F focuses the search input instead of opening the browser find', async () => {
+		const user = userEvent.setup()
+		render(<SearchView />)
+		const input = screen.getByRole('textbox', { name: 'Search' })
+		input.blur()
+		expect(input).not.toHaveFocus()
+
+		await user.keyboard('{Control>}f{/Control}')
+
+		expect(input).toHaveFocus()
 	})
 
 	it('runs a recent search from the empty state', async () => {

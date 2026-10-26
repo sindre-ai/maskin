@@ -375,7 +375,7 @@ const postOfferRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
-		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.',
+		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.',
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: offerBody } }, required: true },

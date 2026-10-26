@@ -26,9 +26,13 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 
 vi.mock('../../lib/sentry-voice', () => ({ captureVoiceException: vi.fn() }))
 
-const { attachVoiceCall, closeVoiceCall, createRealtimeCall, realtimeSocketUrl } = await import(
-	'../../services/voice-realtime-call'
-)
+const {
+	VOICE_SOCKET_MAX_RECONNECTS,
+	attachVoiceCall,
+	closeVoiceCall,
+	createRealtimeCall,
+	realtimeSocketUrl,
+} = await import('../../services/voice-realtime-call')
 
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
@@ -47,8 +51,10 @@ function fakeSocket() {
 	const close = vi.fn()
 	let handlers: RealtimeSocketHandlers | null = null
 	let url = ''
+	let opens = 0
 	const openSocket: OpenRealtimeSocketFn = (u, _key, h) => {
 		url = u
+		opens += 1
 		handlers = h
 		return { send: (data) => sent.push(JSON.parse(data)), close }
 	}
@@ -58,6 +64,9 @@ function fakeSocket() {
 		close,
 		get url() {
 			return url
+		},
+		get opens() {
+			return opens
 		},
 		open: () => handlers?.onOpen(),
 		emit: (evt: Record<string, unknown>) => handlers?.onMessage(JSON.stringify(evt)),
@@ -165,7 +174,7 @@ describe('attachVoiceCall', () => {
 		expect(socket.sent[1]).toEqual({ type: 'response.create' })
 	})
 
-	it('holds a write until the person says yes over the socket, then runs it once', async () => {
+	it('holds a risky write until the person says yes over the socket, then runs it once', async () => {
 		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'done' }] })
 		const socket = fakeSocket()
 		const attached = attach(socket, invokeTool)
@@ -175,7 +184,7 @@ describe('attachVoiceCall', () => {
 			socket.emit({
 				type: 'response.function_call_arguments.done',
 				call_id: id,
-				name: 'create_comment',
+				name: 'gmail_send_email',
 				arguments: JSON.stringify({ entity_id: 'e1', content: 'hi', ...extra }),
 			})
 
@@ -330,19 +339,181 @@ describe('attachVoiceCall', () => {
 		await vi.waitFor(() => expect(recordTurn).toHaveBeenCalledTimes(1))
 	})
 
-	it('ends the call as network_error when the socket drops mid-call', async () => {
+	it('ends the call as network_error once every reconnect attempt has failed, exactly once', async () => {
+		vi.useFakeTimers()
 		const socket = fakeSocket()
 		const attached = attach(socket)
 		socket.open()
 		await attached
 
 		socket.drop()
-		await vi.waitFor(() =>
-			expect(endSession).toHaveBeenCalledWith(expect.anything(), {
-				id: SESSION_ID,
-				reason: 'network_error',
+		await vi.advanceTimersByTimeAsync(251)
+		socket.drop()
+		expect(endSession).not.toHaveBeenCalled()
+		await vi.advanceTimersByTimeAsync(1001)
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(5000)
+
+		expect(endSession).toHaveBeenCalledTimes(1)
+		expect(endSession).toHaveBeenCalledWith(expect.anything(), {
+			id: SESSION_ID,
+			reason: 'network_error',
+		})
+	})
+
+	it('does not start a second reconnect chain when a failed attempt closes late', async () => {
+		vi.useFakeTimers()
+		const socket = fakeSocket()
+		const attached = attach(socket, vi.fn(), { connectTimeoutMs: 100 })
+		socket.open()
+		await attached
+
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(251) // attempt 1 starts and never opens
+		await vi.advanceTimersByTimeAsync(101) // it times out and is closed
+		socket.drop() // the closed socket's own close event arrives late
+		await vi.advanceTimersByTimeAsync(10_000)
+
+		// The first socket plus the two attempts, not a restarted chain.
+		expect(socket.opens).toBe(3)
+		expect(endSession).toHaveBeenCalledTimes(1)
+	})
+
+	it('ends the call when the socket keeps dropping, instead of reconnecting forever', async () => {
+		vi.useFakeTimers()
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+
+		for (let i = 0; i < VOICE_SOCKET_MAX_RECONNECTS; i++) {
+			socket.drop()
+			await vi.advanceTimersByTimeAsync(251)
+			socket.open()
+			await vi.advanceTimersByTimeAsync(10)
+		}
+		expect(endSession).not.toHaveBeenCalled()
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(10)
+		expect(endSession).toHaveBeenCalledTimes(1)
+	})
+
+	it('keeps the call when the socket re-opens, and later tool calls still work', async () => {
+		vi.useFakeTimers()
+		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(251)
+		socket.open()
+		await vi.advanceTimersByTimeAsync(5000)
+		expect(endSession).not.toHaveBeenCalled()
+
+		socket.emit({
+			type: 'response.function_call_arguments.done',
+			call_id: 'c1',
+			name: 'search_objects',
+			arguments: '{}',
+		})
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
+		await vi.waitFor(() => expect(socket.sent).toHaveLength(2))
+		expect(invokeTool).toHaveBeenCalledTimes(1)
+		expect(socket.sent.map((m) => m.type)).toEqual(['conversation.item.create', 'response.create'])
+	})
+
+	it('delivers a tool result finished while the socket was down once it is back', async () => {
+		vi.useFakeTimers()
+		let release: (v: unknown) => void = () => {}
+		const invokeTool = vi.fn().mockReturnValue(
+			new Promise((r) => {
+				release = r
 			}),
 		)
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+
+		socket.emit({
+			type: 'response.function_call_arguments.done',
+			call_id: 'c1',
+			name: 'search_objects',
+			arguments: '{}',
+		})
+		socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
+		socket.drop()
+		release({ content: [{ type: 'text', text: 'ok' }] })
+		await vi.advanceTimersByTimeAsync(100)
+		expect(socket.sent).toHaveLength(0)
+
+		await vi.advanceTimersByTimeAsync(200)
+		socket.open()
+		await vi.advanceTimersByTimeAsync(10)
+		expect(socket.sent.map((m) => m.type)).toEqual(['conversation.item.create', 'response.create'])
+		expect(endSession).not.toHaveBeenCalled()
+	})
+
+	it('does not reconnect when the server closed the socket itself', async () => {
+		vi.useFakeTimers()
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+
+		await closeVoiceCall({ voiceSessionId: SESSION_ID, vendorSessionId: null })
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(5000)
+		expect(socket.opens).toBe(1)
+		expect(endSession).not.toHaveBeenCalled()
+	})
+
+	it('runs a risky call held before the drop once, when the yes comes after the reconnect', async () => {
+		vi.useFakeTimers()
+		const invokeTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'done' }] })
+		const socket = fakeSocket()
+		const attached = attach(socket, invokeTool)
+		socket.open()
+		await attached
+		const args = { entity_id: 'e1', content: 'hello' }
+		const call = (id: string, extra: Record<string, unknown> = {}) => {
+			socket.emit({
+				type: 'response.function_call_arguments.done',
+				call_id: id,
+				name: 'gmail_send_email',
+				arguments: JSON.stringify({ ...args, ...extra }),
+			})
+			socket.emit({ type: 'response.done', response: { output: [{ type: 'function_call' }] } })
+		}
+
+		call('w1')
+		await vi.advanceTimersByTimeAsync(10)
+		const held = JSON.parse(String((socket.sent[0]?.item as { output: string }).output))
+		const confirmationId = /confirmation_id "([^"]+)"/.exec(held.error)?.[1] ?? ''
+		expect(confirmationId).not.toBe('')
+		expect(invokeTool).not.toHaveBeenCalled()
+
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(251)
+		socket.open()
+		await vi.advanceTimersByTimeAsync(10)
+		// The new socket does not replay the hold.
+		expect(invokeTool).not.toHaveBeenCalled()
+
+		socket.emit({ type: 'input_audio_buffer.speech_started', item_id: 'i1' })
+		socket.emit({
+			type: 'conversation.item.input_audio_transcription.completed',
+			transcript: 'yes',
+			item_id: 'i1',
+		})
+		await vi.advanceTimersByTimeAsync(10)
+		call('w2', { confirmation_id: confirmationId })
+		await vi.advanceTimersByTimeAsync(10)
+		call('w3', { confirmation_id: confirmationId })
+		await vi.advanceTimersByTimeAsync(10)
+		expect(invokeTool).toHaveBeenCalledTimes(1)
 	})
 
 	it('does not end the call when the server closes the socket itself', async () => {

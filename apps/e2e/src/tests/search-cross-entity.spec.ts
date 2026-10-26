@@ -152,7 +152,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				timeout: 20000,
 			})
 			await expect(
-				page.getByText(/Search looks across chats, loops, agents, objects and automations/),
+				page.getByText(/Search looks across chats, loops, agents, people, objects and automations/),
 			).toBeVisible()
 
 			// The action is a real, always-visible control — not a hover reveal.

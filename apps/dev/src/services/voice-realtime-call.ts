@@ -28,6 +28,13 @@ export const VOICE_CONTROL_CONNECT_TIMEOUT_MS = 5000
 /** Stored on voice_sessions.vendor_session_id while an offer is in flight, so only one offer is ever accepted. */
 export const VOICE_OFFER_CLAIM = 'offer-in-flight'
 
+/** How often an open server socket is pinged, so an idle proxy does not reap it mid-call. */
+export const VOICE_SOCKET_PING_MS = 20_000
+/** Waits before each re-open of a dropped server socket; its length is the number of attempts. */
+export const VOICE_SOCKET_RECONNECT_DELAYS_MS = [250, 1000]
+/** How many drops one call survives. A socket that keeps dropping is not worth holding the call open for. */
+export const VOICE_SOCKET_MAX_RECONNECTS = 5
+
 const DEFAULT_CALLS_URL = 'https://api.openai.com/v1/realtime/calls'
 
 /** MASKIN_VOICE_OPENAI_REALTIME_URL, when set, replaces the calls endpoint (used to point at a fake in tests and staging). */
@@ -160,6 +167,8 @@ export function createRealtimeCall(
 export interface RealtimeSocket {
 	send(data: string): void
 	close(): void
+	/** Optional keepalive; sockets without it (test fakes) are simply not pinged. */
+	ping?(): void
 }
 
 export interface RealtimeSocketHandlers {
@@ -186,6 +195,7 @@ const defaultOpenSocket: OpenRealtimeSocketFn = (url, apiKey, handlers) => {
 	return {
 		send: (data) => ws.send(data),
 		close: () => ws.close(),
+		ping: () => ws.ping(),
 	}
 }
 
@@ -268,7 +278,10 @@ interface RealtimeEvent {
  * browser, which answers every tool call with "tools are unavailable" so the
  * agent says so instead of waiting on a call nobody runs. Once open, a socket
  * that drops ends the call (and hangs it up at OpenAI) rather than leaving the
- * model waiting on tool results that can no longer arrive.
+ * model waiting on tool results that can no longer arrive; before giving up
+ * it re-opens the socket (the person's audio runs on a separate WebRTC
+ * connection and is usually fine), keeping the call's gate, pending holds and
+ * counters, which belong to the call and not to the socket.
  */
 export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	const { db, session } = input
@@ -286,6 +299,14 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	let socket: RealtimeSocket | null = null
 	let opened = false
 	let closedByUs = false
+	let ended = false
+	let reconnectsUsed = 0
+	// Bumped per socket so late events from a replaced socket are ignored.
+	let generation = 0
+	let pingTimer: ReturnType<typeof setInterval> | null = null
+	// Events for the model produced while the socket is down (tool results);
+	// delivered once it is back, dropped if the call ends instead.
+	const outbox: string[] = []
 	// Tool calls received and not yet answered. Parallel calls in one response
 	// each get their own output.
 	let pendingCalls = 0
@@ -303,8 +324,12 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	let bargeIn = false
 
 	function sendToModel(event: unknown) {
+		if (!socket) {
+			if (opened && !ended && outbox.length < 50) outbox.push(JSON.stringify(event))
+			return
+		}
 		try {
-			socket?.send(JSON.stringify(event))
+			socket.send(JSON.stringify(event))
 		} catch (err) {
 			logger.warn('Voice server socket send failed', {
 				voice_session_id: session.id,
@@ -416,6 +441,167 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		}
 	}
 
+	function stopPing() {
+		if (pingTimer) clearInterval(pingTimer)
+		pingTimer = null
+	}
+
+	function startPing() {
+		stopPing()
+		pingTimer = setInterval(() => {
+			try {
+				socket?.ping?.()
+			} catch {
+				// A dead socket reports itself through onClose.
+			}
+		}, VOICE_SOCKET_PING_MS)
+		pingTimer.unref?.()
+	}
+
+	function registerLive() {
+		liveCalls.set(session.id, {
+			close: () => {
+				dispose()
+				closedByUs = true
+				stopPing()
+				socket?.close()
+			},
+		})
+	}
+
+	/** Gives up on the call's server socket: ends the call, which hangs it up at OpenAI. */
+	function endCallAfterDrop(detail: string) {
+		if (ended) return
+		ended = true
+		outbox.length = 0
+		stopPing()
+		dispose()
+		liveCalls.delete(session.id)
+		logger.warn('Voice server socket dropped mid-call; ending the call', {
+			voice_session_id: session.id,
+			detail,
+		})
+		// endVoiceSession hangs the call up at OpenAI through closeVoiceCall, so
+		// the browser's connection closes and its own recovery path takes over.
+		endVoiceSession(db, { id: session.id, reason: 'network_error' }).catch((err) => {
+			logger.error('Voice call end after socket drop failed', {
+				voice_session_id: session.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			captureVoiceException(session.id, err)
+		})
+	}
+
+	function reconnect(attempt: number) {
+		const delay = VOICE_SOCKET_RECONNECT_DELAYS_MS[attempt]
+		if (delay === undefined) {
+			endCallAfterDrop(`reconnect failed after ${attempt} attempts`)
+			return
+		}
+		setTimeout(() => {
+			if (closedByUs || ended) return
+			const myGen = ++generation
+			let settled = false
+			const next: { socket?: RealtimeSocket } = {}
+			const failAttempt = (reason: string) => {
+				if (settled || myGen !== generation) return
+				settled = true
+				clearTimeout(timeout)
+				// Closing the failed socket below fires its onClose; bumping the generation makes
+				// that late event stale, so it cannot be mistaken for a fresh drop and start a
+				// second reconnect chain with its attempt count reset.
+				generation++
+				logger.warn('Voice server socket reconnect failed', {
+					voice_session_id: session.id,
+					attempt: attempt + 1,
+					reason,
+				})
+				try {
+					next.socket?.close()
+				} catch {
+					// Already closed.
+				}
+				reconnect(attempt + 1)
+			}
+			const timeout = setTimeout(
+				() => failAttempt('connect timeout'),
+				input.connectTimeoutMs ?? VOICE_CONTROL_CONNECT_TIMEOUT_MS,
+			)
+			next.socket = openSocket(url, input.apiKey, {
+				onOpen: () => {
+					if (settled || myGen !== generation) return
+					settled = true
+					clearTimeout(timeout)
+					if (closedByUs || ended) {
+						next.socket?.close()
+						return
+					}
+					socket = next.socket ?? null
+					logger.info('Voice server socket reconnected', {
+						voice_session_id: session.id,
+						attempt: attempt + 1,
+					})
+					const queued = outbox.splice(0)
+					for (const raw of queued) {
+						try {
+							next.socket?.send(raw)
+						} catch {
+							// Lost with the socket; the next close handles it.
+						}
+					}
+					startPing()
+				},
+				onMessage: (data) => onSocketMessage(myGen, data),
+				onClose: () => {
+					if (!settled) failAttempt('closed before open')
+					else onSocketClosed(myGen)
+				},
+				onError: (err) => {
+					if (!settled) failAttempt(err.message)
+					else logSocketError(err)
+				},
+			})
+		}, delay)
+	}
+
+	function onSocketMessage(myGen: number, data: string) {
+		if (myGen !== generation) return
+		let evt: RealtimeEvent
+		try {
+			evt = JSON.parse(data)
+		} catch {
+			return
+		}
+		handleEvent(evt)
+	}
+
+	function onSocketClosed(myGen: number) {
+		if (myGen !== generation || ended) return
+		if (closedByUs) {
+			dispose()
+			return
+		}
+		socket = null
+		stopPing()
+		if (reconnectsUsed >= VOICE_SOCKET_MAX_RECONNECTS) {
+			endCallAfterDrop(`dropped ${reconnectsUsed + 1} times`)
+			return
+		}
+		reconnectsUsed += 1
+		logger.warn('Voice server socket dropped mid-call; reconnecting', {
+			voice_session_id: session.id,
+			pending_tool_calls: pendingCalls,
+		})
+		reconnect(0)
+	}
+
+	function logSocketError(err: Error) {
+		logger.warn('Voice server socket error', {
+			voice_session_id: session.id,
+			error: err.message,
+		})
+	}
+
 	return new Promise<boolean>((resolve) => {
 		let settled = false
 		const settle = (ok: boolean) => {
@@ -444,58 +630,29 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			input.connectTimeoutMs ?? VOICE_CONTROL_CONNECT_TIMEOUT_MS,
 		)
 
+		const myGen = ++generation
 		socket = openSocket(url, input.apiKey, {
 			onOpen: () => {
 				if (settled) return
 				opened = true
-				liveCalls.set(session.id, {
-					close: () => {
-						dispose()
-						closedByUs = true
-						socket?.close()
-					},
-				})
+				registerLive()
+				startPing()
 				settle(true)
 			},
-			onMessage: (data) => {
-				let evt: RealtimeEvent
-				try {
-					evt = JSON.parse(data)
-				} catch {
-					return
-				}
-				handleEvent(evt)
-			},
+			onMessage: (data) => onSocketMessage(myGen, data),
 			onClose: () => {
 				if (!opened) {
 					if (!settled) fail('closed before open')
 					return
 				}
-				dispose()
-				if (closedByUs) return
-				liveCalls.delete(session.id)
-				logger.warn('Voice server socket dropped mid-call; ending the call', {
-					voice_session_id: session.id,
-				})
-				// endVoiceSession hangs the call up at OpenAI through closeVoiceCall, so
-				// the browser's connection closes and its own recovery path takes over.
-				endVoiceSession(db, { id: session.id, reason: 'network_error' }).catch((err) => {
-					logger.error('Voice call end after socket drop failed', {
-						voice_session_id: session.id,
-						error: err instanceof Error ? err.message : String(err),
-					})
-					captureVoiceException(session.id, err)
-				})
+				onSocketClosed(myGen)
 			},
 			onError: (err) => {
 				if (!opened && !settled) {
 					fail(err.message)
 					return
 				}
-				logger.warn('Voice server socket error', {
-					voice_session_id: session.id,
-					error: err.message,
-				})
+				logSocketError(err)
 			},
 		})
 	})

@@ -7,21 +7,40 @@ const actorsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const triggersRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const conversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
 const searchObjectsSpy = vi.hoisted(() => vi.fn())
+const listOptionsSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-objects', () => ({
-	useSearchObjects: (workspaceId: string, params: unknown) => {
-		searchObjectsSpy(workspaceId, params)
+	useSearchObjects: (workspaceId: string, params: unknown, options?: unknown) => {
+		searchObjectsSpy(workspaceId, params, options)
 		return objectsRef.current
 	},
 }))
-vi.mock('@/hooks/use-loops', () => ({ useLoops: () => loopsRef.current }))
-vi.mock('@/hooks/use-actors', () => ({ useActors: () => actorsRef.current }))
-vi.mock('@/hooks/use-triggers', () => ({ useTriggers: () => triggersRef.current }))
+vi.mock('@/hooks/use-loops', () => ({
+	useLoops: (_ws: string, options?: unknown) => {
+		listOptionsSpy('loops', options)
+		return loopsRef.current
+	},
+}))
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: (_ws: string, options?: unknown) => {
+		listOptionsSpy('actors', options)
+		return actorsRef.current
+	},
+}))
+vi.mock('@/hooks/use-triggers', () => ({
+	useTriggers: (_ws: string, options?: unknown) => {
+		listOptionsSpy('triggers', options)
+		return triggersRef.current
+	},
+}))
 vi.mock('@/hooks/use-conversations', () => ({
-	useConversationsInfinite: () => conversationsRef.current,
+	useConversationsInfinite: (_ws: string, _filters?: unknown, options?: unknown) => {
+		listOptionsSpy('chats', options)
+		return conversationsRef.current
+	},
 }))
 
-import { useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
+import { matches, useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 
 beforeEach(() => {
 	objectsRef.current = { data: [] }
@@ -30,6 +49,7 @@ beforeEach(() => {
 	triggersRef.current = { data: [] }
 	conversationsRef.current = { data: undefined }
 	searchObjectsSpy.mockClear()
+	listOptionsSpy.mockClear()
 })
 
 function seedAll() {
@@ -65,6 +85,42 @@ function seedAll() {
 }
 
 describe('useWorkspaceSearch', () => {
+	it('turns every request off while the surface is closed', () => {
+		seedAll()
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay', enabled: false }))
+
+		expect(searchObjectsSpy).toHaveBeenCalledWith(
+			'ws-1',
+			expect.anything(),
+			expect.objectContaining({ enabled: false }),
+		)
+		for (const list of ['loops', 'actors', 'triggers', 'chats']) {
+			expect(listOptionsSpy).toHaveBeenCalledWith(list, { enabled: false })
+		}
+		expect(result.current.rows).toEqual([])
+		expect(result.current.isSettled).toBe(false)
+	})
+
+	it('filters local lists by q while the object search runs on serverQ, unsettled until they meet', () => {
+		seedAll()
+		const { result, rerender } = renderHook(
+			({ serverQ }) => useWorkspaceSearch('ws-1', { q: 'relay', serverQ }),
+			{ initialProps: { serverQ: 'rel' } },
+		)
+
+		expect(searchObjectsSpy).toHaveBeenLastCalledWith(
+			'ws-1',
+			{ q: 'rel', type: undefined, status: undefined },
+			expect.objectContaining({ keepPrevious: true }),
+		)
+		// Chats, loops, agents, people and automations already answer to "relay".
+		expect(result.current.countsByGroup.loops).toBe(1)
+		expect(result.current.isSettled).toBe(false)
+
+		rerender({ serverQ: 'relay' })
+		expect(result.current.isSettled).toBe(true)
+	})
+
 	it('buckets every entity into its own group with per-group counts', () => {
 		seedAll()
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))
@@ -72,12 +128,61 @@ describe('useWorkspaceSearch', () => {
 		expect(result.current.countsByGroup).toEqual({
 			chats: 1,
 			loops: 1,
-			// The human actor never enters the agents group.
+			// The human actor lands in people, never in agents.
 			agents: 1,
+			people: 1,
 			objects: 1,
 			automations: 1,
 		})
-		expect(result.current.total).toBe(5)
+		expect(result.current.total).toBe(6)
+	})
+
+	it('finds a person by name and opens their dialog on the members page', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [
+				{ id: 'a-1', type: 'agent', name: 'Sales Rep (Magnus)', description: null },
+				{ id: 'h-1', type: 'human', name: 'Magnus', description: null },
+			],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'magnus' }))
+
+		// The exact-name person outranks the agent that merely mentions him.
+		const [first] = result.current.rows
+		expect(first).toMatchObject({
+			id: 'h-1',
+			group: 'people',
+			kind: 'PERSON',
+			to: '/$workspaceId/settings/members',
+			search: { member: 'h-1' },
+		})
+	})
+
+	it('finds a person despite a typo, below an exact hit', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [
+				{ id: 'h-1', type: 'human', name: 'Magnus', description: null },
+				{ id: 'a-1', type: 'agent', name: 'Mgnus bot', description: null },
+			],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'mgnus' }))
+
+		// seedAll's object is returned by the (mocked) server search whatever the query,
+		// so only compare the actors.
+		const actors = result.current.rows.filter((r) => r.group !== 'objects')
+		expect(actors.map((r) => r.id)).toEqual(['a-1', 'h-1'])
+		expect(result.current.countsByGroup.people).toBe(1)
+	})
+
+	it('finds a person when the words are typed in the other order', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [{ id: 'h-1', type: 'human', name: 'Anna Baker', description: null }],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'baker anna' }))
+
+		expect(result.current.countsByGroup.people).toBe(1)
 	})
 
 	it('leaves a group with no hits at zero so its chip never renders', () => {
@@ -99,11 +204,11 @@ describe('useWorkspaceSearch', () => {
 			useWorkspaceSearch('ws-1', { q: 'relay', type: 'bet', status: 'active' }),
 		)
 
-		expect(searchObjectsSpy).toHaveBeenCalledWith('ws-1', {
-			q: 'relay',
-			type: 'bet',
-			status: 'active',
-		})
+		expect(searchObjectsSpy).toHaveBeenCalledWith(
+			'ws-1',
+			{ q: 'relay', type: 'bet', status: 'active' },
+			expect.objectContaining({ enabled: true }),
+		)
 		expect(result.current.countsByGroup.objects).toBe(1)
 	})
 
@@ -166,5 +271,26 @@ describe('useWorkspaceSearch', () => {
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))
 
 		expect(result.current.isPending).toBe(true)
+	})
+})
+
+describe('matches', () => {
+	it('accepts a near miss of a word, but not for short terms', () => {
+		expect(matches('mgnus', 'Magnus')).toBe(true)
+		expect(matches('magnsu', 'Magnus')).toBe(true)
+		expect(matches('magn', 'Magnus')).toBe(true)
+		// Three letters: one wrong letter is a different word.
+		expect(matches('cat', 'cut')).toBe(false)
+	})
+
+	it('needs every term, across fields and in any order', () => {
+		expect(matches('baker anna', 'Anna Baker')).toBe(true)
+		expect(matches('anna', 'Baker', 'Anna')).toBe(true)
+		expect(matches('anna zebra', 'Anna Baker')).toBe(false)
+	})
+
+	it('rejects unrelated words that are far from the term', () => {
+		expect(matches('magnus', 'Manager')).toBe(false)
+		expect(matches('', 'anything')).toBe(true)
 	})
 })

@@ -40,12 +40,12 @@ export function SearchRowIcon({
 			/>
 		)
 	}
-	if (group === 'agents') {
+	if (group === 'agents' || group === 'people') {
 		return (
 			<ActorAvatar
 				id={id}
 				name={title}
-				type="agent"
+				type={group === 'people' ? 'human' : 'agent'}
 				className={cn('size-[22px] shrink-0 text-[9px]', className)}
 			/>
 		)
