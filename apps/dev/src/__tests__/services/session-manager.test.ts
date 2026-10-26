@@ -3264,7 +3264,7 @@ describe('SessionManager', () => {
 		// visible from app logs alone.
 		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.selectQueue = [[], [{ status: 'completed' }], [session]]
+			mockResults.selectQueue = [[], [], [], [], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3371,7 +3371,10 @@ describe('SessionManager', () => {
 		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
-				undefined,
+				undefined, // stdout chunks
+				undefined, // usage watermark
+				undefined, // resume marker
+				undefined, // result rows
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -4791,7 +4794,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4819,7 +4824,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4848,7 +4855,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
@@ -4900,7 +4909,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4943,7 +4954,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4983,7 +4994,7 @@ describe('SessionManager', () => {
 				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
 			})
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -5018,7 +5029,7 @@ describe('SessionManager', () => {
 				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
 			})
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -5082,7 +5093,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5196,7 +5209,9 @@ describe('SessionManager', () => {
 				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
-					[], // extractSessionUsage fallback
+					[], // accumulateSessionUsage: usage watermark
+					[], // sumUncountedResultUsage: resume marker
+					[], // sumUncountedResultUsage: result rows
 					[], // sumAssistantUsage fallback
 					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
@@ -5345,7 +5360,9 @@ describe('SessionManager', () => {
 			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5437,7 +5454,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5492,7 +5511,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 
 			await (
 				manager as unknown as {
@@ -5527,7 +5546,7 @@ describe('SessionManager', () => {
 			)
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
@@ -5587,7 +5606,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -5626,7 +5645,9 @@ describe('SessionManager', () => {
 			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
