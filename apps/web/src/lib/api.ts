@@ -2524,6 +2524,25 @@ export interface MessageIntegrationAccessRequest {
 	reason?: string
 }
 
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
@@ -2577,6 +2596,8 @@ export interface MessageMetadata {
 	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
 	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string

@@ -10,6 +10,7 @@ import {
 	formatIntegrationConnectAsMarkdown,
 	formatKeychainAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
+	formatMcpServerRequestAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionActivityQuerySchema,
@@ -24,6 +25,7 @@ import {
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
 	sessionLogsDeepQuerySchema,
+	sessionMcpServerCardSchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
 	sessionTitleFromPrompt,
@@ -32,13 +34,15 @@ import {
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { maskArgs } from '../lib/actor-tools-redaction'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
 import { providerLabel } from '../lib/integrations/access-preamble'
 import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
-import { isGatedRow } from '../lib/integrations/custom-mcp'
+import { customMcpServerSchema, isGatedRow } from '../lib/integrations/custom-mcp'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -2238,6 +2242,172 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 	})
 	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
 }) as RouteHandler<typeof integrationAccessCardRoute, Env>)
+
+// POST /:id/mcp-server-card - Ask the human to add a tool (MCP) server the agent already has the details of
+//
+// Called by the `add_mcp_server` MCP tool. Posts a card with the server's details, ready to Add,
+// and an input for each secret the server needs. The card holds no secret: the person types those
+// in, and adding the server is their own call to POST /api/custom-mcp-servers (a person only), then
+// /integrations/:id/allow-access for the agent that asked, so an agent can never add a server or
+// widen its own access from here.
+const mcpServerCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/mcp-server-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a card in the session chat asking the person to add a tool server',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionMcpServerCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ posted: z.literal(true), message_id: z.number() }),
+				},
+			},
+			description: 'Card posted',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description:
+				'The server definition is not valid, or carries a secret the agent must not hold',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found, or the feature is not on for this workspace',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(mcpServerCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	if (!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.CHAT_ADD_MCP_SERVER)) {
+		return c.json(createApiError('NOT_FOUND', 'Adding a tool server from a chat is not on'), 404)
+	}
+
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
+
+	const secretEnv = [...new Set(body.secret_env ?? [])]
+	const secretHeaders = [...new Set(body.secret_headers ?? [])]
+	if (
+		secretEnv.some((n) => body.env && n in body.env) ||
+		secretHeaders.some((n) => body.headers && n in body.headers)
+	) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A name is in both the values and the secrets. Put a secret only in secret_env or secret_headers, with no value.',
+			),
+			400,
+		)
+	}
+
+	// The definition as it will be saved, with the secrets still empty: the same rules as adding
+	// a server by hand, so a card is never posted for one that could not be added.
+	const candidate = customMcpServerSchema.safeParse({
+		...(body.type ? { type: body.type } : {}),
+		...(body.command ? { command: body.command } : {}),
+		...(body.args ? { args: body.args } : {}),
+		...(body.url ? { url: body.url } : {}),
+		...(body.env || secretEnv.length > 0
+			? { env: { ...body.env, ...Object.fromEntries(secretEnv.map((n) => [n, ''])) } }
+			: {}),
+		...(body.headers || secretHeaders.length > 0
+			? { headers: { ...body.headers, ...Object.fromEntries(secretHeaders.map((n) => [n, ''])) } }
+			: {}),
+	})
+	if (!candidate.success) {
+		const problem = candidate.error.issues[0]
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Not a valid tool server${problem ? `: ${problem.path.join('.') || 'server'} ${problem.message}` : ''}`,
+			),
+			400,
+		)
+	}
+	// Args are shown to every member and stored in the message, so a credential in one is refused:
+	// the masking pass is what the settings page uses to spot a secret-looking arg.
+	const args = candidate.data.args ?? []
+	if (maskArgs(args).some((masked, i) => masked !== args[i])) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'An argument looks like a secret. Never put a key in args: pass it as an env var or header and name it in secret_env or secret_headers so the person types it into the card.',
+			),
+			400,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: target.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatMcpServerRequestAsMarkdown(body.name, body.hint),
+		metadata: {
+			mcp_server_request: {
+				session_id: session.id,
+				name: body.name,
+				...(body.hint ? { hint: body.hint } : {}),
+				...(candidate.data.type ? { type: candidate.data.type } : {}),
+				...(candidate.data.command ? { command: candidate.data.command } : {}),
+				...(candidate.data.args ? { args: candidate.data.args } : {}),
+				...(candidate.data.url ? { url: candidate.data.url } : {}),
+				...(body.env && Object.keys(body.env).length > 0 ? { env: body.env } : {}),
+				...(body.headers && Object.keys(body.headers).length > 0 ? { headers: body.headers } : {}),
+				...(secretEnv.length > 0 ? { secret_env: secretEnv } : {}),
+				...(secretHeaders.length > 0 ? { secret_headers: secretHeaders } : {}),
+				...(target.helper ? { reply_to_session: true } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+	if (!created) {
+		logger.error('Tool server card insert returned no row', {
+			sessionId: session.id,
+			conversationId: target.conversationId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Tool server card could not be posted'), 500)
+	}
+	if (target.helper) {
+		await markHelperAwaitingCard(db, session.id, created.id, `add the ${body.name} tool server`)
+	}
+	// Never the definition: a command or URL can name an account.
+	logger.info('Posted tool server card into conversation', {
+		sessionId: session.id,
+		conversationId: target.conversationId,
+		messageId: created.id,
+	})
+	return c.json({ posted: true as const, message_id: created.id }, 200)
+}) as RouteHandler<typeof mcpServerCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

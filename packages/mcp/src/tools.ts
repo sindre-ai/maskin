@@ -2212,6 +2212,69 @@ export const tools = {
 				),
 		}),
 	},
+	add_mcp_server: {
+		description:
+			'Add a tool (MCP) server for the user, right in the chat, when you already know how to run or reach it. Use it when the user asks for a tool you do not have and you know the server (a package to run with npx, or an https address), or when you find one that would do the job. It puts an Add card in the chat with the details filled in; the user checks it and presses Add, and the server is saved, given to you and you are restarted with it. Do not explain how to add a server in Settings: call this tool. Before calling, check that it is not already added with `list_integrations` (if it is but you cannot use it, call `request_integration_access`). Give either `command` (with `args`) for a server that runs inside you, or `url` for a remote one. Never put a key, token or password in any value or in `args`: name each one the server needs in `secret_env` (an environment variable) or `secret_headers` (a header such as "Authorization"), and the user types it into the card, so you never see it. If the user already saved the key in the Keychain, write it as a reference in the value instead, like `${KEYCHAIN_BYO_APIKEY_LINEAR}` (see `list_keychain_credentials`). If you are not sure of the exact command, URL or variable names, check the server\'s own documentation first rather than guessing. After calling this, end your turn without a closing message. If they add it you are restarted with the server attached. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: z
+				.string()
+				.min(1)
+				.max(60)
+				.describe('What the person will call it, e.g. "Linear". Must not already be in use.'),
+			command: z
+				.string()
+				.min(1)
+				.max(512)
+				.optional()
+				.describe('For a server that runs inside you: the program, e.g. "npx".'),
+			args: z
+				.array(z.string().max(2048))
+				.max(100)
+				.optional()
+				.describe(
+					'Arguments for command, e.g. ["-y", "@linear/mcp-server"]. Never a key or token.',
+				),
+			url: z
+				.string()
+				.min(1)
+				.max(2048)
+				.optional()
+				.describe('For a remote server: its https address, e.g. "https://mcp.linear.app/mcp".'),
+			env: z
+				.record(z.string().max(100), z.string().max(4096))
+				.optional()
+				.describe(
+					'Environment variables that are not secret, e.g. {"REGION": "eu"}, or a Keychain reference like {"LINEAR_API_KEY": "${KEYCHAIN_BYO_APIKEY_LINEAR}"}.',
+				),
+			headers: z
+				.record(z.string().max(100), z.string().max(4096))
+				.optional()
+				.describe('Headers that are not secret, or a Keychain reference. Same rule as env.'),
+			secret_env: z
+				.array(z.string().min(1).max(100))
+				.max(20)
+				.optional()
+				.describe(
+					'Names of environment variables the user must type in, e.g. ["LINEAR_API_KEY"]. No value here.',
+				),
+			secret_headers: z
+				.array(z.string().min(1).max(100))
+				.max(20)
+				.optional()
+				.describe(
+					'Names of headers the user must type in, e.g. ["Authorization"] (they type the whole value, such as "Bearer ..."). No value here.',
+				),
+			hint: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'One line shown on the card on what you need it for, e.g. "To read and update your Linear issues."',
+				),
+		}),
+	},
 	show_computer: {
 		description:
 			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, solving a CAPTCHA, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',

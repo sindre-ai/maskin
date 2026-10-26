@@ -111,6 +111,15 @@ export const FLAGS = {
 	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
+	/**
+	 * Gates the `add_mcp_server` agent tool: an agent that has a tool server's details puts an
+	 * Add card in the chat instead of explaining how to add it in Settings. Workspace-scoped,
+	 * read with `isFlagEnabledForWorkspace` in the `/sessions/:id/mcp-server-card` route. Off
+	 * means the route answers 404 and the tool tells the agent to describe the server in its
+	 * reply. Backend only: the card exists in a chat only after the route has posted it. Retire
+	 * once the tool is on for every workspace.
+	 */
+	CHAT_ADD_MCP_SERVER: 'chat-add-mcp-server',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
