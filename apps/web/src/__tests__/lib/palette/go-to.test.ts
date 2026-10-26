@@ -14,11 +14,11 @@ describe('matchSettingsPages', () => {
 	})
 
 	it('offers Keys only to enterprise workspaces', () => {
-		expect(matchSettingsPages('keys')).toEqual([])
-		expect(matchSettingsPages('keys', { enterprise: false })).toEqual([])
-		expect(matchSettingsPages('keys', { enterprise: true })).toEqual([
-			{ title: 'Settings › Keys', path: 'settings/keys' },
-		])
+		const titles = (enterprise?: boolean) =>
+			matchSettingsPages('keys', { enterprise }).map((row) => row.title)
+		expect(titles()).not.toContain('Settings › Keys')
+		expect(titles(false)).not.toContain('Settings › Keys')
+		expect(titles(true)).toContain('Settings › Keys')
 	})
 
 	it('never returns more than four rows', () => {

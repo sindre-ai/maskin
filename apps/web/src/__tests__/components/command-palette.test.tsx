@@ -205,14 +205,15 @@ describe('CommandPalette', () => {
 	it('fires search_result_opened with the entity contract when a result is opened', async () => {
 		const objects = [buildObjectResponse({ id: 'obj-1', title: 'Alpha Insight', type: 'insight' })]
 		vi.mocked(useObjects).mockReturnValue({ data: objects } as ReturnType<typeof useObjects>)
+		pushRecentObject('ws-1', 'obj-1')
 		const user = userEvent.setup()
 
 		render(<CommandPalette />)
 		await user.keyboard('{Control>}k{/Control}')
 		await user.click(screen.getByText('Alpha Insight'))
 
-		// The empty-query Jump to list is not a search: no search id, has_query
-		// false, counted against the six-row list it was shown in.
+		// The empty-field Recent list is not a search: no search id, has_query
+		// false, counted against the list it was shown in.
 		expect(trackSearchResultOpenedMock).toHaveBeenCalledWith({
 			entity_id: 'obj-1',
 			entity_type: 'insight',
@@ -536,7 +537,7 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 		const input = screen.getByPlaceholderText('Run a command or jump to…')
 		await user.type(input, 'keychain')
-		await user.click(screen.getByText('Settings › Keychain'))
+		await user.click(screen.getByRole('option', { name: /Settings › Keychain/ }))
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/settings/keychain' })
 
 		await user.keyboard('{Control>}k{/Control}')
