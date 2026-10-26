@@ -61,7 +61,7 @@ describe('explainEmpty', () => {
 			relaxed: noRelaxed,
 		})
 		expect(e.title).toBe('Nothing matches “hans active”')
-		expect(e.wordNotes).toEqual(['“active” is a status. Pick a type first, then choose a status.'])
+		expect(e.wordNotes).toEqual(['“active” is a status. Choose it below to filter by status.'])
 		expect(e.hits.map((h) => h.label)).toEqual(['In progress'])
 		expect(e.filtered).toBe(false)
 		expect(e.everything).toBe(0)

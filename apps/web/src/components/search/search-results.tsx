@@ -3,6 +3,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
+import { rowSub, rowTitle } from '@/lib/search/row-display'
 import type { SearchResultRow, SearchSourceGroup } from '@maskin/shared'
 import { MessageSquare, RefreshCw, Zap } from 'lucide-react'
 import { statusDotClass } from './search-chips'
@@ -81,6 +82,7 @@ export function RowIcon({
 // Live row structure and 13px scale: title with a muted suffix, kind in the right
 // column, status as a muted suffix with one 6px dot. Snippets are for chats only.
 function ResultRow({ row, query, id, active, onOpen }: RowProps) {
+	const sub = rowSub(row)
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard use goes through the search field (combobox with aria-activedescendant), not through focus on the row
 		<div
@@ -99,12 +101,10 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 			<span className="flex min-w-0 flex-1 flex-col gap-[3px]">
 				<span className="flex min-w-0 items-baseline gap-2">
 					<span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-						{highlightText(row.title, query)}
-						{row.sub ? (
-							<span className="font-normal text-muted-foreground"> — {row.sub}</span>
-						) : null}
+						{highlightText(rowTitle(row), query)}
+						{sub ? <span className="font-normal text-muted-foreground"> — {sub}</span> : null}
 					</span>
-					<span className="inline-flex shrink-0 items-center gap-1 text-[11.5px] text-muted-foreground">
+					<span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
 						<span
 							aria-hidden="true"
 							className={cn('size-1.5 shrink-0 rounded-full', statusDotClass(row.statusGroup))}
@@ -113,7 +113,7 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 					</span>
 				</span>
 				{row.group === 'chats' && row.snippet ? (
-					<span className="truncate text-[11.5px] leading-normal text-muted-foreground">
+					<span className="truncate text-xs leading-normal text-muted-foreground">
 						{highlightText(row.snippet, query)}
 					</span>
 				) : null}

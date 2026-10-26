@@ -1,4 +1,5 @@
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { shortcutLabel } from '@/lib/search/platform'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { Search, X } from 'lucide-react'
@@ -28,6 +29,7 @@ function NavSearchV2() {
 	const { workspaceId } = useWorkspace()
 	const { setOpen } = useCommandPalette()
 	const pathname = useRouterState({ select: (s) => s.location.pathname })
+	const paletteShortcut = shortcutLabel('K')
 	if (pathname === `/${workspaceId}/search`) return null
 	if (pathname.startsWith(`/${workspaceId}/marketplace`)) return <NavSearchInline />
 	return (
@@ -35,13 +37,14 @@ function NavSearchV2() {
 			type="button"
 			onClick={() => setOpen(true)}
 			aria-label="Search or run a command"
-			title="Search or run a command · ⌘K"
+			title={`Search or run a command · ${paletteShortcut}`}
 			className="inline-flex h-[30px] shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-[9px] text-[12.5px] text-muted-foreground transition-colors duration-150 hover:border-border-hover hover:text-foreground"
 		>
 			<Search aria-hidden="true" className="size-[15px] shrink-0" />
-			<span className="hidden min-[760px]:inline">Search or run a command</span>
-			<kbd className="hidden rounded-[5px] border border-border bg-muted px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[760px]:inline-block">
-				⌘K
+			{/* Icon only up to 1024px: the labelled button is 227px and crushes the page title. */}
+			<span className="hidden min-[1024px]:inline">Search or run a command</span>
+			<kbd className="hidden rounded-[5px] border border-border bg-muted px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
+				{paletteShortcut}
 			</kbd>
 		</button>
 	)

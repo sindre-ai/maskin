@@ -1,4 +1,4 @@
-import { buildStatusChips, buildTypeChips } from '@/lib/search/chips'
+import { buildStatusChips, buildTypeChips, failedTypeKeys } from '@/lib/search/chips'
 import { describe, expect, it } from 'vitest'
 
 const options = [
@@ -69,6 +69,42 @@ describe('buildStatusChips', () => {
 			'needs_you',
 			'in_progress',
 			'done',
+		])
+	})
+})
+
+describe('failedTypeKeys', () => {
+	it('maps a failed fixed source to its own chip', () => {
+		expect(failedTypeKeys(['loops', 'automations'], ['chat', 'loop', 'company'])).toEqual([
+			'loop',
+			'automation',
+		])
+	})
+
+	it('maps a failed objects source to every chip that is not a fixed source', () => {
+		expect(
+			failedTypeKeys(['objects'], ['chat', 'loop', 'agent', 'bet', 'company', 'automation']),
+		).toEqual(['bet', 'company'])
+	})
+
+	it('returns nothing when no source failed', () => {
+		expect(failedTypeKeys([], ['chat'])).toEqual([])
+	})
+})
+
+describe('buildTypeChips with a failed source', () => {
+	it('keeps the failed chip with a dash even though its count is zero', () => {
+		const counts = { chat: 4, loop: 0, company: 0 }
+		const chips = buildTypeChips({
+			options,
+			counts,
+			selected: [],
+			fallbackLabel,
+			failed: ['loop'],
+		})
+		expect(chips.map((c) => [c.key, c.count])).toEqual([
+			['chat', 4],
+			['loop', null],
 		])
 	})
 })

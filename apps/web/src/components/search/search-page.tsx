@@ -26,10 +26,16 @@ import {
 	trackSearchRowOpened,
 	useTrackSettledSearchV2,
 } from '@/lib/search-telemetry'
-import { type TypeOption, buildStatusChips, buildTypeChips } from '@/lib/search/chips'
+import {
+	type TypeOption,
+	buildStatusChips,
+	buildTypeChips,
+	failedTypeKeys,
+} from '@/lib/search/chips'
 import { explainEmpty } from '@/lib/search/empty-state'
 import { navigateToSearchRow } from '@/lib/search/open-row'
 import { hasPill, queryText } from '@/lib/search/parts'
+import { shortcutLabel } from '@/lib/search/platform'
 import {
 	type RecentSearch,
 	getRecentSearchEntries,
@@ -167,10 +173,12 @@ export function SearchPageV2() {
 	const result = useSearchQuery(workspaceId, input)
 	const { data, isError, isFetching, isPlaceholderData, refetch } = result
 
-	// The last good answer keeps the chips honest while a request fails or is slow.
-	const lastData = useRef<SearchResponse | undefined>(undefined)
-	if (data && !isPlaceholderData) lastData.current = data
-	const facets = (data ?? lastData.current)?.facets ?? null
+	// The last good answer keeps the chips honest while a request fails or is slow. It
+	// remembers the words it answered, so the count line never pairs it with newer words.
+	const lastAnswer = useRef<{ data: SearchResponse; query: string } | undefined>(undefined)
+	if (data && !isPlaceholderData) lastAnswer.current = { data, query }
+	// Nothing asked (idle): the chips are plain filters, with no counts from an earlier search.
+	const facets = enabled ? ((data ?? lastAnswer.current?.data)?.facets ?? null) : null
 
 	// Retry restarts the pace clock too, even though the request was already in flight.
 	const [retries, setRetries] = useState(0)
@@ -210,6 +218,13 @@ export function SearchPageV2() {
 	}, [activeId])
 
 	const [announcement, setAnnouncement] = useState('')
+
+	// Back steps back in the app; a page opened from a link has no app history to step
+	// back into, and going back would leave the app, so it goes to For you.
+	const goBack = () => {
+		if (router.history.canGoBack()) router.history.back()
+		else navigate({ to: '/$workspaceId', params: { workspaceId } })
+	}
 
 	const { track, onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill } =
 		useSearchFieldHandlers({
@@ -270,25 +285,37 @@ export function SearchPageV2() {
 		setActiveIndex((i) => (i < 0 ? (delta === 1 ? 0 : n - 1) : (i + delta + n) % n))
 	}
 
+	const partial = (data?.partial.length ?? 0) > 0
 	const typeChips = buildTypeChips({
 		options: typeOptions,
 		counts: facets?.types ?? null,
 		selected: types,
 		fallbackLabel: humanize,
+		// A source that failed has no count; its chip stays with a dash.
+		failed: failedTypeKeys(
+			data?.partial ?? [],
+			typeOptions.map((o) => o.key),
+		),
 	})
 	const statusChips = buildStatusChips({ counts: facets?.statuses ?? null, selected: statuses })
 	const staleChips = enabled && !data
 
 	// What fills the content area.
 	// Failed, offline with nothing to show, or no answer after 10 seconds. The field and chips stay.
-	const failed = ((isError || !online) && !data) || pace === 'timeout'
+	// Offline, the old rows are not an answer to the new words: show the offline block.
+	const failed = ((isError || !online) && (!data || isPlaceholderData)) || pace === 'timeout'
 	const showSkeleton = enabled && !data && !failed && online
 	const showEmpty = Boolean(data) && data?.total === 0
 	const showList = Boolean(data) && (data?.total ?? 0) > 0
-	const partial = (data?.partial.length ?? 0) > 0
 
+	// While the answer on screen is a stand-in for the new words (slow or offline), the
+	// count line keeps the old total with the old words instead of claiming it for the new.
+	const counted = isPlaceholderData ? lastAnswer.current : data ? { data, query } : undefined
 	const countText =
-		data && !showSkeleton ? `${data.total} result${data.total === 1 ? '' : 's'}` : null
+		counted && !showSkeleton
+			? `${counted.data.total} result${counted.data.total === 1 ? '' : 's'}`
+			: null
+	const countQuery = counted?.query ?? query
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -301,7 +328,7 @@ export function SearchPageV2() {
 							variant="ghost"
 							size="icon"
 							aria-label="Back"
-							onClick={() => router.history.back()}
+							onClick={goBack}
 							className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground max-[1024.02px]:size-11"
 						>
 							<ArrowLeft aria-hidden="true" className="size-4" />
@@ -325,7 +352,7 @@ export function SearchPageV2() {
 							onEscape={() => {
 								// Esc clears the words first; with nothing left it steps back.
 								if (parts.text) dispatch({ type: 'text', text: '' })
-								else router.history.back()
+								else goBack()
 							}}
 						/>
 					</div>
@@ -333,12 +360,15 @@ export function SearchPageV2() {
 					<TypeChips
 						chips={typeChips}
 						dimmed={staleChips}
+						// With nothing asked there is no answer coming, so no dash either.
+						showCounts={enabled}
 						onToggle={(key) => toggleFilter('type', key)}
 					/>
 					<div className="flex items-start gap-2">
 						<StatusChips
 							chips={statusChips}
 							dimmed={staleChips}
+							showCounts={enabled}
 							onToggle={(key) => toggleFilter('status', key)}
 						/>
 						<DisplayMenu
@@ -376,10 +406,10 @@ export function SearchPageV2() {
 							) : countText ? (
 								<p className="min-w-0 max-w-full truncate text-[11.5px] text-muted-foreground">
 									{countText}
-									{query ? (
+									{countQuery ? (
 										<>
 											{' for '}
-											<strong className="font-semibold text-foreground">“{query}”</strong>
+											<strong className="font-semibold text-foreground">“{countQuery}”</strong>
 										</>
 									) : null}
 								</p>
@@ -398,7 +428,7 @@ export function SearchPageV2() {
 						</div>
 					) : null}
 
-					{!online && data ? <OfflineNotice /> : null}
+					{!online && data && !failed ? <OfflineNotice /> : null}
 					{pace === 'slow' && data ? <SlowNotice /> : null}
 					{partial ? <PartialNotice onRetry={retry} /> : null}
 
@@ -551,9 +581,17 @@ function SearchIdleState({
 							</div>
 						) : null}
 						<p className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-dashed border-input px-3 py-2 text-[11.5px] text-muted-foreground">
-							Type a word like “loop” or “done”, then press Tab to turn it into a filter.
+							<span>
+								Type a word like “loop” or “done”, then{' '}
+								{/* A phone has no Tab key: the suggestion that appears is the tap target. */}
+								<span className="max-sm:hidden pointer-coarse:hidden">press Tab</span>
+								<span className="hidden max-sm:inline pointer-coarse:inline">
+									tap the filter that appears
+								</span>{' '}
+								to turn it into a filter.
+							</span>
 							<Button type="button" variant="outline" size="sm" onClick={onOpenPalette}>
-								<kbd className="font-mono text-[10px]">⌘K</kbd>
+								<kbd className="font-mono text-[10px]">{shortcutLabel('K')}</kbd>
 							</Button>
 						</p>
 					</div>

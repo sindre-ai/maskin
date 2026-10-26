@@ -32,6 +32,7 @@ vi.mock('@/hooks/use-available-object-types', () => ({
 	useAvailableObjectTypes: () => [
 		{ value: 'bet', label: 'Bets' },
 		{ value: 'company', label: 'Companies' },
+		{ value: 'person', label: 'People' },
 	],
 }))
 vi.mock('@/components/shared/create-picker', () => ({ CreatePicker: () => null }))
@@ -157,6 +158,52 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		const calls = vi.mocked(api.search.query).mock.calls
 		expect(calls.every(([, params]) => params?.statuses === 'needs_you')).toBe(true)
+	})
+})
+
+describe('launcher commands and hints', () => {
+	it('names the create commands with the singular type name', async () => {
+		renderLauncher()
+		await screen.findByRole('option', { name: /Review the launcher/ })
+		expect(screen.getByRole('option', { name: /New company/ })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /New person/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /New companie\b/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /New people/ })).not.toBeInTheDocument()
+	})
+
+	it('hides the keyboard hints on touch screens and shows Ctrl off Mac', async () => {
+		renderLauncher()
+		await screen.findByRole('option', { name: /Review the launcher/ })
+		expect(screen.getByText('Ctrl+↵ search everything')).toBeInTheDocument()
+		expect(screen.getByText('↑↓ navigate').parentElement).toHaveClass(
+			'max-sm:hidden',
+			'pointer-coarse:hidden',
+		)
+	})
+})
+
+describe('launcher rows', () => {
+	it('shows Untitled for a blank title and plain words for an automation trigger type', async () => {
+		vi.mocked(api.search.query).mockResolvedValue(
+			response([
+				row({ id: IDS.task, group: 'objects', type: 'task', title: '', status: 'active' }),
+				row({
+					id: IDS.recent,
+					group: 'automations',
+					type: 'automation',
+					title: 'Monday health read',
+					sub: 'cron',
+					status: 'on',
+				}),
+			]),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'monday')
+
+		expect(await screen.findByRole('option', { name: /Untitled/ })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Monday health read.*Schedule/ })).toBeInTheDocument()
+		expect(screen.queryByText(/cron/)).not.toBeInTheDocument()
 	})
 })
 

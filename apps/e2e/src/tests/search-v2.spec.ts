@@ -301,12 +301,12 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			await page.goto(`/${account.workspaceId}/objects`)
 
-			// One nav entry. The words show from 760px; under it the button is the icon only.
+			// One nav entry. The words show from 1024px; under it the button is the icon only.
 			const navButton = page.getByRole('button', { name: 'Search or run a command' })
 			await expect(navButton).toBeVisible({ timeout: 15_000 })
 			await expect(page.getByRole('textbox', { name: 'Search the workspace' })).toHaveCount(0)
 			const navLabel = navButton.getByText('Search or run a command')
-			if (vp.width >= 760) await expect(navLabel).toBeVisible()
+			if (vp.width >= 1024) await expect(navLabel).toBeVisible()
 			else await expect(navLabel).toBeHidden()
 
 			// ⌘F is not taken here, so the browser's find works.
