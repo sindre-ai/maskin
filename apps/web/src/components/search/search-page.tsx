@@ -292,7 +292,10 @@ export function SearchPageV2() {
 		selected: types,
 		fallbackLabel: humanize,
 		// A source that failed has no count; its chip stays with a dash.
-		failed: failedTypeKeys(data?.partial ?? [], typeOptions.map((o) => o.key)),
+		failed: failedTypeKeys(
+			data?.partial ?? [],
+			typeOptions.map((o) => o.key),
+		),
 	})
 	const statusChips = buildStatusChips({ counts: facets?.statuses ?? null, selected: statuses })
 	const staleChips = enabled && !data
