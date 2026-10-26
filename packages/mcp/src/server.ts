@@ -1273,6 +1273,7 @@ const MAX_POLL_FAILURES = 5
 async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
+	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
 ) {
 	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
 	// ignored, and it is never true on this create call (registered below instead).
@@ -1300,7 +1301,7 @@ async function createSessionAndWait(
 	}
 
 	return waitForSessionResult(config, {
-		toolName: 'create_session',
+		toolName,
 		workspaceId: workspace_id,
 		session,
 		registerReturn: true,
@@ -1316,7 +1317,12 @@ async function createSessionAndWait(
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName: 'create_session' | 'get_session' | 'resume_session' | 'send_session_message'
+		toolName:
+			| 'create_session'
+			| 'create_sub_chat'
+			| 'get_session'
+			| 'resume_session'
+			| 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
 		registerReturn?: boolean
@@ -1489,6 +1495,169 @@ async function waitForSessionResult(
 			},
 		],
 	}
+}
+
+// ─── Chats: agent status and waiting for replies ──────────────────────────
+
+/** A chat's session as the sessions list returns it (verbose rows). */
+interface ChatSessionRow {
+	id: string
+	actorId: string
+	status: string
+	updatedAt?: string
+}
+
+type ChatAgentStatus = 'starting' | 'running' | 'waiting_for_input' | 'paused' | 'not_running'
+
+/**
+ * What an agent is doing in a chat, from its session. `running` means it has a live
+ * session: it is either working on a turn or ready for the next message. The session
+ * does not say which, so read get_chat_activity for the detail.
+ */
+function chatAgentStatus(status: string | undefined): ChatAgentStatus {
+	if (status === 'pending' || status === 'starting' || status === 'snapshotting') return 'starting'
+	if (status === 'running') return 'running'
+	if (status === 'waiting_for_input') return 'waiting_for_input'
+	if (status === 'paused') return 'paused'
+	return 'not_running'
+}
+
+/** Every session in a chat, newest first. A failed lookup is an empty list, never an error. */
+async function fetchChatSessions(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	conversationId: string,
+): Promise<ChatSessionRow[]> {
+	try {
+		const rows = await apiCall(
+			config,
+			'GET',
+			`/api/sessions?conversation_id=${conversationId}&verbose=true&limit=50`,
+			undefined,
+			{ workspaceId },
+		)
+		return Array.isArray(rows) ? (rows as ChatSessionRow[]) : []
+	} catch {
+		return []
+	}
+}
+
+/** The newest session of each agent. `rows` must already be newest first. */
+function latestSessionByActor(rows: ChatSessionRow[]): Map<string, ChatSessionRow> {
+	const latest = new Map<string, ChatSessionRow>()
+	for (const row of rows) {
+		if (row.actorId && !latest.has(row.actorId)) latest.set(row.actorId, row)
+	}
+	return latest
+}
+
+// A chat reply can take a long time, but not forever: a wait that has not been answered by
+// then returns what it has, with settled false.
+const CHAT_WAIT_MAX_MS = 30 * 60_000
+// Polls to let a woken agent's session appear before "it has no live session" counts.
+const CHAT_WAIT_GRACE_POLLS = 3
+// Consecutive polls with no live session after which an agent is given up on.
+const CHAT_WAIT_IDLE_POLLS = 3
+
+interface ChatReplyMessage {
+	id: number
+	actorId: string
+	actorName?: string
+	actorType?: string
+	content: string
+	metadata?: { source?: string } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has finished its reply to the message at
+ * `afterMessageId`. An agent has finished when its closing message for the turn
+ * arrives (the one the platform posts at the end of a turn; interim notes do not
+ * count), or when it has no live session any more, so a failed run does not hold the
+ * caller for the full wait.
+ */
+async function waitForChatReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		conversationId: string
+		afterMessageId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, ChatReplyMessage>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const page = (await apiCall(
+				config,
+				'GET',
+				`/api/conversations/${opts.conversationId}/messages?after_id=${opts.afterMessageId}&limit=200`,
+				undefined,
+				wsOpts,
+			)) as { messages?: ChatReplyMessage[] }
+			pollFailures = 0
+			pollError = undefined
+			for (const message of page.messages ?? []) {
+				if (!opts.awaitedActorIds.includes(message.actorId)) continue
+				seen.set(message.id, message)
+				if (message.metadata?.source === 'final_output') pending.delete(message.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		const latest = latestSessionByActor(
+			await fetchChatSessions(config, opts.workspaceId, opts.conversationId),
+		)
+		for (const actorId of [...pending]) {
+			const live = latest.get(actorId)
+			const hasLiveSession =
+				!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not finish a reply: they have no live session, or the wait ran out. Read the chat with list_conversation_messages, or see what they did with get_chat_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
+/** A participant as the conversation route returns it. */
+interface ChatParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
 }
 
 /**
@@ -5400,13 +5569,22 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(
+			const result = (await apiCall(
 				config,
 				'GET',
 				`/api/conversations/${args.conversation_id}`,
 				undefined,
 				{ workspaceId: args.workspace_id },
-			)
+			)) as { participants?: Array<ChatParticipant & { status?: ChatAgentStatus }> }
+			// Say who is busy, so an agent does not @mention one that is not running.
+			if (Array.isArray(result.participants)) {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, args.workspace_id, args.conversation_id),
+				)
+				for (const p of result.participants) {
+					if (p.actorType === 'agent') p.status = chatAgentStatus(latest.get(p.actorId)?.status)
+				}
+			}
 			return {
 				_meta: meta('get_conversation', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -5436,6 +5614,10 @@ export function createMcpServer(config: McpConfig) {
 			params.set('offset', String(offset))
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.has_human) params.set('has_human', 'true')
+			if (args.subject_type && args.subject_id) {
+				params.set('subject_type', args.subject_type)
+				params.set('subject_id', args.subject_id)
+			}
 			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as {
@@ -5528,7 +5710,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, mention_names, ...body } = args
+			const { workspace_id, conversation_id, mention_names, wait, sub_chat_session_id, ...body } =
+				args
 			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
@@ -5559,24 +5742,335 @@ export function createMcpServer(config: McpConfig) {
 			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
+			// A sub-chat hangs from a message of this chat. Replying in that message's thread is
+			// what sends the words to its agent, so the message is looked up from the sub-chat.
+			let threadRootId = body.thread_root_id
+			if (sub_chat_session_id && threadRootId === undefined) {
+				const subChat = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sub_chat_session_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { spawnedByMessageId?: number | null }
+				if (typeof subChat.spawnedByMessageId !== 'number') {
+					throw new Error(
+						`Sub-chat ${sub_chat_session_id} is not attached to a message in a chat yet, so there is no thread to reply in. Talk to it with send_session_message instead.`,
+					)
+				}
+				threadRootId = subChat.spawnedByMessageId
+			}
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
+				{
+					...body,
+					thread_root_id: threadRootId,
+					session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+				},
 				{ workspaceId: workspace_id },
 			)
 			const withMentionReport =
 				unresolvedMentions.length > 0
 					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
 					: result
+
+			// Hold for the answer: the agents @mentioned, or every other agent in the chat.
+			let waited: Awaited<ReturnType<typeof waitForChatReplies>> | { note: string } | undefined
+			const posted = result as { id?: number; actorId?: string }
+			if (wait && typeof posted.id === 'number') {
+				// Read after posting: an @mentioned agent has joined the chat by now.
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: ChatParticipant[] }
+				const mentioned = new Set(body.metadata?.mentions ?? [])
+				const agents = (conversation.participants ?? []).filter(
+					(p) => p.actorType === 'agent' && p.actorId !== posted.actorId,
+				)
+				const awaited = (
+					mentioned.size > 0 ? agents.filter((p) => mentioned.has(p.actorId)) : agents
+				).map((p) => p.actorId)
+				waited =
+					awaited.length > 0
+						? await waitForChatReplies(config, {
+								workspaceId: workspace_id,
+								conversationId: conversation_id,
+								afterMessageId: posted.id,
+								awaitedActorIds: awaited,
+							})
+						: { note: 'There is no agent in this chat to wait for, so nothing was waited on.' }
+			}
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							waited
+								? { ...(withMentionReport as Record<string, unknown>), wait: waited }
+								: withMentionReport,
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_chat',
+		{
+			description: tools.create_chat.description,
+			inputSchema: tools.create_chat.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				title,
+				participant_actor_ids,
+				first_message,
+				subject_type,
+				subject_id,
+				wait,
+			} = args
+			if ((subject_type === undefined) !== (subject_id === undefined)) {
+				throw new Error('subject_type and subject_id go together: give both or neither.')
+			}
+			const wsOpts = { workspaceId: workspace_id }
+			const conversation = (await apiCall(
+				config,
+				'POST',
+				'/api/conversations',
+				{
+					title,
+					participant_actor_ids,
+					...(subject_type && subject_id
+						? { subject: { type: subject_type, id: subject_id } }
+						: {}),
+				},
+				wsOpts,
+			)) as { id: string; participants?: ChatParticipant[] }
+
+			// The first message is its own call, so the agents can be @mentioned by id: the
+			// mention is what wakes them, and the create call does not know who is an agent.
+			let firstMessage: unknown
+			let waitResult: Awaited<ReturnType<typeof waitForChatReplies>> | undefined
+			if (first_message) {
+				const requested = new Set(participant_actor_ids)
+				const agentIds = (conversation.participants ?? [])
+					.filter((p) => p.actorType === 'agent' && requested.has(p.actorId))
+					.map((p) => p.actorId)
+				firstMessage = await apiCall(
+					config,
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: first_message,
+						...(agentIds.length > 0 ? { metadata: { mentions: agentIds } } : {}),
+						session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+					},
+					wsOpts,
+				)
+				const posted = firstMessage as { id?: number; actorId?: string }
+				if (wait && typeof posted.id === 'number') {
+					waitResult = await waitForChatReplies(config, {
+						workspaceId: workspace_id,
+						conversationId: conversation.id,
+						afterMessageId: posted.id,
+						awaitedActorIds: agentIds.filter((id) => id !== posted.actorId),
+					})
+				}
+			}
+			return {
+				_meta: meta('create_chat', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							conversation,
+							...(firstMessage ? { first_message: firstMessage } : {}),
+							...(waitResult ? { wait: waitResult } : {}),
+						}),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_chat_participant',
+		{
+			description: tools.add_chat_participant.description,
+			inputSchema: tools.add_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const participants = await apiCall(
+				config,
+				'POST',
+				`/api/conversations/${args.conversation_id}/participants`,
+				{ actor_ids: args.actor_ids },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('add_chat_participant', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ participants }) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_chat_participant',
+		{
+			description: tools.remove_chat_participant.description,
+			inputSchema: tools.remove_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			// The route answers 204 with no body, so there is nothing to parse.
+			await apiFetch(
+				config,
+				'DELETE',
+				`/api/conversations/${args.conversation_id}/participants/${args.actor_id}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('remove_chat_participant', config, args.workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ removed: true, actor_id: args.actor_id }),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_chat_activity',
+		{
+			description: tools.get_chat_activity.description,
+			inputSchema: tools.get_chat_activity.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id, limit_turns } = args
+			if (!conversation_id && !session_id) {
+				throw new Error('Give a conversation_id (and optionally an actor_id), or a session_id.')
+			}
+			const wsOpts = { workspaceId: workspace_id }
+			let targets: ChatSessionRow[]
+			if (session_id) {
+				const row = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${session_id}`,
+					undefined,
+					wsOpts,
+				)) as Partial<ChatSessionRow>
+				targets = [{ id: session_id, actorId: row.actorId ?? '', status: row.status ?? '' }]
+			} else {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, workspace_id, conversation_id as string),
+				)
+				targets = [...latest.values()].filter((s) => !actor_id || s.actorId === actor_id)
+			}
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const agents = await Promise.all(
+				targets.map(async (s) => {
+					const base = {
+						actor_id: s.actorId,
+						actor_name: names[s.actorId] ?? null,
+						session_id: s.id,
+						status: chatAgentStatus(s.status),
+					}
+					try {
+						const activity = await apiCall(
+							config,
+							'GET',
+							`/api/sessions/${s.id}/activity?limit_turns=${limit_turns ?? 3}`,
+							undefined,
+							wsOpts,
+						)
+						return { ...base, activity }
+					} catch (err) {
+						return { ...base, error: err instanceof Error ? err.message : String(err) }
+					}
+				}),
+			)
+			const payload = { agents }
+			return {
+				_meta: meta('get_chat_activity', config, workspace_id),
+				// Same full payload on both channels (see known-pitfalls.md).
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'stop_chat_agent',
+		{
+			description: tools.stop_chat_agent.description,
+			inputSchema: tools.stop_chat_agent.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id } = args
+			const wsOpts = { workspaceId: workspace_id }
+			let sessionIds: string[]
+			if (session_id) {
+				sessionIds = [session_id]
+			} else if (conversation_id && actor_id) {
+				const rows = await fetchChatSessions(config, workspace_id, conversation_id)
+				sessionIds = rows
+					.filter((s) => s.actorId === actor_id && !ENDED_SESSION_STATUSES.includes(s.status))
+					.map((s) => s.id)
+			} else {
+				throw new Error('Give a conversation_id and an actor_id, or a session_id.')
+			}
+			if (sessionIds.length === 0) {
+				return {
+					_meta: meta('stop_chat_agent', config, workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								stopped: false,
+								note: 'That agent has nothing running in this chat, so there is nothing to stop.',
+							}),
+						},
+					],
+				}
+			}
+			const stopped: string[] = []
+			for (const id of sessionIds) {
+				await apiCall(config, 'POST', `/api/sessions/${id}/stop`, undefined, wsOpts)
+				stopped.push(id)
+			}
+			return {
+				_meta: meta('stop_chat_agent', config, workspace_id),
+				content: [
+					{ type: 'text' as const, text: JSON.stringify({ stopped: true, session_ids: stopped }) },
+				],
 			}
 		},
 	)
@@ -6603,41 +7097,45 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	registerAppTool(
-		server,
-		'create_session',
-		{
-			description: tools.create_session.description,
-			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-		},
-		async (args) => {
-			if (args.wait) return createSessionAndWait(config, args)
+	// create_sub_chat is the new name for create_session: one handler, two names, so
+	// prompts that still say create_session keep working.
+	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
+		registerAppTool(
+			server,
+			toolName,
+			{
+				description: tools[toolName].description,
+				inputSchema: tools[toolName].inputSchema.shape,
+				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+			},
+			async (args) => {
+				if (args.wait) return createSessionAndWait(config, args, toolName)
 
-			// `wait` never goes to the create route. The result is always sent back to
-			// the caller, with no opt-out: not waiting means not holding the call open,
-			// not never finding out how it went.
-			const { workspace_id, wait, ...rest } = args
-			const createBody = { ...rest, notify_on_complete: true }
+				// `wait` never goes to the create route. The result is always sent back to
+				// the caller, with no opt-out: not waiting means not holding the call open,
+				// not never finding out how it went.
+				const { workspace_id, wait, ...rest } = args
+				const createBody = { ...rest, notify_on_complete: true }
 
-			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-				workspaceId: workspace_id,
-			})) as SessionRow
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enriched = await enrichSessionActorName(config, wsId, result)
-			const withUrl = wsId
-				? addUrl(enriched as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: enriched.id,
-						actorId: (enriched as { actorId?: string }).actorId,
-					})
-				: enriched
-			return {
-				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-			}
-		},
-	)
+				const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
+					workspaceId: workspace_id,
+				})) as SessionRow
+				const wsId = workspace_id ?? config.defaultWorkspaceId
+				const enriched = await enrichSessionActorName(config, wsId, result)
+				const withUrl = wsId
+					? addUrl(enriched as Record<string, unknown>, config, wsId, {
+							kind: 'session',
+							id: enriched.id,
+							actorId: (enriched as { actorId?: string }).actorId,
+						})
+					: enriched
+				return {
+					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				}
+			},
+		)
+	}
 
 	registerAppTool(
 		server,
