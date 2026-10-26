@@ -102,12 +102,12 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
+import { useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 import { useActors } from '@/hooks/use-actors'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjects } from '@/hooks/use-objects'
 import { useUnread } from '@/hooks/use-subscriptions'
-import { useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 
 function buildSearchRow(overrides: Partial<SearchRow> = {}): SearchRow {
 	return {
