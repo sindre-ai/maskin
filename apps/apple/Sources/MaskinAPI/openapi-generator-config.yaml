@@ -79,6 +79,9 @@ filter:
     - /api/integrations/{id}/complete
     - /api/integrations/{id}/allow-from-chat
     - /api/integrations/{id}/allow-access
+    - /api/integrations/{id}/remove
+    - /api/integrations/{id}/audit-log
+    - /api/integrations/{id}/grants
     - /api/sessions/{id}/continue
     - /api/sessions/{id}/input
     - /api/marketplace/loops
