@@ -216,6 +216,7 @@ import {
 	settleSession,
 } from './session-lifecycle'
 import {
+	SESSION_RESUMED_LOG,
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
@@ -223,6 +224,7 @@ import {
 	resolveSessionCostUsd,
 	sumAssistantUsage,
 	sumRunningSessionUsage,
+	sumSegmentResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
@@ -2024,7 +2026,7 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
-			await this.insertSystemLog(sessionId, 'Session resumed from snapshot')
+			await this.insertSystemLog(sessionId, SESSION_RESUMED_LOG)
 
 			this.streamContainerLogs(sessionId, containerId)
 			this.watchContainerExit(sessionId, containerId)
@@ -4456,7 +4458,10 @@ ${cont.continues_prompt}
 	 * returns null when no usage could be parsed (e.g. Codex/custom runtimes
 	 * that emit no structured usage).
 	 */
-	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
+	private async accumulateSessionUsage(
+		sessionId: string,
+		opts: { allTurns?: boolean } = {},
+	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
 		try {
@@ -4467,7 +4472,12 @@ ${cont.continues_prompt}
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			// A close-out of a many-turn chat (idle close, helper finished) must add up
+			// every turn of this process. The tail below holds only the newest one.
+			if (opts.allTurns) {
+				usage = await sumSegmentResultUsage(this.db, sessionId)
+			}
+			const tail = usage ? undefined : this.activeSessions.get(sessionId)?.stdoutTail
 			if (tail) {
 				usage = parseUsageFromLogChunks([tail])
 			}
@@ -4699,6 +4709,10 @@ ${cont.continues_prompt}
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
+		// Save the usage first, as the timeout close does: the terminal row is final
+		// for usage writes, and the settle below reads these totals for its
+		// $ai_generation event. Must run before cleanupSession() clears the tail.
+		await this.accumulateSessionUsage(session.id, { allTurns: true })
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
@@ -4797,6 +4811,9 @@ ${cont.continues_prompt}
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 		if (!session || session.status !== 'running') return
+
+		// Same reason as the idle close: save the usage before the row goes final.
+		await this.accumulateSessionUsage(session.id, { allTurns: true })
 
 		const settled = await settleSession(
 			session.id,
