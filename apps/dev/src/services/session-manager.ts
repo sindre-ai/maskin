@@ -171,6 +171,7 @@ import {
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
 	resolveLlmRoute,
+	unreadableKeyError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -190,6 +191,7 @@ import {
 } from '../lib/mcp-session-header'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
+import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
 	AgentServerAuthError,
 	AgentServerClient,
@@ -2565,7 +2567,12 @@ ${cont.continues_prompt}
 			}
 			// Workspace OpenAI key — independent of the anthropic-side routing above.
 			if (!llmConfig.api_key && wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+				try {
+					envVars.OPENAI_API_KEY = openSecret(wsLlmKeys.openai, 'llm_keys.openai')
+				} catch (err) {
+					if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+					throw err
+				}
 			}
 		}
 

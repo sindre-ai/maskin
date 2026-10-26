@@ -37,7 +37,7 @@ import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, Hash, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -45,6 +45,7 @@ import {
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -193,6 +194,13 @@ export interface ComposerProps {
 	externalError?: string | null
 	onDismissExternalError?: () => void
 	/**
+	 * One quiet line under the box, for the group-chat cue ("No agent will reply. Tag one
+	 * with @."). Pass a string, or null when the cue applies but has nothing to say, to
+	 * render the polite live region; leave it undefined for no region at all. The line
+	 * shows once the box has focus, text or a tag, and never next to an error line.
+	 */
+	hint?: string | null
+	/**
 	 * The active conversation's participant actor ids — used to seed the
 	 * `In this conversation` section of the `@` mention picker. Callers wiring
 	 * a brand-new-chat surface pass `[]`; the picker falls through to the
@@ -292,6 +300,7 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	hint,
 	conversationParticipantIds,
 	textareaLabel,
 	value: controlledValue,
@@ -372,6 +381,14 @@ export function Composer({
 	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
+	const hintId = useId()
+	const [textareaFocused, setTextareaFocused] = useState(false)
+	const hintText =
+		hint &&
+		!(sendError || externalError) &&
+		(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
+			? hint
+			: null
 	// Unified `/` picker state. `slashStart`
 	// points at the `/` in the textarea; when set, everything after it up to the
 	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
@@ -569,9 +586,13 @@ export function Composer({
 				const before = prev.slice(0, trigger.atPos)
 				const after = prev.slice(trigger.atPos + 1 + trigger.query.length)
 				const trimmedAfter = after.startsWith(' ') ? after : ` ${after}`
-				const next = `${before}${trimmedAfter}`
+				const joined = `${before}${trimmedAfter}`
+				// Only whitespace left: keep the box empty so the placeholder (the composer
+				// cue's "Reply to …") stays visible behind the chips.
+				const next = joined.trim() === '' ? '' : joined
 				requestAnimationFrame(() => {
-					const caret = before.length + 1 // land the caret past the leading space we inserted
+					// Land the caret past the leading space we inserted
+					const caret = next === '' ? 0 : before.length + 1
 					textarea?.focus()
 					textarea?.setSelectionRange(caret, caret)
 				})
@@ -1136,6 +1157,9 @@ export function Composer({
 					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
 					rows={1}
 					aria-label={textareaLabel}
+					aria-describedby={hint === undefined ? undefined : hintId}
+					onFocus={() => setTextareaFocused(true)}
+					onBlur={() => setTextareaFocused(false)}
 					// Screen readers announce the picker's active row while focus
 					// stays on the textarea (spec §Accessibility). The picker
 					// keeps this in sync via `onActiveDescendantChange`.
@@ -1148,6 +1172,21 @@ export function Composer({
 						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
+				{hint === undefined ? null : (
+					<output
+						id={hintId}
+						aria-live="polite"
+						className={cn(
+							'px-1 text-muted-foreground text-xs',
+							// The icon and the 8 px gap above the control row exist only while there is text,
+							// so the empty live region adds no height.
+							hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
+						)}
+					>
+						{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
+						{hintText}
+					</output>
+				)}
 				<div className="flex items-center gap-2">
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>

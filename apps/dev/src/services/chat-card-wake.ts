@@ -129,7 +129,7 @@ export async function wakeAgentFromCard(params: {
 			},
 			conversationHistory: historyRows.slice().reverse(),
 			isDirectConversation: participants.length === 2,
-			wasMentioned: true,
+			wakeReason: 'tagged',
 		})
 		return true
 	} catch (err) {

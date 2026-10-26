@@ -16,6 +16,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
@@ -527,7 +528,9 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(200)
 			const row = await workspaceRow(ws.id)
 			expect(row.name).toBe(`Renamed by ${role}!`)
-			expect(row.settings).toMatchObject({ llm_keys: { openai: 'sk-oai-BBB' } })
+			const stored = (row.settings as { llm_keys: { openai: string } }).llm_keys.openai
+			expect(stored).not.toContain('sk-oai-BBB')
+			expect(openSecret(stored)).toBe('sk-oai-BBB')
 		})
 
 		it('returns 403 to an agent member holding the owner role, row unchanged', async () => {
