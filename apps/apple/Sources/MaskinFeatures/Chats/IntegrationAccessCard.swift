@@ -101,8 +101,13 @@ struct IntegrationAccessCard: View {
 					// Stopped to take the new access, so its follow-up carries on; not stopped, so write into it.
 					if result.changed {
 						try await helper.continueSession(sessionID: request.sessionID, content: reply)
-					} else if let card = messageID.map({ ChatCardAnswer(messageID: $0, outcome: .done) }) {
-						try await helper.sendInput(sessionID: request.sessionID, content: reply, cardAnswer: card)
+					} else {
+						// Not stopped, so write into the running helper. Without the card's message id there is
+						// nothing to record the answer against: say so rather than skip it and look done.
+						guard let messageID else { throw KeychainAccessError("Couldn't tell the agent.") }
+						try await helper.sendInput(
+							sessionID: request.sessionID, content: reply,
+							cardAnswer: ChatCardAnswer(messageID: messageID, outcome: .done))
 					}
 				} catch {
 					stillRunning = true
@@ -124,7 +129,10 @@ struct IntegrationAccessCard: View {
 			onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
 			return
 		}
-		guard let card, let (_, helper) = source() else { return }
+		guard let card, let (_, helper) = source() else {
+			error = "Couldn't tell the agent. Try again."
+			return
+		}
 		busy = true
 		error = nil
 		Task {

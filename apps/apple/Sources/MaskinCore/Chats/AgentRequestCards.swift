@@ -71,13 +71,15 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		self.replyToSession = raw["reply_to_session"]?.boolValue == true
 	}
 
-	/// What the person says back after an Allow. `changed` is false when the agent already had it.
+	/// What the person says back after an Allow, worded as the web does. `changed` is false when the
+	/// agent already had it. In a chat the agent is also asked for one short line, so the person
+	/// sees it has the access; a helper just carries on.
 	public func allowedReply(changed: Bool) -> String {
 		let head =
 			changed
-			? "I've allowed you \(level.words) to \(displayName)."
-			: "You already have \(level.words) to \(displayName)."
-		return replyToSession ? head + " Carry on with the work." : head + " Reply with one short line to say you have it."
+			? "I've allowed you \(level.words) to \(displayName). Carry on with the work."
+			: "You already have \(level.words) to \(displayName). Carry on with the work."
+		return replyToSession ? head : head + " Reply with one short line to say you have it."
 	}
 
 	public var declinedReply: String {
@@ -128,7 +130,7 @@ public struct APIIntegrationAccessSource: IntegrationAccessing {
 		// An agent's own entry wins over the default for agents without one.
 		let own = row.agentGrants?.first { $0.actorId == agentID }?.access.rawValue
 		let current = own ?? row.defaultAgentAccess?.rawValue ?? "none"
-		let rank = ["none": 0, "read": 1, "ask_first": 1, "read_write": 2][current] ?? 0
+		let rank = ["none": 0, "read": 1, "read_write": 2][current] ?? 0
 		return rank >= request.level.rank ? .allowed : .ask
 	}
 
@@ -144,9 +146,21 @@ public struct APIIntegrationAccessSource: IntegrationAccessing {
 			return IntegrationAccessResult(changed: body.changed, relaunched: body.relaunch == .stopped)
 		case .forbidden:
 			throw KeychainAccessError("Only the person who connected this or a workspace admin can allow it.")
+		// The server says why (a custom tool server asked for read access, the session is gone, the
+		// connection is no longer active), as the web's card does; "try again" would never work.
+		case .badRequest(let bad):
+			throw KeychainAccessError(Self.refusal((try? bad.body.json)?.error.message))
+		case .notFound(let missing):
+			throw KeychainAccessError(Self.refusal((try? missing.body.json)?.error.message))
+		case .conflict(let conflict):
+			throw KeychainAccessError(Self.refusal((try? conflict.body.json)?.error.message))
 		default:
 			throw KeychainAccessError("Couldn't allow it. Try again.")
 		}
+	}
+
+	static func refusal(_ serverMessage: String?) -> String {
+		serverMessage.map { "Couldn't allow: \($0)" } ?? "Couldn't allow it. Try again."
 	}
 }
 

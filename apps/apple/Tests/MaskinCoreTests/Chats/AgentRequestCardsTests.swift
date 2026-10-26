@@ -40,9 +40,26 @@ struct AgentRequestCardsTests {
 			]))
 		let request = try #require(IntegrationAccessRequest(message: m))
 		#expect(request.level == .readWrite)
-		#expect(request.allowedReply(changed: true) == "I've allowed you read and write access to Slack. Reply with one short line to say you have it.")
-		#expect(request.allowedReply(changed: false) == "You already have read and write access to Slack. Reply with one short line to say you have it.")
+		#expect(request.allowedReply(changed: true) == "I've allowed you read and write access to Slack. Carry on with the work. Reply with one short line to say you have it.")
+		#expect(request.allowedReply(changed: false) == "You already have read and write access to Slack. Carry on with the work. Reply with one short line to say you have it.")
 		#expect(request.declinedReply == "Not now: please don't use Slack yet. Carry on without it, or tell me what you need instead.")
+	}
+
+	@Test func aHelperIsToldToCarryOnWithoutAskingForAReplyLine() throws {
+		let m = message(
+			.object([
+				"integration_access_request": .object([
+					"session_id": .string("s"), "integration_id": .string("i"), "display_name": .string("Slack"),
+					"level": .string("read"), "reply_to_session": .bool(true),
+				])
+			]))
+		let request = try #require(IntegrationAccessRequest(message: m))
+		#expect(request.allowedReply(changed: true) == "I've allowed you read access to Slack. Carry on with the work.")
+	}
+
+	@Test func theServersReasonIsShownInsteadOfTryAgain() {
+		#expect(APIIntegrationAccessSource.refusal("Use read_write or none for this tool.") == "Couldn't allow: Use read_write or none for this tool.")
+		#expect(APIIntegrationAccessSource.refusal(nil) == "Couldn't allow it. Try again.")
 	}
 
 	@Test func anAccessRequestNeedsAKnownLevel() {

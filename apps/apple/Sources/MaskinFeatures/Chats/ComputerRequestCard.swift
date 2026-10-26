@@ -61,7 +61,10 @@ struct ComputerRequestCard: View {
 			onReply(ComputerRequest.doneMessage, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
 			return
 		}
-		guard let card, let runtime, let workspaceID = runtime.environment.workspaceId else { return }
+		guard let card, let runtime, let workspaceID = runtime.environment.workspaceId else {
+			error = "Couldn't tell the agent. Try again."
+			return
+		}
 		busy = true
 		error = nil
 		defer { busy = false }
