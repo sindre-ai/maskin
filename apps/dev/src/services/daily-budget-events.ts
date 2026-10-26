@@ -22,7 +22,7 @@
  */
 import type { Database } from '@maskin/db'
 import { events, sessions, workspaces } from '@maskin/db/schema'
-import { and, desc, eq, gte, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { resolveSourceActor } from './push-schedule-shared'
@@ -116,36 +116,98 @@ export async function recordSessionAdmission(db: Database, input: AdmissionInput
 
 // ── Daily summary ──────────────────────────────────────────────────────────
 
-/** `YYYY-MM-DD` of the UTC day containing `at`. ASSUMED day boundary: UTC, there is no workspace timezone yet. */
-export function utcDay(at: Date): string {
-	return at.toISOString().slice(0, 10)
+/** A valid IANA timezone, or UTC. */
+function safeTimezone(timezone: unknown): string {
+	if (typeof timezone !== 'string' || timezone === '') return 'UTC'
+	try {
+		new Intl.DateTimeFormat('en-US', { timeZone: timezone })
+		return timezone
+	} catch {
+		return 'UTC'
+	}
 }
 
-export function previousUtcDay(at: Date): string {
-	return utcDay(new Date(at.getTime() - DAY_MS))
+/** `YYYY-MM-DD` of the day containing `at` in `timezone`. */
+export function localDay(at: Date, timezone: string): string {
+	return new Intl.DateTimeFormat('en-CA', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+	}).format(at)
+}
+
+/** `YYYY-MM-DD` of the day before `at`, in `timezone`. */
+export function previousLocalDay(at: Date, timezone: string): string {
+	return shiftDay(localDay(at, timezone), -1)
+}
+
+function shiftDay(day: string, by: number): string {
+	const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+	return new Date(Date.UTC(y, m - 1, d + by)).toISOString().slice(0, 10)
+}
+
+/** How far `timezone` is ahead of UTC at `at`, in ms. */
+function offsetMs(at: Date, timezone: string): number {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: timezone,
+		hourCycle: 'h23',
+		year: 'numeric',
+		month: 'numeric',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: 'numeric',
+		second: 'numeric',
+	}).formatToParts(at)
+	const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+	const asUtc = Date.UTC(
+		get('year'),
+		get('month') - 1,
+		get('day'),
+		get('hour'),
+		get('minute'),
+		get('second'),
+	)
+	return asUtc - Math.floor(at.getTime() / 1000) * 1000
+}
+
+/** The instant a local day starts in `timezone` (its midnight). */
+export function localDayStart(day: string, timezone: string): Date {
+	const guess = new Date(`${day}T00:00:00.000Z`)
+	const first = new Date(guess.getTime() - offsetMs(guess, timezone))
+	// The offset can differ at the real midnight (a clock change in between), so settle once more.
+	return new Date(guess.getTime() - offsetMs(first, timezone))
 }
 
 interface DailyTarget {
-	unit: 'tokens' | 'usd'
+	unit: 'tokens' | 'dollars'
 	amount: number
+	timezone: string
 }
 
 /**
- * The owner's daily target, if one is set. ASSUMED storage (spec section 8): workspace settings key
- * `daily_budget` with `unit` and `amount`. Null until the target setting ships.
+ * The owner's daily target, if one is set: workspace settings key `daily_budget`, written by the
+ * target setting (unit tokens or dollars, amount, stop_share, IANA timezone, UTC when absent).
  */
 export function readDailyTarget(settings: unknown): DailyTarget | null {
-	const raw = (settings as { daily_budget?: { unit?: unknown; amount?: unknown } } | null)
-		?.daily_budget
+	const raw = (
+		settings as { daily_budget?: { unit?: unknown; amount?: unknown; timezone?: unknown } } | null
+	)?.daily_budget
 	if (!raw) return null
-	if (raw.unit !== 'tokens' && raw.unit !== 'usd') return null
+	if (raw.unit !== 'tokens' && raw.unit !== 'dollars') return null
 	if (typeof raw.amount !== 'number' || !Number.isFinite(raw.amount) || raw.amount <= 0) return null
-	return { unit: raw.unit, amount: raw.amount }
+	return { unit: raw.unit, amount: raw.amount, timezone: safeTimezone(raw.timezone) }
+}
+
+/** The timezone a workspace's day runs in: its target's, UTC when there is none. */
+function workspaceTimezone(settings: unknown): string {
+	return readDailyTarget(settings)?.timezone ?? 'UTC'
 }
 
 /**
- * Writes the summary of `day` for the workspace unless one already exists. Returns true when this call
- * wrote it. Runs in one transaction under an advisory lock keyed on workspace and day, so a concurrent
+ * Writes the summary of the local `day` (in the workspace's own timezone) unless one already exists.
+ * Writes nothing for a workspace with no target and no finished run that day. Returns true when this
+ * call wrote it. Runs in one transaction under an advisory lock keyed on workspace and day, so a concurrent
  * replica waits, then sees the row and stops.
  */
 export async function writeDailySummary(
@@ -153,15 +215,15 @@ export async function writeDailySummary(
 	workspaceId: string,
 	day: string,
 ): Promise<boolean> {
-	const dayStart = new Date(`${day}T00:00:00.000Z`)
-	const dayEnd = new Date(dayStart.getTime() + DAY_MS)
-
 	const [ws] = await db
 		.select({ settings: workspaces.settings })
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
 	if (!ws) return false
+	const timezone = workspaceTimezone(ws.settings)
+	const dayStart = localDayStart(day, timezone)
+	const dayEnd = localDayStart(shiftDay(day, 1), timezone)
 	const actorId = await resolveSourceActor(db, workspaceId, NIL_UUID)
 	if (!actorId) return false
 
@@ -221,6 +283,7 @@ export async function writeDailySummary(
 		// ASSUMED token unit: input + output + cache writes. Cache reads are listed apart.
 		const tokens = input + output + cacheCreation
 		const target = readDailyTarget(ws.settings)
+		if (!target && Number(spend?.sessions ?? 0) === 0) return false
 
 		await recordEvent(tx, {
 			workspaceId,
@@ -232,7 +295,8 @@ export async function writeDailySummary(
 				day,
 				target: target?.amount ?? null,
 				unit: target?.unit ?? null,
-				spent: target?.unit === 'usd' ? costUsd : target?.unit === 'tokens' ? tokens : null,
+				timezone: target?.timezone ?? 'UTC',
+				spent: target?.unit === 'dollars' ? costUsd : target?.unit === 'tokens' ? tokens : null,
 				deferred: Number(deferred?.n ?? 0),
 				spent_usd: costUsd,
 				spent_tokens: tokens,
@@ -245,13 +309,15 @@ export async function writeDailySummary(
 }
 
 /**
- * Writes yesterday's summary for every workspace that ran something yesterday or has a target.
- * Ticks every ten minutes but only scans once a day; the per-workspace claim makes a repeat harmless.
+ * Writes the summary of each workspace's last finished local day, once that workspace's own midnight
+ * has passed. Ticks every ten minutes; a workspace is looked at again only when its day changes, and
+ * the per-workspace claim makes a repeat harmless.
  */
 export class DailyBudgetSummaryScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
-	private scannedDay: string | null = null
+	/** workspace id -> the last day this process already settled for it. */
+	private settledDay = new Map<string, string>()
 
 	constructor(private db: Database) {}
 
@@ -275,38 +341,41 @@ export class DailyBudgetSummaryScheduler {
 
 	/** Public for test injection; returns how many summaries this tick wrote. */
 	async tick(now: Date = new Date()): Promise<number> {
-		const today = utcDay(now)
-		if (this.running || this.scannedDay === today) return 0
+		if (this.running) return 0
 		this.running = true
 		let written = 0
-		let failed = false
 		try {
-			const day = previousUtcDay(now)
-			const dayStart = new Date(`${day}T00:00:00.000Z`)
-			const dayEnd = new Date(dayStart.getTime() + DAY_MS)
+			// A workspace's last finished day ended at most 48 hours ago in any timezone, so recent
+			// activity is enough to find every workspace that could have something to summarise.
+			const since = new Date(now.getTime() - 2 * DAY_MS)
 			const active = await this.db
 				.selectDistinct({ workspaceId: sessions.workspaceId })
 				.from(sessions)
-				.where(
-					or(
-						and(gte(sessions.completedAt, dayStart), lt(sessions.completedAt, dayEnd)),
-						and(gte(sessions.createdAt, dayStart), lt(sessions.createdAt, dayEnd)),
-					),
-				)
+				.where(or(gte(sessions.completedAt, since), gte(sessions.createdAt, since)))
 			const withTarget = await this.db
 				.select({ workspaceId: workspaces.id })
 				.from(workspaces)
 				.where(sql`${workspaces.settings}->'daily_budget' is not null`)
-			const ids = new Set([...active, ...withTarget].map((r) => r.workspaceId))
-			for (const workspaceId of ids) {
+			const ids = [...new Set([...active, ...withTarget].map((r) => r.workspaceId))]
+			if (ids.length === 0) return 0
+			const rows = await this.db
+				.select({ id: workspaces.id, settings: workspaces.settings })
+				.from(workspaces)
+				.where(inArray(workspaces.id, ids))
+			for (const ws of rows) {
+				const day = previousLocalDay(now, workspaceTimezone(ws.settings))
+				if (this.settledDay.get(ws.id) === day) continue
 				try {
-					if (await writeDailySummary(this.db, workspaceId, day)) written++
+					if (await writeDailySummary(this.db, ws.id, day)) written++
+					this.settledDay.set(ws.id, day)
 				} catch (err) {
-					failed = true
-					logger.warn('Daily budget summary failed', { workspaceId, day, error: String(err) })
+					logger.warn('Daily budget summary failed', {
+						workspaceId: ws.id,
+						day,
+						error: String(err),
+					})
 				}
 			}
-			if (!failed) this.scannedDay = today
 		} finally {
 			this.running = false
 		}

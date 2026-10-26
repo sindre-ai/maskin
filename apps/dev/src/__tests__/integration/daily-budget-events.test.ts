@@ -5,7 +5,9 @@ import {
 	DAILY_BUDGET_SUMMARY_ACTION,
 	DailyBudgetSummaryScheduler,
 	SESSION_ADMISSION_ACTION,
+	localDayStart,
 	median,
+	previousLocalDay,
 	writeDailySummary,
 } from '../../services/daily-budget-events'
 import { configureSessionLifecycle, startSession } from '../../services/session-lifecycle'
@@ -171,6 +173,58 @@ describe('daily budget events (Integration)', () => {
 			expect(row?.data).toMatchObject({ target: 2000, unit: 'tokens', spent: 1500, spent_usd: 4 })
 		})
 
+		it('reports spent in dollars for a dollar target', async () => {
+			await db
+				.update(workspaces)
+				.set({ settings: { daily_budget: { unit: 'dollars', amount: 20, stop_share: 90 } } })
+				.where(eq(workspaces.id, workspaceId))
+			await finishedSession({ totalCostUsd: '4.5' })
+
+			await writeDailySummary(db, workspaceId, YESTERDAY)
+			const [row] = await summaries()
+			expect(row?.data).toMatchObject({ target: 20, unit: 'dollars', spent: 4.5, spent_usd: 4.5 })
+		})
+
+		it("takes the day from the target's timezone, across a clock change", async () => {
+			// Oslo on 2026-10-25 runs 25 hours: 2026-10-24T22:00Z to 2026-10-25T23:00Z.
+			await db
+				.update(workspaces)
+				.set({
+					settings: { daily_budget: { unit: 'dollars', amount: 20, timezone: 'Europe/Oslo' } },
+				})
+				.where(eq(workspaces.id, workspaceId))
+			await finishedSession({
+				totalCostUsd: '7',
+				completedAt: new Date('2026-10-24T21:30:00.000Z'),
+			})
+			await finishedSession({
+				totalCostUsd: '1',
+				completedAt: new Date('2026-10-24T22:30:00.000Z'),
+			})
+			await finishedSession({
+				totalCostUsd: '2',
+				completedAt: new Date('2026-10-25T22:30:00.000Z'),
+			})
+			await finishedSession({
+				totalCostUsd: '5',
+				completedAt: new Date('2026-10-25T23:30:00.000Z'),
+			})
+
+			// 23:05Z is already past Oslo midnight, while it is still the 25th in UTC.
+			const scheduler = new DailyBudgetSummaryScheduler(db)
+			expect(await scheduler.tick(new Date('2026-10-25T23:05:00.000Z'))).toBeGreaterThanOrEqual(1)
+			expect(await scheduler.tick(new Date('2026-10-25T23:15:00.000Z'))).toBe(0)
+
+			const rows = await summaries()
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.data).toMatchObject({
+				day: '2026-10-25',
+				timezone: 'Europe/Oslo',
+				spent: 3,
+				sessions: 2,
+			})
+		})
+
 		it('counts deferred admissions of the day', async () => {
 			await finishedSession({ totalCostUsd: '1' })
 			await db.insert(events).values([
@@ -206,11 +260,36 @@ describe('daily budget events (Integration)', () => {
 		it('writes a zero-spend summary for a workspace that has a target but ran nothing', async () => {
 			await db
 				.update(workspaces)
-				.set({ settings: { daily_budget: { unit: 'usd', amount: 20 } } })
+				.set({ settings: { daily_budget: { unit: 'dollars', amount: 20 } } })
 				.where(eq(workspaces.id, workspaceId))
 			await new DailyBudgetSummaryScheduler(db).tick(NOW)
 			const [row] = await summaries()
-			expect(row?.data).toMatchObject({ target: 20, unit: 'usd', spent: 0, sessions: 0 })
+			expect(row?.data).toMatchObject({
+				target: 20,
+				unit: 'dollars',
+				timezone: 'UTC',
+				spent: 0,
+				sessions: 0,
+			})
+		})
+	})
+
+	describe('local days', () => {
+		it('finds the start of a day and the previous day in a timezone', () => {
+			expect(localDayStart('2026-10-25', 'UTC').toISOString()).toBe('2026-10-25T00:00:00.000Z')
+			expect(localDayStart('2026-10-25', 'Europe/Oslo').toISOString()).toBe(
+				'2026-10-24T22:00:00.000Z',
+			)
+			expect(localDayStart('2026-10-26', 'Europe/Oslo').toISOString()).toBe(
+				'2026-10-25T23:00:00.000Z',
+			)
+			expect(localDayStart('2026-10-26', 'America/Los_Angeles').toISOString()).toBe(
+				'2026-10-26T07:00:00.000Z',
+			)
+			expect(previousLocalDay(new Date('2026-10-26T00:05:00.000Z'), 'UTC')).toBe('2026-10-25')
+			expect(previousLocalDay(new Date('2026-10-26T00:05:00.000Z'), 'America/Los_Angeles')).toBe(
+				'2026-10-24',
+			)
 		})
 	})
 
