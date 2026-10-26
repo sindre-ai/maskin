@@ -8,7 +8,7 @@ import {
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { type McpConfig, mcpRemoteUrl } from '@maskin/shared'
+import { type McpConfig, type ToolGrants, mcpRemoteUrl } from '@maskin/shared'
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { decrypt, encrypt } from '../crypto'
@@ -198,6 +198,8 @@ export type ExtensionMcpEntry = {
 	config: McpConfig
 	/** The extension's MCP key row (provider extension-mcp:{slug}), when one exists. Never its credentials. */
 	credentialIntegrationId: string | null
+	/** agentId -> tool -> grant, as stored on the extension. An agent with no entry has no grant. */
+	toolGrants: ToolGrants
 }
 
 /**
@@ -214,6 +216,7 @@ export async function resolveMcpFromExtension(
 			id: extensions.id,
 			slug: extensions.slug,
 			mcpConfig: extensions.mcpConfig,
+			toolGrants: extensions.toolGrants,
 			credentialIntegrationId: integrations.id,
 		})
 		.from(extensions)
@@ -243,6 +246,7 @@ export async function resolveMcpFromExtension(
 						extensionId: r.id,
 						config: r.mcpConfig,
 						credentialIntegrationId: r.credentialIntegrationId,
+						toolGrants: r.toolGrants,
 					},
 				]
 			: [],
@@ -312,17 +316,21 @@ export function createExtensionMcpKeyReader(
  * extension's key row; its value is passed as a Bearer value through the env
  * var the config names. If the key cannot be read the server does not attach
  * and mcp_last_error says so; a server that attaches clears a stale error.
- * With no reader nothing attaches.
+ * With no reader nothing attaches. An agent with no grant on an extension (no
+ * entry in its tool grants) gets none of it: no server, no key read, no audit
+ * row, and the extension's mcp_last_error is left alone.
  */
 export async function buildExtensionMcpServers(
 	db: Database | Transaction,
 	workspaceId: string,
+	agentId: string,
 	readKey: ExtensionMcpKeyReader | null,
 ): Promise<{ servers: Record<string, unknown>; env: Record<string, string> }> {
 	const servers: Record<string, unknown> = {}
 	const env: Record<string, string> = {}
 	if (!readKey) return { servers, env }
 	for (const entry of await resolveMcpFromExtension(db, workspaceId)) {
+		if (!Object.hasOwn(entry.toolGrants, agentId)) continue
 		const { server, tools } = entry.config
 		if (server.type !== 'stdio') continue
 		if (tools.length > MAX_EXTENSION_TOOLS) {

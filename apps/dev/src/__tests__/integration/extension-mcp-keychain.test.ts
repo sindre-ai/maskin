@@ -82,6 +82,7 @@ async function setup() {
 			name: 'Example',
 			status: 'active',
 			mcpConfig: mcpConfig as never,
+			toolGrants: { [agent.id]: { get_item: 'allow' } },
 			createdBy: human,
 		})
 		.returning()
@@ -164,6 +165,36 @@ describe('SessionManager.buildLaunchSpec: extension MCP key read through Keychai
 			sessionId: s.session.id,
 			outboundTarget: 'mcp.example.com',
 		})
+	})
+
+	it('does not attach, read the key or write an audit row for an agent with no grant on the extension', async () => {
+		const s = await setup()
+		const key = fake('mcp-key')
+		const row = await saveKey(s, key)
+		await db.update(extensions).set({ toolGrants: {} }).where(eq(extensions.id, s.extension.id))
+
+		const env = await launch(s.session)
+
+		expect(env.AUTHORIZATION).toBeUndefined()
+		expect(env.MCP_SERVERS_JSON).not.toContain('extension-example')
+		for (const value of Object.values(env)) expect(value).not.toContain(key)
+		expect(await readsOf(row.id)).toEqual([])
+		expect(await lastError(s.extension.id)).toBeNull()
+	})
+
+	it('does not attach for an agent when only another agent holds the grant', async () => {
+		const s = await setup()
+		const other = await insertActor(db, { type: 'agent', systemPrompt: 'Other' })
+		await db
+			.update(extensions)
+			.set({ toolGrants: { [other.id]: { get_item: 'allow' } } })
+			.where(eq(extensions.id, s.extension.id))
+		const row = await saveKey(s, fake('mcp-key'))
+
+		const env = await launch(s.session)
+
+		expect(env.AUTHORIZATION).toBeUndefined()
+		expect(await readsOf(row.id)).toEqual([])
 	})
 
 	it('needs no grant row: the key saved through the write path is readable by the workspace', async () => {

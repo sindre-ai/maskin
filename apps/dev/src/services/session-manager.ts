@@ -2676,11 +2676,13 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
-		// Custom extension MCPs (extension-<slug>). Each key is read through Keychain
-		// for this agent and session; one that cannot be read leaves its server off.
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
 		const extensionMcp = await buildExtensionMcpServers(
 			this.db,
 			session.workspaceId,
+			agent.id,
 			createExtensionMcpKeyReader(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: agent.id,
