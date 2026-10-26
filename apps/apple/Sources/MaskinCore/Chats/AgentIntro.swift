@@ -61,6 +61,14 @@ public struct AgentIntroView: Equatable, Sendable {
 		self.plainTail = tail
 	}
 
+	/// Whether an intro's first-step buttons are still on offer: only until a person has written after
+	/// it (as the web does). Scrolling back to an old intro must not offer "Set up my pages" again, and a
+	/// tap posts into the current chat, not the intro's moment. `messages` is the timeline in order.
+	public static func stepsOpen(for intro: ChatMessage, in messages: [ChatMessage]) -> Bool {
+		guard let index = messages.firstIndex(where: { $0.id == intro.id }) else { return true }
+		return !messages[messages.index(after: index)...].contains { $0.author == .human }
+	}
+
 	/// The body without its last `count` paragraphs (the plain list, the tools sentence and the
 	/// closing line). Paragraphs are blank-line separated. Returns the body untouched when the count
 	/// does not leave at least one paragraph, so a wrong count can only show too much, never cut

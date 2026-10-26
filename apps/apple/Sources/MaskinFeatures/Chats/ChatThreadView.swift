@@ -1091,6 +1091,7 @@ struct ThreadTranscript: View {
 						metadata: ChatSendMetadata(fromSuggestedStep: ChatSuggestedStepRef(introMessageID: introID, index: index)))
 				},
 				onFillStep: onFillStep,
+				introStepsOpen: AgentIntroView.stepsOpen(for: message, in: store.messages),
 				cardOutcome: message.asksForAnswer
 					? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 				chatAgents: store.participants.filter { $0.kind == .agent },

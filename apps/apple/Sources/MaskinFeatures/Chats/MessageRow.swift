@@ -179,9 +179,13 @@ struct MessageRow: View {
 	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
 	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
 	/// An intro's send step tapped: send its words, noting which step it was.
-	var onSendStep: (_ prompt: String, _ introMessageID: Int, _ index: Int) -> Void = { _, _, _ in }
+	/// Nil where the screen cannot send a step (a thread), so the buttons are not drawn at all rather
+	/// than drawn and dead.
+	var onSendStep: ((_ prompt: String, _ introMessageID: Int, _ index: Int) -> Void)?
 	/// An intro's fill step tapped: put its prompt in the message box.
-	var onFillStep: (String) -> Void = { _ in }
+	var onFillStep: ((String) -> Void)?
+	/// The steps are on offer only until a person has written after the intro.
+	var introStepsOpen = true
 	/// How a person already answered an agent's card in this message (read from the chat).
 	var cardOutcome: ChatCardAnswer.Outcome?
 	/// The agents in this chat, who may use a credential saved from a Keychain card.
@@ -402,7 +406,7 @@ struct MessageRow: View {
 					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let intro = AgentIntroView(message: message) {
-				if let steps = intro.steps, let introID = message.serverID {
+				if introStepsOpen, let steps = intro.steps, let introID = message.serverID, let onSendStep, let onFillStep {
 					IntroStepsView(
 						steps: steps, onSend: { step, index in onSendStep(step.prompt, introID, index) },
 						onFill: onFillStep)

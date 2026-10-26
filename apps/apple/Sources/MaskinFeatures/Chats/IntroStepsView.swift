@@ -58,8 +58,9 @@ struct IntroStepsView: View {
 /// The tools an agent's intro says the job needs, one row each (3 at most, in the writer's order).
 /// Status is read live rather than stored on the message, so a scrolled-back intro never shows a
 /// stale button. A missing tool is the Connect card; once every one is connected it collapses to
-/// one line. Whether the agent itself has the tool (the web's "set up the agent's tools" hint) is
-/// not shown yet.
+/// one line that says only what is known here: connected to the workspace. Whether the agent itself
+/// has the tool (the web's "set up the agent's tools" hint) is not checked, so the line does not
+/// claim the agent can use it.
 struct IntroToolsView: View {
 	let providers: [String]
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -73,7 +74,7 @@ struct IntroToolsView: View {
 					if known.allSatisfy({ isConnected($0.id, store) }) {
 						RequestCardSettled(
 							symbol: "checkmark.circle.fill",
-							text: "Connected: " + known.map(\.displayName).joined(separator: ", "))
+							text: "Connected to this workspace: " + known.map(\.displayName).joined(separator: ", "))
 					} else {
 						VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 							Text("TOOLS FOR THIS JOB").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)

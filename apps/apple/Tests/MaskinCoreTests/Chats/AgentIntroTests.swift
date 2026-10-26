@@ -77,3 +77,32 @@ struct AgentIntroTests {
 		#expect(json["from_suggested_step"]?["index"]?.intValue == 2)
 	}
 }
+
+@Suite("Intro steps still on offer")
+struct IntroStepsOpenTests {
+	private func message(_ id: String, _ author: ChatParticipant.Kind) -> ChatMessage {
+		ChatMessage(
+			id: id, conversationID: "c", actorID: author == .agent ? "a" : "me", actorName: "x", author: author,
+			kind: "message", content: "x")
+	}
+
+	@Test func stepsAreOfferedUntilAPersonHasWrittenAfterTheIntro() {
+		let intro = message("1", .agent)
+		#expect(AgentIntroView.stepsOpen(for: intro, in: [intro]))
+		#expect(AgentIntroView.stepsOpen(for: intro, in: [intro, message("2", .agent)]))
+		#expect(AgentIntroView.stepsOpen(for: intro, in: [intro, message("2", .human)]) == false)
+	}
+
+	@Test func aMessageBeforeTheIntroDoesNotCloseIt() {
+		let intro = message("2", .agent)
+		#expect(AgentIntroView.stepsOpen(for: intro, in: [message("1", .human), intro]))
+	}
+
+	@Test func aSendJustTappedClosesThemAtOnceBecauseItsBubbleAppearsFirst() {
+		// An optimistic bubble has no server id yet but is already in the timeline.
+		let intro = message("1", .agent)
+		var pending = message("p", .human)
+		pending.serverID = nil
+		#expect(AgentIntroView.stepsOpen(for: intro, in: [intro, pending]) == false)
+	}
+}
