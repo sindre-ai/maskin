@@ -47142,6 +47142,146 @@ public enum Operations {
                         public var threadAlsoInChannel: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/unresolved_mentions`.
                         public var unresolved_mentions: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session`.
+                        @frozen public enum delivered_to_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1`.
+                            public struct Case1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case live = "live"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/session_id`.
+                                public var session_id: Swift.String
+                                /// Creates a new `Case1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload.modePayload,
+                                    session_id: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1`.
+                            case case1(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload)
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2`.
+                            public struct Case2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case continued = "continued"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/session_id`.
+                                public var session_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/previous_session_id`.
+                                public var previous_session_id: Swift.String
+                                /// Creates a new `Case2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                ///   - previous_session_id:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload.modePayload,
+                                    session_id: Swift.String,
+                                    previous_session_id: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                    self.previous_session_id = previous_session_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                    case previous_session_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2`.
+                            case case2(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload)
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3`.
+                            public struct Case3Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case not_delivered = "not_delivered"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/session_id`.
+                                public var session_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/reason`.
+                                public var reason: Swift.String
+                                /// Creates a new `Case3Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                ///   - reason:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload.modePayload,
+                                    session_id: Swift.String,
+                                    reason: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                    self.reason = reason
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                    case reason
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3`.
+                            case case3(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload)
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self = .case1(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self = .case2(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self = .case3(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                throw Swift.DecodingError.failedToDecodeOneOfSchema(
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                switch self {
+                                case let .case1(value):
+                                    try value.encode(to: encoder)
+                                case let .case2(value):
+                                    try value.encode(to: encoder)
+                                case let .case3(value):
+                                    try value.encode(to: encoder)
+                                }
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session`.
+                        public var delivered_to_session: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -47159,6 +47299,7 @@ public enum Operations {
                         ///   - threadRootId:
                         ///   - threadAlsoInChannel:
                         ///   - unresolved_mentions:
+                        ///   - delivered_to_session:
                         public init(
                             id: Swift.Double,
                             conversationId: Swift.String,
@@ -47173,7 +47314,8 @@ public enum Operations {
                             editedAt: Swift.String? = nil,
                             threadRootId: Swift.Double? = nil,
                             threadAlsoInChannel: Swift.Bool,
-                            unresolved_mentions: [Swift.String]? = nil
+                            unresolved_mentions: [Swift.String]? = nil,
+                            delivered_to_session: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload? = nil
                         ) {
                             self.id = id
                             self.conversationId = conversationId
@@ -47189,6 +47331,7 @@ public enum Operations {
                             self.threadRootId = threadRootId
                             self.threadAlsoInChannel = threadAlsoInChannel
                             self.unresolved_mentions = unresolved_mentions
+                            self.delivered_to_session = delivered_to_session
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -47205,6 +47348,7 @@ public enum Operations {
                             case threadRootId
                             case threadAlsoInChannel
                             case unresolved_mentions
+                            case delivered_to_session
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/application\/json`.
