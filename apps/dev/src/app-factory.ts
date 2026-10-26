@@ -44,6 +44,7 @@ import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
+import fileProposalsRoutes from './routes/file-proposals'
 import filesRoutes from './routes/files'
 import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
@@ -490,6 +491,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// prefix so the nested /:id/comments paths sit under the existing files
 	// surface without touching files.ts.
 	app.route('/api/files', fileCommentsRoutes)
+	app.route('/api/files', fileProposalsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
