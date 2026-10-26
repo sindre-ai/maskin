@@ -499,12 +499,15 @@ export function ObjectReferenceChip({
 	objectId,
 	fallback,
 	cardFollows = true,
+	newTab = false,
 }: {
 	workspaceId: string
 	objectId: string
 	fallback: ReactNode
 	/** A draft's approval card is drawn under its sentence. Without one the draft is a chip too. */
 	cardFollows?: boolean
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
@@ -564,6 +567,7 @@ export function ObjectReferenceChip({
 			<Link
 				to="/$workspaceId/objects/$objectId"
 				params={{ workspaceId, objectId: object.id }}
+				{...(newTab ? NEW_TAB : {})}
 				aria-label={name}
 				className={CHIP}
 			>
@@ -666,6 +670,9 @@ export function SettingsReferenceChip({
 	)
 }
 
+/** Your own messages open an object in a new tab, so the conversation stays where it is. */
+const NEW_TAB = { target: '_blank', rel: 'noopener noreferrer' } as const
+
 const CARD_SHELL =
 	'not-prose @container my-2 flex w-full max-w-[460px] flex-col rounded-xl border bg-card'
 // The same card as a hover preview: no outer margin, a fixed width, lifted off the page.
@@ -698,6 +705,7 @@ function FoldableCard({
 	title,
 	head,
 	state,
+	className,
 	children,
 }: {
 	title: string
@@ -705,6 +713,8 @@ function FoldableCard({
 	head: ReactNode
 	/** The status badge or state. */
 	state: ReactNode
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 	/** The card's link, drawn without a shell of its own. */
 	children: ReactNode
 }) {
@@ -732,6 +742,7 @@ function FoldableCard({
 				CARD_SHELL,
 				'relative border-border transition-colors duration-180 ease-standard hover:border-border-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring',
 				folded && 'h-10',
+				className,
 			)}
 		>
 			{folded ? (
@@ -817,6 +828,8 @@ export function ObjectReferenceCard({
 	preview = false,
 	sheet = false,
 	actions,
+	newTab = false,
+	className,
 }: {
 	workspaceId: string
 	objectId: string
@@ -826,12 +839,16 @@ export function ObjectReferenceCard({
 	sheet?: boolean
 	/** The preview's Copy link and Open, at the right end of the footer. */
 	actions?: ReactNode
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
 	const { workspace } = useWorkspace()
-	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const shell = cn(sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL, className)
 	const marker = preview || sheet ? undefined : ''
 
 	if (object === undefined) {
@@ -869,7 +886,11 @@ export function ObjectReferenceCard({
 			preview={preview}
 			sheet={sheet}
 			link={
-				<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId: object.id }} />
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId: object.id }}
+					{...(newTab ? NEW_TAB : {})}
+				/>
 			}
 		>
 			<LinkedCardFace
@@ -926,7 +947,7 @@ export function ObjectReferenceCard({
 	return preview || sheet ? (
 		link
 	) : (
-		<FoldableCard title={title} head={head} state={state}>
+		<FoldableCard title={title} head={head} state={state} className={className}>
 			{link}
 		</FoldableCard>
 	)

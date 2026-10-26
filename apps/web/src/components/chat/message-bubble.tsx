@@ -5,6 +5,8 @@ import {
 	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
 import {
+	ObjectReferenceCard,
+	ObjectReferenceChip,
 	OtherWorkspaceLink,
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
@@ -29,9 +31,13 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type OwnCard,
+	type OwnPlacement,
 	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	isOnlyCard,
+	placeOwnLinks,
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
@@ -51,7 +57,7 @@ import {
 	RotateCcw,
 	Settings as SettingsIcon,
 } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, type Ref, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
@@ -176,14 +182,22 @@ export function MessageBubble({
 					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
 					.join('\n')
 			: message.content
-	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
-		[isOwn, shownContent, workspaceId, enterprise],
+	const ownParts = useMemo(
+		() =>
+			isOwn
+				? placeOwnLinks(splitOwnLinks(shownContent, workspaceId, enterprise), shownLinkedObjectIds)
+				: [],
+		[isOwn, shownContent, workspaceId, enterprise, shownLinkedObjectIds],
 	)
+	// One card and nothing else (no words, no attachments, not being edited): the card is the message.
+	const cardOnly = isOwn && !editing && attachments.length === 0 && isOnlyCard(ownParts)
+	// A bubble that holds a card is a fixed width so the card has room, instead of the width of its words.
+	const holdsCard = isOwn && !editing && !cardOnly && ownParts.some((p) => p.kind === 'card')
 
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
-	// attachments take the same width. Editing, and a message with no text, keep the full layout.
-	const fitText = isOwn && !editing && message.content.length > 0
+	// attachments take the same width. Editing, a message with no text and a message with a card
+	// (which has its own width) keep the full layout.
+	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
 		enabled: fitText,
 		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
@@ -295,8 +309,15 @@ export function MessageBubble({
 				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
-									// While fitting, the column above carries the width cap.
-									fitText ? 'relative w-full' : 'relative max-w-[min(560px,80%)]',
+									// While fitting, the column above carries the width cap. A lone card fills the
+									// column up to 460px; a bubble with a card is min(520px, 88% of the column).
+									fitText
+										? 'relative w-full'
+										: cardOnly
+											? 'relative w-full max-w-[460px]'
+											: holdsCard
+												? 'relative w-[min(520px,88%)]'
+												: 'relative max-w-[min(560px,80%)]',
 									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
@@ -304,7 +325,12 @@ export function MessageBubble({
 								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
 								<div
 									ref={plateRef}
-									className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground"
+									className={
+										// A message that is only a card has no plate: the card is the message.
+										cardOnly
+											? 'contents'
+											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+									}
 								>
 									{fileList}
 									{editing ? (
@@ -340,21 +366,12 @@ export function MessageBubble({
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
 										// unbroken token (a long URL) raises this span's min-content and
 										// paints past the bubble's `max-w` cap, out to the viewport edge.
-										<span ref={textRef} className="whitespace-pre-wrap text-balance break-words">
-											{ownSegments.map((segment, index) =>
-												segment.kind === 'text' ? (
-													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-													<Fragment key={index}>{segment.text}</Fragment>
-												) : (
-													<OwnLinkChip
-														// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-														key={index}
-														workspaceId={workspaceId}
-														segment={segment}
-													/>
-												),
-											)}
-										</span>
+										<OwnMessageBody
+											parts={ownParts}
+											workspaceId={workspaceId}
+											inBubble={!cardOnly}
+											textRef={fitText ? textRef : undefined}
+										/>
 									) : null}
 								</div>
 							</div>
@@ -681,6 +698,95 @@ function chipTitle(title: string): string {
 
 const OWN_CHIP_CLASS =
 	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/**
+ * What you wrote, in order: words, a chip for each link, and a card for an object linked on a
+ * line of its own. In a bubble the cards sit nested under the words they follow; a message that is
+ * only a card has no bubble. Objects open in a new tab.
+ */
+function OwnMessageBody({
+	parts,
+	workspaceId,
+	inBubble,
+	textRef,
+}: {
+	parts: OwnPlacement[]
+	workspaceId: string
+	inBubble: boolean
+	/** The words, measured to fit the bubble to them (only set when the message holds no card). */
+	textRef?: Ref<HTMLSpanElement>
+}) {
+	const runs: Array<{ card: OwnCard } | { inline: OwnPlacement[] }> = []
+	for (const part of parts) {
+		const last = runs[runs.length - 1]
+		if (part.kind === 'card') runs.push({ card: part })
+		else if (last && 'inline' in last) last.inline.push(part)
+		else runs.push({ inline: [part] })
+	}
+	return (
+		<>
+			{runs.map((run, index) =>
+				'card' in run ? (
+					<ObjectReferenceCard
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						workspaceId={workspaceId}
+						objectId={run.card.id}
+						newTab
+						// In a bubble the card fills it, 8px under the words (the bubble's gap is 6px) and
+						// with a light shadow; a lone card is the message and fills its wrapper.
+						className={cn(
+							'my-0 w-full max-w-full',
+							inBubble && 'shadow-xs',
+							inBubble && index > 0 && 'mt-0.5',
+						)}
+					/>
+				) : (
+					// `break-words` is load-bearing next to the column's `min-w-0`: `min-w-0` bounds the
+					// box, this bounds the ink. Without it an unbroken token (a long URL) raises this
+					// span's min-content and paints past the bubble's `max-w` cap, out to the viewport edge.
+					<span
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						ref={textRef}
+						className="whitespace-pre-wrap text-balance break-words"
+					>
+						{run.inline.map((part, i) =>
+							part.kind === 'text' ? (
+								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
+								<Fragment key={i}>{part.text}</Fragment>
+							) : part.kind === 'other' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={part.segment}
+								/>
+							) : part.kind === 'file' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={{ kind: 'file', id: part.id }}
+								/>
+							) : (
+								<ObjectReferenceChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									objectId={part.id}
+									newTab
+									cardFollows={false}
+									fallback={part.address}
+								/>
+							),
+						)}
+					</span>
+				),
+			)}
+		</>
+	)
+}
 
 /**
  * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed
