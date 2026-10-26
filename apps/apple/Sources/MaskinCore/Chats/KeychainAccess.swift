@@ -148,12 +148,25 @@ public struct APIHelperSessionSource: HelperSessionReplying {
 	}
 
 	public func continueSession(sessionID: String, content: String) async throws {
-		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(
-			.init(
-				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-				body: .json(.init(content: content))))
-		guard case .created = output else { throw KeychainAccessError("Couldn't reach the agent. Try again.") }
+		// The grant stops the helper's idle session, and the server only starts a follow-up once
+		// that has ended (409 until then), so a conflict is worth a few short retries.
+		for attempt in 1...Self.continueAttempts {
+			let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(
+				.init(
+					path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(.init(content: content))))
+			switch output {
+			case .created: return
+			case .conflict where attempt < Self.continueAttempts:
+				try await Task.sleep(for: Self.continueDelay)
+			default:
+				throw KeychainAccessError("Couldn't reach the agent. Send it a message to carry on.")
+			}
+		}
 	}
+
+	static let continueAttempts = 4
+	static let continueDelay: Duration = .milliseconds(1500)
 
 	public func sendInput(sessionID: String, content: String, cardAnswer: ChatCardAnswer) async throws {
 		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(
@@ -165,6 +178,8 @@ public struct APIHelperSessionSource: HelperSessionReplying {
 						card_answer: .init(
 							message_id: cardAnswer.messageID,
 							outcome: cardAnswer.outcome == .declined ? .declined : .done)))))
-		guard case .ok = output else { throw KeychainAccessError("Couldn't reach the agent. Try again.") }
+		guard case .ok = output else {
+			throw KeychainAccessError("Couldn't tell the agent. It may have stopped waiting; send it a message instead.")
+		}
 	}
 }

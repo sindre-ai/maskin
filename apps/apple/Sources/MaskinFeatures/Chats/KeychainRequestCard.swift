@@ -194,7 +194,12 @@ struct KeychainRequestCard: View {
 			if relaunched {
 				let reply = request.savedReply(name: displayName)
 				if request.replyToSession {
-					try await helper()?.continueSession(sessionID: request.sessionID, content: reply)
+					do {
+						try await helper()?.continueSession(sessionID: request.sessionID, content: reply)
+					} catch {
+						// The credential is saved; only the agent's restart failed.
+						stillRunning = true
+					}
 				} else {
 					onReply(reply, ChatSendMetadata(hiddenFromChat: true))
 				}

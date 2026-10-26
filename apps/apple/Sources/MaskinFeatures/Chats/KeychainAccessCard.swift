@@ -50,8 +50,9 @@ struct KeychainAccessCard: View {
 					Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 				}
 				VStack(spacing: MaskinSpace.s4) {
-					choice("Allow in this chat", primary: true) { await allow(.chat) }
-					choice("Always allow", primary: false) { await allow(.always) }
+					// A helper another agent started has no chat of its own to scope an Allow to.
+					if !request.replyToSession { choice("Allow in this chat", primary: true) { await allow(.chat) } }
+					choice("Always allow", primary: request.replyToSession) { await allow(.always) }
 					choice("Not now", primary: false) { await decline() }
 				}
 			}
@@ -130,7 +131,13 @@ struct KeychainAccessCard: View {
 			state = .allowed(scope)
 			if relaunched {
 				if request.replyToSession {
-					try await helper()?.continueSession(sessionID: request.sessionID, content: request.allowedReply(scope: scope))
+					do {
+						try await helper()?.continueSession(
+							sessionID: request.sessionID, content: request.allowedReply(scope: scope))
+					} catch {
+						// The grant is saved; only the agent's restart failed.
+						stillRunning = true
+					}
 				} else {
 					onReply(request.allowedReply(scope: scope), ChatSendMetadata(hiddenFromChat: true))
 				}
@@ -146,12 +153,23 @@ struct KeychainAccessCard: View {
 	}
 
 	private func decline() async {
-		declinedNow = true
 		let card = messageID.map { ChatCardAnswer(messageID: $0, outcome: .declined) }
-		if request.replyToSession {
-			if let card { try? await helper()?.sendInput(sessionID: request.sessionID, content: request.declinedReply, cardAnswer: card) }
-		} else {
+		guard request.replyToSession else {
+			declinedNow = true
 			onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
+			return
+		}
+		guard let card, let helper = helper() else { return }
+		busy = true
+		error = nil
+		defer { busy = false }
+		do {
+			try await helper.sendInput(sessionID: request.sessionID, content: request.declinedReply, cardAnswer: card)
+			declinedNow = true
+		} catch let failure as KeychainAccessError {
+			error = failure.message
+		} catch {
+			self.error = "Couldn't tell the agent. Try again."
 		}
 	}
 
