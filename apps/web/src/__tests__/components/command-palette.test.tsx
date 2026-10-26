@@ -541,14 +541,12 @@ describe('CommandPalette', () => {
 	})
 
 	it('filters the local lists on the keystroke and debounces only the server query', async () => {
-		const user = userEvent.setup()
+		// Fire-and-forget typing (delay: null) so the debounce has no time to land.
+		const user = userEvent.setup({ delay: null })
 		render(<CommandPalette />)
 		await user.keyboard('{Control>}k{/Control}')
 
-		// Fire-and-forget so the debounce has no time to land.
-		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'mark', {
-			delay: null,
-		})
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'mark')
 
 		const calls = vi.mocked(useWorkspaceSearch).mock.calls
 		const last = calls[calls.length - 1]?.[1]
