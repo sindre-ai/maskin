@@ -62,6 +62,7 @@ import {
 	stopPurgedSessions,
 } from '../lib/workspace-purge'
 import { workspaceForCaller } from '../lib/workspace-redaction'
+import { openWorkspaceLlmSecrets, sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
@@ -355,11 +356,16 @@ type SettingsPatch = NonNullable<z.infer<typeof updateWorkspaceSchema>['settings
  * value equal to the stored one is not a change, and neither is a null for a
  * provider that is not stored. Returns the patch without the unchanged parts,
  * and whether anything admin-only is left.
+ *
+ * The submitted values are plain text and the stored ones are sealed, so the
+ * comparison is against the stored values opened. A stored value that cannot be
+ * opened counts as different from anything submitted.
  */
 function pickChangedAdminSettings(
 	patch: SettingsPatch,
-	stored: Record<string, unknown>,
+	storedSealed: Record<string, unknown>,
 ): { settings: SettingsPatch; changed: boolean } {
+	const stored = openWorkspaceLlmSecrets(storedSealed, { omitUnreadable: true })
 	const { llm_keys, custom_llm, ...rest } = patch
 	const settings: SettingsPatch = { ...rest }
 	let changed = false
@@ -520,11 +526,13 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			)
 		}
 
-		const merged: Record<string, unknown> = { ...existingSettings, ...patchSettings }
-		if (patchSettings.llm_keys) {
+		// The patch carries plain text; the row only ever holds sealed values.
+		const sealedPatch = sealWorkspaceLlmSecrets(patchSettings)
+		const merged: Record<string, unknown> = { ...existingSettings, ...sealedPatch }
+		if (sealedPatch.llm_keys) {
 			const existingLlm = (existingSettings.llm_keys ?? {}) as Record<string, string>
 			const mergedLlm: Record<string, string> = { ...existingLlm }
-			for (const [k, v] of Object.entries(patchSettings.llm_keys)) {
+			for (const [k, v] of Object.entries(sealedPatch.llm_keys)) {
 				if (v === null || v === undefined) delete mergedLlm[k]
 				else mergedLlm[k] = v
 			}
