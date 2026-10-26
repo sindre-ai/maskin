@@ -774,6 +774,24 @@ describe('Conversations Integration', () => {
 			expect(hit.snippet).toBe('Stripe invoices fail on retry')
 		})
 
+		it('q lists title and person matches before chats that only mention the word', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const titled = await createChat(ownerId, 'human', [agent.id], 'Relaunch plan')
+			const mentioned = await createChat(ownerId, 'human', [agent.id], 'Standup')
+			await db
+				.insert(messages)
+				.values({ conversationId: mentioned, actorId: ownerId, content: 'relaunch is slipping' })
+			// The message-only chat is the newest, yet the titled one still leads.
+			await db
+				.update(conversations)
+				.set({ lastMessageAt: new Date('2026-10-01T10:00:00Z') })
+				.where(eq(conversations.id, titled))
+
+			const list = await listAs(agent.id, 'sort=activity&q=relaunch')
+			expect(list.conversations.map((c) => c.id)).toEqual([titled, mentioned])
+		})
+
 		it('q treats % and _ literally and stays inside the callers chats', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			const outsider = await insertActor(db, { type: 'agent' })

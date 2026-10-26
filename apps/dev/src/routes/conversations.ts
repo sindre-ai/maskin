@@ -594,27 +594,32 @@ app.openapi(listConversationsRoute, (async (c) => {
 		)
 	}
 	const searchTokens = query.q ? conversationSearchTokens(query.q) : []
-	for (const token of searchTokens) {
-		const pattern = likeContains(token)
-		// Literal table names inside the subqueries, like unread_only below.
-		conditions.push(
-			sql`(
-				conversations.title ILIKE ${pattern}
-				OR EXISTS (
-					SELECT 1 FROM conversation_participants cp2
-					INNER JOIN actors a2 ON a2.id = cp2.actor_id
-					WHERE cp2.conversation_id = conversations.id
-						AND cp2.left_at IS NULL
-						AND a2.name ILIKE ${pattern}
-				)
-				OR EXISTS (
-					SELECT 1 FROM messages m2
-					WHERE m2.conversation_id = conversations.id
-						AND m2.content ILIKE ${pattern}
-				)
-			)`,
+	// Titles and people come first, message text second: a word in the title or
+	// a participant's name is what the searcher is usually after. Literal table
+	// names inside the subqueries, like unread_only below.
+	const namedBy = (pattern: string) => sql`(
+		conversations.title ILIKE ${pattern}
+		OR EXISTS (
+			SELECT 1 FROM conversation_participants cp2
+			INNER JOIN actors a2 ON a2.id = cp2.actor_id
+			WHERE cp2.conversation_id = conversations.id
+				AND cp2.left_at IS NULL
+				AND a2.name ILIKE ${pattern}
 		)
+	)`
+	const saidIn = (pattern: string) => sql`EXISTS (
+		SELECT 1 FROM messages m2
+		WHERE m2.conversation_id = conversations.id
+			AND m2.content ILIKE ${pattern}
+	)`
+	const patterns = searchTokens.map(likeContains)
+	for (const pattern of patterns) {
+		conditions.push(sql`(${namedBy(pattern)} OR ${saidIn(pattern)})`)
 	}
+	const namedFirst =
+		patterns.length > 0
+			? [sql`(CASE WHEN ${sql.join(patterns.map(namedBy), sql` AND `)} THEN 0 ELSE 1 END)`]
+			: []
 	if (query.unread_only) {
 		// Table names (not Drizzle column refs) inside the correlated subquery —
 		// interpolating column objects here renders unqualified and silently
@@ -639,6 +644,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 		)
 		.where(and(...conditions))
 		.orderBy(
+			...namedFirst,
 			...(query.sort === 'activity'
 				? [desc(conversations.lastMessageAt), desc(conversations.id)]
 				: [desc(conversationParticipants.pinned), desc(conversations.lastMessageAt)]),
