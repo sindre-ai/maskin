@@ -41,6 +41,7 @@ import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
+	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
@@ -974,6 +975,37 @@ export function Composer({
 		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
+	// Dropping files on the composer attaches them like a paste does. The drag handlers
+	// only act on drags that carry files, so dragging text or a link around still
+	// behaves as before. preventDefault on dragover is what stops the browser from
+	// opening the dropped file in the tab instead.
+	const [isDraggingFile, setIsDraggingFile] = useState(false)
+	const acceptsDrop = !disabled && !vaultFlow?.blocking && !secretFlow?.blocking
+	const handleDragOver = useCallback(
+		(e: DragEvent<HTMLDivElement>) => {
+			if (!e.dataTransfer.types.includes('Files')) return
+			e.preventDefault()
+			if (!acceptsDrop) return
+			e.dataTransfer.dropEffect = 'copy'
+			setIsDraggingFile(true)
+		},
+		[acceptsDrop],
+	)
+	const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+		if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+		setIsDraggingFile(false)
+	}, [])
+	const handleDrop = useCallback(
+		(e: DragEvent<HTMLDivElement>) => {
+			if (!e.dataTransfer.types.includes('Files')) return
+			e.preventDefault()
+			setIsDraggingFile(false)
+			if (!acceptsDrop) return
+			attachFiles(Array.from(e.dataTransfer.files))
+		},
+		[acceptsDrop, attachFiles],
+	)
+
 	const handleRemovePending = useCallback((tempId: string) => {
 		// Abort first so the in-flight XHR is cancelled before the request can
 		// finish on the server. uploadPickedFile's catch branch sees
@@ -989,7 +1021,11 @@ export function Composer({
 			className={cn(
 				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
+				isDraggingFile && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
+			onDragOver={handleDragOver}
+			onDragLeave={handleDragLeave}
+			onDrop={handleDrop}
 		>
 			<UnifiedChatSlashPicker
 				ref={unifiedPickerRef}
