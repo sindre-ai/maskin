@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { dailyBudgetSchema } from './daily-budget'
 import { LOOP_STATUSES } from './objects'
 
 const fieldDefinitionSchema = z.object({
@@ -229,6 +230,10 @@ export const workspaceSettingsSchema = z.object({
 			linkedin_addon_item_id: z.string().nullable().optional(),
 		})
 		.optional(),
+	// The one daily spend target (bet A daily token budget, slice 1a). Absent means
+	// off. Written only by PUT /api/billing/daily-budget, which owns the owner check
+	// and the dollar-unit gate; PATCH /api/workspaces/:id rejects it.
+	daily_budget: dailyBudgetSchema.optional(),
 	// Voice v1 (bet 16bd0042). Absent means transcripts persist; only an explicit
 	// `persist_transcripts: false` opts the workspace out (no transcript rows,
 	// no audio blob). Deliberately no default so existing workspaces' stored

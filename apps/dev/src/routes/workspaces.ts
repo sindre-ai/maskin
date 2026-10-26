@@ -503,6 +503,24 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		)
 	}
 
+	// `daily_budget` is written only by PUT /api/billing/daily-budget, which holds
+	// the admin/owner check, the dollar-unit gate and the audit event; the shallow
+	// merge below would skip all three. The web app spreads the whole stored
+	// settings object back on unrelated edits, so a value equal to the stored one
+	// is dropped quietly and only a changed or newly set one is rejected.
+	if (body.settings && 'daily_budget' in body.settings) {
+		if (!isDeepStrictEqual(body.settings.daily_budget, existingSettings.daily_budget)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'daily_budget cannot be updated via PATCH /api/workspaces/:id — use PUT /api/billing/daily-budget instead',
+				),
+				400,
+			)
+		}
+		if (patchSettings) delete patchSettings.daily_budget
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (patchSettings) {
