@@ -7,11 +7,14 @@ const searchState = vi.hoisted(() => ({ current: {} as Record<string, string | u
 const navigateMock = vi.hoisted(() => vi.fn())
 const historyBackMock = vi.hoisted(() => vi.fn())
 const onlineRef = vi.hoisted(() => ({ current: true }))
+const canGoBackRef = vi.hoisted(() => ({ current: true }))
 
 vi.mock('@tanstack/react-router', () => ({
 	useSearch: () => searchState.current,
 	useNavigate: () => navigateMock,
-	useRouter: () => ({ history: { back: historyBackMock } }),
+	useRouter: () => ({
+		history: { back: historyBackMock, canGoBack: () => canGoBackRef.current },
+	}),
 }))
 
 vi.mock('@/components/layout/page-header', () => ({ PageHeader: () => null }))
@@ -103,6 +106,7 @@ const field = () => screen.getByRole('combobox', { name: 'Search' })
 beforeEach(() => {
 	searchState.current = {}
 	onlineRef.current = true
+	canGoBackRef.current = true
 	navigateMock.mockClear()
 	historyBackMock.mockClear()
 	vi.mocked(trackSearchFilterChanged).mockClear()
@@ -194,6 +198,70 @@ describe('SearchPageV2 results', () => {
 	})
 })
 
+describe('SearchPageV2 chips under a failed source', () => {
+	it('keeps the failed group chip with a dash so it does not read as no matches', async () => {
+		searchState.current = { q: 'hans' }
+		vi.mocked(api.search.query).mockResolvedValue(response({ partial: ['loops'] }))
+		renderPage()
+		await screen.findByRole('option', { name: /Hans on pricing/ })
+
+		const types = screen.getByRole('group', { name: 'Filter by type' })
+		const loops = within(types).getByRole('button', { name: 'Loops' })
+		expect(loops).toHaveTextContent('–')
+		// A source that answered with zero is still hidden.
+		expect(within(types).queryByRole('button', { name: /Agents/ })).not.toBeInTheDocument()
+	})
+})
+
+describe('SearchPageV2 idle', () => {
+	it('shows the type chips without a count or a dash when nothing has been asked', () => {
+		renderPage()
+		const types = screen.getByRole('group', { name: 'Filter by type' })
+		expect(within(types).getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+		expect(within(types).queryByText('–')).not.toBeInTheDocument()
+		const statuses = screen.getByRole('group', { name: 'Filter by status' })
+		expect(within(statuses).queryByText('–')).not.toBeInTheDocument()
+		expect(api.search.query).not.toHaveBeenCalled()
+	})
+})
+
+describe('SearchPageV2 while the answer is for earlier words', () => {
+	const typeMore = async () => {
+		const user = userEvent.setup()
+		searchState.current = { q: 'hans' }
+		vi.mocked(api.search.query)
+			.mockResolvedValueOnce(response())
+			.mockReturnValue(new Promise(() => {}))
+		renderPage()
+		await screen.findByRole('option', { name: /Hans on pricing/ })
+		return user
+	}
+
+	it('keeps the old count line with the old words while the new answer is slow', async () => {
+		const user = await typeMore()
+		await user.type(field(), ' pricing')
+		await waitFor(() => expect(api.search.query).toHaveBeenCalledTimes(2))
+
+		const count = screen.getByText(/2 results/, { selector: 'p' })
+		expect(count).toHaveTextContent('2 results for “hans”')
+		expect(count).not.toHaveTextContent('pricing')
+		// The old rows stay on screen, dimmed, until the new answer settles.
+		expect(screen.getByRole('option', { name: /Hans on pricing/ })).toBeInTheDocument()
+	})
+
+	it('shows the offline block, with the old count line, when offline with a new query', async () => {
+		const user = await typeMore()
+		onlineRef.current = false
+		await user.type(field(), ' pricing')
+
+		const alert = await screen.findByRole('alert')
+		expect(within(alert).getByText("You're offline")).toBeInTheDocument()
+		expect(screen.getByText(/2 results/, { selector: 'p' })).toHaveTextContent(
+			'2 results for “hans”',
+		)
+	})
+})
+
 describe('SearchPageV2 pills', () => {
 	it('turns a typed type word into a pill on Tab, writes it to the URL, and Backspace restores the word', async () => {
 		const user = userEvent.setup()
@@ -277,6 +345,37 @@ describe('SearchPageV2 pills', () => {
 		expect(field()).toHaveValue('')
 		await user.keyboard('{Escape}')
 		expect(historyBackMock).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('SearchPageV2 leaving the page', () => {
+	it('goes to For you on Esc and on Back when the page was opened from a link', async () => {
+		const user = userEvent.setup()
+		canGoBackRef.current = false
+		renderPage()
+
+		await user.click(field())
+		await user.keyboard('{Escape}')
+		expect(navigateMock).toHaveBeenLastCalledWith({
+			to: '/$workspaceId',
+			params: { workspaceId: 'ws-1' },
+		})
+
+		navigateMock.mockClear()
+		await user.click(screen.getByRole('button', { name: 'Back' }))
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId',
+			params: { workspaceId: 'ws-1' },
+		})
+		expect(historyBackMock).not.toHaveBeenCalled()
+	})
+
+	it('steps back in the app when there is history to step back into', async () => {
+		const user = userEvent.setup()
+		renderPage()
+		await user.click(screen.getByRole('button', { name: 'Back' }))
+		expect(historyBackMock).toHaveBeenCalledTimes(1)
+		expect(navigateMock).not.toHaveBeenCalled()
 	})
 })
 
@@ -364,7 +463,7 @@ describe('SearchPageV2 zero results', () => {
 
 		expect(await screen.findByText('Nothing matches “hans active”')).toBeInTheDocument()
 		expect(
-			screen.getByText('“active” is a status. Pick a type first, then choose a status.'),
+			screen.getByText('“active” is a status. Choose it below to filter by status.'),
 		).toBeInTheDocument()
 
 		// The field offers the same suggestion; the empty state's chip comes later in the page.

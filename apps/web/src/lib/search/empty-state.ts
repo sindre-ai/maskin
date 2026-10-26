@@ -118,7 +118,7 @@ export function explainEmpty(input: {
 		title: filtered ? 'No results with these filters' : `Nothing matches “${text}”`,
 		wordNotes: hits.map((hit) =>
 			hit.kind === 'status'
-				? `“${hit.word}” is a status. Pick a type first, then choose a status.`
+				? `“${hit.word}” is a status. Choose it below to filter by status.`
 				: `“${hit.word}” is a type. Choose it below to filter by type.`,
 		),
 		hits,

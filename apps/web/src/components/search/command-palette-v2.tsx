@@ -2,6 +2,7 @@ import { type CreatableType, CreatePicker } from '@/components/shared/create-pic
 import { SearchRowTitle } from '@/components/shared/search-row'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObjects } from '@/hooks/use-objects'
 import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
 import {
@@ -24,7 +25,9 @@ import {
 } from '@/lib/search-telemetry'
 import { navigateToSearchRow } from '@/lib/search/open-row'
 import { queryText } from '@/lib/search/parts'
+import { shortcutLabel } from '@/lib/search/platform'
 import { pushRecentSearchEntry } from '@/lib/search/recents'
+import { rowSub, rowTitle } from '@/lib/search/row-display'
 import { serializeSearchState, urlStateFromParts } from '@/lib/search/url-state'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SearchResultRow } from '@maskin/shared'
@@ -138,6 +141,7 @@ export function CommandPaletteV2() {
 	const navigate = useNavigate()
 	const pathname = useRouterState({ select: (s) => s.location.pathname })
 	const objectTypes = useAvailableObjectTypes()
+	const typeLabel = useObjectTypeLabel()
 	const triggerRef = useRef<HTMLElement | null>(null)
 
 	// Mark all read runs the real per-entity mutation over the unread feed.
@@ -208,7 +212,7 @@ export function CommandPaletteV2() {
 			},
 			...objectTypes.map((type) => ({
 				id: `new-${type.value}`,
-				title: `New ${type.label.replace(/s$/, '').toLowerCase()}`,
+				title: `New ${typeLabel(type.value).toLowerCase()}`,
 				sub: 'an agent structures it from what you say',
 				icon: Plus,
 				run: () => openCreate('object', type.value),
@@ -235,7 +239,7 @@ export function CommandPaletteV2() {
 				run: markAllRead,
 			},
 		],
-		[markAllRead, navigateTo, objectTypes, openChat, openCreate, workspaceId],
+		[markAllRead, navigateTo, objectTypes, openChat, openCreate, typeLabel, workspaceId],
 	)
 
 	// One `command_palette_opened` per open transition, on any route. The launcher
@@ -423,8 +427,8 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		id: `${group}-${row.group}-${row.id}`,
 		group,
 		kind: row.type.replace(/_/g, ' ').toUpperCase(),
-		title: row.title,
-		sub: row.sub || undefined,
+		title: rowTitle(row),
+		sub: rowSub(row),
 		icon: <RowIcon row={row} />,
 		// A row from the previous answer must not open while the new one is on its way.
 		run: () => {
@@ -737,10 +741,11 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					) : null}
 				</div>
 
-				<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
+				{/* Keyboard hints mean nothing on a phone or tablet: no footer there. */}
+				<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground max-sm:hidden pointer-coarse:hidden">
 					<span>↑↓ navigate</span>
 					<span>↵ run</span>
-					<span>⌘↵ search everything</span>
+					<span>{shortcutLabel('↵')} search everything</span>
 					<span className="ml-auto">esc closes</span>
 				</div>
 

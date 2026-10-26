@@ -20,6 +20,8 @@ interface ChipProps {
 	label: string
 	/** Null shows a dash: the count has not arrived yet. */
 	count: number | null
+	/** False hides the count and its dash: nothing has been asked, so there is no answer to wait for. */
+	showCount: boolean
 	selected: boolean
 	onToggle: () => void
 	dot?: string
@@ -27,12 +29,12 @@ interface ChipProps {
 
 // Same pill as FilterTabs (28px, fully round, dark when selected, 44px under the
 // app's mobile rule). FilterTabs holds one value; these chips are a multi-select.
-function Chip({ label, count, selected, onToggle, dot }: ChipProps) {
+function Chip({ label, count, showCount, selected, onToggle, dot }: ChipProps) {
 	return (
 		<button
 			type="button"
 			aria-pressed={selected}
-			aria-label={count === null ? label : `${label} (${count})`}
+			aria-label={count === null || !showCount ? label : `${label} (${count})`}
 			onClick={onToggle}
 			className={cn(
 				'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[11.5px] font-semibold transition-colors duration-150 max-[1024.02px]:min-h-11',
@@ -45,9 +47,12 @@ function Chip({ label, count, selected, onToggle, dot }: ChipProps) {
 				<span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', dot)} />
 			) : null}
 			{label}
-			<span aria-hidden="true" className="tabular-nums text-[10.5px] opacity-70">
-				{count === null ? '–' : count}
-			</span>
+			{showCount ? (
+				// Full text colour: the count is 10.5px, so it needs the whole 4.5:1 of the label.
+				<span aria-hidden="true" className="tabular-nums text-[10.5px]">
+					{count === null ? '–' : count}
+				</span>
+			) : null}
 		</button>
 	)
 }
@@ -60,10 +65,12 @@ export function TypeChips({
 	chips,
 	onToggle,
 	dimmed,
+	showCounts = true,
 }: {
 	chips: TypeChip[]
 	onToggle: (key: string) => void
 	dimmed?: boolean
+	showCounts?: boolean
 }) {
 	if (chips.length === 0) return null
 	return (
@@ -74,6 +81,7 @@ export function TypeChips({
 					key={chip.key}
 					label={chip.label}
 					count={chip.count}
+					showCount={showCounts}
 					selected={chip.selected}
 					onToggle={() => onToggle(chip.key)}
 				/>
@@ -86,10 +94,12 @@ export function StatusChips({
 	chips,
 	onToggle,
 	dimmed,
+	showCounts = true,
 }: {
 	chips: StatusChip[]
 	onToggle: (key: string) => void
 	dimmed?: boolean
+	showCounts?: boolean
 }) {
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: <fieldset> is meant for form controls; a filter toggle group is more idiomatic as role="group" (same as FilterTabs)
@@ -99,6 +109,7 @@ export function StatusChips({
 					key={chip.key}
 					label={chip.label}
 					count={chip.count}
+					showCount={showCounts}
 					selected={chip.selected}
 					onToggle={() => onToggle(chip.key)}
 					dot={statusDotClass(chip.key)}
