@@ -50,6 +50,20 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
 	) async throws -> ConversationSummary {
+		try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			initialMetadata: nil, idempotencyKey: idempotencyKey)
+	}
+
+	public func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		// Same round-trip as `send`: ChatSendMetadata already uses the API's exact keys.
+		let wireMetadata = try initialMetadata.flatMap { value -> InitialMetadata? in
+			guard !value.isEmpty else { return nil }
+			return try JSONDecoder().decode(InitialMetadata.self, from: JSONEncoder().encode(value))
+		}
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations(
 				.init(
@@ -57,7 +71,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					body: .json(
 						.init(
 							title: title, participant_actor_ids: participantIDs,
-							initial_message: initialMessage))))
+							initial_message: initialMessage, initial_message_metadata: wireMetadata))))
 		}
 		switch output {
 		case .created(let created):
@@ -329,6 +343,9 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
 	}
+
+	private typealias InitialMetadata = Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload
+		.initial_message_metadataPayload
 
 	private typealias Metadata = Operations
 		.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload

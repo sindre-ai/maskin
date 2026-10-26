@@ -10,6 +10,11 @@ public protocol ConversationsAPI: Sendable {
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
 	) async throws -> ConversationSummary
+	/// Same, with the first message's metadata (its attachments and mentions).
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?,
 		markUnread: Bool
@@ -24,6 +29,15 @@ public protocol ConversationsAPI: Sendable {
 }
 
 extension ConversationsAPI {
+	public func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
+	}
+
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
 

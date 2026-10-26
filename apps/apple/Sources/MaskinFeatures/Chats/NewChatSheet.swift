@@ -31,7 +31,7 @@ struct NewChatSheet: View {
 
 	init(
 		store: ConversationsStore, currentActorID: String?, prefill: String = "",
-		initialRecipient: ChatParticipant? = nil,
+		initialRecipient: ChatParticipant? = nil, uploader: (any ChatFileUploading)? = nil,
 		onCreated: @escaping (ConversationSummary, _ live: Bool) -> Void
 	) {
 		self.store = store
@@ -39,7 +39,7 @@ struct NewChatSheet: View {
 		self.prefill = prefill
 		self.initialRecipient = initialRecipient
 		self.onCreated = onCreated
-		_composer = State(initialValue: ChatComposerModel(uploader: nil, selfActorID: currentActorID ?? ""))
+		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: currentActorID ?? ""))
 	}
 
 	private var recipients: [ChatParticipant] {
@@ -119,7 +119,8 @@ struct NewChatSheet: View {
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
 		// Live starts the call with no first message; the typed text stays in the composer.
-		let message: String? = live ? nil : composer.take()?.text
+		let taken = live ? nil : composer.take()
+		let message = taken?.text
 		guard live || message != nil else { return }
 		isCreating = true
 		error = nil
@@ -127,7 +128,8 @@ struct NewChatSheet: View {
 		do {
 			let created = try await store.create(
 				title: ThreadLayout.defaultTitle(for: people.map(\.name)),
-				participantIDs: people.map(\.id), firstMessage: message)
+				participantIDs: people.map(\.id), firstMessage: message,
+				firstMessageMetadata: taken?.metadata)
 			MaskinHaptics.play(.success)
 			onCreated(created, live)
 			dismiss()
