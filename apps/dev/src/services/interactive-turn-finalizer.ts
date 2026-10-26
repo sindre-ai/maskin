@@ -1096,13 +1096,14 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
-		const threadRootId = await this.resolveThreadRootId(turnMessageId)
+		const { threadRootId, alsoInChannel } = await this.resolveThread(turnMessageId)
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
 			workspaceId: gate.workspaceId,
 			actorId: gate.actorId,
 			threadRootId,
+			threadAlsoInChannel: alsoInChannel,
 			content,
 			metadata: {
 				source: 'final_output',
@@ -1843,24 +1844,58 @@ export class InteractiveTurnFinalizer {
 	 * whole row would throw and silently yield an unanchored message.
 	 */
 	/**
-	 * A reply to a message posted inside a thread answers in that thread. The turn's
-	 * triggering message is either the thread's root (which starts the thread) or one
-	 * of its replies; only a reply carries a root, so an agent answering a top-level
-	 * message still posts to the main timeline. Best-effort: a lookup failure posts
-	 * the reply top-level rather than losing it.
+	 * Where a turn's reply goes. A reply to a message posted inside a thread answers in that
+	 * thread. The turn's triggering message is either the thread's root (which starts the
+	 * thread) or one of its replies; only a reply carries a root, so an agent answering a
+	 * top-level message still posts to the main timeline.
+	 *
+	 * The exception is a helper's result handed back to this agent (a hidden top-level message
+	 * marked `helper_return`): the agent's answer to it goes in the thread of the message that
+	 * handed the work off, and also shows in the main chat so the person sees the outcome without
+	 * opening the thread. A hand-off with no anchor yet (the anchor is set when the spawning turn
+	 * posts) answers top-level as before.
+	 *
+	 * Best-effort: a lookup failure posts the reply top-level rather than losing it.
 	 */
-	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		if (turnMessageId === null) return null
+	private async resolveThread(
+		turnMessageId: number | null,
+	): Promise<{ threadRootId: number | null; alsoInChannel: boolean }> {
+		const topLevel = { threadRootId: null, alsoInChannel: false }
+		if (turnMessageId === null) return topLevel
 		try {
 			const [row] = await this.db
-				.select({ threadRootId: messages.threadRootId })
+				.select({
+					conversationId: messages.conversationId,
+					threadRootId: messages.threadRootId,
+					metadata: messages.metadata,
+				})
 				.from(messages)
 				.where(eq(messages.id, turnMessageId))
 				.limit(1)
-			return row?.threadRootId ?? null
+			if (!row) return topLevel
+			if (row.threadRootId) return { threadRootId: row.threadRootId, alsoInChannel: false }
+			const helperSessionId = (row.metadata as { helper_return?: unknown } | null)?.helper_return
+			if (typeof helperSessionId !== 'string') return topLevel
+			const [helper] = await this.db
+				.select({ anchorId: sessions.spawnedByMessageId })
+				.from(sessions)
+				.where(eq(sessions.id, helperSessionId))
+				.limit(1)
+			if (!helper?.anchorId) return topLevel
+			const [anchor] = await this.db
+				.select({
+					id: messages.id,
+					conversationId: messages.conversationId,
+					rootId: messages.threadRootId,
+				})
+				.from(messages)
+				.where(eq(messages.id, helper.anchorId))
+				.limit(1)
+			if (!anchor || anchor.conversationId !== row.conversationId) return topLevel
+			return { threadRootId: anchor.rootId ?? anchor.id, alsoInChannel: true }
 		} catch (err) {
 			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
-			return null
+			return topLevel
 		}
 	}
 

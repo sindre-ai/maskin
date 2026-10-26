@@ -284,13 +284,16 @@ export async function notifyChatReply(
 		sessionId: string | null | undefined
 		/** Set on a reply inside a thread: the push then goes to the thread's people only. */
 		threadRootId?: number | null
+		/** The reply is also in the main timeline, so it notifies like a top-level message. */
+		threadAlsoInChannel?: boolean
 	},
 ): Promise<void> {
 	if ((msg.kind ?? 'message') !== 'message') return
 	try {
 		const author = await actorProfile(db, msg.authorId)
 		if (!author) return
-		if (msg.threadRootId) return await notifyThreadReply(db, msg, author)
+		if (msg.threadRootId && !msg.threadAlsoInChannel)
+			return await notifyThreadReply(db, msg, author)
 		if (!isSuccessfulFinalOutput(msg.metadata)) return
 		if (author.type !== 'agent') return
 		const targets = await humanParticipants(db, msg.conversationId, msg.authorId)
@@ -306,13 +309,22 @@ export async function notifyChatReply(
 			title: author.name,
 			content: previewText(msg.content),
 			sessionId: msg.sessionId,
-			extraMetadata: asksQuestion
-				? { push_category: 'needs_you' }
-				: {
-						push_category: 'conversation',
-						push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
-						[PUSH_ONLY_METADATA_KEY]: true,
-					},
+			// An also-in-channel reply opens its thread when tapped, but is still a chat message:
+			// it collapses and rate-limits with the chat, and counts as read when either the
+			// chat or the thread has been read past it (see NotificationPushFanout.alreadyRead).
+			...(msg.threadRootId
+				? { threadRootId: msg.threadRootId, collapseKey: `chat:${msg.conversationId}` }
+				: {}),
+			extraMetadata: {
+				...(msg.threadRootId ? { thread_also_in_channel: true } : {}),
+				...(asksQuestion
+					? { push_category: 'needs_you' }
+					: {
+							push_category: 'conversation',
+							push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+							[PUSH_ONLY_METADATA_KEY]: true,
+						}),
+			},
 		})
 	} catch (err) {
 		logger.warn('Failed to create notification for chat reply', {

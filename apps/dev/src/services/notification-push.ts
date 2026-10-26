@@ -263,8 +263,6 @@ export class NotificationPushFanout {
 			return false
 		}
 		try {
-			// A thread reply is read in the thread, not in the chat: the chat's cursor
-			// moving past it says nothing about whether this person opened the thread.
 			if (typeof meta.thread_root_id === 'number') {
 				const [thread] = await this.db
 					.select({ lastRead: messageThreadReads.lastReadMessageId })
@@ -276,7 +274,11 @@ export class NotificationPushFanout {
 						),
 					)
 					.limit(1)
-				return thread != null && Number(thread.lastRead) >= messageId
+				if (thread != null && Number(thread.lastRead) >= messageId) return true
+				// A thread reply is read in the thread, not in the chat: the chat's cursor
+				// moving past it says nothing about whether this person opened the thread.
+				// A reply that is also in the main chat is read in either place.
+				if (meta.thread_also_in_channel !== true) return false
 			}
 			const [row] = await this.db
 				.select({ lastRead: conversationParticipants.lastReadMessageId })
