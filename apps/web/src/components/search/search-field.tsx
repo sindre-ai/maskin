@@ -6,6 +6,8 @@ import { Search, X } from 'lucide-react'
 import { type KeyboardEvent, type RefObject, useRef } from 'react'
 
 interface SearchFieldProps {
+	/** The page field is 50px tall with 30px pills; the launcher's is a 30px input with 26px pills. */
+	variant?: 'page' | 'palette'
 	parts: SearchParts
 	vocab: Vocabulary
 	suggestion: Suggestion | null
@@ -23,6 +25,8 @@ interface SearchFieldProps {
 	onClearText: () => void
 	onMoveActive: (delta: 1 | -1) => void
 	onOpenActive: () => void
+	/** Cmd or Ctrl with Enter. Without it the key opens the highlighted result like a plain Enter. */
+	onModEnter?: () => void
 	/** Escape with no suggestion showing. The page decides: clear the words, then go back. */
 	onEscape: () => void
 }
@@ -32,6 +36,7 @@ interface SearchFieldProps {
 // clicks the suggestion; Backspace at the start of the input turns the last pill
 // back into its word. Focus never leaves the input while arrowing through results.
 export function SearchField({
+	variant = 'page',
 	parts,
 	vocab,
 	suggestion,
@@ -47,9 +52,11 @@ export function SearchField({
 	onClearText,
 	onMoveActive,
 	onOpenActive,
+	onModEnter,
 	onEscape,
 }: SearchFieldProps) {
 	const composing = useRef(false)
+	const palette = variant === 'palette'
 	const suggestionLabel = suggestion ? pillLabel(vocab, suggestion.kind, suggestion.value) : ''
 
 	const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -88,13 +95,21 @@ export function SearchField({
 			case 'Enter':
 				// Enter opens the highlighted result. It never turns a word into a pill.
 				e.preventDefault()
-				onOpenActive()
+				if ((e.metaKey || e.ctrlKey) && onModEnter) onModEnter()
+				else onOpenActive()
 				return
 		}
 	}
 
 	return (
-		<div className="flex min-h-[50px] min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+		<div
+			className={cn(
+				'flex min-w-0 flex-1 items-center gap-1.5',
+				palette
+					? 'min-h-12 px-3.5 py-1'
+					: 'min-h-[50px] rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
+			)}
+		>
 			{/* Pills and the input wrap onto more lines on a narrow screen, so none is hidden; the clear button stays at the end of the first line. */}
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
 				<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
@@ -103,6 +118,7 @@ export function SearchField({
 					<PillButton
 						key={`${pill.kind}:${pill.value}`}
 						pill={pill}
+						size={palette ? 26 : 30}
 						label={pillLabel(vocab, pill.kind, pill.value)}
 						onRemove={() => onRemovePill(index)}
 					/>
@@ -112,7 +128,8 @@ export function SearchField({
 					ref={inputRef}
 					type="text"
 					role="combobox"
-					aria-label="Search"
+					aria-label={palette ? 'Search or run a command' : 'Search'}
+					data-search-field={variant}
 					aria-autocomplete="list"
 					aria-expanded={listboxOpen}
 					aria-controls={listboxId}
@@ -120,7 +137,13 @@ export function SearchField({
 					autoComplete="off"
 					spellCheck={false}
 					value={parts.text}
-					placeholder={parts.pills.length > 0 ? 'Add words…' : 'Search everything…'}
+					placeholder={
+						parts.pills.length > 0
+							? 'Add words…'
+							: palette
+								? 'Run a command or jump to…'
+								: 'Search everything…'
+					}
 					onChange={(e) => onTextChange(e.target.value, composing.current)}
 					onCompositionStart={() => {
 						composing.current = true
@@ -130,14 +153,20 @@ export function SearchField({
 						onTextChange(e.currentTarget.value, false)
 					}}
 					onKeyDown={onKeyDown}
-					className="h-[34px] min-w-[8ch] flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-muted-foreground"
+					className={cn(
+						'min-w-[8ch] flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground',
+						palette ? 'h-[30px] text-[13.5px]' : 'h-[34px] text-[14px]',
+					)}
 				/>
 
 				{suggestion ? (
 					<button
 						type="button"
 						onClick={() => onAcceptSuggestion('click')}
-						className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border border-dashed border-border-strong px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-foreground hover:text-foreground max-[1024.02px]:min-h-11"
+						className={cn(
+							'inline-flex shrink-0 items-center gap-1.5 rounded-md border border-dashed border-border-strong px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-foreground hover:text-foreground max-[1024.02px]:min-h-11',
+							palette ? 'h-[26px]' : 'h-[30px]',
+						)}
 					>
 						Filter by {suggestionLabel}
 						{/* There is no Tab key on a phone: the label is the tap target there. */}
@@ -170,17 +199,21 @@ export function SearchField({
 function PillButton({
 	pill,
 	label,
+	size,
 	onRemove,
 }: {
 	pill: Pill
 	label: string
+	/** Height of the pill in px: 30 on the page, 26 in the launcher. */
+	size: 26 | 30
 	onRemove: () => void
 }) {
 	const typed = pill.word ? `, typed as ${pill.word}` : ''
 	return (
 		<span
 			className={cn(
-				'inline-flex h-[30px] shrink-0 items-center gap-0.5 rounded-md bg-muted pl-2.5 text-[13px] font-semibold text-foreground',
+				'inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted pl-2.5 text-[13px] font-semibold text-foreground',
+				size === 26 ? 'h-[26px]' : 'h-[30px]',
 				pill.kind === 'status' && 'bg-secondary',
 			)}
 		>
@@ -189,7 +222,10 @@ function PillButton({
 				type="button"
 				aria-label={`Remove filter: ${label}${typed}`}
 				onClick={onRemove}
-				className="grid size-[30px] place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground max-[1024.02px]:size-11"
+				className={cn(
+					'grid place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground max-[1024.02px]:size-11',
+					size === 26 ? 'size-[26px]' : 'size-[30px]',
+				)}
 			>
 				<X aria-hidden="true" className="size-3.5" />
 			</button>

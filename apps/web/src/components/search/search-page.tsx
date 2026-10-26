@@ -7,6 +7,7 @@ import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useObjects } from '@/hooks/use-objects'
 import { useOnlineStatus } from '@/hooks/use-online-status'
+import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
 	hasSearchInput,
@@ -14,15 +15,8 @@ import {
 	useSearchQuery,
 } from '@/hooks/use-search-query'
 import { useSearchState } from '@/hooks/use-search-state'
-import {
-	type SearchEntry,
-	type SearchFilterAction,
-	type SearchFilterDimension,
-	type SearchFilterKind,
-	type SearchFilterVia,
-	trackCommandPaletteOpened,
-	trackSearchFilterChanged,
-} from '@/lib/analytics'
+import { humanize, useSearchVocabulary } from '@/hooks/use-search-vocabulary'
+import { type SearchEntry, trackCommandPaletteOpened } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
@@ -34,25 +28,20 @@ import {
 } from '@/lib/search-telemetry'
 import { type TypeOption, buildStatusChips, buildTypeChips } from '@/lib/search/chips'
 import { explainEmpty } from '@/lib/search/empty-state'
+import { navigateToSearchRow } from '@/lib/search/open-row'
 import { hasPill, queryText } from '@/lib/search/parts'
-import { typeText } from '@/lib/search/pillify'
 import {
 	type RecentSearch,
 	getRecentSearchEntries,
 	pushRecentSearchEntry,
 } from '@/lib/search/recents'
 import { parseSearchState, serializeSearchState } from '@/lib/search/url-state'
-import {
-	type Vocabulary,
-	type VocabularyType,
-	buildVocabulary,
-	pillLabel,
-} from '@/lib/search/vocabulary'
+import { type Vocabulary, pillLabel } from '@/lib/search/vocabulary'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SearchResponse, SearchResultRow } from '@maskin/shared'
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { DisplayMenu } from './display-menu'
 import { StatusChips, TypeChips } from './search-chips'
 import { SearchField } from './search-field'
@@ -89,11 +78,6 @@ function useRequestPace(active: boolean, requestKey: string): Pace {
 	return pace
 }
 
-function humanize(key: string): string {
-	const text = key.replace(/_/g, ' ')
-	return text.charAt(0).toUpperCase() + text.slice(1)
-}
-
 export function SearchPageV2() {
 	useDocumentTitle('Search')
 	const { workspaceId } = useWorkspace()
@@ -107,14 +91,7 @@ export function SearchPageV2() {
 	const listboxId = useId()
 
 	// The words and filters this page knows about, from real workspace types.
-	const vocab = useMemo(() => {
-		const types: VocabularyType[] = objectTypes.map((t) => ({
-			key: t.value,
-			label: humanize(t.value),
-			plural: t.label,
-		}))
-		return buildVocabulary(types)
-	}, [objectTypes])
+	const vocab = useSearchVocabulary()
 
 	// Chats, Loops, Agents, then the workspace's object types, then Automations.
 	const typeOptions = useMemo<TypeOption[]>(
@@ -232,71 +209,21 @@ export function SearchPageV2() {
 		if (activeId) document.getElementById(activeId)?.scrollIntoView({ block: 'nearest' })
 	}, [activeId])
 
-	const track = useCallback(
-		(change: {
-			dimension: SearchFilterDimension
-			action: SearchFilterAction
-			value: string
-			kind: SearchFilterKind
-			via: SearchFilterVia
-		}) => trackSearchFilterChanged({ surface: 'search_view', ...change }),
-		[],
-	)
-
 	const [announcement, setAnnouncement] = useState('')
 
-	const onTextChange = (text: string, composing: boolean) => {
-		const next = typeText(parts, text, vocab, { composing })
-		if (next.pills.length > parts.pills.length) {
-			const pill = next.pills[next.pills.length - 1]
-			track({ dimension: pill.kind, action: 'add', value: pill.value, kind: 'pill', via: 'typed' })
-		}
-		setEntry('typed')
-		dispatch({ type: 'text', text, composing })
-	}
-	const onAcceptSuggestion = (via: 'tab' | 'click') => {
-		if (!suggestion) return
-		track({
-			dimension: suggestion.kind,
-			action: 'add',
-			value: suggestion.value,
-			kind: 'pill',
-			via,
+	const { track, onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill } =
+		useSearchFieldHandlers({
+			surface: 'search_view',
+			parts,
+			vocab,
+			suggestion,
+			dispatch,
+			inputRef,
+			onEdit: () => setEntry('typed'),
 		})
-		setEntry('typed')
-		dispatch({ type: 'accept' })
-		inputRef.current?.focus()
-	}
 	const onDismissSuggestion = () => {
 		dispatch({ type: 'dismiss' })
 		setAnnouncement('Suggestion dismissed')
-	}
-	const onBackspaceToWord = () => {
-		const pill = parts.pills[parts.pills.length - 1]
-		if (pill) {
-			track({
-				dimension: pill.kind,
-				action: 'remove',
-				value: pill.value,
-				kind: 'pill',
-				via: 'backspace',
-			})
-		}
-		dispatch({ type: 'backspace' })
-	}
-	const onRemovePill = (index: number) => {
-		const pill = parts.pills[index]
-		if (pill) {
-			track({
-				dimension: pill.kind,
-				action: 'remove',
-				value: pill.value,
-				kind: 'pill',
-				via: 'click',
-			})
-		}
-		dispatch({ type: 'removePill', index })
-		inputRef.current?.focus()
 	}
 	const toggleFilter = (
 		kind: 'type' | 'status',
@@ -333,33 +260,8 @@ export function SearchPageV2() {
 			uiVersion: 'v2',
 		})
 		pushRecentSearchEntry(workspaceId, { q: query, types, statuses })
-		switch (row.group) {
-			case 'chats':
-				navigate({
-					to: '/$workspaceId/chats/$conversationId',
-					params: { workspaceId, conversationId: row.id },
-				})
-				return
-			case 'loops':
-				navigate({ to: '/$workspaceId/loops/$loopId', params: { workspaceId, loopId: row.id } })
-				return
-			case 'agents':
-				navigate({ to: '/$workspaceId/agents/$agentId', params: { workspaceId, agentId: row.id } })
-				return
-			case 'automations':
-				navigate({
-					to: '/$workspaceId/triggers/$triggerId',
-					params: { workspaceId, triggerId: row.id },
-				})
-				return
-			case 'objects':
-				pushRecentObject(workspaceId, row.id)
-				navigate({
-					to: '/$workspaceId/objects/$objectId',
-					params: { workspaceId, objectId: row.id },
-				})
-				return
-		}
+		if (row.group === 'objects') pushRecentObject(workspaceId, row.id)
+		navigateToSearchRow(navigate, workspaceId, row)
 	}
 
 	const moveActive = (delta: 1 | -1) => {
