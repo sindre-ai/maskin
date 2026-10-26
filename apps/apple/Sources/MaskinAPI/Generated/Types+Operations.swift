@@ -59,6 +59,20 @@ public enum Operations {
                 ///
                 /// - Remark: Generated from `#/paths/api/objects/GET/query/include_archived`.
                 public var include_archived: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/starred`.
+                public var starred: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/working`.
+                public var working: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/attention_ids`.
+                public var attention_ids: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/group_by`.
+                public var group_by: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/group_value`.
+                public var group_value: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/tz`.
+                public var tz: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/q`.
+                public var q: Swift.String?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -76,6 +90,13 @@ public enum Operations {
                 ///   - cursor_created_at: Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.
                 ///   - cursor_id:
                 ///   - include_archived: When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).
+                ///   - starred:
+                ///   - working:
+                ///   - attention_ids:
+                ///   - group_by:
+                ///   - group_value:
+                ///   - tz:
+                ///   - q:
                 public init(
                     _type: Swift.String? = nil,
                     status: Swift.String? = nil,
@@ -90,7 +111,14 @@ public enum Operations {
                     snapshot_at: Foundation.Date? = nil,
                     cursor_created_at: Foundation.Date? = nil,
                     cursor_id: Swift.String? = nil,
-                    include_archived: Swift.Bool? = nil
+                    include_archived: Swift.Bool? = nil,
+                    starred: Swift.Bool? = nil,
+                    working: Swift.Bool? = nil,
+                    attention_ids: Swift.String? = nil,
+                    group_by: Swift.String? = nil,
+                    group_value: Swift.String? = nil,
+                    tz: Swift.String? = nil,
+                    q: Swift.String? = nil
                 ) {
                     self._type = _type
                     self.status = status
@@ -106,6 +134,13 @@ public enum Operations {
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
                     self.include_archived = include_archived
+                    self.starred = starred
+                    self.working = working
+                    self.attention_ids = attention_ids
+                    self.group_by = group_by
+                    self.group_value = group_value
+                    self.tz = tz
+                    self.q = q
                 }
             }
             public var query: Operations.get_sol_api_sol_objects.Input.Query
@@ -1807,6 +1842,18 @@ public enum Operations {
                 ///
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/include_archived`.
                 public var include_archived: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/starred`.
+                public var starred: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/working`.
+                public var working: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/attention_ids`.
+                public var attention_ids: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/group_by`.
+                public var group_by: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/group_value`.
+                public var group_value: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/tz`.
+                public var tz: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/q`.
                 public var q: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/groupBy`.
@@ -1830,6 +1877,12 @@ public enum Operations {
                 ///   - cursor_created_at: Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.
                 ///   - cursor_id:
                 ///   - include_archived: When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).
+                ///   - starred:
+                ///   - working:
+                ///   - attention_ids:
+                ///   - group_by:
+                ///   - group_value:
+                ///   - tz:
                 ///   - q:
                 ///   - groupBy:
                 ///   - column:
@@ -1848,6 +1901,12 @@ public enum Operations {
                     cursor_created_at: Foundation.Date? = nil,
                     cursor_id: Swift.String? = nil,
                     include_archived: Swift.Bool? = nil,
+                    starred: Swift.Bool? = nil,
+                    working: Swift.Bool? = nil,
+                    attention_ids: Swift.String? = nil,
+                    group_by: Swift.String? = nil,
+                    group_value: Swift.String? = nil,
+                    tz: Swift.String? = nil,
                     q: Swift.String? = nil,
                     groupBy: Swift.String? = nil,
                     column: Swift.String? = nil
@@ -1866,6 +1925,12 @@ public enum Operations {
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
                     self.include_archived = include_archived
+                    self.starred = starred
+                    self.working = working
+                    self.attention_ids = attention_ids
+                    self.group_by = group_by
+                    self.group_value = group_value
+                    self.tz = tz
                     self.q = q
                     self.groupBy = groupBy
                     self.column = column
