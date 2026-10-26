@@ -41218,6 +41218,76 @@
 												"type": "string",
 												"format": "uuid"
 											}
+										},
+										"delivered_to_session": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"mode": {
+															"type": "string",
+															"enum": [
+																"live"
+															]
+														},
+														"session_id": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"required": [
+														"mode",
+														"session_id"
+													]
+												},
+												{
+													"type": "object",
+													"properties": {
+														"mode": {
+															"type": "string",
+															"enum": [
+																"continued"
+															]
+														},
+														"session_id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"previous_session_id": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"required": [
+														"mode",
+														"session_id",
+														"previous_session_id"
+													]
+												},
+												{
+													"type": "object",
+													"properties": {
+														"mode": {
+															"type": "string",
+															"enum": [
+																"not_delivered"
+															]
+														},
+														"session_id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"reason": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"mode",
+														"session_id",
+														"reason"
+													]
+												}
+											]
 										}
 									},
 									"required": [
