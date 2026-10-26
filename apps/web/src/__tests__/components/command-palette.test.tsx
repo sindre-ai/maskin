@@ -416,10 +416,12 @@ describe('CommandPalette', () => {
 		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'ma')
 
 		// The typed letters are wrapped in <mark>, which splits each title across
-		// elements, so find the rows by their accessible name rather than exact text.
-		expect(screen.queryByRole('option', { name: /New chat/ })).not.toBeInTheDocument()
-		expect(screen.getByRole('option', { name: /Mark all read/ })).toBeInTheDocument()
-		expect(screen.getByRole('option', { name: /Marketplace/ })).toBeInTheDocument()
+		// elements and puts a space in its accessible name ("Ma rk all read"), so
+		// read the rows' own text instead.
+		const rows = screen.getAllByRole('option').map((option) => option.textContent ?? '')
+		expect(rows.some((row) => row.includes('New chat'))).toBe(false)
+		expect(rows.some((row) => row.includes('Mark all read'))).toBe(true)
+		expect(rows.some((row) => row.includes('Marketplace'))).toBe(true)
 		expect(screen.queryByText('Chats')).not.toBeInTheDocument()
 	})
 
