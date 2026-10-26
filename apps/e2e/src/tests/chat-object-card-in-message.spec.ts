@@ -73,13 +73,13 @@ test.describe('Chat — a link to an object is a card or a chip with type, statu
 			await expect(cards.filter({ hasText: 'How cards work' })).toContainText('Unassigned')
 
 			// Chips: a link in a sentence, in a list and in a quote, the fourth link on its own line.
-			await expect(
-				thread.getByRole('link', { name: /^Task, To do: Draw the card/ }),
-			).toBeVisible()
+			await expect(thread.getByRole('link', { name: /^Task, To do: Draw the card/ })).toBeVisible()
 			await expect(
 				thread.getByRole('link', { name: /^Bet, Active: Chat preview cards/ }),
 			).toHaveCount(1)
-			await expect(thread.getByRole('link', { name: /^Task, Backlog: A fourth card/ })).toBeVisible()
+			await expect(
+				thread.getByRole('link', { name: /^Task, Backlog: A fourth card/ }),
+			).toBeVisible()
 			await expect(thread.getByText('Deleted object')).toBeVisible()
 
 			// Order: sentence, card, sentence.
