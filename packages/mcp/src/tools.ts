@@ -1122,7 +1122,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user.',
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user. The response also carries `contentHash` — pass it as `if_match` to update_file so your write is refused if someone saved the file in between.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1130,7 +1130,7 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
+			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1155,6 +1155,13 @@ export const tools = {
 				.enum(['base64', 'utf8'])
 				.optional()
 				.describe('Encoding of `content`. Defaults to "utf8". Use "base64" for binary files.'),
+			if_match: z
+				.string()
+				.regex(/^[0-9a-f]{64}$/, 'Expected a sha256 hex digest')
+				.optional()
+				.describe(
+					'Version check. The `contentHash` from get_file. If the file changed since, the update is refused with a 409 conflict and nothing is written. Optional.',
+				),
 		}),
 	},
 	delete_file: {
