@@ -1021,7 +1021,7 @@ export function Composer({
 			className={cn(
 				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
-				isDraggingFile && 'border-accent bg-accent/5 ring-1 ring-accent/40',
+				isDraggingFile && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 			onDragOver={handleDragOver}
 			onDragLeave={handleDragLeave}
