@@ -5,7 +5,9 @@ import { VoiceShowInChatError, showInChat } from '../../services/voice-show-in-c
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-async function seedCall() {
+// A person can have one live call at a time (voice_sessions_active_per_human_uniq), so a second
+// call seeded for the same person must not be live.
+async function seedCall(status: 'active' | 'ended' = 'active') {
 	const humanId = getTestActorId()
 	const agent = await insertActor(db, { type: 'agent', name: 'Chief of Staff', email: null })
 	const ws = await insertWorkspace(db, humanId)
@@ -15,7 +17,7 @@ async function seedCall() {
 			workspaceId: ws.id,
 			agentActorId: agent.id,
 			humanActorId: humanId,
-			status: 'active',
+			status,
 		})
 		.returning()
 	if (!session) throw new Error('voice session insert failed')
@@ -79,7 +81,7 @@ describe('show_in_chat against real Postgres', () => {
 
 	it('refuses an object of another workspace and writes no message', async () => {
 		const { session } = await seedCall()
-		const other = await seedCall()
+		const other = await seedCall('ended')
 		const foreign = await insertObject(db, other.ws.id, other.humanId)
 
 		await expect(
