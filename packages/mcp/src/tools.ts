@@ -81,10 +81,19 @@ const optionalWorkspaceId = z
 // instead of silently falling back to DEFAULT_WORKSPACE_ID like tools that
 // operate on an already-identified resource — means a call can never land in
 // or leak from the wrong workspace by omission.
-const requiredWorkspaceId = z
-	.string()
-	.uuid()
-	.describe('Workspace ID to operate in. Call list_workspaces to discover available workspaces.')
+const WORKSPACE_ID_DESCRIPTION =
+	'Workspace ID to operate in. Call list_workspaces to discover available workspaces.'
+const requiredWorkspaceId = z.string().uuid().describe(WORKSPACE_ID_DESCRIPTION)
+
+// create_objects is the one tool whose missing-key errors name the key and
+// show a correct call, so the agent's second attempt works. The text is static
+// (it only fires when the key is absent), so it never echoes a received value.
+// It changes what the error says, never what the schema accepts.
+export const CREATE_OBJECTS_EXAMPLE_CALL =
+	'{"workspace_id":"<workspace uuid>","nodes":[{"$id":"n1","type":"task","status":"todo","title":"Short title"}]}'
+const createObjectsMissingKey = (key: string, where: 'call' | 'node') => ({
+	required_error: `Missing required key "${key}" on the ${where}. Correct call: ${CREATE_OBJECTS_EXAMPLE_CALL}`,
+})
 
 // Single agent-facing param covering everything needed to run an agent on a
 // specific LLM. The actor record still stores provider and config as two
@@ -283,13 +292,18 @@ export const tools = {
 		description:
 			'Create one or more objects with optional relationships in a single atomic operation. Use get_workspace_schema to see more details on objects and relationships. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
-			workspace_id: requiredWorkspaceId,
+			workspace_id: z
+				.string(createObjectsMissingKey('workspace_id', 'call'))
+				.uuid()
+				.describe(WORKSPACE_ID_DESCRIPTION),
 			nodes: z
 				.array(
 					z.object({
-						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
+						$id: z
+							.string(createObjectsMissingKey('$id', 'node'))
+							.describe('Client-side temporary ID for cross-referencing in edges'),
 						type: z
-							.string()
+							.string(createObjectsMissingKey('type', 'node'))
 							.describe(
 								"Object type. Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
 							),
@@ -301,7 +315,7 @@ export const tools = {
 								"The object's body — this is the meat of it. Keep it sharp: lead with the point, cut filler.",
 							),
 						status: z
-							.string()
+							.string(createObjectsMissingKey('status', 'node'))
 							.describe(
 								"Object status. Choose the first status by default. Only choose a different status when it's relevant.",
 							),
@@ -323,6 +337,7 @@ export const tools = {
 								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship between the object and the file.',
 							),
 					}),
+					createObjectsMissingKey('nodes', 'call'),
 				)
 				.min(1)
 				.max(50)
@@ -1122,7 +1137,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user.',
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user. The response also carries `contentHash` — pass it as `if_match` to update_file so your write is refused if someone saved the file in between.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1130,7 +1145,7 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
+			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1155,6 +1170,13 @@ export const tools = {
 				.enum(['base64', 'utf8'])
 				.optional()
 				.describe('Encoding of `content`. Defaults to "utf8". Use "base64" for binary files.'),
+			if_match: z
+				.string()
+				.regex(/^[0-9a-f]{64}$/, 'Expected a sha256 hex digest')
+				.optional()
+				.describe(
+					'Version check. The `contentHash` from get_file. If the file changed since, the update is refused with a 409 conflict and nothing is written. Optional.',
+				),
 		}),
 	},
 	delete_file: {
