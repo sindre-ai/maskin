@@ -1357,7 +1357,7 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					'Reply inside the thread under this message of the chat instead of posting at the top level. The root must be a top-level message of this conversation; replying to a reply is not possible, so pass the thread\'s root. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.',
+					"Reply inside the thread under this message of the chat instead of posting at the top level. The root must be a top-level message of this conversation; replying to a reply is not possible, so pass the thread's root. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
 				),
 			also_in_channel: z
 				.boolean()

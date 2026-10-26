@@ -11,6 +11,8 @@ vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', ty
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
 	useConversation: () => ({ data: undefined }),
+	useConversationMessages: () => ({ data: undefined, hasNextPage: false }),
+	flattenMessagesOldestFirst: () => [],
 }))
 
 const FORGE = { id: 'agent-1', name: 'Forge' }
