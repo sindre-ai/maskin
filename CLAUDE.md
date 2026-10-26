@@ -148,6 +148,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `POST /api/workspaces/:id/members` — add member
 - `GET /api/workspaces/:id/members` — list members
 
+### Search (`/api/search`)
+- `GET /api/search` — chats (the caller's own), loops, agents, objects and automations in one call; every typed word must match; returns `results` (capped at `limit`, max 150), `total`, `capped`, `facets` and `relaxed` counts over the full set, and `partial` for any source that failed
+
 ### Relationships (`/api/relationships`)
 - `POST /api/relationships` — create relationship
 - `GET /api/relationships` — list relationships (filter by source_id, target_id, type)
