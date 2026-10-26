@@ -42,6 +42,9 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
+	validateSearch: (search: Record<string, unknown>): { member?: string } => ({
+		member: typeof search.member === 'string' ? search.member : undefined,
+	}),
 	component: MembersPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
@@ -53,6 +56,7 @@ const ROLE_OPTIONS = ['admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId, workspace } = useWorkspace()
+	const { member: memberFromSearch } = Route.useSearch()
 	const { data: allMembers, isLoading } = useWorkspaceMembers(workspaceId)
 	// Connected integrations hold a 'system' member row so they can act in the
 	// workspace; this list is people and agents only.
@@ -64,7 +68,7 @@ function MembersPage() {
 	const removeMember = useRemoveWorkspaceMember(workspaceId)
 	const navigate = useNavigate()
 	const [showInviteDialog, setShowInviteDialog] = useState(false)
-	const [activeHumanId, setActiveHumanId] = useState<string | null>(null)
+	const [activeHumanId, setActiveHumanId] = useState<string | null>(memberFromSearch ?? null)
 	const [pendingRemoval, setPendingRemoval] = useState<MemberResponse | null>(null)
 	const [removeError, setRemoveError] = useState<string | null>(null)
 	const [roleError, setRoleError] = useState<string | null>(null)

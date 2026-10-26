@@ -72,12 +72,34 @@ describe('useWorkspaceSearch', () => {
 		expect(result.current.countsByGroup).toEqual({
 			chats: 1,
 			loops: 1,
-			// The human actor never enters the agents group.
+			// The human actor lands in people, never in agents.
 			agents: 1,
+			people: 1,
 			objects: 1,
 			automations: 1,
 		})
-		expect(result.current.total).toBe(5)
+		expect(result.current.total).toBe(6)
+	})
+
+	it('finds a person by name and opens their dialog on the members page', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [
+				{ id: 'a-1', type: 'agent', name: 'Sales Rep (Magnus)', description: null },
+				{ id: 'h-1', type: 'human', name: 'Magnus', description: null },
+			],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'magnus' }))
+
+		// The exact-name person outranks the agent that merely mentions him.
+		const [first] = result.current.rows
+		expect(first).toMatchObject({
+			id: 'h-1',
+			group: 'people',
+			kind: 'PERSON',
+			to: '/$workspaceId/settings/members',
+			search: { member: 'h-1' },
+		})
 	})
 
 	it('leaves a group with no hits at zero so its chip never renders', () => {

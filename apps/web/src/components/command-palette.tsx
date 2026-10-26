@@ -394,7 +394,7 @@ export function CommandPalette() {
 				openObject(row.object)
 				return
 			}
-			navigate({ to: row.to, params: row.params })
+			navigate({ to: row.to, params: row.params, search: row.search })
 			setOpen(false)
 		},
 		[hasQuery, navigate, openObject, setOpen],

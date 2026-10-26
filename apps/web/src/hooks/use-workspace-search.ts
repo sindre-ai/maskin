@@ -19,7 +19,14 @@ import { useMemo } from 'react'
  * until `GET /conversations` grows a `q` parameter.
  */
 
-export const SEARCH_GROUPS = ['chats', 'loops', 'agents', 'objects', 'automations'] as const
+export const SEARCH_GROUPS = [
+	'chats',
+	'loops',
+	'agents',
+	'people',
+	'objects',
+	'automations',
+] as const
 
 export type SearchGroup = (typeof SEARCH_GROUPS)[number]
 
@@ -27,6 +34,7 @@ export const SEARCH_GROUP_LABEL: Record<SearchGroup, string> = {
 	chats: 'Chats',
 	loops: 'Loops',
 	agents: 'Agents',
+	people: 'People',
 	objects: 'Objects',
 	automations: 'Automations',
 }
@@ -43,6 +51,8 @@ export interface SearchRow {
 	snippet: string
 	to: string
 	params: Record<string, string>
+	/** Search params for the destination, e.g. which member dialog to open. */
+	search?: Record<string, string>
 	/** Only set for `objects`, so the page can keep firing the analytics +
 	 *  recents side effects the object rows already own. */
 	object?: ObjectResponse
@@ -189,6 +199,7 @@ export function useWorkspaceSearch(
 			chats: 0,
 			loops: 0,
 			agents: 0,
+			people: 0,
 			objects: 0,
 			automations: 0,
 		}
@@ -236,8 +247,23 @@ export function useWorkspaceSearch(
 		}
 
 		for (const actor of actors ?? []) {
-			if (actor.type !== 'agent') continue
+			if (actor.type !== 'agent' && actor.type !== 'human') continue
 			if (!matches(query, actor.name, actor.description)) continue
+			// People have no page of their own: they open their dialog on the members list.
+			if (actor.type === 'human') {
+				rows.push({
+					id: actor.id,
+					group: 'people',
+					kind: 'PERSON',
+					title: actor.name,
+					sub: '',
+					snippet: actor.description ?? '',
+					to: '/$workspaceId/settings/members',
+					params: { workspaceId },
+					search: { member: actor.id },
+				})
+				continue
+			}
 			rows.push({
 				id: actor.id,
 				group: 'agents',

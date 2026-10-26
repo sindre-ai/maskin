@@ -296,7 +296,7 @@ function SearchRoute() {
 				openObject(row.object)
 				return
 			}
-			navigate({ to: row.to, params: row.params })
+			navigate({ to: row.to, params: row.params, search: row.search })
 		},
 		[navigate, openObject, renderedRows],
 	)
@@ -451,7 +451,7 @@ function SearchRoute() {
 					<EmptyState
 						emphasis="page"
 						title={`Nothing matches "${query}"`}
-						description="Search looks across chats, loops, agents, objects and automations. Try a shorter word — or run a command instead."
+						description="Search looks across chats, loops, agents, people, objects and automations. Try a shorter word — or run a command instead."
 						action={
 							<Button
 								type="button"
@@ -520,11 +520,11 @@ function ResultRow({
 					variant="tile"
 					className="mt-px size-[22px] shrink-0 rounded-md"
 				/>
-			) : row.group === 'agents' ? (
+			) : row.group === 'agents' || row.group === 'people' ? (
 				<ActorAvatar
 					id={row.id}
 					name={row.title}
-					type="agent"
+					type={row.group === 'people' ? 'human' : 'agent'}
 					className="mt-px size-[22px] shrink-0 text-[9px]"
 				/>
 			) : Glyph ? (
@@ -579,7 +579,7 @@ function SearchIdleState({
 				emphasis="page"
 				className="py-0"
 				title="Search the workspace"
-				description="Chats, loops, agents, objects and automations — everything you and the agents have touched, in one result list you can filter."
+				description="Chats, loops, agents, people, objects and automations — everything you and the agents have touched, in one result list you can filter."
 				action={
 					<div className="flex flex-col items-center gap-4">
 						{recentSearches.length > 0 ? (

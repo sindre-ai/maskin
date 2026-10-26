@@ -104,6 +104,7 @@ const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEnti
 	chats: 'conversation',
 	loops: 'loop',
 	agents: 'agent',
+	people: 'actor',
 	automations: 'trigger',
 }
 
