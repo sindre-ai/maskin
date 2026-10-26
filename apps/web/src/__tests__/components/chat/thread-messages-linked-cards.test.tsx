@@ -24,6 +24,7 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 	renderLinkedCard: (target: { kind: string; id: string }): ReactNode => (
 		<p>{`Card for ${target.id}`}</p>
 	),
+	renderLinkedChip: (_target: unknown, fallback: ReactNode): ReactNode => fallback,
 }))
 
 import { ThreadMessages } from '@/components/chat/thread-messages'

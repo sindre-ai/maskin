@@ -215,7 +215,7 @@ describe('MarkdownContent linkedCards', () => {
 	it('leaves a link with other text in its paragraph alone, even with a long lead-in', () => {
 		qualifying = new Set()
 		renderMessage(
-			`This is a much longer introduction than any label would be: [x](${objectUrl(A)})`,
+			`This is a much longer introduction than any label would ever be allowed to be: [x](${objectUrl(A)})`,
 		)
 		expect(screen.getByRole('link', { name: 'x' })).toBeInTheDocument()
 	})
@@ -326,10 +326,11 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
 	})
 
-	it('draws an id once even when a sentence mentions it before a standalone link', () => {
+	it('draws a draft once, where it stands alone, even when a sentence mentioned it before', () => {
 		renderMessage(`I wrote [it](${objectUrl(A)}) for you.\n\n[Email](${objectUrl(A)})`)
 		expect(screen.getAllByTestId('card')).toHaveLength(1)
-		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'it' })).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Email' })).not.toBeInTheDocument()
 	})
 
 	it('renders exactly as before without the prop', () => {
