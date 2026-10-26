@@ -5,10 +5,15 @@ import { logger } from '../lib/logger'
  * The yes-before-a-write rule for a live voice call, enforced on the server.
  *
  * Telling the model to ask first is not a guard: it can skip the question or
- * take its own words for a yes. So a tool that is not read-only is held, and it
- * only runs when two things both happen: the model repeats the same call with
- * the id of the hold, and the person's next spoken line after the hold, heard
- * by our own socket to the Realtime call, is a short clear yes.
+ * take its own words for a yes. So a risky tool (see isRiskyTool: anything that
+ * sends outside the workspace, starts work, deletes, or touches access) is held,
+ * and it only runs when two things both happen: the model repeats the same call
+ * with the id of the hold, and the person's next spoken line after the hold,
+ * heard by our own socket to the Realtime call, is a clear yes.
+ *
+ * Ordinary changes inside the workspace (a comment, a status, a new task) run at
+ * once. They are recorded in the events log and can be changed back, and making
+ * the person confirm each one made a call too slow to use.
  */
 
 export const VOICE_CONFIRM_TTL_MS = 60_000
@@ -17,11 +22,14 @@ export const VOICE_CONFIRM_WAIT_MS = 3_000
 /** The argument the model adds to repeat a held call. Removed before the tool runs. */
 export const VOICE_CONFIRM_ARG = 'confirmation_id'
 
-const YES_TOKENS = [
+/** Words and phrases a yes can open with. */
+const YES_OPENERS = [
 	'yes',
 	'yeah',
 	'yep',
 	'yup',
+	'ja',
+	'jep',
 	'sure',
 	'ok',
 	'okay',
@@ -33,28 +41,94 @@ const YES_TOKENS = [
 	'definitely',
 	'exactly',
 	'right',
-	'do it',
-	'go ahead',
-	'go for it',
+	'agreed',
+	'perfect',
+	'great',
+	'alright',
+	'fine',
+	'approve',
+	'approved',
+	'i approve',
+	'i agree',
+	'sounds good',
+	'sounds great',
+	'that works',
 	'that is right',
 	'thats right',
 	'that is correct',
 	'thats correct',
+	'do it',
+	'do that',
+	'lets do it',
+	'lets do that',
+	'lets go',
+	'go ahead',
+	'go for it',
+	'send it',
+	'send that',
 ]
-const YES_ONLY = new RegExp(`^(?:(?:${YES_TOKENS.join('|')})(?:\\s+|$))+$`)
-const MAX_YES_WORDS = 6
+const YES_START = new RegExp(`^(?:${YES_OPENERS.join('|')})(?:\\s|$)`)
+/** Any of these anywhere in the line makes it not a yes: it is a no, a condition or a change of mind. */
+const NO_WORDS = new Set([
+	'no',
+	'nope',
+	'not',
+	'never',
+	'nothing',
+	'wait',
+	'hold',
+	'stop',
+	'cancel',
+	'but',
+	'however',
+	'actually',
+	'instead',
+	'except',
+	'only',
+	'skip',
+	'later',
+	'change',
+	'edit',
+	'rather',
+	'without',
+	'dont',
+	'cant',
+	'wont',
+	'shouldnt',
+	'isnt',
+	'arent',
+	'wasnt',
+	'nej',
+])
+const MAX_YES_WORDS = 8
 
-/** A short, clear yes. Anything else (a no, a question, a longer sentence) is not one. */
-export function isYes(text: string): boolean {
-	const normalized = text
+function normalize(text: string): string {
+	return text
 		.toLowerCase()
 		.replace(/['’]/g, '')
 		.replace(/[^a-z\s]/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim()
+}
+
+/**
+ * A short, clear yes: a few words that open with a yes or an approval and carry
+ * no "no", "but", "wait" or question. "Yes", "I approve", "sounds good, send it"
+ * and "sure, do that" all count.
+ */
+export function isYes(text: string): boolean {
+	const normalized = normalize(text)
 	if (!normalized || text.includes('?')) return false
-	if (normalized.split(' ').length > MAX_YES_WORDS) return false
-	return YES_ONLY.test(normalized)
+	const words = normalized.split(' ')
+	if (words.length > MAX_YES_WORDS) return false
+	if (words.some((word) => NO_WORDS.has(word))) return false
+	return YES_START.test(normalized)
+}
+
+/** True when the line turns the ask down. A line that is neither this nor a yes leaves the ask open. */
+export function isNo(text: string): boolean {
+	const words = normalize(text).split(' ')
+	return words.some((word) => NO_WORDS.has(word))
 }
 
 const RISKY_TOOLS: ReadonlySet<string> = new Set([
@@ -253,6 +327,8 @@ export function createWriteGate(deps: {
 				for (const wake of action.waiters.splice(0)) wake()
 				return
 			}
+			// A question or an aside is not an answer: the ask stays open for the person's yes or no.
+			if (!isNo(text)) return
 			action.answer = 'no'
 			log('declined', action.tool)
 			declinedIds.add(action.id)
@@ -260,7 +336,7 @@ export function createWriteGate(deps: {
 		},
 
 		async review(tool, args, confirmationId) {
-			if (isReadOnlyTool(tool)) return { kind: 'run' }
+			if (isReadOnlyTool(tool) || !isRiskyTool(tool)) return { kind: 'run' }
 			if (confirmationId !== null && declinedIds.has(confirmationId)) {
 				return { kind: 'refuse', reason: 'declined' }
 			}
