@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { validateApiKey } from '@maskin/auth'
 import { actors, deviceAuthCodes } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -66,8 +67,14 @@ describe('device sign-in (integration)', () => {
 		const approved = await poll(started.device_code)
 		expect(approved.status).toBe('approved')
 		expect(approved.actor?.id).toBe(getTestActorId())
+		// Keys are stored hashed, so the TV receives a key minted for it: one that authenticates as
+		// the person who approved, and is not the legacy plaintext column.
 		const [actor] = await db.select().from(actors).where(eq(actors.id, getTestActorId()))
-		expect(approved.actor?.api_key).toBe(actor?.apiKey)
+		expect(approved.actor?.api_key).toMatch(/^ank_[a-f0-9]{32}$/)
+		expect(approved.actor?.api_key).not.toBe(actor?.apiKey)
+		expect(await validateApiKey(db, approved.actor?.api_key ?? '')).toMatchObject({
+			actorId: getTestActorId(),
+		})
 
 		// Spent: the same device code never yields the session twice.
 		expect((await poll(started.device_code)).status).toBe('expired')

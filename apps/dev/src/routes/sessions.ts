@@ -26,6 +26,7 @@ import {
 	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
@@ -286,12 +287,8 @@ function synthesizeSessionTitle(row: {
 	actionPrompt: string | null
 }): string {
 	if (row.triggerName && row.triggerName.trim().length > 0) return row.triggerName
-	const prompt = row.actionPrompt?.trim()
-	if (prompt && prompt.length > 0) {
-		return prompt.length > SESSION_TITLE_MAX_CHARS
-			? `${prompt.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`
-			: prompt
-	}
+	const title = sessionTitleFromPrompt(row.actionPrompt, SESSION_TITLE_MAX_CHARS)
+	if (title) return title
 	return `Session ${row.id.slice(0, 8)}`
 }
 

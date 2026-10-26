@@ -116,6 +116,8 @@ describe('SessionRetryScheduler', () => {
 		const call = vi.mocked(startSession).mock.calls[0][0]
 		expect(call.retryOf).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.attemptNumber).toBe(2)
+		// Workspace-restore source: the retry starts from the failed session's /agent files
+		expect(call.parentSessionId).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.callerKind).toBe('internal')
 
 		// CAS-clear retry_at + link retried_session_id both happened
@@ -124,6 +126,19 @@ describe('SessionRetryScheduler', () => {
 
 		// telemetry event emitted
 		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(true)
+	})
+
+	it('hands the rerun to whoever handed the original work over', async () => {
+		const { db } = fakeDb([
+			buildDueRow({ spawnedBySessionId: 'session-sender', spawnedByMessageId: 17903 }),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const call = vi.mocked(startSession).mock.calls[0][0]
+		expect(call.spawnedBySessionId).toBe('session-sender')
+		expect(call.spawnedByMessageId).toBe(17903)
 	})
 
 	it('caps at MAX_RETRY_ATTEMPTS and emits session_retry_capped', async () => {

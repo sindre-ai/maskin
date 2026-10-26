@@ -50,9 +50,9 @@ export function isPlainText(mimeType: string): boolean {
 	)
 }
 
-type ViewMode = 'rendered' | 'source'
+export type ViewMode = 'rendered' | 'source'
 
-function SourceView({ text }: { text: string }) {
+export function SourceView({ text }: { text: string }) {
 	return (
 		<pre className="rounded-md border border-border bg-muted p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-foreground">
 			{text}
@@ -60,7 +60,10 @@ function SourceView({ text }: { text: string }) {
 	)
 }
 
-function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+export function ViewToggle({
+	mode,
+	onChange,
+}: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
 	const options: { value: ViewMode; label: string }[] = [
 		{ value: 'rendered', label: 'Rendered' },
 		{ value: 'source', label: 'Source' },

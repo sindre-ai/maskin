@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	CHAT_REPLY_PUSH_DELAY_SECONDS,
 	notifyAgentQuestion,
+	notifyChatMention,
 	notifyChatReply,
 	previewText,
 } from '../../services/chat-notifications'
@@ -202,5 +203,66 @@ describe('notifyAgentQuestion', () => {
 		mockResults.insertError = new Error('boom')
 
 		await expect(notifyAgentQuestion(db as Database, args)).resolves.toBeUndefined()
+	})
+})
+
+describe('notifyChatMention', () => {
+	function mention(over: Record<string, unknown> = {}) {
+		return {
+			workspaceId: wsId,
+			authorId: human2,
+			conversationId: conv,
+			messageId: 7,
+			content: 'Can you look at **this**?',
+			kind: 'message' as const,
+			metadata: { mentions: [human1] },
+			sessionId: null,
+			...over,
+		}
+	}
+
+	it('creates an immediate conversation push for the mentioned person, under its own collapse key', async () => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [{ id: human1 }], []])
+
+		await notifyChatMention(db as Database, mention())
+
+		const [row] = notificationRows(calls.inserts)
+		expect(row).toMatchObject({
+			title: 'Sam mentioned you',
+			content: 'Can you look at this?',
+			targetActorId: human1,
+			sourceActorId: human2,
+			type: 'good_news',
+			status: 'seen',
+			metadata: {
+				push_category: 'conversation',
+				push_collapse_key: `chat-mention:${conv}:7`,
+				push_only: true,
+				conversation_id: conv,
+				message_id: 7,
+			},
+		})
+		expect(row?.metadata).not.toHaveProperty('push_delay_seconds')
+	})
+
+	it.each([
+		['an auto-posted final output', { metadata: { source: 'final_output', mentions: [human1] } }],
+		['a system message', { kind: 'system' }],
+		['a message with no mentions', { metadata: { mentions: [] } }],
+		['a self-mention', { metadata: { mentions: [human2] } }],
+	])('creates nothing for %s', async (_name, over) => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [{ id: human1 }], []])
+
+		await notifyChatMention(db as Database, mention(over))
+
+		expect(calls.inserts).toHaveLength(0)
+	})
+
+	it('creates nothing when no mentioned id is a workspace-member human', async () => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [], []])
+
+		await notifyChatMention(db as Database, mention({ metadata: { mentions: [agent] } }))
+
+		expect(calls.inserts).toHaveLength(0)
 	})
 })

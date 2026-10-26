@@ -1,8 +1,9 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { hashPassword } from '@maskin/auth'
+import { hashPassword, validateApiKey } from '@maskin/auth'
 import {
 	events,
 	actors,
+	apiKeys,
 	deviceAuthCodes,
 	deviceTokens,
 	liveActivityCards,
@@ -16,7 +17,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -92,8 +93,14 @@ describe('account deletion (integration)', () => {
 		expect(after?.name).toBe('Deleted user')
 		expect(after?.email).toBeNull()
 		expect(after?.passwordHash).toBeNull()
-		expect(after?.apiKey).not.toBe(me.apiKey)
-		expect(after?.apiKey.startsWith('deleted_')).toBe(true)
+		expect(after?.apiKey).toBeNull()
+		// Every key they held stops authenticating.
+		const liveKeys = await db
+			.select({ id: apiKeys.id })
+			.from(apiKeys)
+			.where(and(eq(apiKeys.actorId, me.id), isNull(apiKeys.revokedAt)))
+		expect(liveKeys).toEqual([])
+		expect(await validateApiKey(db, me.apiKey)).toBeNull()
 		expect(after?.defaultWorkspaceId).toBeNull()
 		expect((after?.metadata as { deleted_at?: string } | null)?.deleted_at).toBeTruthy()
 
@@ -263,6 +270,7 @@ describe('account deletion (integration)', () => {
 		const [after] = await db.select().from(actors).where(eq(actors.id, me.id))
 		expect(after?.name).not.toBe('Deleted user')
 		expect(after?.apiKey).toBe(me.apiKey)
+		expect(await validateApiKey(db, me.apiKey)).toEqual({ actorId: me.id, type: 'human' })
 	})
 
 	it('is refused for an agent key', async () => {

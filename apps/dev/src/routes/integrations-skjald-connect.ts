@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, integrations, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
@@ -268,10 +267,7 @@ async function ensureSkjaldSystemActor(
 		.where(and(eq(actors.type, 'system'), eq(actors.name, name)))
 		.limit(1)
 	if (!systemActor) {
-		;[systemActor] = await db
-			.insert(actors)
-			.values({ type: 'system', name, apiKey: generateApiKey().key, createdBy })
-			.returning()
+		;[systemActor] = await db.insert(actors).values({ type: 'system', name, createdBy }).returning()
 	}
 	if (!systemActor) throw new Error('Failed to create system actor for integration')
 

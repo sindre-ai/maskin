@@ -1,5 +1,6 @@
 import Foundation
 import MaskinAPI
+import OpenAPIRuntime
 
 /// What the server hands back for a call's WebRTC offer.
 public struct VoiceCallAnswer: Sendable, Equatable {
@@ -70,49 +71,59 @@ public protocol VoiceCalling: Sendable {
 	) async throws -> String?
 }
 
-/// `/api/voice-sessions` over plain `URLSession`. Written by hand because the routes are not yet in
-/// the checked-in OpenAPI snapshot; once they are, this can sit on the generated client.
+/// `/api/voice-sessions` on the generated client. The generated operation names stop here; the
+/// rest of the app sees `VoiceCalling`.
 public struct URLSessionVoiceCalls: VoiceCalling {
-	private let baseURL: URL
-	private let clientSource: String
-	private let credentials: MaskinCredentialsProvider
-	private let session: URLSession
+	private let client: Client
 
 	public init(
 		baseURL: URL, clientSource: String, credentials: @escaping MaskinCredentialsProvider,
-		session: URLSession = .shared
+		session: URLSession? = nil
 	) {
-		self.baseURL = baseURL
-		self.clientSource = clientSource
-		self.credentials = credentials
-		self.session = session
+		self.client = MaskinClient.make(
+			serverURL: baseURL, clientSource: clientSource, credentials: credentials, session: session)
 	}
 
-	/// The body of the create call. `conversation_id` is left out, not null, when there is no chat.
-	struct CreateBody: Encodable, Equatable {
-		var agent_actor_id: String
-		var conversation_id: String?
+	init(client: Client) {
+		self.client = client
 	}
 
 	public func create(agentActorID: String, conversationID: String?) async throws -> String {
-		let data = try await post(
-			"voice-sessions",
-			body: CreateBody(agent_actor_id: agentActorID, conversation_id: conversationID))
-		struct Created: Decodable { let voice_session_id: String }
-		return try decode(Created.self, from: data).voice_session_id
+		let output = try await send {
+			try await client.post_sol_api_sol_voice_hyphen_sessions(
+				body: .json(.init(agent_actor_id: agentActorID, conversation_id: conversationID)))
+		}
+		switch output {
+		case .created(let created): return try decoded { try created.body.json.voice_session_id }
+		case .badRequest: throw Self.failure(status: 400)
+		case .notFound: throw Self.failure(status: 404)
+		case .conflict: throw Self.failure(status: 409)
+		case .internalServerError(let failed):
+			throw Self.failure(status: 500, message: try? failed.body.json.error.message)
+		case .undocumented(let status, _): throw Self.failure(status: status)
+		}
 	}
 
 	public func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer {
-		let data = try await post("voice-sessions/\(voiceSessionID)/offer", body: ["sdp": sdp])
-		struct Answer: Decodable {
-			let sdp: String
-			let tools_available: Bool
-			let persist_transcripts: Bool
+		let output = try await send {
+			try await client.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer(
+				path: .init(id: voiceSessionID), body: .json(.init(sdp: sdp)))
 		}
-		let answer = try decode(Answer.self, from: data)
-		return VoiceCallAnswer(
-			sdp: answer.sdp, toolsAvailable: answer.tools_available,
-			persistTranscripts: answer.persist_transcripts)
+		switch output {
+		case .ok(let ok):
+			let answer = try decoded { try ok.body.json }
+			return VoiceCallAnswer(
+				sdp: answer.sdp, toolsAvailable: answer.tools_available,
+				persistTranscripts: answer.persist_transcripts)
+		case .notFound: throw Self.failure(status: 404)
+		case .conflict: throw Self.failure(status: 409)
+		case .tooManyRequests(let limited):
+			throw Self.failure(
+				status: 429, retryAfterSeconds: try? limited.body.json.retry_after_seconds)
+		case .internalServerError(let failed):
+			throw Self.failure(status: 500, message: try? failed.body.json.error.message)
+		case .undocumented(let status, _): throw Self.failure(status: status)
+		}
 	}
 
 	@discardableResult
@@ -120,78 +131,55 @@ public struct URLSessionVoiceCalls: VoiceCalling {
 		voiceSessionID: String, reason: VoiceCallEndReason, inputAudioSeconds: Int,
 		outputAudioSeconds: Int
 	) async throws -> String? {
-		struct Body: Encodable {
-			let reason: String
-			let input_audio_seconds: Int
-			let output_audio_seconds: Int
+		let body = Components.Schemas.HangupVoiceSessionBody(
+			reason: reason == .userHangup ? .user_hangup : .network_error,
+			input_audio_seconds: max(0, inputAudioSeconds),
+			output_audio_seconds: max(0, outputAudioSeconds))
+		let output = try await send {
+			try await client.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(
+				path: .init(id: voiceSessionID), body: .json(body))
 		}
-		let data = try await post(
-			"voice-sessions/\(voiceSessionID)/hangup",
-			body: Body(
-				reason: reason.rawValue, input_audio_seconds: max(0, inputAudioSeconds),
-				output_audio_seconds: max(0, outputAudioSeconds)))
-		struct Ended: Decodable { let conversation_id: String? }
-		return try decode(Ended.self, from: data).conversation_id
+		switch output {
+		case .ok(let ok): return try decoded { try ok.body.json.conversation_id }
+		case .notFound: throw Self.failure(status: 404)
+		case .undocumented(let status, _): throw Self.failure(status: status)
+		}
 	}
 
 	// MARK: Transport
 
-	func makeRequest(path: String, body: some Encodable, credentials: MaskinCredentials?) throws -> URLRequest {
-		var request = URLRequest(url: baseURL.appendingPathComponent("api").appendingPathComponent(path))
-		request.httpMethod = "POST"
-		request.timeoutInterval = 30
-		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.setValue("application/json", forHTTPHeaderField: "Accept")
-		request.setValue(clientSource, forHTTPHeaderField: "X-Client-Source")
-		if let credentials {
-			request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
-			if let workspaceId = credentials.workspaceId {
-				request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+	/// Runs one generated call. Anything that stops it before a status code comes back is a
+	/// connection problem when `URLSession` was the cause, and an unreadable answer otherwise.
+	private func send<Output>(_ call: () async throws -> Output) async throws -> Output {
+		do {
+			return try await call()
+		} catch {
+			var current: Error? = error
+			while let e = current {
+				if e is URLError {
+					throw VoiceCallFailure.network("Couldn't reach Maskin. Check your connection and try again.")
+				}
+				current = (e as? ClientError)?.underlyingError
 			}
-		}
-		request.httpBody = try JSONEncoder().encode(body)
-		return request
-	}
-
-	private func post(_ path: String, body: some Encodable) async throws -> Data {
-		let request = try makeRequest(path: path, body: body, credentials: await credentials())
-		let data: Data
-		let response: URLResponse
-		do {
-			(data, response) = try await session.data(for: request)
-		} catch {
-			throw VoiceCallFailure.network("Couldn't reach Maskin. Check your connection and try again.")
-		}
-		guard let http = response as? HTTPURLResponse else {
-			throw VoiceCallFailure.server("Unexpected response from Maskin.")
-		}
-		if (200..<300).contains(http.statusCode) { return data }
-		throw Self.failure(status: http.statusCode, body: data)
-	}
-
-	private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-		do {
-			return try JSONDecoder().decode(type, from: data)
-		} catch {
 			throw VoiceCallFailure.server("Unexpected response from Maskin.")
 		}
 	}
 
-	/// The error a non-2xx answer means.
-	static func failure(status: Int, body: Data) -> VoiceCallFailure {
-		struct Envelope: Decodable {
-			struct Err: Decodable { let message: String? }
-			let error: Err?
-			let retry_after_seconds: Double?
-		}
-		let envelope = try? JSONDecoder().decode(Envelope.self, from: body)
+	/// Reading a documented body can still throw when the server sent a different content type.
+	private func decoded<T>(_ read: () throws -> T) throws -> T {
+		do { return try read() } catch { throw VoiceCallFailure.server("Unexpected response from Maskin.") }
+	}
+
+	/// The error a non-2xx answer means. `message` is the server's own text, used for 5xx.
+	static func failure(
+		status: Int, message: String? = nil, retryAfterSeconds: Double? = nil
+	) -> VoiceCallFailure {
 		switch status {
 		case 404: return .unavailable
 		case 400: return .notAnAgent
 		case 409: return .alreadyInCall
-		case 429: return .rateLimited(retryAfterSeconds: envelope?.retry_after_seconds.map { Int($0) })
-		default:
-			return .server(envelope?.error?.message ?? "Voice call failed (\(status)).")
+		case 429: return .rateLimited(retryAfterSeconds: retryAfterSeconds.map { Int($0) })
+		default: return .server(message ?? "Voice call failed (\(status)).")
 		}
 	}
 }

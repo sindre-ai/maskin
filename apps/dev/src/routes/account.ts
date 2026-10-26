@@ -1,9 +1,15 @@
-import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, evictApiKey, evictMembership, verifyPassword } from '@maskin/auth'
+import {
+	evictActor,
+	evictApiKeyHash,
+	evictMembership,
+	revokeActorKeys,
+	verifyPassword,
+} from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	apiKeys,
 	deviceAuthCodes,
 	deviceTokens,
 	liveActivityCards,
@@ -159,7 +165,7 @@ app.openapi(deleteRoute, async (c) => {
 		await lockActorForOwnershipClaim(tx, actorId)
 		// Lock the person's row so two deletions, or a deletion racing a transfer, can't interleave.
 		const [locked] = await tx
-			.select({ id: actors.id, apiKey: actors.apiKey })
+			.select({ id: actors.id })
 			.from(actors)
 			.where(eq(actors.id, actorId))
 			.for('update')
@@ -222,16 +228,18 @@ app.openapi(deleteRoute, async (c) => {
 		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.
 		await tx.delete(webPushSubscriptions).where(eq(webPushSubscriptions.actorId, actorId))
 
-		// The row stays (records elsewhere reference it) but nothing about the person does. The key
-		// is replaced with a random value nobody holds; null password and email mean no sign-in and
-		// a free email.
+		// The row stays (records elsewhere reference it) but nothing about the person does. Every
+		// key is revoked, then its hash row erased, and the legacy plaintext column is cleared; null
+		// password and email mean no sign-in and a free email.
+		const revokedKeyHashes = await revokeActorKeys(tx, actorId)
+		await tx.delete(apiKeys).where(eq(apiKeys.actorId, actorId))
 		await tx
 			.update(actors)
 			.set({
 				name: DELETED_ACTOR_NAME,
 				email: null,
 				passwordHash: null,
-				apiKey: `deleted_${randomUUID().replaceAll('-', '')}`,
+				apiKey: null,
 				description: null,
 				systemPrompt: null,
 				tools: null,
@@ -246,7 +254,7 @@ app.openapi(deleteRoute, async (c) => {
 
 		return {
 			kind: 'deleted' as const,
-			oldApiKey: locked.apiKey,
+			revokedKeyHashes,
 			workspaceIds: memberships.map((m) => m.workspaceId).filter((id) => !purgedIds.has(id)),
 			purged,
 		}
@@ -265,8 +273,9 @@ app.openapi(deleteRoute, async (c) => {
 	}
 
 	// Takes effect on the very next request, not when the cached lookups expire.
-	evictApiKey(result.oldApiKey)
 	evictActor(actorId)
+	// The eviction inside the transaction can be undone by a request that lands before the commit.
+	for (const keyHash of result.revokedKeyHashes) evictApiKeyHash(keyHash)
 	for (const workspaceId of result.workspaceIds) evictMembership(actorId, workspaceId)
 	for (const p of result.purged) {
 		evictPurgedWorkspace(p.workspaceId, p.result)
