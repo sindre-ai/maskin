@@ -62,11 +62,16 @@ describe('daily budget events (Integration)', () => {
 			configureSessionLifecycle({ db, sessionManager })
 		}
 
+		// startSession does not await the admission write, so wait for the row to land.
 		async function admissionFor(sessionId: string) {
-			return db
-				.select()
-				.from(events)
-				.where(and(eq(events.entityId, sessionId), eq(events.action, SESSION_ADMISSION_ACTION)))
+			return vi.waitFor(async () => {
+				const rows = await db
+					.select()
+					.from(events)
+					.where(and(eq(events.entityId, sessionId), eq(events.action, SESSION_ADMISSION_ACTION)))
+				expect(rows.length).toBeGreaterThan(0)
+				return rows
+			})
 		}
 
 		it('writes one admitted event per start, normal priority, estimate unknown without history', async () => {

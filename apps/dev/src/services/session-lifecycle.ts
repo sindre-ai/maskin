@@ -243,8 +243,9 @@ export async function startSession(
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
 	// Daily budget 1a: one admission event per start, the baseline 1b is judged against. Every
-	// decision is 'admitted' until the gate exists. Never throws.
-	await recordSessionAdmission(db, {
+	// decision is 'admitted' until the gate exists. Best effort and not awaited: reporting must not
+	// slow the start path. recordSessionAdmission never throws, so there is nothing to catch here.
+	void recordSessionAdmission(db, {
 		sessionId: session.id,
 		workspaceId: input.workspaceId,
 		actorId: input.actorId,
