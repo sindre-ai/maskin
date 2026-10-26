@@ -33,7 +33,7 @@ async function setup(settings: Record<string, unknown> | null) {
 	return { ownerId, workspaceId, agentId }
 }
 
-const target = { unit: 'usd', amount: 10, stop_at_share: 100, timezone: 'Europe/Oslo' }
+const target = { unit: 'dollars', amount: 10, stop_share: 100, timezone: 'Europe/Oslo' }
 
 async function cards(workspaceId: string) {
 	return db
@@ -127,16 +127,18 @@ describe('daily budget card scheduler', () => {
 		expect(row?.content).toContain('Month forecast (approximate): Estimate unknown')
 	})
 
-	it('sends nothing without a target, without a timezone, or outside the day start', async () => {
+	it('sends nothing without a target, with a timezone that does not exist, or outside the day start', async () => {
 		const none = await setup(null)
-		const noTimezone = await setup({ daily_budget: { unit: 'usd', amount: 10 } })
+		const badTimezone = await setup({
+			daily_budget: { unit: 'dollars', amount: 10, stop_share: 100, timezone: 'Not/AZone' },
+		})
 		const outside = await setup({ daily_budget: target })
 		await new DailyBudgetCardScheduler(db).tick(day1)
 		// 05:30 local: the three hour catch-up window after the day start is over.
 		await new DailyBudgetCardScheduler(db).tick(new Date('2026-03-10T04:30:00Z'))
 
 		expect(await cards(none.workspaceId)).toHaveLength(0)
-		expect(await cards(noTimezone.workspaceId)).toHaveLength(0)
+		expect(await cards(badTimezone.workspaceId)).toHaveLength(0)
 		// Only the day1 tick sent to the valid workspace; the late tick added nothing.
 		expect(await cards(outside.workspaceId)).toHaveLength(1)
 	})

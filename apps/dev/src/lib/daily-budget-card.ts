@@ -9,7 +9,9 @@
  * unknown" instead of $0.
  */
 
-export type BudgetUnit = 'tokens' | 'usd'
+import { type DailyBudget, dailyBudgetSchema } from '@maskin/shared'
+
+export type BudgetUnit = DailyBudget['unit']
 
 export interface BudgetTarget {
 	unit: BudgetUnit
@@ -90,7 +92,7 @@ export function projectMonth(
 }
 
 export function formatAmount(value: number, unit: BudgetUnit): string {
-	if (unit === 'usd') return `$${value.toFixed(2)}`
+	if (unit === 'dollars') return `$${value.toFixed(2)}`
 	const abs = Math.abs(value)
 	if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M tokens`
 	if (abs >= 1_000) return `${Math.round(value / 1_000)}k tokens`
@@ -185,21 +187,18 @@ export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
 
 /**
  * The target as the target-setting task stores it on the workspace: `settings.daily_budget`
- * (unit, amount, stop_at_share, timezone). The timezone is an IANA name and lives with the
- * target; there is no general workspace timezone. This is the one place that reads that shape.
- * Off (null) when the key is absent, the amount is not a positive number or the timezone is
- * missing: a workspace with no target gets no card, and a day is never guessed in UTC.
+ * (`dailyBudgetSchema` in @maskin/shared: unit, amount, stop_share, timezone). The timezone is
+ * an IANA name and lives with the target; there is no general workspace timezone. This is the
+ * one place that reads that shape. Off (null) when the key is absent or does not parse, so a
+ * workspace with no target gets no card.
  */
 export function readBudgetSettings(
 	settings: unknown,
 ): { target: BudgetTarget; timezone: string } | null {
-	const s = (settings ?? {}) as Record<string, unknown>
-	const raw = (s.daily_budget ?? null) as Record<string, unknown> | null
-	if (!raw || typeof raw !== 'object') return null
-	const { unit, amount } = raw
-	if (unit !== 'tokens' && unit !== 'usd') return null
-	if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return null
-	const { timezone } = raw
-	if (typeof timezone !== 'string' || timezone.length === 0) return null
+	const parsed = dailyBudgetSchema.safeParse(
+		(settings as { daily_budget?: unknown } | null)?.daily_budget,
+	)
+	if (!parsed.success) return null
+	const { unit, amount, timezone } = parsed.data
 	return { target: { unit, amount }, timezone }
 }

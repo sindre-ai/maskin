@@ -11,7 +11,7 @@ import {
 } from '../../lib/daily-budget-card'
 
 const tokens: BudgetTarget = { unit: 'tokens', amount: 2_000_000 }
-const usd: BudgetTarget = { unit: 'usd', amount: 10 }
+const usd: BudgetTarget = { unit: 'dollars', amount: 10 }
 
 function stats(over: Partial<TriggerWindowStats> & { name: string }): TriggerWindowStats {
 	return { triggerId: over.name, runs: 0, knownRuns: 0, spent: 0, ...over }
@@ -90,7 +90,7 @@ describe('formatting', () => {
 	it('formats tokens and dollars', () => {
 		expect(formatAmount(1_800_000, 'tokens')).toBe('1.8M tokens')
 		expect(formatAmount(12_400, 'tokens')).toBe('12k tokens')
-		expect(formatAmount(3.2, 'usd')).toBe('$3.20')
+		expect(formatAmount(3.2, 'dollars')).toBe('$3.20')
 	})
 
 	it('draws a bar that is empty at zero, shows something once spent and caps at full', () => {
@@ -103,16 +103,16 @@ describe('formatting', () => {
 
 describe('card lines', () => {
 	it('yesterday: nothing ran, cost known, partly unknown, all unknown', () => {
-		expect(yesterdayLine({ runs: 0, knownRuns: 0, spent: 0 }, 'usd')).toBe(
+		expect(yesterdayLine({ runs: 0, knownRuns: 0, spent: 0 }, 'dollars')).toBe(
 			'Yesterday: nothing ran.',
 		)
-		expect(yesterdayLine({ runs: 38, knownRuns: 38, spent: 3.2 }, 'usd')).toBe(
+		expect(yesterdayLine({ runs: 38, knownRuns: 38, spent: 3.2 }, 'dollars')).toBe(
 			'Yesterday: 38 runs, $3.20.',
 		)
-		expect(yesterdayLine({ runs: 10, knownRuns: 7, spent: 1 }, 'usd')).toBe(
+		expect(yesterdayLine({ runs: 10, knownRuns: 7, spent: 1 }, 'dollars')).toBe(
 			'Yesterday: 10 runs, $1.00 (cost unknown for 3).',
 		)
-		expect(yesterdayLine({ runs: 1, knownRuns: 0, spent: 0 }, 'usd')).toBe(
+		expect(yesterdayLine({ runs: 1, knownRuns: 0, spent: 0 }, 'dollars')).toBe(
 			'Yesterday: 1 run. Estimate unknown.',
 		)
 	})

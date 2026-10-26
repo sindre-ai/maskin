@@ -190,7 +190,7 @@ export class DailyBudgetCardScheduler {
 		to: Date,
 	): Promise<TriggerWindowStats[]> {
 		const spend =
-			unit === 'usd'
+			unit === 'dollars'
 				? sql`COALESCE(${sessions.totalCostUsd}, 0)::float8`
 				: sql`(COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0) + COALESCE(${sessions.cacheCreationInputTokens}, 0))::float8`
 		const rows = await this.db
