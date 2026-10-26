@@ -1,3 +1,7 @@
+// LEGACY: used only while the `search-v2` flag is off. This directory is deleted with the
+// flag (see routes/_authed/$workspaceId.tsx and routes/_authed/$workspaceId/search.tsx).
+// Do not add features here.
+
 import { useActors } from '@/hooks/use-actors'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useLoops } from '@/hooks/use-loops'

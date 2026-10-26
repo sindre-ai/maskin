@@ -1,6 +1,6 @@
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { Search, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 
@@ -12,8 +12,42 @@ import { useCallback, useRef, useState } from 'react'
  * the source of truth for results; this field only carries the query there.
  * The ⌘K chip opens the command palette, which is a different affordance —
  * jump-anywhere and run-an-action, not text search.
+ *
+ * With the `search-v2` flag on (the workspace layout passes it down through the palette
+ * context), this field is replaced by one button that opens the launcher, except on
+ * Marketplace, which keeps the inline field.
  */
 export function NavSearch() {
+	const { searchV2 } = useCommandPalette()
+	return searchV2 ? <NavSearchV2 /> : <NavSearchInline />
+}
+
+// One entry point to search: the button opens the launcher, whose last row opens /search.
+// Search itself has its own field, so the header shows nothing there.
+function NavSearchV2() {
+	const { workspaceId } = useWorkspace()
+	const { setOpen } = useCommandPalette()
+	const pathname = useRouterState({ select: (s) => s.location.pathname })
+	if (pathname === `/${workspaceId}/search`) return null
+	if (pathname.startsWith(`/${workspaceId}/marketplace`)) return <NavSearchInline />
+	return (
+		<button
+			type="button"
+			onClick={() => setOpen(true)}
+			aria-label="Search or run a command"
+			title="Search or run a command · ⌘K"
+			className="inline-flex h-[30px] shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-[9px] text-[12.5px] text-muted-foreground transition-colors duration-150 hover:border-border-hover hover:text-foreground"
+		>
+			<Search aria-hidden="true" className="size-[15px] shrink-0" />
+			<span className="hidden min-[760px]:inline">Search or run a command</span>
+			<kbd className="hidden rounded-[5px] border border-border bg-muted px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[760px]:inline-block">
+				⌘K
+			</kbd>
+		</button>
+	)
+}
+
+function NavSearchInline() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { setOpen: setPaletteOpen } = useCommandPalette()
