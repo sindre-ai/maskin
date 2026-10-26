@@ -118,9 +118,9 @@ describe('SearchPageV2 results', () => {
 		searchState.current = { q: 'hans' }
 		renderPage()
 
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 		// One count only, taken from the endpoint total.
-		expect(screen.getByText(/2 results/)).toBeInTheDocument()
+		expect(screen.getByText(/2 results/, { selector: 'p' })).toBeInTheDocument()
 		expect(screen.queryByText(/matches/)).not.toBeInTheDocument()
 
 		const types = screen.getByRole('group', { name: 'Filter by type' })
@@ -158,7 +158,7 @@ describe('SearchPageV2 results', () => {
 			}),
 		)
 		renderPage()
-		await screen.findByText(/Hans follow-up loop/)
+		await screen.findByRole('option', { name: /Hans follow-up loop/ })
 		expect(screen.queryByText(/a loop body that must not show/)).not.toBeInTheDocument()
 	})
 
@@ -181,7 +181,7 @@ describe('SearchPageV2 results', () => {
 		expect(
 			await screen.findByText('Showing 2 of 412. Add a filter to narrow the list.'),
 		).toBeInTheDocument()
-		expect(screen.getByText(/412 results/)).toBeInTheDocument()
+		expect(screen.getByText(/412 results/, { selector: 'p' })).toBeInTheDocument()
 	})
 
 	it('says when some sources could not be loaded', async () => {
@@ -251,7 +251,7 @@ describe('SearchPageV2 pills', () => {
 	it('restores the pills from the URL on load without counting a filter change', async () => {
 		searchState.current = { q: 'hans', types: 'loop', statuses: 'done' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 		expect(screen.getByRole('button', { name: 'Remove filter: Loops' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Remove filter: Done' })).toBeInTheDocument()
 		expect(field()).toHaveValue('hans')
@@ -285,7 +285,7 @@ describe('SearchPageV2 chips', () => {
 		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 
 		await user.click(screen.getByRole('button', { name: 'Loops (1)' }))
 		expect(screen.getByRole('button', { name: 'Remove filter: Loops' })).toBeInTheDocument()
@@ -318,7 +318,7 @@ describe('SearchPageV2 Display', () => {
 		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 
 		await user.click(screen.getByRole('button', { name: 'Display' }))
 		await user.click(await screen.findByRole('radio', { name: 'A to Z' }))
@@ -345,7 +345,7 @@ describe('SearchPageV2 Display', () => {
 		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 		await user.click(screen.getByRole('button', { name: 'Display' }))
 		expect(await screen.findByRole('radio', { name: 'Relevance' })).toBeInTheDocument()
 		await user.keyboard('{Escape}')
@@ -406,7 +406,7 @@ describe('SearchPageV2 failure', () => {
 		expect(field()).toHaveValue('hans')
 
 		await user.click(within(alert).getByRole('button', { name: 'Retry' }))
-		expect(await screen.findByText('Hans on pricing')).toBeInTheDocument()
+		expect(await screen.findByRole('option', { name: /Hans on pricing/ })).toBeInTheDocument()
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 	})
 
@@ -426,7 +426,7 @@ describe('SearchPageV2 keyboard and analytics', () => {
 		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 		await waitFor(() => expect(trackSearchPerformed).toHaveBeenCalledTimes(1))
 
 		await user.click(field())
@@ -465,7 +465,7 @@ describe('SearchPageV2 keyboard and analytics', () => {
 	it('fires search_performed once with the v2 fields and no query text', async () => {
 		searchState.current = { q: 'hans', types: 'loop' }
 		renderPage()
-		await screen.findByText('Hans on pricing')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
 		await waitFor(() => expect(trackSearchPerformed).toHaveBeenCalledTimes(1))
 		const payload = vi.mocked(trackSearchPerformed).mock.calls[0]?.[0]
 		expect(payload).toMatchObject({
