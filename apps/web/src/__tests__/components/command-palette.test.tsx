@@ -407,6 +407,31 @@ describe('CommandPalette', () => {
 		})
 	})
 
+	it('a short query does not pull in every command or view through the group names', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		// "ma" sits inside "command" and "to" inside "go to"; neither may list every row.
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'ma')
+
+		expect(screen.queryByText('New chat')).not.toBeInTheDocument()
+		expect(screen.getByText('Mark all read')).toBeInTheDocument()
+		expect(screen.getByText('Marketplace')).toBeInTheDocument()
+		expect(screen.queryByText('Chats')).not.toBeInTheDocument()
+	})
+
+	it('typing the start of "command" still lists the commands', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'comm')
+
+		expect(screen.getByText('New chat')).toBeInTheDocument()
+		expect(screen.getByText('New bet')).toBeInTheDocument()
+	})
+
 	it('the terminal Search row hands the typed query to /search', async () => {
 		const user = userEvent.setup()
 		render(<CommandPalette />)

@@ -309,8 +309,15 @@ export function CommandPalette() {
 		return () => document.removeEventListener('keydown', handler)
 	}, [openChat, setOpen])
 
+	// Commands and Go to rows match on their title, or when the query is the
+	// start of the group name ("com" shows every command). Matching the group
+	// name or the row description anywhere would put all seven commands above
+	// the result for any short query: "ma" is inside "command" and "to" is
+	// inside "go to", so typing "ma" for Magnus made ↵ run "New chat".
 	const matchesQuery = useCallback(
-		(...fields: (string | undefined)[]) => matches(trimmedQuery, ...fields),
+		(title: string, groupName: string) =>
+			matches(trimmedQuery, title) ||
+			(trimmedQuery.length >= 3 && groupName.startsWith(trimmedQuery.toLowerCase())),
 		[trimmedQuery],
 	)
 
@@ -362,7 +369,7 @@ export function CommandPalette() {
 				run: markAllRead,
 			},
 		]
-		return rows.filter((row) => matchesQuery(row.title, row.sub, 'command'))
+		return rows.filter((row) => matchesQuery(row.title, 'command'))
 	}, [matchesQuery, markAllRead, navigateTo, objectTypes, openChat, openCreate, workspaceId])
 
 	const goToRows = useMemo(() => {

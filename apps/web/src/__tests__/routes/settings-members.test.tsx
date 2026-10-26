@@ -69,6 +69,10 @@ import { Route } from '@/routes/_authed/$workspaceId/settings/members'
 
 const MembersPage = (Route as unknown as { component: React.FC }).component
 
+// The imported Route comes from the mocked createFileRoute, so it has no
+// useSearch. The page reads the optional ?member= param from it.
+;(Route as unknown as { useSearch: () => Record<string, unknown> }).useSearch = () => ({})
+
 describe('MembersPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
