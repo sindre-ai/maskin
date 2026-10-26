@@ -26,9 +26,13 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 
 vi.mock('../../lib/sentry-voice', () => ({ captureVoiceException: vi.fn() }))
 
-const { attachVoiceCall, closeVoiceCall, createRealtimeCall, realtimeSocketUrl } = await import(
-	'../../services/voice-realtime-call'
-)
+const {
+	VOICE_SOCKET_MAX_RECONNECTS,
+	attachVoiceCall,
+	closeVoiceCall,
+	createRealtimeCall,
+	realtimeSocketUrl,
+} = await import('../../services/voice-realtime-call')
 
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
@@ -355,6 +359,43 @@ describe('attachVoiceCall', () => {
 			id: SESSION_ID,
 			reason: 'network_error',
 		})
+	})
+
+	it('does not start a second reconnect chain when a failed attempt closes late', async () => {
+		vi.useFakeTimers()
+		const socket = fakeSocket()
+		const attached = attach(socket, vi.fn(), { connectTimeoutMs: 100 })
+		socket.open()
+		await attached
+
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(251) // attempt 1 starts and never opens
+		await vi.advanceTimersByTimeAsync(101) // it times out and is closed
+		socket.drop() // the closed socket's own close event arrives late
+		await vi.advanceTimersByTimeAsync(10_000)
+
+		// The first socket plus the two attempts, not a restarted chain.
+		expect(socket.opens).toBe(3)
+		expect(endSession).toHaveBeenCalledTimes(1)
+	})
+
+	it('ends the call when the socket keeps dropping, instead of reconnecting forever', async () => {
+		vi.useFakeTimers()
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+
+		for (let i = 0; i < VOICE_SOCKET_MAX_RECONNECTS; i++) {
+			socket.drop()
+			await vi.advanceTimersByTimeAsync(251)
+			socket.open()
+			await vi.advanceTimersByTimeAsync(10)
+		}
+		expect(endSession).not.toHaveBeenCalled()
+		socket.drop()
+		await vi.advanceTimersByTimeAsync(10)
+		expect(endSession).toHaveBeenCalledTimes(1)
 	})
 
 	it('keeps the call when the socket re-opens, and later tool calls still work', async () => {
