@@ -1,4 +1,4 @@
-import { type SearchRow, rankTitleMatchesFirst } from '@/hooks/use-workspace-search'
+import { type SearchRow, rankTitleMatchesFirst } from '@/hooks/legacy/use-workspace-search'
 import { describe, expect, it } from 'vitest'
 
 function row(title: string): SearchRow {

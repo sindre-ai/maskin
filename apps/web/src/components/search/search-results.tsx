@@ -49,7 +49,9 @@ interface RowProps {
 	onOpen: (row: SearchResultRow) => void
 }
 
-function RowIcon({ row }: { row: SearchResultRow }) {
+export function RowIcon({
+	row,
+}: { row: Pick<SearchResultRow, 'id' | 'group' | 'type' | 'title'> }) {
 	const Glyph = GROUP_GLYPH[row.group]
 	if (row.group === 'objects') {
 		return (

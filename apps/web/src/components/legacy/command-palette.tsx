@@ -1,9 +1,13 @@
+// LEGACY: used only while the `search-v2` flag is off. This directory is deleted with the
+// flag (see routes/_authed/$workspaceId.tsx and routes/_authed/$workspaceId/search.tsx).
+// Do not add features here.
+
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
 import { SearchRowIcon, SearchRowTitle } from '@/components/shared/search-row'
+import { type SearchRow, matches, useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useObjects } from '@/hooks/use-objects'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
-import { type SearchRow, matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
 import { type TaxonomyEntityType, trackCommandPaletteOpened } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'

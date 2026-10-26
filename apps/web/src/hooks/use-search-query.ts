@@ -39,6 +39,8 @@ export interface SearchQueryInput {
 	statuses: string[]
 	updated: UpdatedFilter
 	sort: SearchSort
+	/** Cap on the rows sent back. The launcher asks for a few; the page takes the default. */
+	limit?: number
 }
 
 /** True when there is anything to ask: words or at least one filter. Sort alone is not enough. */
@@ -62,11 +64,12 @@ export function buildSearchParams(input: SearchQueryInput, now: number = Date.no
 		params.updated_after = new Date(now - UPDATED_WINDOW_MS[input.updated]).toISOString()
 	}
 	if (input.sort !== 'rel') params.sort = input.sort
+	if (input.limit) params.limit = String(input.limit)
 	return params
 }
 
-export function useSearchQuery(workspaceId: string, input: SearchQueryInput) {
-	const enabled = hasSearchInput(input)
+export function useSearchQuery(workspaceId: string, input: SearchQueryInput, active = true) {
+	const enabled = active && hasSearchInput(input)
 	return useQuery<SearchResponse>({
 		// The Updated window is kept as its name in the key; the cutoff time is computed
 		// inside queryFn so the key does not change every time the clock does.
@@ -76,6 +79,7 @@ export function useSearchQuery(workspaceId: string, input: SearchQueryInput) {
 			statuses: input.statuses,
 			updated: input.updated,
 			sort: input.sort,
+			limit: input.limit,
 		}),
 		queryFn: ({ signal }) => api.search.query(workspaceId, buildSearchParams(input), { signal }),
 		enabled,

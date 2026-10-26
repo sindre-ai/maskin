@@ -21,7 +21,7 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => conversationsRef.current,
 }))
 
-import { useWorkspaceSearch } from '@/hooks/use-workspace-search'
+import { useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 
 beforeEach(() => {
 	objectsRef.current = { data: [] }

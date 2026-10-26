@@ -1,4 +1,4 @@
-import type { SearchGroup, SearchRow } from '@/hooks/use-workspace-search'
+import type { SearchGroup, SearchRow } from '@/hooks/legacy/use-workspace-search'
 import {
 	type SearchEntry,
 	type SearchSortKey,
@@ -103,9 +103,9 @@ export function useTrackSettledSearch(input: SettledSearchInput): void {
 	}, [surface, active, trimmed, type, status, isSettled, isError, isPartial, total])
 }
 
-const V2_SURFACE: SearchSurface = 'search_view'
-
 export interface SettledSearchV2Input {
+	/** The surface the search ran on. The page by default; the launcher passes command_palette. */
+	surface?: SearchSurface
 	/** False when there is nothing to report (no words typed). Clears the dedupe memory. */
 	active: boolean
 	query: string
@@ -128,8 +128,19 @@ export interface SettledSearchV2Input {
  * event keeps the meaning it had on the old page.
  */
 export function useTrackSettledSearchV2(input: SettledSearchV2Input): void {
-	const { active, query, types, statuses, updated, sort, entry, isSettled, isPartial, total } =
-		input
+	const {
+		surface = 'search_view',
+		active,
+		query,
+		types,
+		statuses,
+		updated,
+		sort,
+		entry,
+		isSettled,
+		isPartial,
+		total,
+	} = input
 	const trimmed = query.trim()
 	const typeFilter = [...types].sort().join(',')
 	const statusFilter = [...statuses].sort().join(',')
@@ -138,30 +149,30 @@ export function useTrackSettledSearchV2(input: SettledSearchV2Input): void {
 
 	useEffect(
 		() => () => {
-			delete lastSearch[V2_SURFACE]
+			delete lastSearch[surface]
 		},
-		[],
+		[surface],
 	)
 
 	useEffect(() => {
 		if (!active || !trimmed) {
 			firedKey.current = null
 			firedSearch.current = null
-			delete lastSearch[V2_SURFACE]
+			delete lastSearch[surface]
 			return
 		}
 		if (!isSettled) return
 		const key = [trimmed, typeFilter, statusFilter, updated].join('\u0000')
 		if (firedKey.current === key) {
-			if (firedSearch.current) lastSearch[V2_SURFACE] = firedSearch.current
+			if (firedSearch.current) lastSearch[surface] = firedSearch.current
 			return
 		}
 		firedKey.current = key
 		const searchId = newSearchId()
 		firedSearch.current = { id: searchId, resultCount: total }
-		lastSearch[V2_SURFACE] = firedSearch.current
+		lastSearch[surface] = firedSearch.current
 		trackSearchPerformed({
-			surface: 'search_view',
+			surface,
 			search_id: searchId,
 			result_count: total,
 			is_partial: isPartial,
@@ -176,6 +187,7 @@ export function useTrackSettledSearchV2(input: SettledSearchV2Input): void {
 			sort,
 		})
 	}, [
+		surface,
 		active,
 		trimmed,
 		typeFilter,
