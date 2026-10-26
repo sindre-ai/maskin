@@ -413,7 +413,7 @@ describe('LinkedObjectCard', () => {
 	})
 
 	describe('a draft longer than the clamp', () => {
-		const CLAMP = 260
+		const CLAMP = 304
 		let heights: { scroll: number }
 		const longDraft = (hash = 'hash-1') =>
 			objectRow({

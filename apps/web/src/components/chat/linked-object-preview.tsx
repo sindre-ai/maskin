@@ -226,7 +226,7 @@ export function LinkedObjectCard({
 					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
 					<div
 						ref={textRef}
-						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-65 overflow-hidden')}
+						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
 					>
 						<MarkdownContent
 							content={shown}
