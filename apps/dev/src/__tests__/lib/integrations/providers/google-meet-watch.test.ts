@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	isOperationName,
+	reactivateOrRecreate,
 	resolveSubscription,
 } from '../../../../lib/integrations/providers/google-meet/watch'
 
@@ -55,6 +56,24 @@ describe('resolveSubscription', () => {
 	it('throws when the operation finished with an error', async () => {
 		const op = { name: 'operations/xyz', done: true, error: { message: 'boom' } }
 		await expect(resolveSubscription('t', op, noSleep)).rejects.toThrow('boom')
+	})
+})
+
+describe('reactivateOrRecreate', () => {
+	afterEach(() => vi.restoreAllMocks())
+
+	it('returns the subscription from a reactivate operation, not the operation name', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				Response.json({ name: 'operations/xyz', done: true, response: subscription }),
+			)
+		const result = await reactivateOrRecreate('t', 'subscriptions/abc', 'p', 'topic')
+		expect(result.name).toBe('subscriptions/abc')
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		expect(fetchSpy.mock.calls[0][0]).toBe(
+			'https://workspaceevents.googleapis.com/v1/subscriptions/abc:reactivate',
+		)
 	})
 })
 

@@ -128,7 +128,7 @@ async function createSubscription(
 	return resolveSubscription(accessToken, created)
 }
 
-async function reactivateOrRecreate(
+export async function reactivateOrRecreate(
 	accessToken: string,
 	subscriptionName: string,
 	peopleId: string,
@@ -136,8 +136,9 @@ async function reactivateOrRecreate(
 ): Promise<WorkspaceEventsSubscription> {
 	// Meet subscriptions:reactivate availability drifted historically; probe first,
 	// fall back to delete + recreate on 404 / METHOD_NOT_ALLOWED.
+	let reactivated: WorkspaceEventsSubscription | WorkspaceEventsOperation
 	try {
-		return await callGoogleApi<WorkspaceEventsSubscription>(
+		reactivated = await callGoogleApi<WorkspaceEventsSubscription | WorkspaceEventsOperation>(
 			`https://workspaceevents.googleapis.com/v1/${subscriptionName}:reactivate`,
 			accessToken,
 			{ method: 'POST', body: {} },
@@ -167,6 +168,9 @@ async function reactivateOrRecreate(
 		}
 		throw err
 	}
+	// Reactivate answers with an operation, same as create. Unwrap it outside the
+	// try so a failed poll does not trigger the delete + recreate fallback.
+	return resolveSubscription(accessToken, reactivated)
 }
 
 function parseExpireTime(iso: string | undefined): number {
