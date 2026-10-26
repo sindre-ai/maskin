@@ -1,6 +1,6 @@
 import { BillingSection } from '@/components/settings/billing-section'
-import { DailyBudgetSection } from '@/components/settings/daily-budget-section'
 import { BillingUsageDetails, useWorkspaceModelUsage } from '@/components/settings/billing-usage'
+import { DailyBudgetSection } from '@/components/settings/daily-budget-section'
 import { RouteError } from '@/components/shared/route-error'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useWorkspace } from '@/lib/workspace-context'

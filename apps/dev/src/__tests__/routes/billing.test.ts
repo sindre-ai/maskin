@@ -19,8 +19,8 @@ vi.mock('../../lib/daily-budget', async () => {
 })
 
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
-import { DOLLAR_UNIT_LOCKED_REASON, readZeroCostDays } from '../../lib/daily-budget'
 import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
+import { DOLLAR_UNIT_LOCKED_REASON, readZeroCostDays } from '../../lib/daily-budget'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'

@@ -100,6 +100,7 @@ function PillGroup<T extends string | number>({
 					<button
 						key={option.value}
 						type="button"
+						// biome-ignore lint/a11y/useSemanticElements: custom pill styling; ARIA radio semantics preserved
 						role="radio"
 						aria-checked={active}
 						disabled={disabled || option.disabled}
@@ -340,6 +341,7 @@ export function DailyBudgetSection({
 								</Button>
 							</>
 						) : (
+							// biome-ignore lint/a11y/useSemanticElements: inline span keeps the layout; role=status carries the live-region semantics
 							<span className="inline-flex items-center gap-1 text-xs text-success" role="status">
 								<Check size={14} /> Saved
 							</span>

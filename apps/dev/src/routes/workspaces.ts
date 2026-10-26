@@ -450,9 +450,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	// PATCHes with the whole settings object spread back in, so a member's
 	// ordinary edit carries llm_keys/custom_llm exactly as stored. A null that
 	// deletes a stored key is a change and is gated.
-	const { settings: patchSettings, changed: changesLlm } = body.settings
+	const { settings: pickedSettings, changed: changesLlm } = body.settings
 		? pickChangedAdminSettings(body.settings, existingSettings)
 		: { settings: undefined, changed: false }
+	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
 	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
@@ -518,7 +519,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 				400,
 			)
 		}
-		if (patchSettings) delete patchSettings.daily_budget
+		if (patchSettings) {
+			const { daily_budget: _storedUnchanged, ...withoutDailyBudget } = patchSettings
+			patchSettings = withoutDailyBudget
+		}
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
