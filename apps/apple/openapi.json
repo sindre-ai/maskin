@@ -59985,6 +59985,521 @@
 				}
 			}
 		},
+		"/api/files/{id}/proposals": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Propose text changes to a markdown file instead of overwriting it.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"summary": {
+										"type": "string",
+										"maxLength": 1000
+									},
+									"changes": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"old_text": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 4000
+												},
+												"new_text": {
+													"type": "string",
+													"maxLength": 8000
+												},
+												"reason": {
+													"type": "string",
+													"maxLength": 1000
+												}
+											},
+											"required": [
+												"old_text",
+												"new_text"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 50
+									}
+								},
+								"required": [
+									"changes"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Proposal stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"proposalId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"fileId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"url": {
+											"type": "string"
+										},
+										"changeCount": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"proposalId",
+										"fileId",
+										"url",
+										"changeCount"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Not a markdown file, or a change does not match exactly once or overlaps",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limit exceeded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List the open change proposals on a file, with per-change staleness.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"open"
+							],
+							"default": "open"
+						},
+						"required": false,
+						"name": "status",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Open proposals, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"proposals": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"fileId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"author": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															},
+															"type": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"id",
+															"name",
+															"type"
+														]
+													},
+													"sessionId": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"summary": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"fileChangedSinceProposed": {
+														"type": "boolean"
+													},
+													"createdAt": {
+														"type": "string"
+													},
+													"changes": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"ordinal": {
+																	"type": "integer"
+																},
+																"oldText": {
+																	"type": "string"
+																},
+																"newText": {
+																	"type": "string"
+																},
+																"reason": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"contextBefore": {
+																	"type": "string"
+																},
+																"contextAfter": {
+																	"type": "string"
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"accepted",
+																		"rejected"
+																	]
+																},
+																"decidedBy": {
+																	"type": [
+																		"string",
+																		"null"
+																	],
+																	"format": "uuid"
+																},
+																"decidedAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"appliedText": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"stale": {
+																	"type": "boolean"
+																}
+															},
+															"required": [
+																"id",
+																"ordinal",
+																"oldText",
+																"newText",
+																"reason",
+																"contextBefore",
+																"contextAfter",
+																"status",
+																"decidedBy",
+																"decidedAt",
+																"appliedText",
+																"stale"
+															]
+														}
+													}
+												},
+												"required": [
+													"id",
+													"fileId",
+													"author",
+													"sessionId",
+													"summary",
+													"fileChangedSinceProposed",
+													"createdAt",
+													"changes"
+												]
+											}
+										}
+									},
+									"required": [
+										"proposals"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/claude-oauth": {
 			"delete": {
 				"x-viewer-policy": "writer",
