@@ -47,6 +47,20 @@ beforeEach(() => {
 })
 
 describe('showInChat', () => {
+	it.each([
+		['a markdown link', '[click here](javascript:alert(1))', 'click herejavascript:alert1'],
+		['an image', '![x](https://evil.example/a.png)', 'xevil.example/a.png'],
+		['an autolink', 'see https://evil.example/pay now', 'see evil.example/pay now'],
+		['a www address', 'go to www.evil.example', 'go to evil.example'],
+		['html', '<a href="https://evil.example">hi</a>', 'a href="evil.example"hi/a'],
+	])('turns a caption with %s into plain text', async (_label, caption, expected) => {
+		const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
+		await run(db, { object_ids: [OBJECT_A], caption })
+		const content = insertMessage.mock.calls[0]?.[1].content as string
+		expect(content.split('\n\n')[0]).toBe(expected)
+		expect(content.split('\n\n')[0]).not.toMatch(/[[\]()<>!]|https?:\/\//)
+	})
+
 	it('posts one message as the agent into the call conversation, tagged voice', async () => {
 		const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
 		const result = await run(db, {

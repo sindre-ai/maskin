@@ -70,6 +70,10 @@ export class VoiceShowInChatError extends Error {}
 const oneLine = (text: string, max: number) => text.replace(/\s+/g, ' ').trim().slice(0, max)
 // A label sits inside [..]; keep a stray bracket from ending it early.
 const escapeLabel = (text: string) => text.replace(/[[\]\\]/g, '\\$&')
+// The caption is the one piece of model text that sits outside a link, so it is made plain text:
+// no link, image, html or emphasis syntax, and no address that a renderer would turn into a link.
+const plainCaption = (text: string) =>
+	text.replace(/(?:https?:\/\/|www\.)/gi, '').replace(/[[\]()<>!*_`~#|\\]/g, '')
 
 function cleanLink(rawUrl: string): string {
 	let url: URL
@@ -134,7 +138,9 @@ export async function showInChat(
 
 	const base = input.webAppBaseUrl ?? resolveWebAppBaseUrl(process.env)
 	const paragraphs: string[] = []
-	const caption = parsed.data.caption ? oneLine(parsed.data.caption, CAPTION_MAX_LENGTH) : ''
+	const caption = parsed.data.caption
+		? plainCaption(oneLine(parsed.data.caption, CAPTION_MAX_LENGTH)).trim()
+		: ''
 	if (caption) paragraphs.push(caption)
 	for (const id of objectIds) {
 		const title = oneLine(byId.get(id) ?? '', LABEL_MAX_LENGTH) || 'Open'
