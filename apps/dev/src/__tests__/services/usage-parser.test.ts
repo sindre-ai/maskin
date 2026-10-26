@@ -5,6 +5,7 @@ const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn()
 vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
 
 import {
+	addTurnUsage,
 	parseAssistantUsageFromLogChunks,
 	parseUsageFromLogChunks,
 	resolveSessionCostUsd,
@@ -262,5 +263,43 @@ describe('resolveSessionCostUsd', () => {
 			usage: usage({ totalCostUsd: null }),
 		})
 		expect(resolved).toBeNull()
+	})
+})
+
+describe('addTurnUsage', () => {
+	const turn = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
+		totalCostUsd: 0.1,
+		inputTokens: 10,
+		outputTokens: 100,
+		cacheCreationInputTokens: 5,
+		cacheReadInputTokens: 1000,
+		durationMs: 2000,
+		...overrides,
+	})
+
+	it('starts from the first turn as it is', () => {
+		expect(addTurnUsage(null, turn())).toEqual(turn())
+	})
+
+	it('adds token counts and duration but keeps the newest running cost', () => {
+		const total = addTurnUsage(turn(), turn({ totalCostUsd: 0.25, outputTokens: 300 }))
+		expect(total).toEqual({
+			totalCostUsd: 0.25,
+			inputTokens: 20,
+			outputTokens: 400,
+			cacheCreationInputTokens: 10,
+			cacheReadInputTokens: 2000,
+			durationMs: 4000,
+		})
+	})
+
+	it('keeps the earlier cost when a turn reports none, and null for fields no turn reported', () => {
+		const total = addTurnUsage(
+			turn({ cacheReadInputTokens: null }),
+			turn({ totalCostUsd: null, cacheReadInputTokens: null }),
+		)
+		expect(total.totalCostUsd).toBe(0.1)
+		expect(total.cacheReadInputTokens).toBeNull()
+		expect(total.outputTokens).toBe(200)
 	})
 })

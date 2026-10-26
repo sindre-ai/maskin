@@ -4451,24 +4451,37 @@ ${cont.continues_prompt}
 	 * the CLI's `total_cost_usd` — a maskin_plan session's CLI cost is priced
 	 * against Anthropic's rate card even though it runs through OpenRouter.
 	 *
+	 * An interactive session closes many turns, each with its own `result`
+	 * envelope. The finalizer sums them as they arrive (token counts add up, the
+	 * cost is the CLI's running total), and that sum is preferred here; the last
+	 * envelope in the log is the fallback when the finalizer has seen none.
+	 *
+	 * `waitForLogs: false` is for closing a session whose container is still
+	 * running: its log stream has not ended, so waiting for it only burns the
+	 * timeout, and every result so far was already handled by the finalizer.
+	 *
 	 * Returns the parsed segment (not the new cumulative total, and not
 	 * necessarily persisted if the DB write failed) so callers can log it;
 	 * returns null when no usage could be parsed (e.g. Codex/custom runtimes
 	 * that emit no structured usage).
 	 */
-	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
+	private async accumulateSessionUsage(
+		sessionId: string,
+		{ waitForLogs = true }: { waitForLogs?: boolean } = {},
+	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
 		try {
-			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			const drained = waitForLogs ? this.activeSessions.get(sessionId)?.logsDrained : undefined
 			if (drained) {
 				await Promise.race([
 					drained,
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
+			usage = this.turnFinalizer.takeTurnUsage(sessionId)
 			const tail = this.activeSessions.get(sessionId)?.stdoutTail
-			if (tail) {
+			if (!usage && tail) {
 				usage = parseUsageFromLogChunks([tail])
 			}
 			if (!usage) {
@@ -4699,6 +4712,11 @@ ${cont.continues_prompt}
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
+		// Save the conversation's usage before the row turns terminal: the write
+		// refuses terminal rows, and the `$ai_generation` event settleSession emits
+		// reads the saved totals. Without this a session that ends here reports
+		// zero tokens and no cost.
+		await this.accumulateSessionUsage(session.id, { waitForLogs: false })
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
@@ -4797,6 +4815,9 @@ ${cont.continues_prompt}
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 		if (!session || session.status !== 'running') return
+
+		// Same as the idle close: save the usage before the row turns terminal.
+		await this.accumulateSessionUsage(session.id, { waitForLogs: false })
 
 		const settled = await settleSession(
 			session.id,

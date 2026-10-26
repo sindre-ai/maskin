@@ -51,6 +51,28 @@ export function parseUsageFromLogChunks(chunks: string[]): SessionUsage | null {
 }
 
 /**
+ * Folds one turn's `result` envelope into the running usage of the CLI process
+ * that emitted it. An interactive session writes one envelope per turn, and the
+ * two kinds of number in it behave differently (measured against a live CLI over
+ * two turns of one process): token counts and `duration_ms` are that turn's own,
+ * so they are added up, while `total_cost_usd` is the process's running total,
+ * so the newest value replaces the older one. Reading only the last envelope
+ * would keep one turn's tokens and drop every earlier turn's.
+ */
+export function addTurnUsage(total: SessionUsage | null, turn: SessionUsage): SessionUsage {
+	const add = (a: number | null | undefined, b: number | null): number | null =>
+		a == null && b == null ? null : (a ?? 0) + (b ?? 0)
+	return {
+		totalCostUsd: turn.totalCostUsd ?? total?.totalCostUsd ?? null,
+		inputTokens: add(total?.inputTokens, turn.inputTokens),
+		outputTokens: add(total?.outputTokens, turn.outputTokens),
+		cacheCreationInputTokens: add(total?.cacheCreationInputTokens, turn.cacheCreationInputTokens),
+		cacheReadInputTokens: add(total?.cacheReadInputTokens, turn.cacheReadInputTokens),
+		durationMs: add(total?.durationMs, turn.durationMs),
+	}
+}
+
+/**
  * Reads the tail of stdout from session_logs and parses it for the
  * final stream-json `result` event. Returns null when nothing useful
  * is found — e.g. Codex / custom runtimes that don't emit structured

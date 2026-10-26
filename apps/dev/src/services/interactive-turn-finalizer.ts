@@ -10,6 +10,7 @@ import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
+import { type SessionUsage, addTurnUsage } from './usage-parser'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -402,6 +403,15 @@ export class InteractiveTurnFinalizer {
 		string,
 		{ primaryModel: string; armedAfterLogId: number }
 	>()
+	/**
+	 * sessionId -> usage of the turns seen so far, and the envelopes already
+	 * counted. The agent-server replays stdout on reconnect, so a re-delivered
+	 * envelope must not be added twice.
+	 */
+	private readonly turnUsage = new Map<
+		string,
+		{ total: SessionUsage | null; counted: Set<string> }
+	>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly setModel?: InteractiveTurnFinalizerOptions['setModel']
 	private readonly fallbackModel: string | null
@@ -462,6 +472,9 @@ export class InteractiveTurnFinalizer {
 		for (const line of lines) {
 			try {
 				const result = parseResultLine(line)
+				// Counted before posting: a helper's result ends the session from inside
+				// postFinalOutput, and the close reads this total.
+				if (result) this.recordTurnUsage(sessionId, result.raw, result.usage)
 				if (result) await this.postFinalOutput(sessionId, result, logId)
 			} catch (err) {
 				logger.error(
@@ -469,6 +482,29 @@ export class InteractiveTurnFinalizer {
 				)
 			}
 		}
+	}
+
+	/**
+	 * The usage of every turn closed since the last call, summed. Resets the
+	 * running total so a segment is handed over once: a pause saves its segment
+	 * and the resumed process then starts from nothing. Null when no turn has
+	 * closed (or the process restarted), and the caller falls back to the log.
+	 */
+	takeTurnUsage(sessionId: string): SessionUsage | null {
+		const entry = this.turnUsage.get(sessionId)
+		if (!entry) return null
+		const { total } = entry
+		entry.total = null
+		return total
+	}
+
+	private recordTurnUsage(sessionId: string, raw: string, usage: SessionUsage): void {
+		const entry = this.turnUsage.get(sessionId) ?? { total: null, counted: new Set<string>() }
+		this.turnUsage.set(sessionId, entry)
+		const key = createHash('sha256').update(raw).digest('hex').slice(0, 32)
+		if (entry.counted.has(key)) return
+		entry.counted.add(key)
+		entry.total = addTurnUsage(entry.total, usage)
 	}
 
 	private turnFinished(sessionId: string, outcome: 'done' | 'failed'): void {
@@ -483,6 +519,7 @@ export class InteractiveTurnFinalizer {
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
 		this.pseudoToolCallNudges.delete(sessionId)
+		this.turnUsage.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
 		this.fallbackActive.delete(sessionId)
 		// A replay was written and its turn never came back; the session going
