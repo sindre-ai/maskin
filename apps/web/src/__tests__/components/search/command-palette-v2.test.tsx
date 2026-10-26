@@ -8,6 +8,9 @@ const setOpenMock = vi.hoisted(() => vi.fn())
 const pathnameRef = vi.hoisted(() => ({ current: '/ws-1/objects' }))
 const objectsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
 const openRef = vi.hoisted(() => ({ current: true }))
+const actorsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
+const chatsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
+const loopsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => navigateMock,
@@ -24,6 +27,11 @@ vi.mock('@/lib/api', () => ({
 }))
 
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: objectsRef.current }) }))
+vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: actorsRef.current }) }))
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: { pages: [{ conversations: chatsRef.current }] } }),
+}))
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: loopsRef.current }) }))
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: () => ({ data: { items: [] } }),
 	useMarkRead: () => ({ mutateAsync: vi.fn() }),
@@ -114,6 +122,9 @@ beforeEach(() => {
 	pathnameRef.current = '/ws-1/objects'
 	openRef.current = true
 	objectsRef.current = []
+	actorsRef.current = []
+	chatsRef.current = []
+	loopsRef.current = []
 	vi.mocked(trackCommandPaletteOpened).mockClear()
 	vi.mocked(trackSearchFilterChanged).mockClear()
 	vi.mocked(trackSearchPerformed).mockClear()
@@ -158,6 +169,118 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		const calls = vi.mocked(api.search.query).mock.calls
 		expect(calls.every(([, params]) => params?.statuses === 'needs_you')).toBe(true)
+	})
+})
+
+describe('launcher content from the shared module', () => {
+	const chiefOfStaff = { id: 'cos-1', type: 'agent', name: 'Chief of Staff' }
+
+	it('finds New chat by its initials', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'nc')
+		expect(await screen.findByRole('option', { name: /New chat/ })).toBeInTheDocument()
+	})
+
+	it('puts up to four recents, chats and loops included, after Needs you', async () => {
+		localStorage.setItem('maskin-recent-objects-ws-1', JSON.stringify([IDS.recent]))
+		objectsRef.current = [
+			{ id: IDS.recent, type: 'bet', title: 'Recent bet', status: 'active' } as unknown,
+		]
+		chatsRef.current = [
+			{ id: 'chat-a', title: 'Pricing chat', lastMessageAt: '2026-10-26T10:00:00Z' },
+			{ id: 'chat-b', title: 'Older chat', lastMessageAt: '2026-10-25T10:00:00Z' },
+		]
+		loopsRef.current = [
+			{ id: 'loop-a', name: 'Weekly review', updatedAt: '2026-10-26T09:00:00Z' },
+			{ id: 'loop-b', name: 'Cut by the limit', updatedAt: '2026-10-20T09:00:00Z' },
+		]
+		const user = userEvent.setup()
+		renderLauncher()
+
+		await screen.findByRole('option', { name: /Review the launcher/ })
+		expect(groupLabels().slice(0, 2)).toEqual(['Needs you', 'Recent'])
+		const recent = within(screen.getByRole('group', { name: 'Recent' })).getAllByRole('option')
+		expect(recent.map((option) => option.textContent)).toEqual([
+			expect.stringContaining('Recent bet'),
+			expect.stringContaining('Pricing chat'),
+			expect.stringContaining('Older chat'),
+			expect.stringContaining('Weekly review'),
+		])
+
+		await user.click(screen.getByRole('option', { name: /Weekly review/ }))
+		expect(navigateMock).toHaveBeenCalledWith({ to: '/ws-1/loops/loop-a' })
+	})
+
+	it('adds a Settings row to Go to when a settings page name is typed', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'keychain')
+
+		const option = await screen.findByRole('option', { name: /Settings › Keychain/ })
+		expect(within(screen.getByRole('group', { name: 'Go to' })).getByText(/Keychain/)).toBeTruthy()
+		await user.click(option)
+		expect(navigateMock).toHaveBeenCalledWith({ to: '/ws-1/settings/keychain' })
+	})
+
+	it('finds Triggers in Go to', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'trigg')
+		expect(
+			await within(await screen.findByRole('group', { name: 'Go to' })).findByRole('option', {
+				name: /Triggers/,
+			}),
+		).toBeInTheDocument()
+	})
+
+	it('shows the empty-state text and an Ask row that opens a new chat with the text, unsent', async () => {
+		actorsRef.current = [chiefOfStaff]
+		vi.mocked(api.search.query).mockResolvedValue(response([]))
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'zzzz')
+
+		expect(
+			await screen.findByText('Nothing matches “zzzz”. Try fewer words, or ask an agent.'),
+		).toBeInTheDocument()
+		await user.click(screen.getByRole('option', { name: /Ask Chief of Staff: “zzzz”/ }))
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-1' },
+			search: { agentId: 'cos-1', agentName: 'Chief of Staff', text: 'zzzz' },
+		})
+		expect(setOpenMock).toHaveBeenCalledWith(false)
+	})
+
+	it('offers the Ask row for a request of three words even when there are matches', async () => {
+		actorsRef.current = [chiefOfStaff]
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'what did hans say')
+		await screen.findByRole('option', { name: /Hans on pricing/ })
+		expect(screen.getByRole('option', { name: /Ask Chief of Staff/ })).toBeInTheDocument()
+	})
+
+	it('has no Ask row without a Chief of Staff', async () => {
+		vi.mocked(api.search.query).mockResolvedValue(response([]))
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'zzzz')
+		await screen.findByText(/Nothing matches/)
+		expect(screen.queryByRole('option', { name: /Ask Chief of Staff/ })).not.toBeInTheDocument()
+	})
+
+	it('has no Ask row while a type pill is active', async () => {
+		actorsRef.current = [chiefOfStaff]
+		vi.mocked(api.search.query).mockResolvedValue(response([]))
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'zzzz company')
+		await user.click(await screen.findByRole('button', { name: /^Filter by Companies/ }))
+
+		expect(await screen.findByText('No results with these filters.')).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /Ask Chief of Staff/ })).not.toBeInTheDocument()
 	})
 })
 
