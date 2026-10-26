@@ -111,6 +111,15 @@ export const FLAGS = {
 	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
+	/**
+	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
+	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
+	 * slice 1a). UI only: the route layout reads it once and mounts the section
+	 * under the usage banner. Off means Billing looks as it does today. The
+	 * storage and API behind it are additive and safe with the flag off. Retire
+	 * once the daily budget is on for everyone.
+	 */
+	DAILY_BUDGET: 'daily-budget',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -12,8 +12,15 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+vi.mock('../../lib/daily-budget', async () => {
+	const actual =
+		await vi.importActual<typeof import('../../lib/daily-budget')>('../../lib/daily-budget')
+	return { ...actual, readZeroCostDays: vi.fn() }
+})
+
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
 import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
+import { DOLLAR_UNIT_LOCKED_REASON, readZeroCostDays } from '../../lib/daily-budget'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
@@ -52,6 +59,7 @@ const clearEnv = () => {
 }
 
 beforeEach(() => {
+	vi.mocked(readZeroCostDays).mockReset().mockResolvedValue([])
 	_resetBillingUsageCache()
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createCreditCheckoutSession).mockReset()
@@ -1192,5 +1200,186 @@ describe('GET /api/billing/usage', () => {
 				},
 			})
 		})
+	})
+})
+
+describe('/api/billing/daily-budget', () => {
+	const TOKENS = { unit: 'tokens', amount: 2_000_000, stop_share: 90, timezone: 'Europe/Oslo' }
+	const BROKEN_COST_DAYS = [{ date: '2026-10-25', ended_sessions: 1208, zero_cost_sessions: 1206 }]
+	const put = (workspaceId: string, body: unknown) =>
+		jsonRequest('PUT', '/api/billing/daily-budget', body, { 'X-Workspace-Id': workspaceId })
+
+	it('GET returns null (off) for a workspace that never set a target', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+		const res = await app.request(
+			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			daily_budget: null,
+			dollar_unit: { available: true, reason: null, days: [] },
+		})
+	})
+
+	it('GET returns the stored target and reads the cost check in its timezone', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: { daily_budget: TOKENS } }]]
+
+		const res = await app.request(
+			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
+		)
+
+		expect((await res.json()).daily_budget).toEqual(TOKENS)
+		expect(readZeroCostDays).toHaveBeenCalledWith(expect.anything(), workspaceId, 'Europe/Oslo')
+	})
+
+	it('GET says why dollars are locked when zero-cost events are 5% or more', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
+
+		const res = await app.request(
+			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
+		)
+
+		const body = await res.json()
+		expect(body.dollar_unit.available).toBe(false)
+		expect(body.dollar_unit.reason).toBe(DOLLAR_UNIT_LOCKED_REASON)
+	})
+
+	it('PUT stores a token target for an owner and writes an audit event', async () => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+
+		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+
+		expect(res.status).toBe(200)
+		expect((await res.json()).daily_budget).toEqual(TOKENS)
+		expect(calls.updates).toHaveLength(1)
+		expect(calls.inserts).toContainEqual(
+			expect.objectContaining({
+				action: 'workspace_daily_budget_updated',
+				data: { before: null, after: TOKENS },
+			}),
+		)
+	})
+
+	it('PUT fills in the default stop-at share and timezone', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+
+		const res = await app.request(
+			put(workspaceId, { daily_budget: { unit: 'tokens', amount: 1000 } }),
+		)
+
+		expect((await res.json()).daily_budget).toEqual({
+			unit: 'tokens',
+			amount: 1000,
+			stop_share: 100,
+			timezone: 'UTC',
+		})
+	})
+
+	it('PUT null switches the budget off', async () => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { daily_budget: TOKENS } }],
+			[OWNER_CALLER],
+		]
+
+		const res = await app.request(put(workspaceId, { daily_budget: null }))
+
+		expect(res.status).toBe(200)
+		expect((await res.json()).daily_budget).toBeNull()
+		expect(calls.updates).toHaveLength(1)
+	})
+
+	it('PUT refuses a dollar target with 409 while cost numbers are unreliable', async () => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
+
+		const res = await app.request(
+			put(workspaceId, { daily_budget: { unit: 'dollars', amount: 50 } }),
+		)
+
+		expect(res.status).toBe(409)
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('PUT still allows a token target while dollars are locked', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
+
+		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+
+		expect(res.status).toBe(200)
+	})
+
+	it('PUT accepts a dollar target once cost numbers are reliable', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+
+		const res = await app.request(
+			put(workspaceId, { daily_budget: { unit: 'dollars', amount: 50.25 } }),
+		)
+
+		expect(res.status).toBe(200)
+	})
+
+	it('PUT returns 403 for a plain member and writes nothing', async () => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {} }],
+			[{ role: 'member', type: 'human' }],
+		]
+
+		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+
+		expect(res.status).toBe(403)
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('PUT returns 403 for an agent holding an admin role', async () => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {} }],
+			[{ role: 'admin', type: 'agent' }],
+		]
+
+		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+
+		expect(res.status).toBe(403)
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it.each([
+		['zero', { unit: 'tokens', amount: 0 }],
+		['fractional tokens', { unit: 'tokens', amount: 1.5 }],
+		['share of 70', { unit: 'tokens', amount: 10, stop_share: 70 }],
+	])('PUT rejects an invalid target (%s) with 400', async (_label, daily_budget) => {
+		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+
+		const res = await app.request(put(workspaceId, { daily_budget }))
+
+		expect(res.status).toBe(400)
+		expect(calls.updates).toHaveLength(0)
 	})
 })

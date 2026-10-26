@@ -22,7 +22,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
@@ -252,9 +252,12 @@ function getPlanCta(
 export function BillingSection({
 	workspaceId,
 	enterprise = false,
+	afterBanner,
 }: {
 	workspaceId: string
 	enterprise?: boolean
+	/** Rendered directly under the usage banner (the Billing route mounts flagged settings here). */
+	afterBanner?: ReactNode
 }) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
@@ -363,6 +366,8 @@ export function BillingSection({
 				resetsIn={resetsIn}
 				onBuyCredits={() => setBuyCreditsOpen(true)}
 			/>
+
+			{afterBanner && <div className="mt-4">{afterBanner}</div>}
 
 			{checkout.isError && (
 				<p className="mt-2 text-xs text-error">

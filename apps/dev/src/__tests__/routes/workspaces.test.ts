@@ -180,6 +180,40 @@ describe('Workspaces Routes', () => {
 			expect(calls.updates).toHaveLength(0)
 		})
 
+		const DAILY_BUDGET = { unit: 'tokens', amount: 2000000, stop_share: 100, timezone: 'UTC' }
+
+		it('returns 400 and does not touch the DB when settings.daily_budget would change', async () => {
+			const ws = buildWorkspace({ settings: { daily_budget: DAILY_BUDGET } })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, [ws]]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { daily_budget: { ...DAILY_BUDGET, amount: 5000000 } },
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('accepts a settings object that re-sends the stored daily_budget unchanged', async () => {
+			const ws = buildWorkspace({ settings: { daily_budget: DAILY_BUDGET } })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, [ws], HUMAN_OWNER]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { daily_budget: DAILY_BUDGET, display_names: { insight: 'Signal' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
+		})
+
 		it('returns 404 when workspace not found for settings merge', async () => {
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [MEMBER, []]
