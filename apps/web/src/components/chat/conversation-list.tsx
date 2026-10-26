@@ -2,10 +2,11 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import type { ConversationListItemResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
 
@@ -62,7 +63,27 @@ export function ConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
+	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Reading a chat opened from the Unread filter would drop its row on the
+	// next refetch and shift everything below it. Keep rows that were shown in
+	// place (as read) until the filter or workspace changes.
+	const shownRef = useRef<{ key: string; rows: ConversationListItemResponse[] }>({
+		key: '',
+		rows: [],
+	})
+	const conversations = useMemo(() => {
+		if (filter !== 'unread') return fetched
+		const key = `${workspaceId}:${filter}`
+		const prev = shownRef.current.key === key ? shownRef.current.rows : []
+		const fresh = new Map(fetched.map((c) => [c.id, c]))
+		const prevIds = new Set(prev.map((c) => c.id))
+		const rows = [
+			...fetched.filter((c) => !prevIds.has(c.id)),
+			...prev.map((c) => fresh.get(c.id) ?? { ...c, unread_count: 0 }),
+		].filter((c) => !c.archived)
+		shownRef.current = { key, rows }
+		return rows
+	}, [fetched, filter, workspaceId])
 	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'default',
 	})

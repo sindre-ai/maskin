@@ -1,5 +1,6 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import { render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -124,6 +125,39 @@ describe('ConversationList', () => {
 				expect.objectContaining({ pinned: 'true' }),
 			),
 		)
+	})
+
+	it('keeps a row in the Unread filter once it is read, until the filter changes', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValueOnce({
+			conversations: [
+				buildConversation({ id: 'a', title: 'First unread', unread_count: 2 }),
+				buildConversation({ id: 'b', title: 'Second unread', unread_count: 1 }),
+			],
+			has_more: false,
+		})
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const wrapper = ({ children }: { children: React.ReactNode }) => (
+			<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		)
+		const view = render(<ConversationList workspaceId="ws-1" filter="unread" />, { wrapper })
+		expect(await screen.findByText('First unread')).toBeInTheDocument()
+
+		// Reading the first chat makes the server drop it from the unread list.
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'b', title: 'Second unread', unread_count: 1 })],
+			has_more: false,
+		})
+		await act(async () => {
+			await client.invalidateQueries()
+		})
+		expect(screen.getByText('First unread')).toBeInTheDocument()
+		expect(screen.getByText('Second unread')).toBeInTheDocument()
+
+		// Leaving the filter and coming back starts from the server's list.
+		view.rerender(<ConversationList workspaceId="ws-1" filter="all" />)
+		view.rerender(<ConversationList workspaceId="ws-1" filter="unread" />)
+		await waitFor(() => expect(screen.queryByText('First unread')).not.toBeInTheDocument())
+		expect(screen.getByText('Second unread')).toBeInTheDocument()
 	})
 
 	it('collapses archived results into a single Archived group', async () => {

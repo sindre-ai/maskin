@@ -12,7 +12,10 @@ export function useChatUnreadCount(workspaceId: string): { count: number; hasMor
 	const { data } = useConversationsInfinite(workspaceId, { unread_only: true })
 	const firstPage = data?.pages?.[0]
 	return {
-		count: firstPage?.conversations.length ?? 0,
+		// Count rows that are still unread, not the list length: marking a chat
+		// read patches its unread_count to 0 straight away, but the row only
+		// leaves this list on the next refetch.
+		count: firstPage?.conversations.filter((c) => c.unread_count > 0).length ?? 0,
 		hasMore: firstPage?.has_more ?? false,
 	}
 }

@@ -25,6 +25,7 @@ import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useMarkNewestRead } from '@/hooks/use-mark-newest-read'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import type { MessageMetadata } from '@/lib/api'
@@ -146,7 +147,6 @@ function ConversationThreadPage() {
 		}),
 		[],
 	)
-	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
 	// Chat-level aggregate — one events fetch per chat time-window, shared
@@ -189,17 +189,17 @@ function ConversationThreadPage() {
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: updateMe is a stable mutation handle; including it would rerun this on every render without changing behavior
-	useEffect(() => {
-		if (!conversation) return
+	const newestMessageId = useMemo(() => {
 		const messages = flattenMessagesOldestFirst(messagesData)
-		const newest = messages[messages.length - 1]
-		if (!newest || newest.id <= 0) return
-		if (newest.id === conversation.last_read_message_id) return
-		if (lastMarkedRef.current === newest.id) return
-		lastMarkedRef.current = newest.id
-		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
-	}, [conversation, messagesData, conversationId])
+		return messages[messages.length - 1]?.id ?? 0
+	}, [messagesData])
+	useMarkNewestRead(
+		conversation && newestMessageId > 0 && newestMessageId !== conversation.last_read_message_id
+			? newestMessageId
+			: null,
+		(messageId) =>
+			updateMe.mutateAsync({ id: conversationId, data: { last_read_message_id: messageId } }),
+	)
 
 	// P toggles the Overview pane. Skipped when the user is typing in an
 	// editable element (input/textarea/contentEditable) so composer keystrokes
