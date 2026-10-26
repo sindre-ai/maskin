@@ -65,7 +65,11 @@ export function ObjectReferenceChip({
 	// A draft keeps its plain link: its approval card sits under the text.
 	if (object === undefined || showsObjectCard(object, workspaceId)) return <>{fallback}</>
 	if (object === null) {
-		return <span className="italic text-muted-foreground opacity-60">Deleted object</span>
+		return (
+			<span className="inline-flex items-center rounded-[9px] border border-dashed border-border px-2 py-0.5 align-baseline text-[11.5px] italic text-muted-foreground">
+				Deleted object
+			</span>
+		)
 	}
 
 	const title = object.title?.trim() || 'Untitled'
@@ -124,7 +128,7 @@ export function ObjectReferenceCard({
 			<div
 				data-linked-card=""
 				aria-busy="true"
-				className={cn(CARD_SHELL, 'gap-2 border-border px-3 py-2.5')}
+				className={cn(CARD_SHELL, 'gap-2 border-border p-3')}
 			>
 				<Skeleton className="h-4 w-1/3" />
 				<Skeleton className="h-4 w-4/5" />
@@ -138,7 +142,7 @@ export function ObjectReferenceCard({
 				data-linked-card=""
 				className={cn(
 					CARD_SHELL,
-					'border-dashed border-border px-3 py-2.5 text-sm italic text-muted-foreground',
+					'border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
 				)}
 			>
 				Deleted object
@@ -155,9 +159,9 @@ export function ObjectReferenceCard({
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: object.id }}
 			data-linked-card=""
-			className={cn(CARD_SHELL, 'group gap-1.5 border-border px-3 py-2.5 no-underline', HOVER)}
+			className={cn(CARD_SHELL, 'group border-border p-3 no-underline', HOVER)}
 		>
-			<span className="flex items-center gap-2">
+			<span className="flex items-center gap-1.5">
 				{/* The workspace's own name for the type, on the type's own colours. */}
 				<span
 					className={cn(
@@ -179,13 +183,15 @@ export function ObjectReferenceCard({
 					<ArrowUpRight size={14} aria-hidden />
 				</span>
 			</span>
-			<span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
 				{title}
 			</span>
 			{snippet ? (
-				<span className="line-clamp-2 text-xs leading-snug text-muted-foreground">{snippet}</span>
+				<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
+					{snippet}
+				</span>
 			) : null}
-			<span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
 				<span className="inline-flex min-w-0 items-center gap-1.5">
 					{driver.state === 'known' ? (
 						<>
@@ -212,10 +218,10 @@ export function ObjectReferenceCard({
 					</span>
 				) : null}
 				{working ? (
-					<span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+					<span className="ml-auto inline-flex items-center gap-1 font-semibold text-brand">
 						<span
 							aria-hidden="true"
-							className="size-1.5 rounded-full bg-success motion-safe:animate-pulse"
+							className="size-1.5 rounded-full bg-brand motion-safe:animate-pulse"
 						/>
 						Working now
 					</span>
