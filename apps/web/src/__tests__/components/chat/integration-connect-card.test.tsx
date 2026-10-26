@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const connectMutate = vi.fn()
+const grantMutate = vi.fn()
+let canGive = true
 let providers: ProviderInfo[] = []
 let integrations: IntegrationResponse[] = []
 let pricing = { isFree: false, isPaid: false }
@@ -13,6 +15,7 @@ let pricing = { isFree: false, isPaid: false }
 vi.mock('@/hooks/use-integrations', () => ({
 	useProviders: () => ({ data: providers }),
 	useIntegrations: () => ({ data: integrations }),
+	useSetAgentGrant: () => ({ mutate: grantMutate, isPending: false }),
 	useConnectIntegration: () => ({ mutate: connectMutate, isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 	useCompleteIntegration: () => ({ mutate: vi.fn(), isPending: false }),
@@ -22,6 +25,10 @@ vi.mock('@/hooks/use-integrations', () => ({
 vi.mock('@/hooks/use-identity-addon-pricing', () => ({
 	useIdentityAddonPricing: () => pricing,
 }))
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspace: { role: canGive ? 'admin' : 'member' }, workspaceId: 'ws-1' }),
+}))
+vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'human-1', type: 'human' }) }))
 vi.mock('@/hooks/use-auth', () => ({ useAuth: () => ({ actor: { id: 'actor-1' } }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 
@@ -53,13 +60,14 @@ function active(providerName: string, id = 'i-1'): IntegrationResponse {
 	} as unknown as IntegrationResponse
 }
 
-function renderCard(name: string, introState?: IntegrationToolState) {
+function renderCard(name: string, introState?: IntegrationToolState, withAgent = false) {
 	return render(
 		<IntegrationConnectCard
 			workspaceId="ws-1"
 			conversationId="conv-1"
 			provider={name}
 			introState={introState}
+			agent={withAgent ? { id: 'agent-1', name: 'Scout' } : undefined}
 		/>,
 		{
 			wrapper: TestWrapper,
@@ -70,6 +78,8 @@ function renderCard(name: string, introState?: IntegrationToolState) {
 describe('IntegrationConnectCard', () => {
 	beforeEach(() => {
 		connectMutate.mockClear()
+		grantMutate.mockClear()
+		canGive = true
 		providers = []
 		integrations = []
 		pricing = { isFree: false, isPaid: false }
@@ -213,6 +223,35 @@ describe('IntegrationConnectCard', () => {
 
 			expect(screen.getByText('Connected to the workspace')).toBeInTheDocument()
 			expect(screen.queryByText('Connected, ready to use')).not.toBeInTheDocument()
+		})
+
+		it('gives the agent access with one click on Add to agent', async () => {
+			providers = [provider({})]
+			integrations = [active('linear')]
+			renderCard('linear', 'connected_not_on_agent', true)
+
+			await userEvent.setup().click(screen.getByRole('button', { name: 'Add Linear to Scout' }))
+
+			expect(grantMutate).toHaveBeenCalledWith({ actorId: 'agent-1', access: 'read_write' })
+			expect(screen.queryByRole('button', { name: 'Connected' })).not.toBeInTheDocument()
+		})
+
+		it('keeps the disabled Connected button for someone who may not give the agent access', () => {
+			canGive = false
+			providers = [provider({})]
+			integrations = [active('linear')]
+			renderCard('linear', 'connected_not_on_agent', true)
+
+			expect(screen.queryByRole('button', { name: /^Add Linear/ })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Connected' })).toBeDisabled()
+		})
+
+		it('offers no Add to agent button once the agent can use the tool', () => {
+			providers = [provider({})]
+			integrations = [active('linear')]
+			renderCard('linear', 'ready', true)
+
+			expect(screen.queryByRole('button', { name: /^Add Linear/ })).not.toBeInTheDocument()
 		})
 
 		it('draws one quiet row, not the install count card, for a multi-install provider', () => {

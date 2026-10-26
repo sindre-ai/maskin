@@ -1,3 +1,4 @@
+import { useCanGiveAgentAccess } from '@/components/chat/add-to-agent-button'
 import { IntegrationConnectCard } from '@/components/chat/integration-connect-card'
 import { useActor } from '@/hooks/use-actors'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
@@ -34,6 +35,7 @@ export function NeededTools({
 	const { data: providers } = useProviders()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: agent } = useActor(agentId)
+	const canGiveAccess = useCanGiveAgentAccess()
 
 	// Until both lists have loaded there is nothing honest to draw, and a failed
 	// load draws nothing either. The card itself also draws nothing for an unknown
@@ -49,7 +51,7 @@ export function NeededTools({
 		return [
 			{
 				info,
-				state: integrationToolState({ provider: info, integrations, agentMcpServers }),
+				state: integrationToolState({ provider: info, integrations, agentMcpServers, agentId }),
 			},
 		]
 	})
@@ -64,7 +66,13 @@ export function NeededTools({
 		)
 	}
 
-	const needsSetup = rows.some((row) => row.state === 'connected_not_on_agent')
+	// A viewer who can add the tool from its row has no need for the agent page; one who cannot
+	// (not the person who connected it, not an admin) is still sent there.
+	const needsSetup = rows.some(
+		({ info, state }) =>
+			state === 'connected_not_on_agent' &&
+			!canGiveAccess(integrations.find((i) => i.provider === info.name && i.status === 'active')),
+	)
 	const sharingOff = rows.some((row) => row.state === 'sharing_off')
 
 	return (
@@ -77,6 +85,7 @@ export function NeededTools({
 					workspaceId={workspaceId}
 					conversationId={conversationId}
 					provider={info.name}
+					agent={{ id: agentId, name: agentName }}
 				/>
 			))}
 			{needsSetup ? (
