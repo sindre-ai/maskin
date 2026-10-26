@@ -27,6 +27,8 @@ const loopsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const actorsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const triggersRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const conversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
+// What GET /conversations?q= returns; the plain call keeps using conversationsRef.
+const serverConversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -61,7 +63,8 @@ vi.mock('@/hooks/use-loops', () => ({ useLoops: () => loopsRef.current }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => actorsRef.current }))
 vi.mock('@/hooks/use-triggers', () => ({ useTriggers: () => triggersRef.current }))
 vi.mock('@/hooks/use-conversations', () => ({
-	useConversationsInfinite: () => conversationsRef.current,
+	useConversationsInfinite: (_workspaceId: string, filters?: { q?: string }) =>
+		filters?.q ? serverConversationsRef.current : conversationsRef.current,
 }))
 
 vi.mock('@/lib/analytics', () => ({

@@ -91,6 +91,31 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			expect(overflow).toBeLessThanOrEqual(1)
 		})
 
+		test('a chat is found by words in an earlier message, not only its title or last line', async ({
+			page,
+			account,
+		}) => {
+			const msgToken = `${TOKEN}msg`
+			const agent = await account.api.createAgentActor(`Chat ${msgToken} Partner`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const chat = await account.api.createConversation(account.workspaceId, {
+				title: 'Quarterly planning',
+				participant_actor_ids: [agent.id],
+				initial_message: `The ${msgToken} invoices keep failing`,
+			})
+			await account.api.postConversationMessage(chat.id, account.workspaceId, {
+				content: 'Moving on to the agenda',
+			})
+
+			await page.goto(`/${account.workspaceId}/search?q=${msgToken}`)
+			await waitForAppReady(page)
+
+			// Neither the title nor the newest message holds the word; the first message does.
+			const chatRow = page.getByRole('button', { name: /Quarterly planning/ })
+			await expect(chatRow).toBeVisible({ timeout: 20000 })
+			await expect(chatRow).toContainText(`${msgToken} invoices keep failing`)
+		})
+
 		test('every result row ends in the same kind column, object status inline', async ({
 			page,
 			account,

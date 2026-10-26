@@ -20,6 +20,8 @@ export interface ConversationListFilters {
 	pinned?: boolean
 	archived?: boolean
 	unread_only?: boolean
+	/** Server-side search over title, people and message text. */
+	q?: string
 }
 
 export function useConversationsInfinite(workspaceId: string, filters?: ConversationListFilters) {
@@ -38,12 +40,14 @@ export function useConversationsInfinite(workspaceId: string, filters?: Conversa
 			if (filters?.pinned) params.pinned = 'true'
 			if (filters?.archived) params.archived = 'true'
 			if (filters?.unread_only) params.unread_only = 'true'
+			if (filters?.q) params.q = filters.q
 			return api.conversations.list(workspaceId, params)
 		},
 		initialPageParam: 0,
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.has_more ? allPages.length * CONVERSATIONS_PAGE_SIZE : undefined,
-		enabled: !!workspaceId,
+		// A search with no text yet has nothing to ask the server.
+		enabled: !!workspaceId && (filters?.q === undefined || filters.q.length > 0),
 	})
 }
 

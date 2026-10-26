@@ -737,6 +737,61 @@ describe('Conversations Integration', () => {
 			expect(list.conversations).toEqual([])
 		})
 
+		it('q finds chats by title, participant name or any message, in any word order', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const magnus = await insertActor(db, { type: 'human', name: 'Magnus Hansen' })
+			await addMember(workspaceId, agent.id)
+			await addMember(workspaceId, magnus.id)
+
+			const byTitle = await createChat(ownerId, 'human', [agent.id], 'Pricing review')
+			const byPerson = await createChat(ownerId, 'human', [agent.id, magnus.id], 'Weekly sync')
+			const byOldMessage = await createChat(ownerId, 'human', [agent.id], 'Roadmap')
+			const unrelated = await createChat(ownerId, 'human', [agent.id], 'Standup notes')
+			// The matching words sit in an early message; a newer one does not match.
+			await db.insert(messages).values([
+				{ conversationId: byOldMessage, actorId: ownerId, content: 'Stripe invoices fail on retry' },
+				{ conversationId: byOldMessage, actorId: ownerId, content: 'anyway, lunch?' },
+			])
+
+			const ids = async (q: string) =>
+				(await listAs(agent.id, `sort=activity&q=${encodeURIComponent(q)}`)).conversations
+					.map((c) => c.id)
+					.sort()
+
+			expect(await ids('pricing')).toEqual([byTitle])
+			expect(await ids('magnus')).toEqual([byPerson])
+			expect(await ids('invoices stripe')).toEqual([byOldMessage])
+			expect(await ids('stripe lunch')).toEqual([byOldMessage]) // words may sit in different messages
+			expect(await ids('stripe pricing')).toEqual([]) // but every word must appear in the chat
+			expect(await ids('zzzznothing')).toEqual([])
+			expect(await ids('standup')).toEqual([unrelated])
+			// One-letter words are ignored, so they cannot match everything or nothing.
+			expect(await ids('p')).toHaveLength(4)
+
+			const hit = (await listAs(agent.id, 'sort=activity&q=stripe')).conversations[0] as {
+				snippet: string | null
+			}
+			expect(hit.snippet).toBe('Stripe invoices fail on retry')
+		})
+
+		it('q treats % and _ literally and stays inside the callers chats', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const outsider = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			await addMember(workspaceId, outsider.id)
+			const mine = await createChat(ownerId, 'human', [agent.id], '100% sure')
+			await createChat(ownerId, 'human', [agent.id], 'Something else')
+
+			const wildcard = await listAs(agent.id, `q=${encodeURIComponent('%')}`)
+			expect(wildcard.conversations).toHaveLength(2) // a lone % is a one-letter word, ignored
+			const literal = await listAs(agent.id, `q=${encodeURIComponent('0% su')}`)
+			expect(literal.conversations.map((c) => c.id)).toEqual([mine])
+			const underscore = await listAs(agent.id, `q=${encodeURIComponent('so_e')}`)
+			expect(underscore.conversations).toEqual([])
+			const outside = await listAs(outsider.id, `q=${encodeURIComponent('sure')}`)
+			expect(outside.conversations).toEqual([])
+		})
+
 		it('rejects an updated_after that is not a time', async () => {
 			const { app } = createConversationsApp(ownerId)
 			const res = await app.request(

@@ -27,7 +27,7 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, ilike, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -86,6 +86,21 @@ const app = new OpenAPIHono<Env>({
 		return undefined
 	},
 })
+
+const SEARCH_MAX_TOKENS = 6
+
+/** Words of a chat search: lowercased, 2+ letters, no repeats, at most six. */
+function conversationSearchTokens(q: string): string[] {
+	const tokens = new Set<string>()
+	for (const word of q.toLowerCase().split(/\s+/)) {
+		if (word.length >= 2) tokens.add(word)
+	}
+	return [...tokens].slice(0, SEARCH_MAX_TOKENS)
+}
+
+function likeContains(token: string): string {
+	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
 
 type ParticipantRow = {
 	conversationId: string
@@ -578,6 +593,28 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
+	const searchTokens = query.q ? conversationSearchTokens(query.q) : []
+	for (const token of searchTokens) {
+		const pattern = likeContains(token)
+		// Literal table names inside the subqueries, like unread_only below.
+		conditions.push(
+			sql`(
+				conversations.title ILIKE ${pattern}
+				OR EXISTS (
+					SELECT 1 FROM conversation_participants cp2
+					INNER JOIN actors a2 ON a2.id = cp2.actor_id
+					WHERE cp2.conversation_id = conversations.id
+						AND cp2.left_at IS NULL
+						AND a2.name ILIKE ${pattern}
+				)
+				OR EXISTS (
+					SELECT 1 FROM messages m2
+					WHERE m2.conversation_id = conversations.id
+						AND m2.content ILIKE ${pattern}
+				)
+			)`,
+		)
+	}
 	if (query.unread_only) {
 		// Table names (not Drizzle column refs) inside the correlated subquery —
 		// interpolating column objects here renders unqualified and silently
@@ -643,17 +680,24 @@ app.openapi(listConversationsRoute, (async (c) => {
 				// The sender comes back with the preview so the row can say who is
 				// talking. Left-joined: a message from an actor that has since been
 				// deleted still yields its text rather than dropping the snippet.
-				const [latest] = await db
-					.select({
-						content: messages.content,
-						actorId: messages.actorId,
-						actorName: actors.name,
-					})
-					.from(messages)
-					.leftJoin(actors, eq(actors.id, messages.actorId))
-					.where(eq(messages.conversationId, r.conversation.id))
-					.orderBy(desc(messages.id))
-					.limit(1)
+				const latestWhere = (...extra: ReturnType<typeof ilike>[]) =>
+					db
+						.select({
+							content: messages.content,
+							actorId: messages.actorId,
+							actorName: actors.name,
+						})
+						.from(messages)
+						.leftJoin(actors, eq(actors.id, messages.actorId))
+						.where(and(eq(messages.conversationId, r.conversation.id), ...extra))
+						.orderBy(desc(messages.id))
+						.limit(1)
+				// A search shows the newest message that holds every word, so an old
+				// hit reads as the reason the chat matched. Falls back to the latest.
+				const [matched] = searchTokens.length
+					? await latestWhere(...searchTokens.map((t) => ilike(messages.content, likeContains(t))))
+					: []
+				const latest = matched ?? (await latestWhere())[0]
 				return {
 					conversationId: r.conversation.id,
 					snippet: latest?.content ?? null,

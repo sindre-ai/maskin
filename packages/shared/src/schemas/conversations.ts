@@ -448,6 +448,9 @@ export const conversationListQuerySchema = z.object({
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	// Only chats that still have at least one human participant.
 	has_human: booleanQueryParam.optional(),
+	// Search: every word (2+ letters) must appear in the title, a participant's
+	// name or the text of any message, in any order.
+	q: z.string().trim().max(200).optional(),
 	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
 	// 'activity' orders purely by last message, newest first.
 	sort: z.enum(['pinned', 'activity']).default('pinned'),

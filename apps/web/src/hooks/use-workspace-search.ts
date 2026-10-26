@@ -14,9 +14,9 @@ import { useMemo } from 'react'
  * It composes existing hooks rather than adding API surface. Objects are
  * filtered server-side by `GET /objects/search`; the other four lists have no
  * `q` parameter, so they are filtered client-side over the workspace lists the
- * app already caches. Chats are limited to the conversations hook's first page
- * (30) — a workspace with more chats than that will not surface older ones
- * until `GET /conversations` grows a `q` parameter.
+ * app already caches. Chats come from two places: `GET /conversations?q=` finds
+ * them by title, person or any message however old, and the newest 30 are also
+ * matched client-side so a typo ("mgnus") still finds a recent chat.
  */
 
 export const SEARCH_GROUPS = [
@@ -232,11 +232,20 @@ export function useWorkspaceSearch(
 		isError: chatsFailed,
 		isPending: chatsPending,
 	} = useConversationsInfinite(workspaceId)
+	// The server ignores one-letter words, so a query made only of them would
+	// list every chat; skip the call instead.
+	const serverQuery = query.split(/\s+/).some((word) => word.length >= 2) ? query : ''
+	const {
+		data: serverChats,
+		isError: serverChatsFailed,
+		isPending: serverChatsPending,
+	} = useConversationsInfinite(workspaceId, { q: serverQuery })
 
 	// Secondary sources are consumed as `?? []` below, so a failure would drop a
 	// whole group to zero and hide its chip while the header still claimed a
 	// confident total. Track it so the page can say results are incomplete.
-	const isPartial = loopsFailed || actorsFailed || triggersFailed || chatsFailed
+	const isPartial =
+		loopsFailed || actorsFailed || triggersFailed || chatsFailed || serverChatsFailed
 
 	const isSettled =
 		enabled &&
@@ -244,9 +253,11 @@ export function useWorkspaceSearch(
 		!loopsPending &&
 		!actorsPending &&
 		!triggersPending &&
-		!chatsPending
+		!chatsPending &&
+		(serverQuery === '' || !serverChatsPending)
 
 	const firstChatPage = conversations?.pages?.[0]?.conversations
+	const serverChatPage = serverChats?.pages?.[0]?.conversations
 
 	return useMemo(() => {
 		let rows: SearchRow[] = []
@@ -271,9 +282,22 @@ export function useWorkspaceSearch(
 			}
 		}
 
-		for (const conversation of firstChatPage ?? []) {
+		const seenChats = new Set<string>()
+		const chatCandidates = [
+			...(serverChatPage ?? []),
+			...(firstChatPage ?? []).filter((conversation) =>
+				matches(
+					query,
+					conversation.title,
+					conversation.participants.map((p) => p.actorName).join(', '),
+					conversation.snippet,
+				),
+			),
+		]
+		for (const conversation of chatCandidates) {
+			if (seenChats.has(conversation.id)) continue
+			seenChats.add(conversation.id)
 			const participants = conversation.participants.map((p) => p.actorName).join(', ')
-			if (!matches(query, conversation.title, participants, conversation.snippet)) continue
 			rows.push({
 				id: conversation.id,
 				group: 'chats',
@@ -380,6 +404,7 @@ export function useWorkspaceSearch(
 		query,
 		workspaceId,
 		firstChatPage,
+		serverChatPage,
 		loops,
 		actors,
 		objectResults,

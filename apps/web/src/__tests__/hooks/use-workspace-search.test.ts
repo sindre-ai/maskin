@@ -6,6 +6,8 @@ const loopsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const actorsRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const triggersRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const conversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
+// What GET /conversations?q= returns; the plain call keeps using conversationsRef.
+const serverConversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
 const searchObjectsSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -18,7 +20,8 @@ vi.mock('@/hooks/use-loops', () => ({ useLoops: () => loopsRef.current }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => actorsRef.current }))
 vi.mock('@/hooks/use-triggers', () => ({ useTriggers: () => triggersRef.current }))
 vi.mock('@/hooks/use-conversations', () => ({
-	useConversationsInfinite: () => conversationsRef.current,
+	useConversationsInfinite: (_workspaceId: string, filters?: { q?: string }) =>
+		filters?.q ? serverConversationsRef.current : conversationsRef.current,
 }))
 
 import { matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
@@ -29,6 +32,7 @@ beforeEach(() => {
 	actorsRef.current = { data: [] }
 	triggersRef.current = { data: [] }
 	conversationsRef.current = { data: undefined }
+	serverConversationsRef.current = { data: undefined }
 	searchObjectsSpy.mockClear()
 })
 
@@ -174,6 +178,37 @@ describe('useWorkspaceSearch', () => {
 
 		expect(result.current.countsByGroup.chats).toBe(1)
 		expect(result.current.rows[0]?.sub).toBe('Compass')
+	})
+
+	it('lists chats the server found, even ones outside the newest page, once each', () => {
+		conversationsRef.current = {
+			data: { pages: [{ conversations: [{ id: 'c-1', title: 'Relay', snippet: null, participants: [] }] }] },
+		}
+		serverConversationsRef.current = {
+			data: {
+				pages: [
+					{
+						conversations: [
+							{ id: 'c-1', title: 'Relay', snippet: null, participants: [] },
+							{ id: 'c-old', title: 'Roadmap', snippet: 'the relay fails', participants: [] },
+						],
+					},
+				],
+			},
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))
+
+		expect(result.current.rows.map((r) => r.id)).toEqual(['c-1', 'c-old'])
+		expect(result.current.rows[1]?.snippet).toBe('the relay fails')
+	})
+
+	it('does not ask the server for chats when the query is only one-letter words', () => {
+		serverConversationsRef.current = {
+			data: { pages: [{ conversations: [{ id: 'c-9', title: 'Anything', snippet: null, participants: [] }] }] },
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'a' }))
+
+		expect(result.current.rows.some((r) => r.id === 'c-9')).toBe(false)
 	})
 
 	it('returns an empty index and no pending state for a blank query', () => {
