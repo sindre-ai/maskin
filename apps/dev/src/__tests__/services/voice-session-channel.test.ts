@@ -420,6 +420,7 @@ describe('voice channel — a write waits for the person to say yes', () => {
 		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
 		expect(outputOf(0).error).toContain('Not done yet')
 		expect(outputOf(0).error).toContain('confirmation_id')
+		expect(outputOf(0).error).toContain('One yes is enough')
 	})
 
 	it('runs the same call once after the person says yes, with the confirmation id removed', async () => {

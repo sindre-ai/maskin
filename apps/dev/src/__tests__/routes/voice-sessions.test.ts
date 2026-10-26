@@ -421,6 +421,8 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			expect(res.status).toBe(200)
 			expect(instructions).toContain('You are the Chief of Staff.')
 			expect(instructions).toContain('## Earlier in this chat')
+			expect(instructions).toContain('Do not ask for a yes before such a call')
+			expect(instructions).toContain('How to speak on this call')
 			const sam = instructions.indexOf('Sam: Lets move the launch review to Thursday 14:00.')
 			const cos = instructions.indexOf('Chief of Staff: Sounds good, I will book it.')
 			expect(sam).toBeGreaterThan(-1)

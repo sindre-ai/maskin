@@ -144,7 +144,7 @@ function heldMessage(tool: string, review: Exclude<WriteReview, { kind: 'run' }>
 	const target = review.risky
 		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
 		: ''
-	return `Not done yet. ${tool} changes things, so the person has to say yes first. Tell them in one plain sentence what you are about to do, ask for a yes, and wait for their answer.${target} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.`
+	return `Not done yet. ${tool} changes things, so the person has to say yes first, and it is held now. Tell them once, in one plain sentence, what you will do, ask for a yes, and wait for their answer. One yes is enough, do not ask a second time.${target} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud now, after this message.`
 }
 
 export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {

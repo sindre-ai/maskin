@@ -23,6 +23,7 @@ import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
+import { VOICE_STYLE_RULE, VOICE_WRITE_RULE } from '../services/voice-call-rules'
 import {
 	findReadableConversationId,
 	formatVoiceChatHistory,
@@ -503,7 +504,8 @@ app.openapi(postOfferRoute, async (c) => {
 		agent.systemPrompt ?? '',
 		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		// The server holds every write until the person says yes; this only makes the agent ask naturally.
-		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
+		VOICE_WRITE_RULE,
+		VOICE_STYLE_RULE,
 		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
 		chatHistory ? `\n\n${chatHistory}` : '',
 	]
