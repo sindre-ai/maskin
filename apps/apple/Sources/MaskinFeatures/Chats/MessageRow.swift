@@ -178,6 +178,10 @@ struct MessageRow: View {
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
 	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
+	/// An intro's send step tapped: send its words, noting which step it was.
+	var onSendStep: (_ prompt: String, _ introMessageID: Int, _ index: Int) -> Void = { _, _, _ in }
+	/// An intro's fill step tapped: put its prompt in the message box.
+	var onFillStep: (String) -> Void = { _ in }
 	/// How a person already answered an agent's card in this message (read from the chat).
 	var cardOutcome: ChatCardAnswer.Outcome?
 	/// The agents in this chat, who may use a credential saved from a Keychain card.
@@ -225,7 +229,7 @@ struct MessageRow: View {
 		}
 	}
 
-	private var shownText: String { messageOverride.text(original: message.content) }
+	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
 	private var bodyText: String { quote?.body ?? shownText }
 
@@ -396,6 +400,14 @@ struct MessageRow: View {
 				KeychainAccessCard(
 					request: access, agentID: message.actorID, conversationID: message.conversationID,
 					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+			}
+			if let intro = AgentIntroView(message: message) {
+				if let steps = intro.steps, let introID = message.serverID {
+					IntroStepsView(
+						steps: steps, onSend: { step, index in onSendStep(step.prompt, introID, index) },
+						onFill: onFillStep)
+				}
+				if let tools = intro.tools { IntroToolsView(providers: tools) }
 			}
 			if let connect = IntegrationConnectRequest(message: message) {
 				IntegrationConnectCard(request: connect)

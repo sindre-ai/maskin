@@ -9,6 +9,8 @@ public struct IntegrationConnectRequest: Equatable, Sendable {
 	/// The provider slug the agent asked for, e.g. `linear`.
 	public var provider: String
 
+	public init(provider: String) { self.provider = provider }
+
 	public init?(message: ChatMessage) {
 		guard let provider = message.metadata?["integration_connect"]?["provider"]?.stringValue, !provider.isEmpty
 		else { return nil }
