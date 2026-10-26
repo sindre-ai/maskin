@@ -14,6 +14,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { type ComposerCue, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
 import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -380,10 +381,46 @@ function NewChatRoute() {
 		return agents.size === 1 ? (agents.values().next().value ?? null) : null
 	}, [recipients, selection.agents, candidates])
 
-	const composerPlaceholder =
+	const todaysPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
 			: 'Message… / reference or create · @ mention'
+
+	// Group-chat cue: this screen has its own composer wiring (it does not use ThreadComposer),
+	// so it calls the same shared function. A new chat has no messages,
+	// so nobody has spoken yet and the next message is the first one. Participants are you, the
+	// To-row chips and anyone tagged in the box, which is who the server adds when it creates
+	// the chat. Fewer than 3 participants: today's placeholder and no hint.
+	const cue = useMemo<ComposerCue | null>(() => {
+		const asParticipant = (r: Recipient) => ({
+			actorId: r.id,
+			actorName: r.name,
+			actorType: (r.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human',
+		})
+		const people = new Map<string, ReturnType<typeof asParticipant>>()
+		if (currentActor) {
+			people.set(currentActor.id, asParticipant({ id: currentActor.id, name: '', type: 'human' }))
+		}
+		for (const r of recipients) people.set(r.id, asParticipant(r))
+		for (const id of selection.agents) {
+			if (people.has(id)) continue
+			// An id missing from the workspace lists counts as a person.
+			const known = candidates.find((c) => c.id === id)
+			people.set(
+				id,
+				asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }),
+			)
+		}
+		return deriveComposerCue({
+			selfId: currentActor?.id ?? '',
+			participants: [...people.values()],
+			taggedIds: selection.agents,
+			messages: null,
+			hasMoreMessages: false,
+			isNewChat: true,
+		})
+	}, [currentActor, recipients, selection.agents, selection.agentNames, candidates])
+	const composerPlaceholder = cue?.placeholder ?? todaysPlaceholder
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -551,6 +588,7 @@ function NewChatRoute() {
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={error}
 					onDismissExternalError={() => setError(null)}
+					hint={cue ? cue.hint : undefined}
 					textareaLabel="Message this conversation"
 					value={draft}
 					onValueChange={setDraft}
