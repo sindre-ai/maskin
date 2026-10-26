@@ -55,3 +55,31 @@ export function isUpdatedWithinWeek(
 	if (Number.isNaN(at)) return false
 	return now.getTime() - at <= 7 * 86_400_000
 }
+
+/** Start of the viewer's local day. The server anchors the Updated bucket counts
+ *  on it, so "today" and "yesterday" mean what they mean on the viewer's clock. */
+export function startOfLocalDay(now: Date = new Date()): Date {
+	return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
+
+/** The `updated_after` / `updated_before` window a bucket stands for — the same
+ *  boundaries `updatedBucketOf` draws, as the half-open bounds the list API takes
+ *  (both exclusive, so the lower bound steps back one millisecond). */
+export function updatedBucketWindow(
+	bucket: UpdatedBucket,
+	now: Date = new Date(),
+): { after?: Date; before?: Date } {
+	const DAY_MS = 86_400_000
+	const start = startOfLocalDay(now).getTime()
+	const exclusiveAfter = (at: number) => new Date(at - 1)
+	switch (bucket) {
+		case 'today':
+			return { after: exclusiveAfter(start) }
+		case 'yesterday':
+			return { after: exclusiveAfter(start - DAY_MS), before: new Date(start) }
+		case 'week':
+			return { after: exclusiveAfter(start - 6 * DAY_MS), before: new Date(start - DAY_MS) }
+		case 'older':
+			return { before: new Date(start - 6 * DAY_MS) }
+	}
+}

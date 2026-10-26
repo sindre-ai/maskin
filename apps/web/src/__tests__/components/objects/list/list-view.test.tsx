@@ -162,6 +162,83 @@ describe('ListView', () => {
 		expect(screen.getByText('Gamma')).toBeInTheDocument()
 	})
 
+	describe('with group totals from the server', () => {
+		it('shows the exact total of each group, not the number of rows loaded', () => {
+			const data = [
+				buildObjectResponse({
+					id: 'obj-1',
+					title: 'Alpha',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+			]
+			renderListView({
+				data,
+				grouping: ['status'] as GroupingState,
+				groupTotals: [
+					{ value: 'active', total: 19 },
+					{ value: 'signal', total: 103 },
+				],
+			})
+
+			const headers = groupHeaders()
+			expect(headers).toHaveLength(2)
+			expect(headers[0]?.textContent).toContain('19')
+			expect(headers[1]?.textContent).toContain('103')
+		})
+
+		it('asks for the next page of just that group when Show more is clicked', async () => {
+			const onLoadMoreInGroup = vi.fn()
+			const data = [
+				buildObjectResponse({
+					id: 'obj-1',
+					title: 'Alpha',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+				buildObjectResponse({
+					id: 'obj-2',
+					title: 'Beta',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+			]
+			renderListView({
+				data,
+				grouping: ['status'] as GroupingState,
+				groupTotals: [{ value: 'active', total: 60 }],
+				onLoadMoreInGroup,
+			})
+
+			await userEvent.click(screen.getByRole('button', { name: /show 25 more/i }))
+			expect(onLoadMoreInGroup).toHaveBeenCalledWith('active')
+		})
+
+		it('keeps a group with nothing loaded yet at its real total', () => {
+			renderListView({
+				data: [],
+				grouping: ['status'] as GroupingState,
+				groupTotals: [{ value: 'active', total: 19 }],
+			})
+
+			expect(groupHeaders()[0]?.textContent).toContain('19')
+			expect(screen.queryByText('No objects found')).toBeNull()
+		})
+
+		it('files rows with no value under the empty-string group the server sends', () => {
+			const data = [buildObjectResponse({ id: 'obj-1', title: 'Alpha', driver: null })]
+			renderListView({
+				data,
+				grouping: ['driver'] as GroupingState,
+				groupTotals: [{ value: '', total: 7 }],
+			})
+
+			expect(groupHeaders()[0]?.textContent).toContain('No value')
+			expect(groupHeaders()[0]?.textContent).toContain('7')
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+		})
+	})
+
 	it('shows type label, name link, status tag and updated time on each row', () => {
 		const data = [
 			buildObjectResponse({

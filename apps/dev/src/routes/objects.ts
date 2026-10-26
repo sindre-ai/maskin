@@ -34,7 +34,9 @@ import {
 	getChangesFromEventData,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
-	objectQuerySchema,
+	objectFacetsQuerySchema,
+	objectFacetsResponseSchema,
+	objectListQuerySchema,
 	reversePatch,
 	searchObjectsSchema,
 	updateObjectSchema,
@@ -48,6 +50,7 @@ import {
 	desc,
 	eq,
 	gt,
+	gte,
 	ilike,
 	inArray,
 	lt,
@@ -436,6 +439,48 @@ function phraseWordPrefixPatterns(q: string): [string, string] | null {
 	return [`${escaped}%`, `% ${escaped}%`]
 }
 
+/**
+ * IANA zone name safe to inline into SQL. The date group axes put the zone in
+ * both SELECT and GROUP BY, where two separate bind parameters would not be
+ * recognised as the same expression — so it is validated and inlined instead.
+ */
+function safeTimeZone(tz?: string): string {
+	if (!tz || !/^[A-Za-z0-9_+-/]{1,64}$/.test(tz)) return 'UTC'
+	try {
+		new Intl.DateTimeFormat('en', { timeZone: tz })
+		return tz
+	} catch {
+		return 'UTC'
+	}
+}
+
+/** The SQL expression an Objects-page group axis buckets rows by, or null for an
+ *  axis the server does not know. Empty string = "no value". Mirrors
+ *  `getObjectGroupValue` on the client. */
+function resolveGroupExpression(groupBy: string | undefined, tz?: string): SQL | null {
+	if (!groupBy || groupBy === 'status') return sql`${objects.status}`
+	if (groupBy === 'type') return sql`${objects.type}`
+	if (groupBy === 'driver') return sql`coalesce(${objects.driver}::text, '')`
+	if (groupBy === 'createdBy') return sql`coalesce(${objects.createdBy}::text, '')`
+	if (groupBy === 'createdAt' || groupBy === 'updatedAt') {
+		const column = groupBy === 'createdAt' ? objects.createdAt : objects.updatedAt
+		return sql`to_char(${column} at time zone '${sql.raw(safeTimeZone(tz))}', 'YYYY-MM-DD')`
+	}
+	if (groupBy.startsWith('metadata.')) {
+		const fieldName = groupBy.slice('metadata.'.length)
+		if (SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) {
+			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
+		}
+	}
+	return null
+}
+
+// Literal, table-qualified SQL — Drizzle column objects inside a correlated
+// subquery render unqualified (known-pitfalls.md).
+function starredByCondition(actorId: string): SQL {
+	return sql`exists (select 1 from star_state s where s.actor_id = ${actorId} and s.entity_type = 'object' and s.entity_id = objects.id)`
+}
+
 export function buildObjectListConditions(
 	query: {
 		type?: string
@@ -446,11 +491,30 @@ export function buildObjectListConditions(
 		updated_before?: string
 		updated_after?: string
 		include_archived?: boolean
+		starred?: boolean
+		working?: boolean
+		attention_ids?: string
+		group_by?: string
+		group_value?: string
+		tz?: string
 	},
 	metadataFilters: { field: string; value: string }[] = [],
+	context: { actorId?: string } = {},
 ): { conditions: SQL[]; searchRankExpr: SQL | null } {
 	const conditions: SQL[] = []
 	let searchRankExpr: SQL | null = null
+	if (query.starred && context.actorId) conditions.push(starredByCondition(context.actorId))
+	if (query.working) conditions.push(sql`${objects.activeSessionId} is not null`)
+	if (query.attention_ids !== undefined) {
+		const attentionIds = query.attention_ids.split(',').filter((id) => UUID_RE.test(id))
+		conditions.push(attentionIds.length > 0 ? inArray(objects.id, attentionIds) : sql`false`)
+	}
+	if (query.group_value !== undefined) {
+		// An axis the server does not know falls back to status, like the board.
+		const groupExpr =
+			resolveGroupExpression(query.group_by, query.tz) ?? resolveGroupExpression('status')
+		conditions.push(sql`${groupExpr} = ${query.group_value}`)
+	}
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
 		const statuses = query.status.split(',').filter(Boolean)
@@ -778,7 +842,7 @@ const listObjectsRoute = createRoute({
 	summary: 'List objects',
 	request: {
 		headers: workspaceIdHeader,
-		query: objectQuerySchema,
+		query: objectListQuerySchema,
 	},
 	responses: {
 		200: {
@@ -806,6 +870,7 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
 		query,
 		parsedMetadataFilters.filters,
+		{ actorId },
 	)
 	// When `q` tokenizes to a non-empty set the ORDER BY switches to
 	// rank-by-token-hits, and the `(createdAt, id)` keyset seek in
@@ -908,6 +973,171 @@ async function hydrateActiveSessionStates(
 	}
 	return statesByObjectId
 }
+
+// GET /facets - Exact counts for the Objects page (tabs, group headers, filter chips)
+const facetsObjectsRoute = createRoute({
+	method: 'get',
+	path: '/facets',
+	tags: ['Objects'],
+	summary: 'Counts for the Objects page',
+	description:
+		'Totals under the same filters as GET /objects. Each facet ignores its own axis (type counts ignore `type`, status counts ignore `status`, ...) so every option shows what picking it would give. `groups` is the total per `group_by` value, in display order.',
+	request: {
+		headers: workspaceIdHeader,
+		query: objectFacetsQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectFacetsResponseSchema } },
+			description: 'Facet counts',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+const DAY_MS = 86_400_000
+
+app.openapi(facetsObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
+	// Conditions under every filter except the named axes. `group_*` never applies
+	// here: the group totals are the point.
+	const conditionsWithout = (omit: Partial<Record<keyof typeof query, true>>) => {
+		const q = { ...query, group_by: undefined, group_value: undefined } as Record<string, unknown>
+		for (const key of Object.keys(omit)) {
+			q[key] = key === 'starred' || key === 'working' ? false : undefined
+		}
+		return [
+			eq(objects.workspaceId, workspaceId),
+			...buildObjectListConditions(q, parsedMetadataFilters.filters, { actorId }).conditions,
+		]
+	}
+	const grouped = async (expr: SQL, where: SQL[]) => {
+		const rows = (await db
+			.select({ value: expr, total: count() })
+			.from(objects)
+			.where(and(...where))
+			.groupBy(expr)) as Array<{ value: unknown; total: unknown }>
+		return rows.map((row) => ({ value: String(row.value ?? ''), total: toCount(row.total) }))
+	}
+	const countWhere = async (where: SQL[]) => {
+		const [row] = await db
+			.select({ value: count() })
+			.from(objects)
+			.where(and(...where))
+		return toCount(row?.value)
+	}
+	const toRecord = (rows: Array<{ value: string; total: number }>) =>
+		Object.fromEntries(rows.map((row) => [row.value, row.total]))
+
+	const dayStart = query.day_start ? new Date(query.day_start).getTime() : null
+	const updatedBounds: Record<string, [number | null, number | null]> | null =
+		dayStart === null
+			? null
+			: {
+					today: [dayStart, null],
+					yesterday: [dayStart - DAY_MS, dayStart],
+					week: [dayStart - 6 * DAY_MS, dayStart - DAY_MS],
+					older: [null, dayStart - 6 * DAY_MS],
+				}
+	const waitingIds = (query.waiting_ids ?? '').split(',').filter((id) => UUID_RE.test(id))
+	const sinceWeek = new Date(Date.now() - 7 * DAY_MS)
+
+	const noRecency = conditionsWithout({ updated_after: true, updated_before: true })
+	const groupExpr = (resolveGroupExpression(query.group_by, query.tz) ??
+		resolveGroupExpression('status')) as SQL
+
+	const [
+		total,
+		groupRows,
+		typeRows,
+		statusRows,
+		driverRows,
+		fresh,
+		starred,
+		working,
+		waiting,
+		updatedEntries,
+		[workspace],
+	] = await Promise.all([
+		countWhere(conditionsWithout({})),
+		grouped(groupExpr, conditionsWithout({})),
+		grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
+		grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
+		grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
+		countWhere([...noRecency, gte(objects.updatedAt, sinceWeek)]),
+		countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
+		countWhere([
+			...conditionsWithout({ working: true }),
+			sql`${objects.activeSessionId} is not null`,
+		]),
+		waitingIds.length === 0
+			? Promise.resolve(0)
+			: countWhere([
+					...conditionsWithout({ attention_ids: true }),
+					inArray(objects.id, waitingIds),
+				]),
+		Promise.all(
+			Object.entries(updatedBounds ?? {}).map(async ([bucket, [from, to]]) => {
+				const where = [...noRecency]
+				if (from !== null) where.push(gte(objects.updatedAt, new Date(from)))
+				if (to !== null) where.push(lt(objects.updatedAt, new Date(to)))
+				return [bucket, await countWhere(where)] as const
+			}),
+		),
+		db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
+	])
+
+	// Group order: statuses follow the workspace's configured lifecycle order,
+	// dates run newest first, everything else A to Z with "no value" last.
+	const axis = query.group_by ?? 'status'
+	const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+	let groups = groupRows
+	if (axis === 'status') {
+		const settings = workspace?.settings as WorkspaceSettings | undefined
+		const configured = [...new Set(Object.values(settings?.statuses ?? {}).flat())]
+		const rank = (value: string) => {
+			const index = configured.indexOf(value)
+			return index === -1 ? configured.length : index
+		}
+		groups = [...groupRows].sort(
+			(a, b) => rank(a.value) - rank(b.value) || collator.compare(a.value, b.value),
+		)
+	} else if (axis === 'createdAt' || axis === 'updatedAt') {
+		groups = [...groupRows].sort((a, b) => b.value.localeCompare(a.value))
+	} else {
+		groups = [...groupRows].sort((a, b) =>
+			a.value === '' ? 1 : b.value === '' ? -1 : collator.compare(a.value, b.value),
+		)
+	}
+
+	return c.json(
+		{
+			total,
+			by_type: toRecord(typeRows),
+			by_status: toRecord(statusRows),
+			by_driver: toRecord(driverRows.filter((row) => row.value !== '')),
+			updated: Object.fromEntries(updatedEntries),
+			fresh,
+			starred,
+			working,
+			waiting,
+			groups,
+		} as z.infer<typeof objectFacetsResponseSchema>,
+		200,
+	)
+})
 
 // GET /board - List board columns with per-column pagination
 const boardObjectsRoute = createRoute({
