@@ -397,6 +397,19 @@ struct MessageRow: View {
 					request: access, agentID: message.actorID, conversationID: message.conversationID,
 					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
+			if let connect = IntegrationConnectRequest(message: message) {
+				IntegrationConnectCard(request: connect)
+			}
+			if let access = IntegrationAccessRequest(message: message) {
+				IntegrationAccessCard(
+					request: access, agentID: message.actorID, messageID: message.serverID, answered: cardOutcome,
+					onReply: onKeychainReply)
+			}
+			if let computer = ComputerRequest(message: message) {
+				ComputerRequestCard(
+					request: computer, agentName: message.actorName, conversationID: message.conversationID,
+					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+			}
 			if let credential = KeychainCredentialRequest(message: message) {
 				KeychainRequestCard(
 					request: credential, messageCreatedAt: message.createdAt,
