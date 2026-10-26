@@ -210,6 +210,8 @@ export class TestAPI {
 			status: string
 			content?: string
 			metadata?: Record<string, unknown>
+			/** The actor who owns it. */
+			driver?: string
 		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
