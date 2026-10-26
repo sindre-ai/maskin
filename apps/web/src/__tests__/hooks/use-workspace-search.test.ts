@@ -204,11 +204,11 @@ describe('useWorkspaceSearch', () => {
 			useWorkspaceSearch('ws-1', { q: 'relay', type: 'bet', status: 'active' }),
 		)
 
-		expect(searchObjectsSpy).toHaveBeenCalledWith('ws-1', {
-			q: 'relay',
-			type: 'bet',
-			status: 'active',
-		})
+		expect(searchObjectsSpy).toHaveBeenCalledWith(
+			'ws-1',
+			{ q: 'relay', type: 'bet', status: 'active' },
+			expect.objectContaining({ enabled: true }),
+		)
 		expect(result.current.countsByGroup.objects).toBe(1)
 	})
 

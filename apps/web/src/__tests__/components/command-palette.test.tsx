@@ -552,9 +552,11 @@ describe('CommandPalette', () => {
 		const last = calls[calls.length - 1]?.[1]
 		expect(last).toMatchObject({ q: 'mark' })
 		expect(calls.some(([, params]) => params.q === 'mark' && params.serverQ !== 'mark')).toBe(true)
-		// The Commands group already narrowed to the matching row.
-		expect(screen.getByText('Mark all read')).toBeInTheDocument()
-		expect(screen.queryByText('New chat')).not.toBeInTheDocument()
+		// The Commands group already narrowed to the matching row. The typed letters
+		// are wrapped in <mark>, so read the rows' own text, not a single text node.
+		const rows = screen.getAllByRole('option').map((option) => option.textContent ?? '')
+		expect(rows.some((row) => row.includes('Mark all read'))).toBe(true)
+		expect(rows.some((row) => row.includes('New chat'))).toBe(false)
 	})
 
 	it('does nothing on Enter for the Search row until the results have settled', async () => {
