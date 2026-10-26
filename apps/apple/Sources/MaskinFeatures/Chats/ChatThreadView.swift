@@ -1082,6 +1082,10 @@ struct ThreadTranscript: View {
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
+				cardOutcome: message.metadata?["keychain_access_request"] == nil
+					? nil : message.serverID.flatMap { store.cardAnswerIndex[$0] },
+				chatAgents: store.participants.filter { $0.kind == .agent },
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)

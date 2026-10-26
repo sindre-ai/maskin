@@ -260,6 +260,18 @@ public final class ChatStore {
 		return index
 	}
 
+	/// For each card a person answered (by the card's message id): how. Read from every message,
+	/// since the answer itself is hidden from the timeline.
+	public var cardAnswerIndex: [Int: ChatCardAnswer.Outcome] {
+		var index: [Int: ChatCardAnswer.Outcome] = [:]
+		for message in allMessages {
+			if let answer = message.cardAnswer, index[answer.messageID] == nil {
+				index[answer.messageID] = answer.outcome
+			}
+		}
+		return index
+	}
+
 	/// A name for an actor id: someone in the conversation, else anyone in the workspace. Nil when
 	/// it can't be resolved (callers omit it; a raw id is never shown).
 	public func displayName(for actorID: String) -> String? {
@@ -1087,7 +1099,7 @@ public final class ChatStore {
 
 	/// The replies of one thread, oldest first, unconfirmed ones last.
 	public func replies(to rootID: Int) -> [ChatMessage] {
-		allMessages.filter { $0.threadRootID == rootID }
+		allMessages.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }
 	}
 
 	/// What the pill under a root says: the server's summary plus replies that arrived since.
@@ -1113,9 +1125,15 @@ public final class ChatStore {
 	/// an agent answer. Returns the local row id, nil when the text is empty.
 	@discardableResult
 	public func reply(
-		_ text: String, in rootID: Int, to recipient: ChatParticipant?, alsoInChannel: Bool
+		_ text: String, in rootID: Int, to recipient: ChatParticipant?, alsoInChannel: Bool,
+		metadata extra: ChatSendMetadata? = nil
 	) -> String? {
-		let metadata = recipient.map { ChatSendMetadata(mentions: [$0.id]) }
+		var metadata = extra
+		if let recipient {
+			metadata = ChatSendMetadata(
+				mentions: [recipient.id], questionAnswer: extra?.questionAnswer,
+				hiddenFromChat: extra?.hiddenFromChat, cardAnswer: extra?.cardAnswer)
+		}
 		return send(
 			text, metadata: metadata, thread: ChatSendThread(rootID: rootID, alsoInChannel: alsoInChannel))
 	}
