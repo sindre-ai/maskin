@@ -163,6 +163,7 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+		dailyBudget: (workspaceId: string) => ['billing', workspaceId, 'daily-budget'] as const,
 	},
 	forYou: {
 		list: (workspaceId: string) => ['for-you', workspaceId] as const,

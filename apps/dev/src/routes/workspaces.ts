@@ -450,9 +450,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	// PATCHes with the whole settings object spread back in, so a member's
 	// ordinary edit carries llm_keys/custom_llm exactly as stored. A null that
 	// deletes a stored key is a change and is gated.
-	const { settings: patchSettings, changed: changesLlm } = body.settings
+	const { settings: pickedSettings, changed: changesLlm } = body.settings
 		? pickChangedAdminSettings(body.settings, existingSettings)
 		: { settings: undefined, changed: false }
+	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
 	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
@@ -501,6 +502,27 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			),
 			400,
 		)
+	}
+
+	// `daily_budget` is written only by PUT /api/billing/daily-budget, which holds
+	// the admin/owner check, the dollar-unit gate and the audit event; the shallow
+	// merge below would skip all three. The web app spreads the whole stored
+	// settings object back on unrelated edits, so a value equal to the stored one
+	// is dropped quietly and only a changed or newly set one is rejected.
+	if (body.settings && 'daily_budget' in body.settings) {
+		if (!isDeepStrictEqual(body.settings.daily_budget, existingSettings.daily_budget)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'daily_budget cannot be updated via PATCH /api/workspaces/:id — use PUT /api/billing/daily-budget instead',
+				),
+				400,
+			)
+		}
+		if (patchSettings) {
+			const { daily_budget: _storedUnchanged, ...withoutDailyBudget } = patchSettings
+			patchSettings = withoutDailyBudget
+		}
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }

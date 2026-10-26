@@ -1,10 +1,17 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
-import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import {
+	CREDIT_TOPUP_MAX_USD,
+	CREDIT_TOPUP_MIN_USD,
+	dailyBudgetResponseSchema,
+	setDailyBudgetSchema,
+	workspaceSettingsSchema,
+} from '@maskin/shared'
+import { eq, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
+import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -661,6 +668,131 @@ app.openapi(cancelRoute, async (c) => {
 
 	logger.info('Plan downgraded to Free', { workspaceId })
 	return c.json({ ok: true as const }, 200)
+})
+
+// ── Daily budget (bet: A daily token budget, slice 1a) ──────────────────────
+// One daily target per workspace, stored at settings.daily_budget. It reports
+// only: nothing reads stop_share or holds work yet.
+
+const getDailyBudgetRoute = createRoute({
+	method: 'get',
+	path: '/daily-budget',
+	tags: ['billing'],
+	summary: 'The workspace daily target and whether the dollar unit can be used',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Current daily target (null when off) and the dollar-unit check',
+			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const setDailyBudgetRoute = createRoute({
+	method: 'put',
+	path: '/daily-budget',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Set the workspace daily target, or switch it off with null',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: setDailyBudgetSchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Daily target stored',
+			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The dollar unit is locked until cost numbers are reliable',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+async function readStoredDailyBudget(db: Database, workspaceId: string) {
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return null
+	const parsed = workspaceSettingsSchema.shape.daily_budget.safeParse(
+		(workspace.settings as Record<string, unknown> | null)?.daily_budget,
+	)
+	return { dailyBudget: parsed.success ? (parsed.data ?? null) : null }
+}
+
+app.openapi(getDailyBudgetRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const stored = await readStoredDailyBudget(db, workspaceId)
+	if (!stored) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	const days = await readZeroCostDays(db, workspaceId, stored.dailyBudget?.timezone ?? 'UTC')
+	return c.json({ daily_budget: stored.dailyBudget, dollar_unit: evaluateDollarUnit(days) }, 200)
+})
+
+app.openapi(setDailyBudgetRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { daily_budget: next } = c.req.valid('json')
+
+	const before = await readStoredDailyBudget(db, workspaceId)
+	if (!before) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Spend controls sit next to plan changes, so they take the same human
+	// admin/owner gate (agents holding a workspace API key stay out).
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can set the daily budget'),
+			403,
+		)
+	}
+
+	const days = await readZeroCostDays(db, workspaceId, next?.timezone ?? 'UTC')
+	const dollarUnit = evaluateDollarUnit(days)
+	if (next?.unit === 'dollars' && !dollarUnit.available) {
+		return c.json(createApiError('CONFLICT', dollarUnit.reason ?? 'Dollar targets are locked'), 409)
+	}
+
+	// Atomic key write: a read-modify-write of the whole settings object could
+	// drop a concurrent change to another key (a Stripe webhook, a PATCH).
+	await db
+		.update(workspaces)
+		.set({
+			settings: next
+				? sql`jsonb_set(coalesce(${workspaces.settings}, '{}'::jsonb), '{daily_budget}', ${JSON.stringify(next)}::jsonb)`
+				: sql`coalesce(${workspaces.settings}, '{}'::jsonb) - 'daily_budget'`,
+			updatedAt: new Date(),
+		})
+		.where(eq(workspaces.id, workspaceId))
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'workspace_daily_budget_updated',
+		entityType: 'workspace',
+		entityId: workspaceId,
+		data: { before: before.dailyBudget, after: next },
+	})
+
+	return c.json({ daily_budget: next, dollar_unit: dollarUnit }, 200)
 })
 
 export default app

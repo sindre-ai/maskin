@@ -14094,6 +14094,56 @@
 													"plan"
 												]
 											},
+											"daily_budget": {
+												"type": "object",
+												"properties": {
+													"unit": {
+														"type": "string",
+														"enum": [
+															"tokens",
+															"dollars"
+														]
+													},
+													"amount": {
+														"type": "number",
+														"exclusiveMinimum": 0,
+														"maximum": 1000000000000
+													},
+													"stop_share": {
+														"anyOf": [
+															{
+																"type": "number",
+																"enum": [
+																	80
+																]
+															},
+															{
+																"type": "number",
+																"enum": [
+																	90
+																]
+															},
+															{
+																"type": "number",
+																"enum": [
+																	100
+																]
+															}
+														],
+														"default": 100
+													},
+													"timezone": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64,
+														"default": "UTC"
+													}
+												},
+												"required": [
+													"unit",
+													"amount"
+												]
+											},
 											"voice": {
 												"type": "object",
 												"properties": {
@@ -15104,6 +15154,56 @@
 												},
 												"required": [
 													"plan"
+												]
+											},
+											"daily_budget": {
+												"type": "object",
+												"properties": {
+													"unit": {
+														"type": "string",
+														"enum": [
+															"tokens",
+															"dollars"
+														]
+													},
+													"amount": {
+														"type": "number",
+														"exclusiveMinimum": 0,
+														"maximum": 1000000000000
+													},
+													"stop_share": {
+														"anyOf": [
+															{
+																"type": "number",
+																"enum": [
+																	80
+																]
+															},
+															{
+																"type": "number",
+																"enum": [
+																	90
+																]
+															},
+															{
+																"type": "number",
+																"enum": [
+																	100
+																]
+															}
+														],
+														"default": 100
+													},
+													"timezone": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64,
+														"default": "UTC"
+													}
+												},
+												"required": [
+													"unit",
+													"amount"
 												]
 											},
 											"voice": {
@@ -35837,6 +35937,567 @@
 					},
 					"500": {
 						"description": "Stripe error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/daily-budget": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "The workspace daily target and whether the dollar unit can be used",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Current daily target (null when off) and the dollar-unit check",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"daily_budget": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
+													]
+												},
+												"amount": {
+													"type": "number",
+													"exclusiveMinimum": 0,
+													"maximum": 1000000000000
+												},
+												"stop_share": {
+													"anyOf": [
+														{
+															"type": "number",
+															"enum": [
+																80
+															]
+														},
+														{
+															"type": "number",
+															"enum": [
+																90
+															]
+														},
+														{
+															"type": "number",
+															"enum": [
+																100
+															]
+														}
+													],
+													"default": 100
+												},
+												"timezone": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64,
+													"default": "UTC"
+												}
+											},
+											"required": [
+												"unit",
+												"amount"
+											]
+										},
+										"dollar_unit": {
+											"type": "object",
+											"properties": {
+												"available": {
+													"type": "boolean"
+												},
+												"reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"days": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"date": {
+																"type": "string"
+															},
+															"ended_sessions": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"zero_cost_sessions": {
+																"type": "integer",
+																"minimum": 0
+															}
+														},
+														"required": [
+															"date",
+															"ended_sessions",
+															"zero_cost_sessions"
+														]
+													}
+												}
+											},
+											"required": [
+												"available",
+												"reason",
+												"days"
+											]
+										}
+									},
+									"required": [
+										"daily_budget",
+										"dollar_unit"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Set the workspace daily target, or switch it off with null",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"daily_budget": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"unit": {
+												"type": "string",
+												"enum": [
+													"tokens",
+													"dollars"
+												]
+											},
+											"amount": {
+												"type": "number",
+												"exclusiveMinimum": 0,
+												"maximum": 1000000000000
+											},
+											"stop_share": {
+												"anyOf": [
+													{
+														"type": "number",
+														"enum": [
+															80
+														]
+													},
+													{
+														"type": "number",
+														"enum": [
+															90
+														]
+													},
+													{
+														"type": "number",
+														"enum": [
+															100
+														]
+													}
+												],
+												"default": 100
+											},
+											"timezone": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 64,
+												"default": "UTC"
+											}
+										},
+										"required": [
+											"unit",
+											"amount"
+										]
+									}
+								},
+								"required": [
+									"daily_budget"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Daily target stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"daily_budget": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
+													]
+												},
+												"amount": {
+													"type": "number",
+													"exclusiveMinimum": 0,
+													"maximum": 1000000000000
+												},
+												"stop_share": {
+													"anyOf": [
+														{
+															"type": "number",
+															"enum": [
+																80
+															]
+														},
+														{
+															"type": "number",
+															"enum": [
+																90
+															]
+														},
+														{
+															"type": "number",
+															"enum": [
+																100
+															]
+														}
+													],
+													"default": 100
+												},
+												"timezone": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64,
+													"default": "UTC"
+												}
+											},
+											"required": [
+												"unit",
+												"amount"
+											]
+										},
+										"dollar_unit": {
+											"type": "object",
+											"properties": {
+												"available": {
+													"type": "boolean"
+												},
+												"reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"days": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"date": {
+																"type": "string"
+															},
+															"ended_sessions": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"zero_cost_sessions": {
+																"type": "integer",
+																"minimum": 0
+															}
+														},
+														"required": [
+															"date",
+															"ended_sessions",
+															"zero_cost_sessions"
+														]
+													}
+												}
+											},
+											"required": [
+												"available",
+												"reason",
+												"days"
+											]
+										}
+									},
+									"required": [
+										"daily_budget",
+										"dollar_unit"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The dollar unit is locked until cost numbers are reliable",
 						"content": {
 							"application/json": {
 								"schema": {
