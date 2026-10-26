@@ -11,18 +11,28 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const TOKEN = 'quokkadrift'
 
-/** Collects the analytics events the app logs while no PostHog key is set. */
-function collectAnalytics(page: Page): () => string[] {
-	const events: string[] = []
-	page.on('console', (msg) => {
-		const text = msg.text()
-		if (text.startsWith('[analytics]')) events.push(text)
+type AnalyticsEvent = Record<string, unknown>
+
+/**
+ * Collects the analytics events the app logs while no PostHog key is set. The
+ * payload is read from the console message's second argument: msg.text() cuts a
+ * logged object to a five-property preview, which drops the later fields.
+ */
+function collectAnalytics(page: Page): () => AnalyticsEvent[] {
+	const events: AnalyticsEvent[] = []
+	page.on('console', async (msg) => {
+		if (!msg.text().startsWith('[analytics]')) return
+		try {
+			const payload = await msg.args()[1]?.jsonValue()
+			if (payload && typeof payload === 'object') events.push(payload as AnalyticsEvent)
+		} catch {
+			// The page moved on before the payload could be read.
+		}
 	})
 	return () => events
 }
 
-const eventNamed = (events: string[], name: string) =>
-	events.filter((e) => e.includes(`name: ${name}`))
+const eventNamed = (events: AnalyticsEvent[], name: string) => events.filter((e) => e.name === name)
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search v2 at ${vp.label}`, () => {
@@ -97,14 +107,16 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}`))
 
 			// The events arrived, with the v2 fields and no query text.
-			const performed = eventNamed(events(), 'search_performed')
-			expect(performed.length).toBeGreaterThan(0)
-			expect(performed.some((e) => e.includes('ui_version: v2'))).toBe(true)
-			expect(eventNamed(events(), 'search_filter_changed').length).toBeGreaterThan(0)
-			const opened = eventNamed(events(), 'search_result_opened')
-			expect(opened.length).toBeGreaterThan(0)
-			expect(opened[opened.length - 1]).toContain('ui_version: v2')
-			expect(events().some((e) => e.includes(TOKEN))).toBe(false)
+			await expect
+				.poll(() => eventNamed(events(), 'search_performed').some((e) => e.ui_version === 'v2'))
+				.toBe(true)
+			await expect
+				.poll(() => eventNamed(events(), 'search_filter_changed').length)
+				.toBeGreaterThan(0)
+			await expect
+				.poll(() => eventNamed(events(), 'search_result_opened').some((e) => e.ui_version === 'v2'))
+				.toBe(true)
+			expect(JSON.stringify(events()).includes(TOKEN)).toBe(false)
 		})
 
 		test('Backspace at the start turns the pill back into its word', async ({ page, account }) => {
