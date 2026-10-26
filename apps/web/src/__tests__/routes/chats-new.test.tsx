@@ -168,6 +168,14 @@ describe('New chat', () => {
 		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
 	})
 
+	it('puts the ?text= URL param in the message box and sends nothing', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'what changed today' })
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('what changed today')
+		expect(mockCreateConversation).not.toHaveBeenCalled()
+	})
+
 	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {
 		mockConversationsInfinite.mockReturnValue(
 			conversationsPage([

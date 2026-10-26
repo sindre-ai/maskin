@@ -1,5 +1,6 @@
 import { CommandPalette } from '@/components/command-palette'
 import type { SearchRow } from '@/hooks/use-workspace-search'
+import { pushRecentObject } from '@/lib/search-recents'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -44,11 +45,18 @@ vi.mock('@/hooks/use-objects', () => ({
 
 vi.mock('@/hooks/use-workspace-search', () => ({
 	useWorkspaceSearch: vi.fn(() => ({ rows: [], isSettled: true })),
-	matches: (query: string, ...fields: (string | null | undefined)[]) => {
-		if (!query) return true
-		const needle = query.toLowerCase()
-		return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
-	},
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: vi.fn(() => ({ data: [] })),
+}))
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: vi.fn(() => ({ data: undefined })),
+}))
+
+vi.mock('@/hooks/use-loops', () => ({
+	useLoops: vi.fn(() => ({ data: [] })),
 }))
 
 vi.mock('@/hooks/use-available-object-types', () => ({
@@ -94,6 +102,9 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
+import { useActors } from '@/hooks/use-actors'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useLoops } from '@/hooks/use-loops'
 import { useObjects } from '@/hooks/use-objects'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspaceSearch } from '@/hooks/use-workspace-search'
@@ -116,7 +127,15 @@ describe('CommandPalette', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		installGlobalDomMocks()
+		localStorage.clear()
 		vi.mocked(useObjects).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useObjects>)
+		vi.mocked(useActors).mockReturnValue({
+			data: [{ id: 'cos-1', type: 'agent', name: 'Chief of Staff' }],
+		} as unknown as ReturnType<typeof useActors>)
+		vi.mocked(useConversationsInfinite).mockReturnValue({
+			data: undefined,
+		} as unknown as ReturnType<typeof useConversationsInfinite>)
+		vi.mocked(useLoops).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useLoops>)
 		vi.mocked(useWorkspaceSearch).mockReturnValue({
 			rows: [],
 			isSettled: true,
@@ -435,6 +454,158 @@ describe('CommandPalette', () => {
 
 		expect(screen.getByText('New chat')).toBeInTheDocument()
 		expect(screen.getByText('New bet')).toBeInTheDocument()
+	})
+
+	it('finds a command by its initials', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'nc')
+
+		const rows = screen.getAllByRole('option').map((option) => option.textContent ?? '')
+		expect(rows.some((row) => row.includes('New chat'))).toBe(true)
+	})
+
+	it('shows the last things opened when the field is empty, not the list order', async () => {
+		const user = userEvent.setup()
+		pushRecentObject('ws-1', 'o-old')
+		pushRecentObject('ws-1', 'o-new')
+		vi.mocked(useObjects).mockReturnValue({
+			data: [
+				buildObjectResponse({ id: 'o-unopened', title: 'First in list', type: 'task' }),
+				buildObjectResponse({ id: 'o-old', title: 'Opened earlier', type: 'task' }),
+				buildObjectResponse({ id: 'o-new', title: 'Opened last', type: 'bet' }),
+			],
+		} as unknown as ReturnType<typeof useObjects>)
+		vi.mocked(useConversationsInfinite).mockReturnValue({
+			data: {
+				pages: [
+					{
+						conversations: [
+							{ id: 'c1', title: 'Weekly sync', lastMessageAt: '2026-10-25T10:00:00Z' },
+						],
+					},
+				],
+			},
+		} as unknown as ReturnType<typeof useConversationsInfinite>)
+		vi.mocked(useLoops).mockReturnValue({
+			data: [{ id: 'l1', name: 'Daily digest', updatedAt: '2026-10-24T10:00:00Z' }],
+		} as unknown as ReturnType<typeof useLoops>)
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+
+		expect(screen.getByText('Recent')).toBeInTheDocument()
+		const rows = screen.getAllByRole('option').map((option) => option.textContent ?? '')
+		expect(rows.slice(0, 4).map((row) => row.replace(/BET|TASK|CHAT|LOOP|↵/g, ''))).toEqual([
+			'Opened last',
+			'Opened earlier',
+			'Weekly sync',
+			'Daily digest',
+		])
+		expect(screen.queryByText('First in list')).not.toBeInTheDocument()
+
+		await user.click(screen.getByText('Weekly sync'))
+		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/chats/c1' })
+	})
+
+	it('has no Recent group when nothing was opened and there are no chats or loops', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+
+		expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+	})
+
+	it('adds a Settings row for a settings page name, and no more than four', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		const input = screen.getByPlaceholderText('Run a command or jump to…')
+		await user.type(input, 'keychain')
+		await user.click(screen.getByText('Settings › Keychain'))
+		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/settings/keychain' })
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'e')
+		const settingsRows = screen
+			.getAllByRole('option')
+			.filter((option) => (option.textContent ?? '').includes('Settings ›'))
+		expect(settingsRows).toHaveLength(4)
+	})
+
+	it('goes to Triggers', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.click(screen.getByText('Triggers'))
+
+		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/triggers' })
+	})
+
+	it('with no results shows the empty state and ends on an Ask Chief of Staff row that sends nothing', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'qzxv')
+
+		expect(
+			screen.getByText('Nothing matches “qzxv”. Try fewer words, or ask an agent.'),
+		).toBeInTheDocument()
+		expect(screen.getByText(/no matches, try fewer words or other types/)).toBeInTheDocument()
+		const options = screen.getAllByRole('option')
+		const last = options[options.length - 1]
+		expect(last.textContent).toContain('Ask Chief of Staff')
+
+		await user.click(last)
+		expect(mockNavigate).toHaveBeenCalledTimes(1)
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-1' },
+			search: { agentId: 'cos-1', agentName: 'Chief of Staff', text: 'qzxv' },
+		})
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
+	})
+
+	it('offers the Ask row for three words and for a trailing question mark, but not for two words', async () => {
+		const user = userEvent.setup()
+		vi.mocked(useWorkspaceSearch).mockReturnValue({
+			rows: [buildSearchRow({ title: 'plan' })],
+			isSettled: true,
+		} as unknown as ReturnType<typeof useWorkspaceSearch>)
+		render(<CommandPalette />)
+		await user.keyboard('{Control>}k{/Control}')
+		const input = screen.getByPlaceholderText('Run a command or jump to…')
+		const askShown = () =>
+			screen
+				.getAllByRole('option')
+				.some((o) => (o.textContent ?? '').includes('Ask Chief of Staff'))
+
+		await user.type(input, 'launch plan')
+		expect(askShown()).toBe(false)
+
+		await user.type(input, ' now')
+		expect(askShown()).toBe(true)
+
+		await user.clear(input)
+		await user.type(input, 'plan?')
+		expect(askShown()).toBe(true)
+	})
+
+	it('hides the Ask row when the workspace has no Chief of Staff', async () => {
+		const user = userEvent.setup()
+		vi.mocked(useActors).mockReturnValue({ data: [] } as unknown as ReturnType<typeof useActors>)
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'qzxv')
+
+		expect(screen.queryByText(/Ask Chief of Staff/)).not.toBeInTheDocument()
 	})
 
 	it('the terminal Search row hands the typed query to /search', async () => {
