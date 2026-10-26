@@ -1,5 +1,5 @@
 import type { MessageResponse } from '@/lib/api'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -215,6 +215,25 @@ describe('MessageBubble', () => {
 			)
 			expect(container.querySelector('[data-linked-card]')).not.toBeNull()
 			expect(container.querySelector('.bg-primary')).toBeNull()
+		})
+
+		it('sets the width by what the message holds: a bubble with a card is min(520px, 88%), a lone card up to 460px, words fit their text', () => {
+			const holder = (content: string) => {
+				const { container } = renderBubble(
+					buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content }),
+				)
+				return container.querySelector('[data-linked-card]')?.closest('.relative') ?? null
+			}
+			expect(holder(`is this done?\n${address}`)).toHaveClass('w-[min(520px,88%)]')
+			cleanup()
+			expect(holder(address)).toHaveClass('w-full', 'max-w-[460px]')
+			cleanup()
+			const { container } = renderBubble(
+				buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content: 'just words' }),
+			)
+			const words = container.querySelector('.bg-primary')?.parentElement
+			expect(words).not.toHaveClass('w-[min(520px,88%)]')
+			expect(words).not.toHaveClass('max-w-[460px]')
 		})
 	})
 
