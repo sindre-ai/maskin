@@ -209,7 +209,9 @@ export function ThreadComposer({
 		messagesQuery.hasNextPage,
 		self?.id,
 	])
-	const placeholder = cue?.placeholder ?? todaysPlaceholder
+	// A reply names who it answers, which is the point of the box; the group-chat cue's wording
+	// is for starting a message, so it keeps only its hint here.
+	const placeholder = reply ? todaysPlaceholder : (cue?.placeholder ?? todaysPlaceholder)
 
 	return (
 		<Composer
