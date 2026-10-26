@@ -440,6 +440,96 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
+	describe('stale sandbox name on create', () => {
+		const nameTaken = Object.assign(new Error('boom'), {
+			stderr: 'Error: sandbox name already exists: orch-5 (UNIQUE constraint failed)',
+		})
+
+		// Scripted runner: create fails once with nameTaken, then succeeds. The name
+		// stays listed (with listedAs status) until remove has run and `goneAfterPolls`
+		// further list calls have gone by.
+		function makeStaleRunner(listedAs: string, goneAfterPolls = 0) {
+			const calls: string[] = []
+			let creates = 0
+			let removed = false
+			let polls = 0
+			const run = async (_bin: string, args: readonly string[]) => {
+				const verb = args[0] ?? ''
+				calls.push(verb)
+				if (verb === 'create') {
+					creates++
+					if (creates === 1) throw nameTaken
+					removed = false
+					return { stdout: '', stderr: '' }
+				}
+				if (verb === 'remove') {
+					removed = true
+					return { stdout: '', stderr: '' }
+				}
+				if (verb === 'list') {
+					if (creates >= 2) {
+						return { stdout: JSON.stringify([{ name: 'orch-5', status: 'Running' }]), stderr: '' }
+					}
+					if (removed && polls++ >= goneAfterPolls) return { stdout: '[]', stderr: '' }
+					return { stdout: JSON.stringify([{ name: 'orch-5', status: listedAs }]), stderr: '' }
+				}
+				return { stdout: '', stderr: '' }
+			}
+			return { run, calls }
+		}
+
+		it('removes a leftover stopped sandbox and retries create once', async () => {
+			const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-stale-'))
+			try {
+				const { run, calls } = makeStaleRunner('Stopped')
+				const result = await spawnSession(
+					{ ...baseInput, sessionId: 'orch-5', sessionDir: dir },
+					{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+				)
+				expect(result.sandboxName).toBe('orch-5')
+				expect(calls.filter((c) => c === 'create')).toHaveLength(2)
+				expect(calls).toContain('remove')
+			} finally {
+				await rm(dir, { recursive: true, force: true })
+			}
+		})
+
+		it('waits for the name to be released before retrying create', async () => {
+			const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-stale-wait-'))
+			try {
+				const { run, calls } = makeStaleRunner('Stopped', 3)
+				await spawnSession(
+					{ ...baseInput, sessionId: 'orch-5', sessionDir: dir },
+					{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+				)
+				const removeAt = calls.indexOf('remove')
+				const secondCreateAt = calls.lastIndexOf('create')
+				const listsBetween = calls.slice(removeAt, secondCreateAt).filter((c) => c === 'list')
+				expect(listsBetween.length).toBeGreaterThan(1)
+			} finally {
+				await rm(dir, { recursive: true, force: true })
+			}
+		})
+
+		it('does not touch a Running sandbox with the same name', async () => {
+			const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-stale-running-'))
+			try {
+				const { run, calls } = makeStaleRunner('Running')
+				await expect(
+					spawnSession(
+						{ ...baseInput, sessionId: 'orch-5', sessionDir: dir },
+						{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+					),
+				).rejects.toThrow(/msb create failed.*already exists/)
+				expect(calls.filter((c) => c === 'create')).toHaveLength(1)
+				// A live session must survive a duplicate spawn request.
+				expect(calls).not.toContain('remove')
+			} finally {
+				await rm(dir, { recursive: true, force: true })
+			}
+		})
+	})
+
 	it('throws and best-effort removes the sandbox when the polling deadline expires', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-stuck-'))
 		try {
