@@ -456,7 +456,11 @@ describe('push producers', () => {
 			expect(rows.map((r) => r.targetActorId).sort()).toEqual(
 				[humanId, secondHumanId, thirdHumanId].sort(),
 			)
-			expect(rows[0]?.metadata).toMatchObject({ thread_root_id: rootId })
+			expect(rows[0]?.metadata).toMatchObject({
+				thread_root_id: rootId,
+				thread_also_in_channel: true,
+				push_collapse_key: `chat:${conversationId}`,
+			})
 		})
 
 		it('leaves a mentioned newcomer to the mention push, which opens the thread', async () => {

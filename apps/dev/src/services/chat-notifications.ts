@@ -309,15 +309,22 @@ export async function notifyChatReply(
 			title: author.name,
 			content: previewText(msg.content),
 			sessionId: msg.sessionId,
-			// An also-in-channel reply opens its thread when tapped.
-			...(msg.threadRootId ? { threadRootId: msg.threadRootId } : {}),
-			extraMetadata: asksQuestion
-				? { push_category: 'needs_you' }
-				: {
-						push_category: 'conversation',
-						push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
-						[PUSH_ONLY_METADATA_KEY]: true,
-					},
+			// An also-in-channel reply opens its thread when tapped, but is still a chat message:
+			// it collapses and rate-limits with the chat, and counts as read when either the
+			// chat or the thread has been read past it (see NotificationPushFanout.alreadyRead).
+			...(msg.threadRootId
+				? { threadRootId: msg.threadRootId, collapseKey: `chat:${msg.conversationId}` }
+				: {}),
+			extraMetadata: {
+				...(msg.threadRootId ? { thread_also_in_channel: true } : {}),
+				...(asksQuestion
+					? { push_category: 'needs_you' }
+					: {
+							push_category: 'conversation',
+							push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+							[PUSH_ONLY_METADATA_KEY]: true,
+						}),
+			},
 		})
 	} catch (err) {
 		logger.warn('Failed to create notification for chat reply', {

@@ -340,6 +340,66 @@ describe('notification_preferences', () => {
 				expect(sent).toHaveLength(0)
 				f.stop()
 			})
+
+			describe('a reply that is also in the main chat', () => {
+				let alsoNotificationId: string
+
+				beforeEach(async () => {
+					const [n] = await db
+						.insert(notifications)
+						.values({
+							workspaceId,
+							type: 'good_news',
+							title: 'Hand-off result',
+							sourceActorId: (await insertActor(db))?.id as string,
+							targetActorId: actorId,
+							status: 'seen',
+							metadata: {
+								push_category: 'conversation',
+								push_delay_seconds: PUSH_DELAY_SECONDS,
+								push_only: true,
+								conversation_id: conversationId,
+								message_id: replyId,
+								thread_root_id: rootId,
+								thread_also_in_channel: true,
+								push_collapse_key: `chat:${conversationId}`,
+							},
+						})
+						.returning()
+					alsoNotificationId = n?.id as string
+				})
+
+				const alsoEv = () => ({ ...ev(), entity_id: alsoNotificationId })
+
+				it('skips when the chat was read past it, even though the thread never was', async () => {
+					const { f, sent } = fanout()
+					await f.handleEvent(alsoEv())
+					await db
+						.update(conversationParticipants)
+						.set({ lastReadMessageId: replyId })
+						.where(
+							and(
+								eq(conversationParticipants.conversationId, conversationId),
+								eq(conversationParticipants.actorId, actorId),
+							),
+						)
+					await sleep(PAST_DELAY_MS)
+					expect(sent).toHaveLength(0)
+					f.stop()
+				})
+
+				it('still sends when neither the chat nor the thread was read, collapsing with the chat', async () => {
+					const { f, sent } = fanout()
+					await f.handleEvent(alsoEv())
+					await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5_000 })
+					expect(sent[0]).toMatchObject({
+						conversationId,
+						threadRootId: rootId,
+						collapseKey: `chat:${conversationId}`,
+					})
+					f.stop()
+				})
+			})
 		})
 
 		it('reads the preferences row: a disabled category never pushes', async () => {
