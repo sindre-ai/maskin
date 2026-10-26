@@ -8094,11 +8094,6 @@ export function createMcpServer(config: McpConfig) {
 						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
 					)
 				}
-				if (status === 404) {
-					return fail(
-						'Adding a server from the chat is not available in this workspace, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
-					)
-				}
 				if (status === 400) return fail(reasonFromError(err, 'invalid_param'))
 				throw err
 			}

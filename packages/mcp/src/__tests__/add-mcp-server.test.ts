@@ -94,15 +94,6 @@ describe('add_mcp_server', () => {
 		expect(result.content[0]?.text).toContain('An argument looks like a secret')
 	})
 
-	it('says the feature is not available, and what to do instead, when it is off (404)', async () => {
-		createMcpServer({ ...config, maskinSessionId: SESSION_ID })
-		fetchMock.mockResolvedValue(errorResponse(404, 'Not on'))
-		const result = await handlers.add_mcp_server(linear)
-		expect(result.isError).toBe(true)
-		expect(result.content[0]?.text).toContain('not available in this workspace')
-		expect(result.content[0]?.text).toContain('Settings → Integrations')
-	})
-
 	it('reports there is nobody to ask when the session is not a chat (409)', async () => {
 		createMcpServer({ ...config, maskinSessionId: SESSION_ID })
 		fetchMock.mockResolvedValue(errorResponse(409, 'Not interactive'))

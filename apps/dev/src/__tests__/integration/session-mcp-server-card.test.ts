@@ -2,9 +2,8 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { conversations, messages, workspaceMembers } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -87,8 +86,6 @@ describe('POST /sessions/:id/mcp-server-card', () => {
 		const ws = await insertWorkspace(db, humanId)
 		if (!ws) throw new Error('failed to seed workspace')
 		workspaceId = ws.id
-		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:chat-add-mcp-server`
-		_resetFeatureFlagConfig()
 
 		const agent = await insertActor(db, { type: 'agent' })
 		if (!agent) throw new Error('failed to seed agent')
@@ -101,11 +98,6 @@ describe('POST /sessions/:id/mcp-server-card', () => {
 			.returning()
 		if (!conversation) throw new Error('failed to seed conversation')
 		conversationId = conversation.id
-	})
-
-	afterEach(() => {
-		process.env.FF_WORKSPACE_FEATURES = undefined
-		_resetFeatureFlagConfig()
 	})
 
 	async function messagesFor(conversation: string) {
@@ -184,18 +176,6 @@ describe('POST /sessions/:id/mcp-server-card', () => {
 		const res = await app.request(mcpServerCard(session.id, workspaceId, body))
 
 		expect(res.status).toBe(400)
-		expect(await messagesFor(conversationId)).toHaveLength(0)
-	})
-
-	it('answers 404 and posts nothing while the flag is off for the workspace', async () => {
-		process.env.FF_WORKSPACE_FEATURES = undefined
-		_resetFeatureFlagConfig()
-		const session = await chatSession()
-		const app = createSessionsApp(agentId)
-
-		const res = await app.request(mcpServerCard(session.id, workspaceId, LINEAR))
-
-		expect(res.status).toBe(404)
 		expect(await messagesFor(conversationId)).toHaveLength(0)
 	})
 

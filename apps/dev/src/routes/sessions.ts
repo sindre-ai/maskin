@@ -37,7 +37,6 @@ import { streamSSE } from 'hono/streaming'
 import { maskArgs } from '../lib/actor-tools-redaction'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
 import { providerLabel } from '../lib/integrations/access-preamble'
 import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -2281,7 +2280,7 @@ const mcpServerCardRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Session not found, or the feature is not on for this workspace',
+			description: 'Session not found',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -2307,10 +2306,6 @@ app.openapi(mcpServerCardRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
 	}
 	await isWorkspaceWriter(db, actorId, session.workspaceId)
-
-	if (!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.CHAT_ADD_MCP_SERVER)) {
-		return c.json(createApiError('NOT_FOUND', 'Adding a tool server from a chat is not on'), 404)
-	}
 
 	const target = cardTarget(session)
 	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)

@@ -48403,7 +48403,7 @@
 						}
 					},
 					"404": {
-						"description": "Session not found, or the feature is not on for this workspace",
+						"description": "Session not found",
 						"content": {
 							"application/json": {
 								"schema": {
