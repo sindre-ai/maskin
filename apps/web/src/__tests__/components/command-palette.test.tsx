@@ -415,9 +415,11 @@ describe('CommandPalette', () => {
 		// "ma" sits inside "command" and "to" inside "go to"; neither may list every row.
 		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'ma')
 
-		expect(screen.queryByText('New chat')).not.toBeInTheDocument()
-		expect(screen.getByText('Mark all read')).toBeInTheDocument()
-		expect(screen.getByText('Marketplace')).toBeInTheDocument()
+		// The typed letters are wrapped in <mark>, which splits each title across
+		// elements, so find the rows by their accessible name rather than exact text.
+		expect(screen.queryByRole('option', { name: /New chat/ })).not.toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Mark all read/ })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Marketplace/ })).toBeInTheDocument()
 		expect(screen.queryByText('Chats')).not.toBeInTheDocument()
 	})
 

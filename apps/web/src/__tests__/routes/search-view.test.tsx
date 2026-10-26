@@ -202,11 +202,13 @@ describe('SearchView', () => {
 
 		render(<SearchView />)
 
-		// Humans never enter the agents group, so the count is 2, not 3.
+		// Humans never enter the agents group (2, not 3); they get their own People group.
 		expect(screen.getByText('Agents · 2')).toBeInTheDocument()
+		expect(screen.getByText('People · 1')).toBeInTheDocument()
 		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /^Agents \(2\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^All \(3\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^People \(1\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^All \(4\)$/ })).toBeInTheDocument()
 	})
 
 	it('commits a group chip selection to the URL and hides the object filters', async () => {

@@ -112,7 +112,10 @@ describe('useWorkspaceSearch', () => {
 		}
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'mgnus' }))
 
-		expect(result.current.rows.map((r) => r.id)).toEqual(['a-1', 'h-1'])
+		// seedAll's object is returned by the (mocked) server search whatever the query,
+		// so only compare the actors.
+		const actors = result.current.rows.filter((r) => r.group !== 'objects')
+		expect(actors.map((r) => r.id)).toEqual(['a-1', 'h-1'])
 		expect(result.current.countsByGroup.people).toBe(1)
 	})
 
