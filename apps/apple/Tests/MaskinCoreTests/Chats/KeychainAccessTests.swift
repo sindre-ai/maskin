@@ -35,12 +35,30 @@ struct KeychainAccessTests {
 
 	@Test func repliesMatchTheWebCard() throws {
 		let request = try #require(KeychainAccessRequest(message: message(card)))
+		let vars = "KEYCHAIN_BYO_LOGIN_GOOGLE_MESH_FIRM_USERNAME and KEYCHAIN_BYO_LOGIN_GOOGLE_MESH_FIRM_PASSWORD"
 		#expect(
 			request.allowedReply(scope: .chat)
-				== "I've allowed you to use Google (Mesh Firm) from the Keychain in this chat only. Please carry on.")
+				== "I've allowed you to use Google (Mesh Firm) from the Keychain in this chat only. It's in your environment as \(vars). Reply with one short line to say you have it, then carry on."
+		)
 		#expect(
 			request.allowedReply(scope: .always)
-				== "I've allowed you to use Google (Mesh Firm) from the Keychain. Please carry on.")
+				== "I've allowed you to use Google (Mesh Firm) from the Keychain. It's in your environment as \(vars). Reply with one short line to say you have it, then carry on."
+		)
+	}
+
+	@Test func aHelpersRequestIsAnsweredThroughItsSession() throws {
+		let helper: JSONValue = .object([
+			"keychain_access_request": .object([
+				"session_id": .string("s"), "integration_id": .string("i"),
+				"credential_name": .string("Coolify"), "kind": .string("api_key"), "reply_to_session": .bool(true),
+			])
+		])
+		let request = try #require(KeychainAccessRequest(message: message(helper)))
+		#expect(request.replyToSession)
+		#expect(
+			request.allowedReply(scope: .always)
+				== "I've allowed you to use Coolify from the Keychain. It's in your environment as KEYCHAIN_BYO_APIKEY_COOLIFY. Carry on with the work."
+		)
 	}
 }
 
@@ -80,5 +98,43 @@ struct KeychainCaptureTests {
 		let body = Data(#"{"error":{"message":"Invalid fields: rawSecret"}}"#.utf8)
 		#expect(APIKeychainCaptureSource.failure(status: 400, body: body) == "Couldn't save: Invalid fields: rawSecret")
 		#expect(APIKeychainCaptureSource.failure(status: 500, body: body) == "Couldn't save. Try again.")
+	}
+}
+
+@Suite("Hidden card messages")
+struct HiddenCardMessageTests {
+	private func message(_ metadata: JSONValue?, thread: Int? = nil) -> ChatMessage {
+		ChatMessage(
+			id: "1", conversationID: "c", actorID: "a", actorName: "Sebastian", author: .human, kind: "message",
+			content: "x", metadata: metadata, threadRootID: thread)
+	}
+
+	@Test func aCardNudgeAndAHelperReturnAreHiddenFromTheTimeline() {
+		#expect(message(.object(["hidden_from_chat": .bool(true)])).showsInTimeline == false)
+		#expect(message(.object(["helper_return": .string("u")])).showsInTimeline == false)
+		#expect(message(.object(["mentions": .array([])])).showsInTimeline)
+		#expect(message(nil).showsInTimeline)
+	}
+
+	@Test func theHiddenMarkerAndCardAnswerGoOnTheWireWithTheApiKeyNames() throws {
+		let metadata = ChatSendMetadata(
+			hiddenFromChat: true, cardAnswer: ChatCardAnswer(messageID: 7, outcome: .declined))
+		let json = try #require(metadata.jsonValue)
+		#expect(json["hidden_from_chat"]?.boolValue == true)
+		#expect(json["card_answer"]?["message_id"]?.intValue == 7)
+		#expect(json["card_answer"]?["outcome"]?.stringValue == "declined")
+		#expect(ChatSendMetadata().isEmpty)
+		#expect(ChatSendMetadata(hiddenFromChat: false).isEmpty)
+	}
+
+	@Test func aDeclineIsReadBackFromTheMessageThatCarriesIt() throws {
+		let answer = try #require(
+			message(
+				.object([
+					"hidden_from_chat": .bool(true),
+					"card_answer": .object(["message_id": .number(7), "outcome": .string("declined")]),
+				])
+			).cardAnswer)
+		#expect(answer == ChatCardAnswer(messageID: 7, outcome: .declined))
 	}
 }

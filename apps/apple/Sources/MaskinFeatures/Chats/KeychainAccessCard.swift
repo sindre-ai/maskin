@@ -12,14 +12,18 @@ struct KeychainAccessCard: View {
 	let request: KeychainAccessRequest
 	let agentID: String
 	let conversationID: String
-	/// Posts the person's reply into the chat.
-	let onReply: (String) -> Void
+	/// The card's own message id, so a decline can be recorded against it.
+	let messageID: Int?
+	/// How the card was already answered (read from the chat), so it says so after a reload.
+	var answered: ChatCardAnswer.Outcome?
+	/// Posts the person's reply into the chat; it is hidden from the chat, as on the web.
+	let onReply: (String, ChatSendMetadata) -> Void
 
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var state: KeychainAccessState = .unknown
 	@State private var busy = false
 	@State private var error: String?
-	@State private var declined = false
+	@State private var declinedNow = false
 	@State private var stillRunning = false
 
 	var body: some View {
@@ -48,7 +52,7 @@ struct KeychainAccessCard: View {
 				VStack(spacing: MaskinSpace.s4) {
 					choice("Allow in this chat", primary: true) { await allow(.chat) }
 					choice("Always allow", primary: false) { await allow(.always) }
-					choice("Not now", primary: false) { decline() }
+					choice("Not now", primary: false) { await decline() }
 				}
 			}
 		}
@@ -64,6 +68,8 @@ struct KeychainAccessCard: View {
 	private var shape: RoundedRectangle {
 		RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 	}
+
+	private var declined: Bool { declinedNow || answered == .declined }
 
 	private var explanation: String {
 		let hint = request.hint.map { $0 + " " } ?? ""
@@ -123,7 +129,11 @@ struct KeychainAccessCard: View {
 			let relaunched = try await source.allow(request, scope: scope)
 			state = .allowed(scope)
 			if relaunched {
-				onReply(request.allowedReply(scope: scope))
+				if request.replyToSession {
+					try await helper()?.continueSession(sessionID: request.sessionID, content: request.allowedReply(scope: scope))
+				} else {
+					onReply(request.allowedReply(scope: scope), ChatSendMetadata(hiddenFromChat: true))
+				}
 			} else {
 				// The idle session could not be stopped, so it still lacks the credential.
 				stillRunning = true
@@ -135,8 +145,18 @@ struct KeychainAccessCard: View {
 		}
 	}
 
-	private func decline() {
-		declined = true
-		onReply(request.declinedReply)
+	private func decline() async {
+		declinedNow = true
+		let card = messageID.map { ChatCardAnswer(messageID: $0, outcome: .declined) }
+		if request.replyToSession {
+			if let card { try? await helper()?.sendInput(sessionID: request.sessionID, content: request.declinedReply, cardAnswer: card) }
+		} else {
+			onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
+		}
+	}
+
+	private func helper() -> HelperSessionReplying? {
+		guard let runtime, let workspaceID = runtime.environment.workspaceId else { return nil }
+		return APIHelperSessionSource(client: runtime.environment.client, workspaceID: workspaceID)
 	}
 }

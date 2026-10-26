@@ -11,12 +11,26 @@ public struct KeychainCredentialRequest: Equatable, Sendable {
 	public var kind: Kind
 	public var suggestedName: String?
 	public var hint: String?
+	/// A helper another agent started: not in this chat, so it is answered through its own session.
+	public var replyToSession: Bool
 
-	public init(sessionID: String, kind: Kind, suggestedName: String? = nil, hint: String? = nil) {
+	public init(
+		sessionID: String, kind: Kind, suggestedName: String? = nil, hint: String? = nil,
+		replyToSession: Bool = false
+	) {
 		self.sessionID = sessionID
 		self.kind = kind
 		self.suggestedName = suggestedName
 		self.hint = hint
+		self.replyToSession = replyToSession
+	}
+
+	/// What the person says back once saved; see `KeychainAccessRequest.allowedReply`.
+	public func savedReply(name: String) -> String {
+		let vars = KeychainCredentialName.envNames(kind: kind, name: name)
+		let where_ = vars.isEmpty ? "" : ". It's in your environment as \(vars.joined(separator: " and "))"
+		return "I've saved \(name) to the Keychain" + where_
+			+ (replyToSession ? ". Carry on with the work." : ". Reply with one short line to say you have it, then carry on.")
 	}
 
 	public init?(message: ChatMessage) {
@@ -24,7 +38,8 @@ public struct KeychainCredentialRequest: Equatable, Sendable {
 		else { return nil }
 		self.init(
 			sessionID: sessionID, kind: raw["kind"]?.stringValue.flatMap(Kind.init(rawValue:)) ?? .apiKey,
-			suggestedName: raw["suggested_name"]?.stringValue, hint: raw["hint"]?.stringValue)
+			suggestedName: raw["suggested_name"]?.stringValue, hint: raw["hint"]?.stringValue,
+			replyToSession: raw["reply_to_session"]?.boolValue == true)
 	}
 }
 

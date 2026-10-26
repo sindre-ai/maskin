@@ -133,13 +133,14 @@ struct ThreadScreen: View {
 			sendStatus: message.isPending ? MessageSendStatus.of(message, readBy: nil) : nil,
 			actions: actions, onRetrySend: { store.retrySend(message.id) },
 			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
-			onKeychainReply: { text in
+			onKeychainReply: { text, metadata in
 				// The allow or save goes back into this thread, to the agent that asked.
 				guard let rootID else { return }
 				store.reply(
 					text, in: rootID, to: message.author == .agent ? store.participant(for: message.actorID) : nil,
-					alsoInChannel: false)
+					alsoInChannel: false, metadata: metadata)
 			},
+			cardOutcome: message.serverID.flatMap { store.cardAnswerIndex[$0] },
 			chatAgents: store.participants.filter { $0.kind == .agent },
 			onApprovedDraft: { title, body in
 				// The yes goes back into this thread, to the agent that wrote the draft.

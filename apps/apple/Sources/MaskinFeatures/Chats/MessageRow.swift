@@ -177,7 +177,9 @@ struct MessageRow: View {
 	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
-	var onKeychainReply: (String) -> Void = { _ in }
+	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
+	/// How a person already answered an agent's card in this message (read from the chat).
+	var cardOutcome: ChatCardAnswer.Outcome?
 	/// The agents in this chat, who may use a credential saved from a Keychain card.
 	var chatAgents: [ChatParticipant] = []
 	var onSelectVersion: (Int) -> Void = { _ in }
@@ -393,7 +395,7 @@ struct MessageRow: View {
 			if let access = KeychainAccessRequest(message: message) {
 				KeychainAccessCard(
 					request: access, agentID: message.actorID, conversationID: message.conversationID,
-					onReply: onKeychainReply)
+					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let credential = KeychainCredentialRequest(message: message) {
 				KeychainRequestCard(

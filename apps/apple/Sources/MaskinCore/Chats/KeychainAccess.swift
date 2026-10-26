@@ -11,15 +11,19 @@ public struct KeychainAccessRequest: Equatable, Sendable {
 	public var credentialName: String
 	public var kind: Kind
 	public var hint: String?
+	/// A helper another agent started: not in this chat, so it is answered through its own session.
+	public var replyToSession: Bool
 
 	public init(
-		sessionID: String, integrationID: String, credentialName: String, kind: Kind, hint: String? = nil
+		sessionID: String, integrationID: String, credentialName: String, kind: Kind, hint: String? = nil,
+		replyToSession: Bool = false
 	) {
 		self.sessionID = sessionID
 		self.integrationID = integrationID
 		self.credentialName = credentialName
 		self.kind = kind
 		self.hint = hint
+		self.replyToSession = replyToSession
 	}
 
 	/// The request on a message, or nil when it carries none (or an incomplete one).
@@ -32,13 +36,18 @@ public struct KeychainAccessRequest: Equatable, Sendable {
 		self.init(
 			sessionID: sessionID, integrationID: integrationID, credentialName: name,
 			kind: raw["kind"]?.stringValue.flatMap(Kind.init(rawValue:)) ?? .apiKey,
-			hint: raw["hint"]?.stringValue)
+			hint: raw["hint"]?.stringValue, replyToSession: raw["reply_to_session"]?.boolValue == true)
 	}
 
-	/// What the person says back, as a plain message the agent reads on its fresh session.
+	/// What the person says back, as a message the agent reads on its fresh session. In a chat it
+	/// asks for one short line, so the person sees the agent has it; a helper just carries on.
 	public func allowedReply(scope: KeychainAccessScope) -> String {
-		"I've allowed you to use \(credentialName) from the Keychain"
-			+ (scope == .chat ? " in this chat only" : "") + ". Please carry on."
+		let vars = KeychainCredentialName.envNames(kind: kind, name: credentialName)
+		let where_ = vars.isEmpty ? "" : ". It's in your environment as \(vars.joined(separator: " and "))"
+		let head = "I've allowed you to use \(credentialName) from the Keychain"
+		if replyToSession { return head + where_ + ". Carry on with the work." }
+		return head + (scope == .chat ? " in this chat only" : "") + where_
+			+ ". Reply with one short line to say you have it, then carry on."
 	}
 
 	public var declinedReply: String {
@@ -117,5 +126,45 @@ public struct APIKeychainAccessSource: KeychainAccessing {
 		default:
 			throw KeychainAccessError("Couldn't allow it. Try again.")
 		}
+	}
+}
+
+/// Answers an agent that a helper started (`reply_to_session`): it is not in this chat, so the
+/// person's reply goes to its own session. `continueSession` starts a follow-up for a helper
+/// that has ended, which is what Allow and Save do (the grant stops its idle session);
+/// `sendInput` is a turn into a live one, which is what a decline does.
+public protocol HelperSessionReplying: Sendable {
+	func continueSession(sessionID: String, content: String) async throws
+	func sendInput(sessionID: String, content: String, cardAnswer: ChatCardAnswer) async throws
+}
+
+public struct APIHelperSessionSource: HelperSessionReplying {
+	private let client: Client
+	private let workspaceID: String
+
+	public init(client: Client, workspaceID: String) {
+		self.client = client
+		self.workspaceID = workspaceID
+	}
+
+	public func continueSession(sessionID: String, content: String) async throws {
+		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(
+			.init(
+				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(.init(content: content))))
+		guard case .created = output else { throw KeychainAccessError("Couldn't reach the agent. Try again.") }
+	}
+
+	public func sendInput(sessionID: String, content: String, cardAnswer: ChatCardAnswer) async throws {
+		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(
+			.init(
+				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(
+					.init(
+						content: content,
+						card_answer: .init(
+							message_id: cardAnswer.messageID,
+							outcome: cardAnswer.outcome == .declined ? .declined : .done)))))
+		guard case .ok = output else { throw KeychainAccessError("Couldn't reach the agent. Try again.") }
 	}
 }

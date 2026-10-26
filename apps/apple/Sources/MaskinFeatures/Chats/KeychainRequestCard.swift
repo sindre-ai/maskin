@@ -13,8 +13,8 @@ struct KeychainRequestCard: View {
 	let messageCreatedAt: Date?
 	/// The agents in this chat: all may use it unless one is unticked.
 	let agents: [ChatParticipant]
-	/// Posts the person's reply into the chat.
-	let onReply: (String) -> Void
+	/// Posts the person's reply into the chat; it is hidden from the chat, as on the web.
+	let onReply: (String, ChatSendMetadata) -> Void
 
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var name: String
@@ -29,7 +29,7 @@ struct KeychainRequestCard: View {
 
 	init(
 		request: KeychainCredentialRequest, messageCreatedAt: Date?, agents: [ChatParticipant],
-		onReply: @escaping (String) -> Void
+		onReply: @escaping (String, ChatSendMetadata) -> Void
 	) {
 		self.request = request
 		self.messageCreatedAt = messageCreatedAt
@@ -168,6 +168,11 @@ struct KeychainRequestCard: View {
 			credentials: env.auth.credentialsProvider)
 	}
 
+	private func helper() -> HelperSessionReplying? {
+		guard let runtime, let workspaceID = runtime.environment.workspaceId else { return nil }
+		return APIHelperSessionSource(client: runtime.environment.client, workspaceID: workspaceID)
+	}
+
 	private func save() async {
 		guard canSave, let source = source() else { return }
 		busy = true
@@ -187,9 +192,12 @@ struct KeychainRequestCard: View {
 			username = ""
 			savedName = displayName
 			if relaunched {
-				let vars = KeychainCredentialName.envNames(kind: request.kind, name: displayName)
-				let where_ = vars.isEmpty ? "" : ". It's in your environment as \(vars.joined(separator: " and "))"
-				onReply("I've saved \(displayName) to the Keychain\(where_). Please carry on.")
+				let reply = request.savedReply(name: displayName)
+				if request.replyToSession {
+					try await helper()?.continueSession(sessionID: request.sessionID, content: reply)
+				} else {
+					onReply(reply, ChatSendMetadata(hiddenFromChat: true))
+				}
 			} else {
 				// The idle session could not be stopped, so it still has no credential.
 				stillRunning = true
