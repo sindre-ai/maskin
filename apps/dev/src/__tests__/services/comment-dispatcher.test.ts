@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { PlanCapExceededError } from '../../lib/llm-routing'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
@@ -129,6 +130,67 @@ describe('CommentDispatcher', () => {
 			case: 'case_1_mention',
 			resolved_actor_id: agent.id,
 		})
+	})
+
+	it('logs a plan-cap block on a mentioned agent at warn, not error', async () => {
+		const { logger } = await import('../../lib/logger')
+		const logWarn = vi.spyOn(logger, 'warn').mockImplementation(() => logger)
+		const logError = vi.spyOn(logger, 'error').mockImplementation(() => logger)
+		const agent = buildActor({ type: 'agent' })
+		mockResults.selectQueue = [
+			[{ actorId: 'commenter-1', data: { content: 'Please look', mentions: [agent.id] } }],
+			[{ id: agent.id, type: agent.type }],
+		]
+		mockResults.insert = [
+			buildNotification({
+				targetActorId: agent.id,
+				sourceActorId: 'commenter-1',
+				type: 'needs_input',
+			}),
+		]
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new PlanCapExceededError({ plan: 'trial', used: 1009, cap: 1000, periodEnd: null }),
+		)
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(logWarn).toHaveBeenCalledWith(
+			'Mentioned agent session blocked by plan cap',
+			expect.objectContaining({ agentId: agent.id }),
+		)
+		expect(logError).not.toHaveBeenCalledWith(
+			'Failed to create session for @mentioned agent',
+			expect.anything(),
+		)
+	})
+
+	it('still logs other mentioned-agent session failures at error', async () => {
+		const { logger } = await import('../../lib/logger')
+		const logError = vi.spyOn(logger, 'error').mockImplementation(() => logger)
+		const agent = buildActor({ type: 'agent' })
+		mockResults.selectQueue = [
+			[{ actorId: 'commenter-1', data: { content: 'Please look', mentions: [agent.id] } }],
+			[{ id: agent.id, type: agent.type }],
+		]
+		mockResults.insert = [
+			buildNotification({
+				targetActorId: agent.id,
+				sourceActorId: 'commenter-1',
+				type: 'needs_input',
+			}),
+		]
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('actor does not exist'),
+		)
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(logError).toHaveBeenCalledWith(
+			'Failed to create session for @mentioned agent',
+			expect.objectContaining({ agentId: agent.id }),
+		)
 	})
 
 	it('mention of an agent outside the workspace → no notification, no session', async () => {

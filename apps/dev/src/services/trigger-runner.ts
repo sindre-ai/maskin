@@ -2670,14 +2670,21 @@ export class CommentDispatcher {
 			createdBy: ctx.commenterId,
 			...initiatedFrom,
 			await: 'none',
-		}).catch((err) =>
-			logger.error('Failed to create session for @mentioned agent', {
+		}).catch((err) => {
+			const fields = {
 				agentId: ctx.actor.id,
 				objectId: ctx.objectId,
 				notificationId: notification.id,
 				error: String(err),
-			}),
-		)
+			}
+			// A workspace over its plan cap is the cap working as designed, not a
+			// fault, so keep it out of Sentry (same split as handleSessionCreateFailure).
+			if (err instanceof PlanCapExceededError) {
+				logger.warn('Mentioned agent session blocked by plan cap', fields)
+				return
+			}
+			logger.error('Failed to create session for @mentioned agent', fields)
+		})
 	}
 
 	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {
