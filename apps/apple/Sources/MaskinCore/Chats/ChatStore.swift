@@ -832,6 +832,13 @@ public final class ChatStore {
 	) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !content.isEmpty else { return nil }
+		// The server refuses a message that holds a secret, so no entry point queues one: the main chat
+		// shows its own sheet first, and any other (a thread reply, a draft card) gets this notice
+		// instead of a failed row that would keep the key.
+		if SecretScanner.firstSecret(in: content) != nil {
+			notice = ChatsHTTPError.rawSecretMessage
+			return nil
+		}
 		do {
 			let pending = try queue.send(
 				conversationID: conversationID, content: content, metadata: metadata,

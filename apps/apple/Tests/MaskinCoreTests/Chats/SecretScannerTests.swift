@@ -67,3 +67,20 @@ struct SecretScannerTests {
 		#expect(shared.map(\.1) == SecretScanner.highConfidence.map(\.source))
 	}
 }
+
+@Suite("Secret in a send")
+struct SecretInASendTests {
+	private let key = "sk_live_" + String(repeating: "a1B2", count: 7)
+
+	@Test func theRefusalTheServerGivesIsOnePlainSentence() {
+		#expect(ChatsHTTPError.rawSecretMessage.contains("contains a secret"))
+		#expect(ChatsHTTPError.rawSecretMessage.contains("Keychain"))
+	}
+
+	@Test func aFailedRowKeepsTheWordsButNotTheKey() {
+		let content = "use \(key) for billing"
+		let kept = SecretScanner.withoutSecrets(content, SecretScanner.scan(content))
+		#expect(!kept.contains(key))
+		#expect(kept == "use for billing")
+	}
+}

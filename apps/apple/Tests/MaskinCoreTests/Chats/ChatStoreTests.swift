@@ -140,6 +140,34 @@ struct ChatStoreTests {
 		#expect(h.store.messages.count == 1)
 	}
 
+	@Test("a message that holds a secret is never queued, from any screen")
+	func secretIsNeverQueued() async {
+		let h = ChatHarness()
+		await h.store.start()
+		let key = "sk_live_" + String(repeating: "a1B2", count: 7)
+		#expect(h.store.send("use \(key) now") == nil)
+		#expect(h.store.messages.isEmpty)
+		#expect(h.store.notice == ChatsHTTPError.rawSecretMessage)
+		#expect(await h.api.sentContents.isEmpty)
+	}
+
+	@Test("a send the server refused for a secret keeps the words but not the key, in memory and on disk")
+	func refusedSecretDoesNotStayOnDisk() async throws {
+		let failedFile = FileManager.default.temporaryDirectory.appendingPathComponent("failed-\(UUID().uuidString).json")
+		defer { try? FileManager.default.removeItem(at: failedFile) }
+		let h = ChatHarness(failedFile: failedFile)
+		await h.store.start()
+		let key = "sk_live_" + String(repeating: "a1B2", count: 7)
+		await h.api.failNextSends([ChatsHTTPError(status: 400, message: ChatsHTTPError.rawSecretMessage)])
+		// Straight onto the queue, as a path that does not pass the store's own check would.
+		_ = try h.queue.send(conversationID: "c1", content: "use \(key) for billing", afterServerID: nil)
+		#expect(await eventually { !h.queue.failed.isEmpty })
+		#expect(h.queue.failed.first?.content == "use for billing")
+		let onDisk = try String(contentsOf: failedFile, encoding: .utf8)
+		#expect(!onDisk.contains(key))
+		#expect(onDisk.contains("use for billing"))
+	}
+
 	@Test("a failed message survives a relaunch so the words are never lost")
 	func failedSurvivesRelaunch() async {
 		let failedFile = FileManager.default.temporaryDirectory

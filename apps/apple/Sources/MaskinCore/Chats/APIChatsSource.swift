@@ -323,9 +323,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			let code = (try? bad.body.json)?.error.code
 			throw ChatsHTTPError(
 				status: 400,
-				message: code == "RAW_SECRET_DETECTED"
-					? "That message looks like it contains a secret, so it wasn't sent. Cut the secret out, or save it to the Keychain."
-					: "The message was rejected.")
+				message: code == "RAW_SECRET_DETECTED" ? ChatsHTTPError.rawSecretMessage : "The message was rejected.")
 		case .notFound:
 			throw ChatsHTTPError(
 				status: 404,
