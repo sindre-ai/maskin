@@ -105,8 +105,7 @@ export function sumResultUsageFromLogChunks(chunks: string[]): SessionUsage | nu
 		cacheReadInputTokens: null,
 		durationMs: null,
 	}
-	const add = (sum: number | null, next: number | null) =>
-		next === null ? sum : (sum ?? 0) + next
+	const add = (sum: number | null, next: number | null) => (next === null ? sum : (sum ?? 0) + next)
 	let found = false
 	for (const line of chunks.join('').split('\n')) {
 		const result = parseResultLine(line)
