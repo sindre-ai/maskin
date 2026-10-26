@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
@@ -137,12 +137,12 @@ describe('LinkedObjectCard', () => {
 		}
 	}
 
-	it('ends a draft in Approve and send, not the next phase, and names the chat so the server tells the agent', async () => {
+	it('ends a draft in Approve draft, not the next phase, and names the chat so the server tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
-		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
+		await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
 		expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 	})
 
@@ -179,7 +179,7 @@ describe('LinkedObjectCard', () => {
 		})
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
-		expect(screen.getByRole('button', { name: /Approve and send/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Approve draft/ })).toBeDisabled()
 	})
 
 	it('shows a sent draft as sent, with nothing left to approve', async () => {
@@ -189,7 +189,7 @@ describe('LinkedObjectCard', () => {
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.getByText('Sent')).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Approve and send/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve draft/ })).not.toBeInTheDocument()
 	})
 
 	it('shows the title and text of an object the message links to', async () => {
@@ -344,7 +344,7 @@ describe('LinkedObjectCard', () => {
 			useObject.mockReturnValue({ data: draft() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
-			await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
+			await userEvent.click(screen.getByRole('button', { name: 'Approve draft' }))
 			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 		})
 
@@ -352,36 +352,36 @@ describe('LinkedObjectCard', () => {
 			useObject.mockReturnValue({ data: draft() })
 			renderCard()
 			await expandDraft()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeDisabled()
 			expect(approveMutate).not.toHaveBeenCalled()
 		})
 
-		it('does not offer a next phase instead of Approve and send', async () => {
+		it('does not offer a next phase instead of Approve draft', async () => {
 			useObject.mockReturnValue({ data: draft() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeInTheDocument()
 		})
 
 		it('cannot be approved while something it needs is missing', async () => {
 			useObject.mockReturnValue({ data: draft({ missing: ['To'], recipients: [] }) })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeDisabled()
 			expect(screen.getByText('Missing: To')).toBeInTheDocument()
 		})
 
 		it('shows that it is approved, and that it has been sent, instead of the button', async () => {
 			for (const [state, label] of [
-				['approved', 'Approved, sending'],
+				['approved', 'Approved, waiting for send'],
 				['sent', 'Sent'],
 			] as const) {
 				useObject.mockReturnValue({ data: draft({ delivery: { state, at: null } }) })
 				const { unmount } = renderCard()
 				await expandDraft()
 				expect(screen.getByText(label)).toBeInTheDocument()
-				expect(screen.queryByRole('button', { name: 'Approve and send' })).not.toBeInTheDocument()
+				expect(screen.queryByRole('button', { name: 'Approve draft' })).not.toBeInTheDocument()
 				unmount()
 			}
 		})
@@ -409,6 +409,88 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('Most agent demos fail on the handoff.')).toBeInTheDocument()
 			expect(screen.getByText('sebk_personal')).toBeInTheDocument()
 			expect(screen.queryByText(/--- POST ---/)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('a draft longer than the clamp', () => {
+		const CLAMP = 260
+		let heights: { scroll: number }
+		const longDraft = (hash = 'hash-1') =>
+			objectRow({
+				title: 'Follow up with Torben',
+				content: 'Hej Torben, her er dokumenterne.',
+				preview: {
+					...DRAFT_PREVIEW,
+					body: 'Hej Torben, her er dokumenterne.',
+					content_hash: hash,
+				},
+			})
+		const expandDraft = () => userEvent.click(screen.getByText('Follow up with Torben'))
+		const approveButton = () => screen.getByRole('button', { name: 'Approve draft' })
+
+		// jsdom has no layout: say how tall the text is against the clamp.
+		beforeEach(() => {
+			heights = { scroll: CLAMP + 200 }
+			vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
+				() => heights.scroll,
+			)
+			vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(CLAMP)
+		})
+		afterEach(() => vi.restoreAllMocks())
+
+		it('disables Approve draft with a hint until Show all is used, then approves', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(approveButton()).toBeDisabled()
+			expect(screen.getByText('Read the full draft first')).toBeInTheDocument()
+			await userEvent.click(approveButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(approveButton()).toBeEnabled()
+			expect(screen.queryByText('Read the full draft first')).not.toBeInTheDocument()
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		})
+
+		it('gates again after Show less', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			await userEvent.click(screen.getByRole('button', { name: 'Show less' }))
+			expect(approveButton()).toBeDisabled()
+		})
+
+		it('gates again when the text changes after it was opened in full', async () => {
+			useObject.mockReturnValue({ data: longDraft('hash-1') })
+			const { rerender } = renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(approveButton()).toBeEnabled()
+			useObject.mockReturnValue({ data: longDraft('hash-2') })
+			rerender(
+				<LinkedObjectCard workspaceId={WS} objectId={ID} conversationId={CHAT} agentId={AGENT} />,
+			)
+			expect(approveButton()).toBeDisabled()
+		})
+
+		it('has no gate and no Show all when the draft fits', async () => {
+			heights.scroll = CLAMP
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(approveButton()).toBeEnabled()
+			expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
+			expect(screen.queryByText('Read the full draft first')).not.toBeInTheDocument()
+		})
+
+		it('keeps no scroll box around the text', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			const { container } = renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(container.querySelector('.overflow-y-auto')).toBeNull()
 		})
 	})
 
