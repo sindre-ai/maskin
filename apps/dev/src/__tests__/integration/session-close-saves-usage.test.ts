@@ -57,7 +57,12 @@ describe('Closing a session saves its usage (Integration)', () => {
 		serverUrl = 'https://close-saves-usage.maskin.test:3001'
 		const [server] = await db
 			.insert(agentServers)
-			.values({ url: serverUrl, secret: 'x'.repeat(32), maxConcurrentSessions: 10, status: 'active' })
+			.values({
+				url: serverUrl,
+				secret: 'x'.repeat(32),
+				maxConcurrentSessions: 10,
+				status: 'active',
+			})
 			.returning()
 		if (!server) throw new Error('failed to insert agent server')
 		serverId = server.id
