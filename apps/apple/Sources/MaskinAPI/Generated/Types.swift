@@ -303,6 +303,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
     /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-from-chat/post`.
     func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -1408,6 +1413,21 @@ extension APIProtocol {
         body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Body
     ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output {
         try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input(
             path: path,
             headers: headers,
             body: body

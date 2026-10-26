@@ -78,6 +78,7 @@ filter:
     - /api/integrations/github/select-installation
     - /api/integrations/{id}/complete
     - /api/integrations/{id}/allow-from-chat
+    - /api/integrations/{id}/allow-access
     - /api/sessions/{id}/continue
     - /api/sessions/{id}/input
     - /api/marketplace/loops
