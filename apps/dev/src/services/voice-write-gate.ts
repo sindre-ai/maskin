@@ -40,7 +40,6 @@ const YES_OPENERS = [
 	'absolutely',
 	'definitely',
 	'exactly',
-	'right',
 	'agreed',
 	'perfect',
 	'great',
@@ -101,6 +100,33 @@ const NO_WORDS = new Set([
 	'nej',
 ])
 const MAX_YES_WORDS = 8
+/**
+ * Every word of a yes must be an approval word or plain filler. Opening with "sure" or
+ * "please" is not enough: "sure, what does it say" and "please read it to me first" are
+ * requests, not approvals, and on a held send or delete they must not count. A line with
+ * any other word is not a yes; the person is asked again.
+ */
+const YES_WORDS = new Set([
+	...YES_OPENERS.flatMap((opener) => opener.split(' ')),
+	'it',
+	'that',
+	'this',
+	'them',
+	'those',
+	'all',
+	'everything',
+	'now',
+	'please',
+	'thanks',
+	'thank',
+	'you',
+	'and',
+	'just',
+	'of',
+	'course',
+	'let',
+	'us',
+])
 
 function normalize(text: string): string {
 	return text
@@ -112,9 +138,9 @@ function normalize(text: string): string {
 }
 
 /**
- * A short, clear yes: a few words that open with a yes or an approval and carry
- * no "no", "but", "wait" or question. "Yes", "I approve", "sounds good, send it"
- * and "sure, do that" all count.
+ * A short, clear yes: a few words that open with a yes or an approval and are made only of
+ * approval and filler words, with no "no", "but", "wait" or question. "Yes", "I approve",
+ * "sounds good, send it" and "sure, do that" count; "sure, what does it say" does not.
  */
 export function isYes(text: string): boolean {
 	const normalized = normalize(text)
@@ -122,6 +148,7 @@ export function isYes(text: string): boolean {
 	const words = normalized.split(' ')
 	if (words.length > MAX_YES_WORDS) return false
 	if (words.some((word) => NO_WORDS.has(word))) return false
+	if (!words.every((word) => YES_WORDS.has(word))) return false
 	return YES_START.test(normalized)
 }
 
