@@ -8,6 +8,7 @@ import {
 	parseAssistantUsageFromLogChunks,
 	parseUsageFromLogChunks,
 	resolveSessionCostUsd,
+	sumResultUsageFromLogChunks,
 } from '../../services/usage-parser'
 import type { SessionUsage } from '../../services/usage-parser'
 
@@ -104,6 +105,73 @@ describe('parseUsageFromLogChunks', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+describe('sumResultUsageFromLogChunks', () => {
+	const turn = (cost: number, usage: Record<string, number>, durationMs: number) =>
+		JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			duration_ms: durationMs,
+			total_cost_usd: cost,
+			usage,
+		})
+
+	it('adds tokens and duration across turns and takes the last running cost', () => {
+		const chunk = [
+			turn(0.1, { input_tokens: 10, output_tokens: 100, cache_read_input_tokens: 1000 }, 1000),
+			turn(0.3, { input_tokens: 20, output_tokens: 200, cache_creation_input_tokens: 50 }, 2000),
+			turn(0.6, { input_tokens: 30, output_tokens: 300, cache_read_input_tokens: 3000 }, 3000),
+		].join('\n')
+		expect(sumResultUsageFromLogChunks([`${chunk}\n`])).toEqual({
+			totalCostUsd: 0.6,
+			inputTokens: 60,
+			outputTokens: 600,
+			cacheCreationInputTokens: 50,
+			cacheReadInputTokens: 4000,
+			durationMs: 6000,
+		})
+	})
+
+	it('matches the last-line parse when there is a single turn', () => {
+		expect(sumResultUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`])).toEqual(
+			parseUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`]),
+		)
+	})
+
+	it('skips sub-agent results and non-result lines', () => {
+		const subAgent = JSON.stringify({
+			type: 'result',
+			parent_tool_use_id: 'toolu_1',
+			total_cost_usd: 9,
+			usage: { input_tokens: 999, output_tokens: 999 },
+		})
+		const chunk = `${subAgent}\n{"type":"assistant"}\nnot json\n${RESULT_SUCCESS}\n`
+		const result = sumResultUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(820)
+		expect(result?.outputTokens).toBe(120)
+		expect(result?.totalCostUsd).toBe(0.00091)
+	})
+
+	it('reassembles a result line split across chunks', () => {
+		const half = Math.floor(RESULT_SUCCESS.length / 2)
+		const result = sumResultUsageFromLogChunks([
+			RESULT_SUCCESS.slice(0, half),
+			`${RESULT_SUCCESS.slice(half)}\n`,
+		])
+		expect(result?.inputTokens).toBe(820)
+	})
+
+	it('keeps a field null when no turn reported it', () => {
+		const result = sumResultUsageFromLogChunks([`${RESULT_SUCCESS}\n`])
+		expect(result?.cacheCreationInputTokens).toBeNull()
+		expect(result?.cacheReadInputTokens).toBeNull()
+	})
+
+	it('returns null when there is no result envelope', () => {
+		expect(sumResultUsageFromLogChunks([])).toBeNull()
+		expect(sumResultUsageFromLogChunks(['{"type":"assistant"}\nplain output\n'])).toBeNull()
 	})
 })
 

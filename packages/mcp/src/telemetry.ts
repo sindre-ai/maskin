@@ -482,6 +482,12 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
+	create_sub_chat: 'session_create',
+	// Chats
+	create_chat: 'chat_create',
+	add_chat_participant: 'chat_participant_add',
+	remove_chat_participant: 'chat_participant_remove',
+	stop_chat_agent: 'chat_agent_stop',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
 	ask_user_question: 'session_ask_user',

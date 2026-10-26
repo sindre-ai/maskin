@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
+	notificationPreferences,
 	voiceSessions,
 	workspaceMembers,
 	workspaceSkills,
@@ -28,6 +29,7 @@ import {
 	formatVoiceChatHistory,
 	loadVoiceChatHistory,
 } from '../services/voice-chat-history'
+import { buildVoiceInstructions } from '../services/voice-instructions'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
@@ -485,6 +487,14 @@ app.openapi(postOfferRoute, async (c) => {
 		.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
 		.where(eq(agentSkills.actorId, session.agentActorId))
 
+	// Who is calling and their time zone (when they have set one), so the agent knows the date.
+	const [caller] = await db
+		.select({ name: actors.name, timezone: notificationPreferences.timezone })
+		.from(actors)
+		.leftJoin(notificationPreferences, eq(notificationPreferences.actorId, actors.id))
+		.where(eq(actors.id, humanActorId))
+		.limit(1)
+
 	// The chat the call was started from, re-checked here: the caller may have left it
 	// between the two requests.
 	let chatHistory = ''
@@ -499,16 +509,14 @@ app.openapi(postOfferRoute, async (c) => {
 		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
 	}
 
-	const instructions = [
-		agent.systemPrompt ?? '',
-		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
-		// The server holds every write until the person says yes; this only makes the agent ask naturally.
-		'\n\nReading and searching need no permission. Anything that changes, sends, deletes or runs something is held by the system until the person says yes out loud. Before such a call, say in one plain sentence what you are about to do and ask for a yes. When the call comes back as not done yet, ask, wait for their answer, then repeat the same call with the confirmation_id you were given.',
-		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
-		chatHistory ? `\n\n${chatHistory}` : '',
-	]
-		.join('')
-		.trim()
+	const instructions = buildVoiceInstructions({
+		systemPrompt: agent.systemPrompt,
+		workspaceId: session.workspaceId,
+		voiceSessionId: session.id,
+		caller: { id: humanActorId, name: caller?.name ?? null, timezone: caller?.timezone ?? null },
+		skills: skillRows,
+		chatHistory,
+	})
 
 	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
 	try {

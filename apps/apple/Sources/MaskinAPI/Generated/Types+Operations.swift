@@ -59,6 +59,20 @@ public enum Operations {
                 ///
                 /// - Remark: Generated from `#/paths/api/objects/GET/query/include_archived`.
                 public var include_archived: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/starred`.
+                public var starred: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/working`.
+                public var working: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/attention_ids`.
+                public var attention_ids: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/group_by`.
+                public var group_by: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/group_value`.
+                public var group_value: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/tz`.
+                public var tz: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/GET/query/q`.
+                public var q: Swift.String?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -76,6 +90,13 @@ public enum Operations {
                 ///   - cursor_created_at: Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.
                 ///   - cursor_id:
                 ///   - include_archived: When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).
+                ///   - starred:
+                ///   - working:
+                ///   - attention_ids:
+                ///   - group_by:
+                ///   - group_value:
+                ///   - tz:
+                ///   - q:
                 public init(
                     _type: Swift.String? = nil,
                     status: Swift.String? = nil,
@@ -90,7 +111,14 @@ public enum Operations {
                     snapshot_at: Foundation.Date? = nil,
                     cursor_created_at: Foundation.Date? = nil,
                     cursor_id: Swift.String? = nil,
-                    include_archived: Swift.Bool? = nil
+                    include_archived: Swift.Bool? = nil,
+                    starred: Swift.Bool? = nil,
+                    working: Swift.Bool? = nil,
+                    attention_ids: Swift.String? = nil,
+                    group_by: Swift.String? = nil,
+                    group_value: Swift.String? = nil,
+                    tz: Swift.String? = nil,
+                    q: Swift.String? = nil
                 ) {
                     self._type = _type
                     self.status = status
@@ -106,6 +134,13 @@ public enum Operations {
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
                     self.include_archived = include_archived
+                    self.starred = starred
+                    self.working = working
+                    self.attention_ids = attention_ids
+                    self.group_by = group_by
+                    self.group_value = group_value
+                    self.tz = tz
+                    self.q = q
                 }
             }
             public var query: Operations.get_sol_api_sol_objects.Input.Query
@@ -1807,6 +1842,18 @@ public enum Operations {
                 ///
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/include_archived`.
                 public var include_archived: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/starred`.
+                public var starred: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/working`.
+                public var working: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/attention_ids`.
+                public var attention_ids: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/group_by`.
+                public var group_by: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/group_value`.
+                public var group_value: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/board/GET/query/tz`.
+                public var tz: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/q`.
                 public var q: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/board/GET/query/groupBy`.
@@ -1830,6 +1877,12 @@ public enum Operations {
                 ///   - cursor_created_at: Keyset seek: the `created_at` of the last row returned. The server pages strictly past `(cursor_created_at, cursor_id)` in `createdAt` order. Requires `cursor_id`.
                 ///   - cursor_id:
                 ///   - include_archived: When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).
+                ///   - starred:
+                ///   - working:
+                ///   - attention_ids:
+                ///   - group_by:
+                ///   - group_value:
+                ///   - tz:
                 ///   - q:
                 ///   - groupBy:
                 ///   - column:
@@ -1848,6 +1901,12 @@ public enum Operations {
                     cursor_created_at: Foundation.Date? = nil,
                     cursor_id: Swift.String? = nil,
                     include_archived: Swift.Bool? = nil,
+                    starred: Swift.Bool? = nil,
+                    working: Swift.Bool? = nil,
+                    attention_ids: Swift.String? = nil,
+                    group_by: Swift.String? = nil,
+                    group_value: Swift.String? = nil,
+                    tz: Swift.String? = nil,
                     q: Swift.String? = nil,
                     groupBy: Swift.String? = nil,
                     column: Swift.String? = nil
@@ -1866,6 +1925,12 @@ public enum Operations {
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
                     self.include_archived = include_archived
+                    self.starred = starred
+                    self.working = working
+                    self.attention_ids = attention_ids
+                    self.group_by = group_by
+                    self.group_value = group_value
+                    self.tz = tz
                     self.q = q
                     self.groupBy = groupBy
                     self.column = column
@@ -47077,6 +47142,146 @@ public enum Operations {
                         public var threadAlsoInChannel: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/unresolved_mentions`.
                         public var unresolved_mentions: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session`.
+                        @frozen public enum delivered_to_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1`.
+                            public struct Case1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case live = "live"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1/session_id`.
+                                public var session_id: Swift.String
+                                /// Creates a new `Case1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload.modePayload,
+                                    session_id: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case1`.
+                            case case1(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case1Payload)
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2`.
+                            public struct Case2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case continued = "continued"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/session_id`.
+                                public var session_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2/previous_session_id`.
+                                public var previous_session_id: Swift.String
+                                /// Creates a new `Case2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                ///   - previous_session_id:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload.modePayload,
+                                    session_id: Swift.String,
+                                    previous_session_id: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                    self.previous_session_id = previous_session_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                    case previous_session_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case2`.
+                            case case2(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case2Payload)
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3`.
+                            public struct Case3Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/mode`.
+                                @frozen public enum modePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case not_delivered = "not_delivered"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/mode`.
+                                public var mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload.modePayload
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/session_id`.
+                                public var session_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3/reason`.
+                                public var reason: Swift.String
+                                /// Creates a new `Case3Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - mode:
+                                ///   - session_id:
+                                ///   - reason:
+                                public init(
+                                    mode: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload.modePayload,
+                                    session_id: Swift.String,
+                                    reason: Swift.String
+                                ) {
+                                    self.mode = mode
+                                    self.session_id = session_id
+                                    self.reason = reason
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case mode
+                                    case session_id
+                                    case reason
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session/case3`.
+                            case case3(Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload.Case3Payload)
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self = .case1(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self = .case2(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self = .case3(try .init(from: decoder))
+                                    return
+                                } catch {
+                                    errors.append(error)
+                                }
+                                throw Swift.DecodingError.failedToDecodeOneOfSchema(
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                switch self {
+                                case let .case1(value):
+                                    try value.encode(to: encoder)
+                                case let .case2(value):
+                                    try value.encode(to: encoder)
+                                case let .case3(value):
+                                    try value.encode(to: encoder)
+                                }
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/delivered_to_session`.
+                        public var delivered_to_session: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -47094,6 +47299,7 @@ public enum Operations {
                         ///   - threadRootId:
                         ///   - threadAlsoInChannel:
                         ///   - unresolved_mentions:
+                        ///   - delivered_to_session:
                         public init(
                             id: Swift.Double,
                             conversationId: Swift.String,
@@ -47108,7 +47314,8 @@ public enum Operations {
                             editedAt: Swift.String? = nil,
                             threadRootId: Swift.Double? = nil,
                             threadAlsoInChannel: Swift.Bool,
-                            unresolved_mentions: [Swift.String]? = nil
+                            unresolved_mentions: [Swift.String]? = nil,
+                            delivered_to_session: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.delivered_to_sessionPayload? = nil
                         ) {
                             self.id = id
                             self.conversationId = conversationId
@@ -47124,6 +47331,7 @@ public enum Operations {
                             self.threadRootId = threadRootId
                             self.threadAlsoInChannel = threadAlsoInChannel
                             self.unresolved_mentions = unresolved_mentions
+                            self.delivered_to_session = delivered_to_session
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -47140,6 +47348,7 @@ public enum Operations {
                             case threadRootId
                             case threadAlsoInChannel
                             case unresolved_mentions
+                            case delivered_to_session
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/application\/json`.
