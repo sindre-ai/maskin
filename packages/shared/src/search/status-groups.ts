@@ -30,8 +30,6 @@ export function isStatusGroupKey(value: unknown): value is StatusGroupKey {
 	return typeof value === 'string' && (STATUS_GROUP_KEYS as readonly string[]).includes(value)
 }
 
-type StatusTable = Record<string, readonly string[]>
-
 /**
  * Explicit mapping for the known (type, status) pairs: group to the statuses in
  * it, per type. Object types come from the default workspace statuses. The
