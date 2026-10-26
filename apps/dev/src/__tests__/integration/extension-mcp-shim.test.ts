@@ -113,7 +113,12 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		await addExtension('example')
 		readCredential.mockResolvedValue('abc123')
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(
+			db,
+			workspaceId,
+			agentId,
+			readCredential,
+		)
 
 		expect(Object.keys(servers)).toEqual(['extension-example'])
 		expect(servers['extension-example']).toEqual({
@@ -144,7 +149,12 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		})
 		readCredential.mockResolvedValue('k')
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(
+			db,
+			workspaceId,
+			agentId,
+			readCredential,
+		)
 
 		expect(servers).toEqual({})
 		expect(env).toEqual({})
@@ -171,7 +181,12 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		const row = await addExtension('example')
 		readCredential.mockResolvedValue(null)
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(
+			db,
+			workspaceId,
+			agentId,
+			readCredential,
+		)
 
 		expect(servers).toEqual({})
 		expect(env).toEqual({})
@@ -185,7 +200,12 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		})
 		readCredential.mockResolvedValue('abc123')
 
-		const { servers, env } = await buildExtensionMcpServers(db, workspaceId, agentId, readCredential)
+		const { servers, env } = await buildExtensionMcpServers(
+			db,
+			workspaceId,
+			agentId,
+			readCredential,
+		)
 
 		expect(servers).toEqual({})
 		expect(env).toEqual({})

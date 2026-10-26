@@ -185,7 +185,10 @@ describe('SessionManager.buildLaunchSpec: extension MCP key read through Keychai
 	it('does not attach for an agent when only another agent holds the grant', async () => {
 		const s = await setup()
 		const other = await insertActor(db, { type: 'agent', systemPrompt: 'Other' })
-		await db.update(extensions).set({ toolGrants: { [other.id]: { get_item: 'allow' } } }).where(eq(extensions.id, s.extension.id))
+		await db
+			.update(extensions)
+			.set({ toolGrants: { [other.id]: { get_item: 'allow' } } })
+			.where(eq(extensions.id, s.extension.id))
 		const row = await saveKey(s, fake('mcp-key'))
 
 		const env = await launch(s.session)
