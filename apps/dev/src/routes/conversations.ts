@@ -59,6 +59,10 @@ import {
 	loadPendingSpawnedSessions,
 	loadSpawnedSessionsByMessage,
 } from '../services/spawned-sessions'
+import {
+	type ThreadReplyDelivery,
+	routeThreadReplyToSubSession,
+} from '../services/thread-reply-routing'
 
 type Env = {
 	Variables: {
@@ -1353,6 +1357,28 @@ app.openapi(postMessageRoute, (async (c) => {
 		}
 	}
 
+	// A reply under a message that a sub-chat hangs from goes to that sub-chat's agent too,
+	// as the thread's own composer would send it. Best effort: the reply is already posted.
+	let delivery: ThreadReplyDelivery | null = null
+	if (body.thread_root_id !== undefined) {
+		delivery = await routeThreadReplyToSubSession(
+			{ db, sessionManager },
+			{
+				workspaceId,
+				rootMessageId: body.thread_root_id,
+				actorId: callerId,
+				content: body.content,
+			},
+		).catch((err: unknown) => {
+			logger.error('Thread reply routing failed', {
+				conversationId: id,
+				messageId: created.id,
+				error: String(err),
+			})
+			return null
+		})
+	}
+
 	evaluateAndRespond({
 		db,
 		sessionManager,
@@ -1380,6 +1406,7 @@ app.openapi(postMessageRoute, (async (c) => {
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
 			...(unresolvedMentions.length > 0 ? { unresolved_mentions: unresolvedMentions } : {}),
+			...(delivery ? { delivered_to_session: delivery } : {}),
 		}) as z.infer<typeof postMessageResponseSchema>,
 		201,
 	)
