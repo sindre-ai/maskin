@@ -72,7 +72,11 @@ export function ConversationList({
 		rows: [],
 	})
 	const conversations = useMemo(() => {
-		if (filter !== 'unread') return fetched
+		if (filter !== 'unread') {
+			// Forget retained rows so coming back to Unread starts from the server's list.
+			shownRef.current = { key: '', rows: [] }
+			return fetched
+		}
 		const key = `${workspaceId}:${filter}`
 		const prev = shownRef.current.key === key ? shownRef.current.rows : []
 		const fresh = new Map(fetched.map((c) => [c.id, c]))
