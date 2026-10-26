@@ -1,5 +1,7 @@
 import {
+	CONVERSATION_TITLE_MAX_LENGTH,
 	HUMAN_MESSAGE_STYLE_SHORT,
+	MAX_CONVERSATION_PARTICIPANTS,
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
@@ -257,6 +259,41 @@ export function parseListActorsInclude(include: string | undefined): string[] {
 		.map((v) => v.trim())
 		.filter(Boolean)
 }
+
+// Shared by create_session and create_sub_chat: the same call under two names.
+const startAgentInputSchema = z.object({
+	workspace_id: z.string().uuid().describe('The workspace you are working in. '),
+	actor_id: z.string().uuid().describe('The agent that should do the work'),
+	action_prompt: z.string().min(1).describe('What you want the agent to do'),
+	source_session_id: z
+		.string()
+		.uuid()
+		.optional()
+		.describe(
+			"An earlier session to pick up from. The new session starts with that session's files, so use it to finish work an earlier session started but could not complete (for example, code that was written but not pushed).",
+		),
+	initiated_from_object_id: z
+		.string()
+		.uuid()
+		.optional()
+		.describe(
+			'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
+		),
+	spawned_by_message_id: z
+		.number()
+		.int()
+		.positive()
+		.optional()
+		.describe(
+			'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
+		),
+	wait: z
+		.boolean()
+		.optional()
+		.describe(
+			'Wait for the agent to finish, however long that takes, and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input, is paused or was stopped; settled false means the agent is not finished.',
+		),
+})
 
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
@@ -1240,7 +1277,7 @@ export const tools = {
 	// ─── Conversations ───────────────────────────────────────
 	get_conversation: {
 		description:
-			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room. Everyone listed sees every message, so there is no need to ask permission before addressing a human participant; to make an agent participant respond, @mention it with its actorId via `metadata.mentions` of post_conversation_message. This tool is read-only.",
+			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room. Each agent also carries a `status` (starting, running, waiting_for_input, paused or not_running) so you can see who has a live session before you @mention them. Everyone listed sees every message, so there is no need to ask permission before addressing a human participant; to make an agent participant respond, @mention it with its actorId via `metadata.mentions` of post_conversation_message. This tool is read-only.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1260,6 +1297,11 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe('When true, only chats with at least one human participant are returned.'),
+			subject_type: z
+				.enum(['object', 'loop'])
+				.optional()
+				.describe('With subject_id: only the chat that belongs to this bet/task/insight or loop.'),
+			subject_id: z.string().uuid().optional(),
 			limit: z.number().int().min(1).max(100).optional(),
 			cursor: z
 				.string()
@@ -1294,6 +1336,99 @@ export const tools = {
 				.describe(
 					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
 				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'After posting, hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has finished its reply, and return those replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages. Only use this when you cannot go on without the answer.',
+				),
+		}),
+	},
+	create_chat: {
+		description: `Start a brand-new top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. Use it for a new topic that deserves its own room. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		inputSchema: z.object({
+			workspace_id: requiredWorkspaceId,
+			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
+			participant_actor_ids: z
+				.array(z.string().uuid())
+				.max(MAX_CONVERSATION_PARTICIPANTS)
+				.describe(
+					'The agents and people to put in the chat. You are added automatically. Get ids from list_actors.',
+				),
+			first_message: z
+				.string()
+				.min(1)
+				.max(MESSAGE_MAX_LENGTH)
+				.optional()
+				.describe(
+					'What you open the chat with. Every agent in `participant_actor_ids` is @mentioned on it so they start. Leave it out to open an empty chat.',
+				),
+			subject_type: z
+				.enum(['object', 'loop'])
+				.optional()
+				.describe(
+					'With subject_id: tie the chat to an object (bet, task, insight) or a loop. Asking again returns the chat that already exists for it.',
+				),
+			subject_id: z.string().uuid().optional(),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until the agents have answered the first message and return their replies. Ends early with settled false if one never starts or the wait runs out.',
+				),
+		}),
+	},
+	add_chat_participant: {
+		description:
+			'Bring an agent or a person into a chat you are in, so they see everything from now on and can be @mentioned. Use it when you need a teammate who is not in the room. Anyone in the workspace can be added. Adding someone who is already in does nothing, and someone who left comes back. Mentioning an agent with post_conversation_message also pulls it in, so you only need this to add someone without saying anything yet, or to add people. Read who is in the chat with get_conversation.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),
+		}),
+	},
+	remove_chat_participant: {
+		description:
+			'Take an agent or a person out of a chat you are in. They stop seeing new messages and can no longer be woken by a mention, but what they already wrote stays. You can remove yourself, or anyone if you started the chat; otherwise it is refused. Use it to clear out an agent whose part is done. To stop an agent that is working right now, use stop_chat_agent. Read who is in the chat with get_conversation.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			actor_id: z.string().uuid().describe('The participant to remove'),
+		}),
+	},
+	get_chat_activity: {
+		description:
+			"See what the agents in a chat actually did: their tool calls, thinking, errors and results, turn by turn, not just the messages they posted. Give the chat's `conversation_id` and, to look at one agent, its `actor_id`; without it you get every agent that has run in the chat. Each agent entry says whether it has a live session (`status`: starting, running, waiting_for_input, paused or not_running) and carries the same trace get_session_activity returns for its latest run (use `limit_turns` to see more turns). For an agent you started with create_sub_chat, pass the sub-chat's `session_id` instead. This tool is read-only — to stop an agent that is working use stop_chat_agent, to talk to it use post_conversation_message.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid().optional(),
+			actor_id: z.string().uuid().optional().describe('Only this agent'),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('A sub-chat from create_sub_chat, instead of conversation_id'),
+			limit_turns: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.default(3)
+				.describe('Newest N turns to return per agent'),
+		}),
+	},
+	stop_chat_agent: {
+		description:
+			"Interrupt an agent that is running in a chat right now. The agent stops what it is doing; it stays in the chat and wakes again the next time someone @mentions it. Give the `conversation_id` and the agent's `actor_id` (see get_chat_activity or get_conversation for who is running). Use it when an agent is going the wrong way or has run too long. For a sub-chat from create_sub_chat, pass its `session_id` instead.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid().optional(),
+			actor_id: z.string().uuid().optional().describe('The agent to stop'),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('A sub-chat from create_sub_chat, instead of conversation_id'),
 		}),
 	},
 
@@ -1528,40 +1663,13 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			"Start another agent on a task. It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished, however long that takes, then give you the session and its output. The wait also ends early if the agent is waiting for input, is paused, or was stopped. If the response says `settled: false` the agent is not finished (waiting for input, or paused); check it later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. To talk to the agent while it works, use send_session_message; to carry on with it after it has ended, failed or been paused, use resume_session. Do not @mention it in a chat for this: a mention reaches a different session of that agent, not this one. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
-		inputSchema: z.object({
-			workspace_id: z.string().uuid().describe('The workspace you are working in. '),
-			actor_id: z.string().uuid().describe('The agent that should do the work'),
-			action_prompt: z.string().min(1).describe('What you want the agent to do'),
-			source_session_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					"An earlier session to pick up from. The new session starts with that session's files, so use it to finish work an earlier session started but could not complete (for example, code that was written but not pushed).",
-				),
-			initiated_from_object_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					'The bet, task, insight or other object this work is for. Leave it out if the work is not about a specific object.',
-				),
-			spawned_by_message_id: z
-				.number()
-				.int()
-				.positive()
-				.optional()
-				.describe(
-					'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
-				),
-			wait: z
-				.boolean()
-				.optional()
-				.describe(
-					'Wait for the agent to finish, however long that takes, and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input, is paused or was stopped; settled false means the agent is not finished.',
-				),
-		}),
+			"Start another agent on a task (the older name of create_sub_chat, which does the same; prefer create_sub_chat). It works on its own, separately from you. By default this returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you can't continue without its answer, set `wait: true` and this call will hold until the agent is finished, however long that takes, then give you the session and its output. The wait also ends early if the agent is waiting for input, is paused, or was stopped. If the response says `settled: false` the agent is not finished (waiting for input, or paused); check it later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message is sent back to you as a new turn in your own chat (or as a comment on the object you were started from), so you do not need to poll it. There is no way to switch this off. To talk to the agent while it works, use send_session_message; to carry on with it after it has ended, failed or been paused, use resume_session. Do not @mention it in a chat for this: a mention reaches a different session of that agent, not this one. You can also @mention the agent in a comment on the object. When you start this from a chat, the person you are talking to sees it under your reply as a handoff card with a live status and can open the agent's thread from it, so give `action_prompt` a clear first line: it becomes the card's title.",
+		inputSchema: startAgentInputSchema,
+	},
+	create_sub_chat: {
+		description:
+			"Hand a task to another agent from inside the chat you are in. It works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. Returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take); set `wait: true` to hold until the agent has finished and get its output. When it finishes, its final message comes back to you as a new turn in your own chat, so you do not need to poll. Check on it with get_chat_activity, stop it with stop_chat_agent, talk to it with send_session_message. Give `action_prompt` a clear first line: it becomes the card's title. Same as create_session, which still works.",
+		inputSchema: startAgentInputSchema,
 	},
 	list_sessions: {
 		description:
@@ -1756,7 +1864,7 @@ export const tools = {
 	},
 	resume_session: {
 		description:
-			"Carry on with a session that is not running: one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished, however long that takes, and get its output; the wait ends early if it is waiting for input or paused (`settled: false`). For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
+			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished, however long that takes, and get its output; the wait ends early if it is waiting for input or paused (`settled: false`). For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The session to carry on with'),
@@ -1777,7 +1885,7 @@ export const tools = {
 	},
 	send_session_message: {
 		description:
-			"Send a message to an agent session that is running right now, as if you typed it into its chat. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
