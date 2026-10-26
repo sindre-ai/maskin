@@ -21,7 +21,7 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => conversationsRef.current,
 }))
 
-import { useWorkspaceSearch } from '@/hooks/use-workspace-search'
+import { matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
 
 beforeEach(() => {
 	objectsRef.current = { data: [] }
@@ -100,6 +100,30 @@ describe('useWorkspaceSearch', () => {
 			to: '/$workspaceId/settings/members',
 			search: { member: 'h-1' },
 		})
+	})
+
+	it('finds a person despite a typo, below an exact hit', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [
+				{ id: 'h-1', type: 'human', name: 'Magnus', description: null },
+				{ id: 'a-1', type: 'agent', name: 'Mgnus bot', description: null },
+			],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'mgnus' }))
+
+		expect(result.current.rows.map((r) => r.id)).toEqual(['a-1', 'h-1'])
+		expect(result.current.countsByGroup.people).toBe(1)
+	})
+
+	it('finds a person when the words are typed in the other order', () => {
+		seedAll()
+		actorsRef.current = {
+			data: [{ id: 'h-1', type: 'human', name: 'Anna Baker', description: null }],
+		}
+		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'baker anna' }))
+
+		expect(result.current.countsByGroup.people).toBe(1)
 	})
 
 	it('leaves a group with no hits at zero so its chip never renders', () => {
@@ -188,5 +212,26 @@ describe('useWorkspaceSearch', () => {
 		const { result } = renderHook(() => useWorkspaceSearch('ws-1', { q: 'relay' }))
 
 		expect(result.current.isPending).toBe(true)
+	})
+})
+
+describe('matches', () => {
+	it('accepts a near miss of a word, but not for short terms', () => {
+		expect(matches('mgnus', 'Magnus')).toBe(true)
+		expect(matches('magnsu', 'Magnus')).toBe(true)
+		expect(matches('magn', 'Magnus')).toBe(true)
+		// Three letters: one wrong letter is a different word.
+		expect(matches('cat', 'cut')).toBe(false)
+	})
+
+	it('needs every term, across fields and in any order', () => {
+		expect(matches('baker anna', 'Anna Baker')).toBe(true)
+		expect(matches('anna', 'Baker', 'Anna')).toBe(true)
+		expect(matches('anna zebra', 'Anna Baker')).toBe(false)
+	})
+
+	it('rejects unrelated words that are far from the term', () => {
+		expect(matches('magnus', 'Manager')).toBe(false)
+		expect(matches('', 'anything')).toBe(true)
 	})
 })
