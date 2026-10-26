@@ -450,6 +450,15 @@ describe('push producers', () => {
 			)
 		})
 
+		it("pushes everyone in the chat for an agent's end-of-turn reply that is also in the main chat, opening the thread", async () => {
+			await finalReply('turn-thread-also', { threadRootId: rootId, threadAlsoInChannel: true })
+			const rows = await allRows()
+			expect(rows.map((r) => r.targetActorId).sort()).toEqual(
+				[humanId, secondHumanId, thirdHumanId].sort(),
+			)
+			expect(rows[0]?.metadata).toMatchObject({ thread_root_id: rootId })
+		})
+
 		it('leaves a mentioned newcomer to the mention push, which opens the thread', async () => {
 			await reply(secondHumanId, { metadata: { mentions: [thirdHumanId] } })
 			const rows = await allRows()

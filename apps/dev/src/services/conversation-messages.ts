@@ -124,6 +124,7 @@ export async function insertConversationMessage(
 		metadata: args.metadata,
 		sessionId: args.sessionId,
 		threadRootId: args.threadRootId ?? null,
+		threadAlsoInChannel: args.threadAlsoInChannel ?? false,
 	})
 
 	// The person replying in the chat answers any agent question waiting on them there.

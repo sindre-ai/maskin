@@ -284,13 +284,16 @@ export async function notifyChatReply(
 		sessionId: string | null | undefined
 		/** Set on a reply inside a thread: the push then goes to the thread's people only. */
 		threadRootId?: number | null
+		/** The reply is also in the main timeline, so it notifies like a top-level message. */
+		threadAlsoInChannel?: boolean
 	},
 ): Promise<void> {
 	if ((msg.kind ?? 'message') !== 'message') return
 	try {
 		const author = await actorProfile(db, msg.authorId)
 		if (!author) return
-		if (msg.threadRootId) return await notifyThreadReply(db, msg, author)
+		if (msg.threadRootId && !msg.threadAlsoInChannel)
+			return await notifyThreadReply(db, msg, author)
 		if (!isSuccessfulFinalOutput(msg.metadata)) return
 		if (author.type !== 'agent') return
 		const targets = await humanParticipants(db, msg.conversationId, msg.authorId)
@@ -306,6 +309,8 @@ export async function notifyChatReply(
 			title: author.name,
 			content: previewText(msg.content),
 			sessionId: msg.sessionId,
+			// An also-in-channel reply opens its thread when tapped.
+			...(msg.threadRootId ? { threadRootId: msg.threadRootId } : {}),
 			extraMetadata: asksQuestion
 				? { push_category: 'needs_you' }
 				: {
