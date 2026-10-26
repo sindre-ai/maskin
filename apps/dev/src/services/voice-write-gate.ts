@@ -74,7 +74,6 @@ const TAIL_WORDS = new Set(['please', 'now', 'thanks'])
 const APPROVAL_PHRASES = [
 	'go ahead',
 	'go for it',
-	'go',
 	'do it',
 	'do that',
 	'send it',
@@ -101,7 +100,6 @@ const APPROVAL_PHRASES = [
 	'lets do it',
 	'lets do that',
 	'let us do it',
-	'lets go',
 	'of course',
 	'for sure',
 ].map((phrase) => phrase.split(' '))
@@ -167,8 +165,12 @@ function isApprovalRun(words: string[]): boolean {
  * "please correct it" do not, and neither does anything with a no, "but", "wait" or question mark.
  */
 export function isYes(text: string): boolean {
+	// Only plain English letters and punctuation can be a yes. normalize() turns everything else
+	// into a space, so without this "send 500", "approve #3" or "yes 5" would read as a bare
+	// approval with its number thrown away; accented letters would be thrown away the same way.
+	if (/[^a-z\s.,!;:'’"-]/i.test(text)) return false
 	const normalized = normalize(text)
-	if (!normalized || text.includes('?')) return false
+	if (!normalized) return false
 	const words = normalized.split(' ')
 	if (words.length > MAX_YES_WORDS) return false
 	if (words.some((word) => NO_WORDS.has(word))) return false
