@@ -4,6 +4,7 @@ import {
 	bar,
 	buildBudgetCard,
 	formatAmount,
+	forecastLines,
 	projectMonth,
 	todayLine,
 	yesterdayLine,
@@ -142,7 +143,32 @@ describe('card lines', () => {
 		expect(card.headline).toBe('Yesterday: 4 runs, $9.50.')
 		expect(card.rationale).toContain('Month forecast (approximate): $2400.00 of $300.00 (800%).')
 		expect(card.rationale).toContain('Over the month target at this pace.')
-		expect(card.rationale).toContain('Heaviest triggers: Nightly drafts $2400.00.')
+		expect(card.rationale).toContain('Heaviest triggers:\n- Nightly drafts: $2400.00')
+	})
+
+	it('says which triggers are left out of the total, in the right grammar', () => {
+		const one = projectMonth(
+			[stats({ name: 'a', runs: 14, knownRuns: 14, spent: 14 }), stats({ name: 'u', runs: 2 })],
+			usd,
+			14,
+			30,
+		)
+		const two = projectMonth(
+			[
+				stats({ name: 'a', runs: 14, knownRuns: 14, spent: 14 }),
+				stats({ name: 'u', runs: 2 }),
+				stats({ name: 'v', runs: 2 }),
+			],
+			usd,
+			14,
+			30,
+		)
+		expect(forecastLines(one, usd, false).join('\n')).toContain(
+			'1 trigger has no recorded cost, so it is left out of the total.',
+		)
+		expect(forecastLines(two, usd, false).join('\n')).toContain(
+			'2 triggers have no recorded cost, so they are left out of the total.',
+		)
 	})
 
 	it('says Estimate unknown when no trigger has a recorded cost', () => {

@@ -162,12 +162,12 @@ export function forecastLines(
 	}
 	const named = f.heaviest.map(
 		(p) =>
-			`${p.name} ${p.monthly === null ? 'Estimate unknown' : formatAmount(p.monthly, target.unit)}`,
+			`- ${p.name}: ${p.monthly === null ? 'Estimate unknown' : formatAmount(p.monthly, target.unit)}`,
 	)
-	if (named.length > 0) lines.push(`Heaviest triggers: ${named.join(', ')}.`)
+	if (named.length > 0) lines.push(`Heaviest triggers:\n${named.join('\n')}`)
 	if (f.unknownTriggers > 0 && f.monthly > 0) {
 		lines.push(
-			`${plural(f.unknownTriggers, 'trigger has', 'triggers have')} no recorded cost and are left out of the total.`,
+			`${plural(f.unknownTriggers, 'trigger has', 'triggers have')} no recorded cost, so ${f.unknownTriggers === 1 ? 'it is' : 'they are'} left out of the total.`,
 		)
 	}
 	return lines

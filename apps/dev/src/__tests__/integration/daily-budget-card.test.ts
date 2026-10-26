@@ -91,8 +91,8 @@ describe('daily budget card scheduler', () => {
 		expect(rows[0]?.content).toContain('Today: ░░░░░░░░░░ $0.00 of $10.00 so far.')
 		expect(rows[0]?.content).toContain('Month forecast (approximate): $8.86 of $310.00 (3%).')
 		expect(rows[0]?.content).toContain('Heaviest triggers:')
-		expect(rows[0]?.content).toContain('Nightly draft $8.86')
-		expect(rows[0]?.content).toContain('Not started by a trigger Estimate unknown')
+		expect(rows[0]?.content).toContain('- Nightly draft: $8.86')
+		expect(rows[0]?.content).toContain('- Not started by a trigger: Estimate unknown')
 
 		// A fresh process (empty memory) a minute later still finds the day taken.
 		await new DailyBudgetCardScheduler(db).tick(new Date(day1.getTime() + 60_000))
