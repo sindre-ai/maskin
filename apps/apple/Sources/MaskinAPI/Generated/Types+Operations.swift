@@ -67166,6 +67166,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/annotations`.
                         public var annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/contentHash`.
+                        public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/warning`.
                         public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
@@ -67186,6 +67188,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - contentHash:
                         ///   - warning:
                         public init(
                             id: Swift.String,
@@ -67203,6 +67206,7 @@ public enum Operations {
                             encoding: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil,
+                            contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
                             self.id = id
@@ -67220,6 +67224,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.contentHash = contentHash
                             self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -67238,6 +67243,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case contentHash
                             case warning
                         }
                     }
@@ -67793,6 +67799,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/annotations`.
                         public var annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/contentHash`.
+                        public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/warning`.
                         public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
@@ -67813,6 +67821,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - contentHash:
                         ///   - warning:
                         public init(
                             id: Swift.String,
@@ -67830,6 +67839,7 @@ public enum Operations {
                             encoding: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
                             self.id = id
@@ -67847,6 +67857,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.contentHash = contentHash
                             self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -67865,6 +67876,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case contentHash
                             case warning
                         }
                     }
@@ -68251,6 +68263,8 @@ public enum Operations {
                     public typealias annotationsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.annotationsPayloadPayload]
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/annotations`.
                     public var annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.annotationsPayload?
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/if_match`.
+                    public var if_match: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -68261,6 +68275,7 @@ public enum Operations {
                     ///   - content:
                     ///   - encoding:
                     ///   - annotations:
+                    ///   - if_match:
                     public init(
                         name: Swift.String? = nil,
                         description: Swift.String? = nil,
@@ -68268,7 +68283,8 @@ public enum Operations {
                         mime_type: Swift.String? = nil,
                         content: Swift.String? = nil,
                         encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload? = nil,
-                        annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.annotationsPayload? = nil
+                        annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.annotationsPayload? = nil,
+                        if_match: Swift.String? = nil
                     ) {
                         self.name = name
                         self.description = description
@@ -68277,6 +68293,7 @@ public enum Operations {
                         self.content = content
                         self.encoding = encoding
                         self.annotations = annotations
+                        self.if_match = if_match
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -68286,6 +68303,7 @@ public enum Operations {
                         case content
                         case encoding
                         case annotations
+                        case if_match
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/content/application\/json`.
@@ -68460,6 +68478,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/annotations`.
                         public var annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/contentHash`.
+                        public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/warning`.
                         public var warning: Swift.String?
                         /// Creates a new `jsonPayload`.
@@ -68480,6 +68500,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - contentHash:
                         ///   - warning:
                         public init(
                             id: Swift.String,
@@ -68497,6 +68518,7 @@ public enum Operations {
                             encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
                             self.id = id
@@ -68514,6 +68536,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.contentHash = contentHash
                             self.warning = warning
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -68532,6 +68555,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case contentHash
                             case warning
                         }
                     }
@@ -68854,6 +68878,290 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/json/currentHash`.
+                        public var currentHash: Swift.String
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        ///   - currentHash:
+                        public init(
+                            error: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload,
+                            currentHash: Swift.String
+                        ) {
+                            self.error = error
+                            self.currentHash = currentHash
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                            case currentHash
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/409/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// if_match does not match the stored content hash; nothing was written
+            ///
+            /// - Remark: Generated from `#/paths//api/files/{id}/patch/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct ServiceUnavailable: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/503/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body
+                /// Creates a new `ServiceUnavailable`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable.Body) {
+                    self.body = body
+                }
+            }
+            /// Timed out waiting for the file or storage; nothing was written, retry is safe
+            ///
+            /// - Remark: Generated from `#/paths//api/files/{id}/patch/responses/503`.
+            ///
+            /// HTTP response code: `503 serviceUnavailable`.
+            case serviceUnavailable(Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable)
+            /// The associated value of the enum case if `self` is `.serviceUnavailable`.
+            ///
+            /// - Throws: An error if `self` is not `.serviceUnavailable`.
+            /// - SeeAlso: `.serviceUnavailable`.
+            public var serviceUnavailable: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.ServiceUnavailable {
+                get throws {
+                    switch self {
+                    case let .serviceUnavailable(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "serviceUnavailable",
                             response: self
                         )
                     }

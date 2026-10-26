@@ -1,7 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
+import { sha256Hex } from '../../lib/file-save'
 import { buildCreateFileBody, buildFile, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createImportTestApp } from '../setup'
+
+// The server-side capture is asserted at this boundary: what reaches PostHog is
+// what the route decided, not what the request body asked for.
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn(async () => {}),
+}))
+
+function fileSavedCaptures() {
+	return vi.mocked(capturePosthogEvent).mock.calls.filter(([event]) => event === 'file_saved')
+}
 
 const { default: filesRoutes } = await import('../../routes/files')
 
@@ -18,6 +30,7 @@ describe('Files Routes', () => {
 		// vi.stubEnv handles both set and unset cleanly — plain
 		// `process.env.X = undefined` would coerce to the string 'undefined'.
 		vi.stubEnv('FRONTEND_URL', 'http://localhost:5173')
+		vi.mocked(capturePosthogEvent).mockClear()
 	})
 
 	afterEach(() => {
@@ -427,6 +440,242 @@ describe('Files Routes', () => {
 
 			expect(res.status).toBe(404)
 			expect(storageProvider.delete).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('content hash and version check', () => {
+		const oldBytes = Buffer.from('# Old\n')
+		const stale = sha256Hex(Buffer.from('# What the editor loaded\n'))
+
+		function patchSetup(fileOverrides: Record<string, unknown> = {}) {
+			const setup = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({
+				workspaceId,
+				mimeType: 'text/markdown',
+				contentHash: sha256Hex(oldBytes),
+				...fileOverrides,
+			})
+			vi.mocked(setup.storageProvider.get).mockResolvedValue(oldBytes)
+			setup.mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
+			setup.mockResults.updateQueue = [[file]]
+			return { ...setup, file }
+		}
+
+		it('stores the content hash when a file is created', async () => {
+			const { app, mockResults, calls } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody()
+			mockResults.insertQueue = [
+				[buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })],
+				[{ id: 'evt-1' }],
+			]
+
+			await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			const fileInsert = calls.inserts[0] as Record<string, unknown>
+			expect(fileInsert.contentHash).toBe(sha256Hex(Buffer.from(body.content, 'utf8')))
+		})
+
+		it('returns the current content hash on GET', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({ workspaceId, contentHash: sha256Hex(oldBytes) })
+			vi.mocked(storageProvider.get).mockResolvedValue(oldBytes)
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
+
+			const res = await app.request(jsonGet(`/api/files/${file.id}`))
+
+			expect((await res.json()).contentHash).toBe(sha256Hex(oldBytes))
+		})
+
+		it('hashes a row without a stored hash from its bytes and writes the hash back', async () => {
+			const { app, mockResults, storageProvider, calls } = createImportTestApp(
+				filesRoutes,
+				'/api/files',
+			)
+			const file = buildFile({ workspaceId, contentHash: null })
+			vi.mocked(storageProvider.get).mockResolvedValue(oldBytes)
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
+
+			const res = await app.request(jsonGet(`/api/files/${file.id}`))
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).contentHash).toBe(sha256Hex(oldBytes))
+			expect(calls.updates).toEqual([{ contentHash: sha256Hex(oldBytes) }])
+		})
+
+		it('returns 409 with the current hash for a stale if_match and writes nothing', async () => {
+			const { app, file, storageProvider, calls } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Mine\n', if_match: stale }),
+			)
+
+			expect(res.status).toBe(409)
+			const json = await res.json()
+			expect(json.error.code).toBe('CONFLICT')
+			expect(json.currentHash).toBe(sha256Hex(oldBytes))
+			expect(storageProvider.put).not.toHaveBeenCalled()
+			expect(calls.updates).toHaveLength(0)
+			expect(fileSavedCaptures()).toHaveLength(0)
+		})
+
+		it('saves when if_match matches and stores the new content hash', async () => {
+			const { app, file, storageProvider, calls } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, {
+					content: '# Mine\n',
+					if_match: sha256Hex(oldBytes),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).toHaveBeenCalledTimes(1)
+			expect(calls.updates[0]).toMatchObject({ contentHash: sha256Hex(Buffer.from('# Mine\n')) })
+		})
+
+		it('still saves a PATCH without if_match', async () => {
+			const { app, file, storageProvider } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Mine\n' }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).toHaveBeenCalledTimes(1)
+		})
+
+		it('returns 400 for a malformed if_match', async () => {
+			const { app, file } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: 'x', if_match: 'not-a-hash' }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when if_match is the only field', async () => {
+			const { app, file } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { if_match: sha256Hex(oldBytes) }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 503 with Retry-After when the row lock wait times out', async () => {
+			const { app, file, mockResults, storageProvider } = patchSetup()
+			mockResults.selectErrorQueue = [
+				undefined,
+				undefined,
+				Object.assign(new Error('lock timeout'), { code: '55P03' }),
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Mine\n' }),
+			)
+
+			expect(res.status).toBe(503)
+			expect(res.headers.get('Retry-After')).toBe('1')
+			expect(storageProvider.put).not.toHaveBeenCalled()
+		})
+
+		it('returns 500 and sends no event when the upload fails', async () => {
+			const { app, file, storageProvider } = patchSetup()
+			vi.mocked(storageProvider.put).mockRejectedValueOnce(new Error('S3 down'))
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Mine\n' }),
+			)
+
+			expect(res.status).toBe(500)
+			expect(fileSavedCaptures()).toHaveLength(0)
+		})
+	})
+
+	describe('file_saved event', () => {
+		const oldBytes = Buffer.from('# Old\n')
+
+		function patchSetup(actorType = 'human') {
+			const setup = createImportTestApp(filesRoutes, '/api/files', 'test-actor-id', actorType)
+			const file = buildFile({
+				workspaceId,
+				mimeType: 'text/markdown',
+				contentHash: sha256Hex(oldBytes),
+			})
+			vi.mocked(setup.storageProvider.get).mockResolvedValue(oldBytes)
+			setup.mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
+			setup.mockResults.updateQueue = [[file]]
+			return { ...setup, file }
+		}
+
+		it('is sent once after a save that changed the bytes', async () => {
+			const { app, file } = patchSetup()
+
+			await app.request(jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Mine\n' }))
+
+			expect(fileSavedCaptures()).toHaveLength(1)
+			const [, distinctId, props] = fileSavedCaptures()[0] as [string, string, unknown]
+			expect(distinctId).toBe('test-actor-id')
+			expect(props).toEqual({
+				workspace_id: workspaceId,
+				file_id: file.id,
+				actor_type: 'human',
+				file_type: 'text/markdown',
+				size_bytes: file.sizeBytes,
+				source: 'typed',
+			})
+		})
+
+		it('takes actor_type and source from the server, not from the request body', async () => {
+			const { app, file } = patchSetup('agent')
+
+			await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, {
+					content: '# Mine\n',
+					actor_type: 'human',
+					source: 'accepted_change',
+				}),
+			)
+
+			expect(fileSavedCaptures()).toHaveLength(1)
+			const [, , props] = fileSavedCaptures()[0] as [string, string, Record<string, unknown>]
+			expect(props.actor_type).toBe('agent')
+			expect(props.source).toBe('typed')
+		})
+
+		it('is not sent for a save with identical bytes', async () => {
+			const { app, file } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: oldBytes.toString('utf8') }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(fileSavedCaptures()).toHaveLength(0)
+		})
+
+		it('is not sent for a metadata-only update', async () => {
+			const { app, file } = patchSetup()
+
+			await app.request(jsonRequest('PATCH', `/api/files/${file.id}`, { name: 'renamed.md' }))
+
+			expect(fileSavedCaptures()).toHaveLength(0)
+		})
+
+		it('is not sent for a refused save', async () => {
+			const { app, file } = patchSetup()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, {
+					content: '# Mine\n',
+					if_match: sha256Hex(Buffer.from('stale')),
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			expect(fileSavedCaptures()).toHaveLength(0)
 		})
 	})
 })

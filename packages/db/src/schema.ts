@@ -1435,6 +1435,10 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
+		// only for rows that predate the column, which are hashed from storage
+		// on first read or first save. Echoed by clients as if_match.
+		contentHash: text('content_hash'),
 		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
 		// marks an HTML page written to be read in For you; nothing else is surfaced
 		// there, so a loop's incidental output files stay out of the row. Null for
@@ -2206,6 +2210,9 @@ export const fileComments = pgTable(
 		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
 		// pin still round-trips. `'legacy'` is reserved as the migration marker.
 		selector: text('selector'),
+		// Text comments: the quoted passage plus a little context each side, so
+		// the editor can find it again by matching. Null for pin comments.
+		textAnchor: jsonb('text_anchor').$type<{ quote: string; prefix: string; suffix: string }>(),
 		authorId: uuid('author_id')
 			.notNull()
 			.references(() => actors.id),

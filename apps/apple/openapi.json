@@ -57516,6 +57516,13 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
 										"warning": {
 											"type": "string"
 										}
@@ -58052,6 +58059,13 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
 										"warning": {
 											"type": "string"
 										}
@@ -58263,6 +58277,10 @@
 											]
 										},
 										"maxItems": 200
+									},
+									"if_match": {
+										"type": "string",
+										"pattern": "^[0-9a-f]{64}$"
 									}
 								}
 							}
@@ -58407,6 +58425,13 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
 										"warning": {
 											"type": "string"
 										}
@@ -58490,6 +58515,124 @@
 					},
 					"404": {
 						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "if_match does not match the stored content hash; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										},
+										"currentHash": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"currentHash"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Timed out waiting for the file or storage; nothing was written, retry is safe",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -58718,6 +58861,32 @@
 													"null"
 												]
 											},
+											"textAnchor": {
+												"type": [
+													"object",
+													"null"
+												],
+												"properties": {
+													"quote": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 500
+													},
+													"prefix": {
+														"type": "string",
+														"maxLength": 100
+													},
+													"suffix": {
+														"type": "string",
+														"maxLength": 100
+													}
+												},
+												"required": [
+													"quote",
+													"prefix",
+													"suffix"
+												]
+											},
 											"authorId": {
 												"type": "string",
 												"format": "uuid"
@@ -58899,6 +59068,32 @@
 										],
 										"maxLength": 1000
 									},
+									"textAnchor": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"quote": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 500
+											},
+											"prefix": {
+												"type": "string",
+												"maxLength": 100
+											},
+											"suffix": {
+												"type": "string",
+												"maxLength": 100
+											}
+										},
+										"required": [
+											"quote",
+											"prefix",
+											"suffix"
+										]
+									},
 									"parentId": {
 										"type": [
 											"string",
@@ -58960,6 +59155,32 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"textAnchor": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"quote": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 500
+												},
+												"prefix": {
+													"type": "string",
+													"maxLength": 100
+												},
+												"suffix": {
+													"type": "string",
+													"maxLength": 100
+												}
+											},
+											"required": [
+												"quote",
+												"prefix",
+												"suffix"
 											]
 										},
 										"authorId": {
@@ -59230,6 +59451,32 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"textAnchor": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"quote": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 500
+												},
+												"prefix": {
+													"type": "string",
+													"maxLength": 100
+												},
+												"suffix": {
+													"type": "string",
+													"maxLength": 100
+												}
+											},
+											"required": [
+												"quote",
+												"prefix",
+												"suffix"
 											]
 										},
 										"authorId": {
@@ -59579,6 +59826,32 @@
 														"type": [
 															"string",
 															"null"
+														]
+													},
+													"textAnchor": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"quote": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"prefix": {
+																"type": "string",
+																"maxLength": 100
+															},
+															"suffix": {
+																"type": "string",
+																"maxLength": 100
+															}
+														},
+														"required": [
+															"quote",
+															"prefix",
+															"suffix"
 														]
 													},
 													"authorId": {

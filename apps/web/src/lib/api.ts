@@ -2470,6 +2470,8 @@ export interface FileDetail extends FileListItem {
 	encoding: 'base64' | 'utf8'
 	url: string
 	annotations: FileAnnotation[]
+	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
+	contentHash?: string | null
 }
 
 export interface CreateFileInput {
@@ -2487,6 +2489,8 @@ export interface UpdateFileInput {
 	content?: string
 	encoding?: 'base64' | 'utf8'
 	annotations?: FileAnnotation[]
+	/** The contentHash the caller loaded; a mismatch is refused with 409 and nothing is written. */
+	if_match?: string
 }
 
 // Conversation entity fields are camelCase (Drizzle column names passed

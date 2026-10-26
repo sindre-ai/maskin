@@ -313,6 +313,26 @@ describe('syncGscIntegration', () => {
 		expect(body.dimensions).toEqual(['date', 'page', 'query', 'country', 'device'])
 	})
 
+	// The connection's Google token can write sitemaps. Read-only is a promise of this code, so
+	// pin it: the sync may list sites and POST the search analytics query, nothing else.
+	it('only lists sites and queries search analytics, so it never writes to Search Console', async () => {
+		const fetchMock = stubSearchConsole()
+		const { db } = makeFakeDb()
+		await syncGscIntegration(db, integrationRow(), deps)
+		const requests = fetchMock.mock.calls.map(([url, init]) => ({
+			method: (init as RequestInit | undefined)?.method ?? 'GET',
+			url: String(url),
+		}))
+		expect(requests.length).toBeGreaterThan(0)
+		for (const { method, url } of requests) {
+			if (url.endsWith('/sites')) expect(method).toBe('GET')
+			else {
+				expect(url).toMatch(/\/searchAnalytics\/query$/)
+				expect(method).toBe('POST')
+			}
+		}
+	})
+
 	it('writes a knowledge object with scalar-only metadata and rows in content', async () => {
 		stubSearchConsole()
 		const { db, inserts } = makeFakeDb()

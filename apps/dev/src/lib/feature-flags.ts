@@ -72,6 +72,14 @@ export const FLAGS = {
 	 */
 	BYO_EXTENSIONS_UI: 'byo-extensions-ui',
 	/**
+	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
+	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
+	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it
+	 * once the editor has been through tester validation across
+	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
+	 */
+	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
+	/**
 	 * Gates the daily capability scan (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
 	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
