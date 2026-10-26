@@ -22,8 +22,8 @@ export const VOICE_CONFIRM_WAIT_MS = 3_000
 /** The argument the model adds to repeat a held call. Removed before the tool runs. */
 export const VOICE_CONFIRM_ARG = 'confirmation_id'
 
-/** Words and phrases a yes can open with. */
-const YES_OPENERS = [
+/** Words that may open a yes, alone or stacked: "yes", "okay sure". */
+const LEAD_WORDS = new Set([
 	'yes',
 	'yeah',
 	'yep',
@@ -33,40 +33,60 @@ const YES_OPENERS = [
 	'sure',
 	'ok',
 	'okay',
-	'please',
-	'confirm',
-	'confirmed',
-	'correct',
+	'alright',
 	'absolutely',
 	'definitely',
 	'exactly',
 	'agreed',
 	'perfect',
 	'great',
-	'alright',
 	'fine',
+	'please',
+])
+/** Words that may close a yes: "go ahead please", "send it now". */
+const TAIL_WORDS = new Set(['please', 'now', 'thanks'])
+/**
+ * The approvals a yes may be made of. A line is a yes only if, after the lead and tail words,
+ * every word belongs to one of these phrases (joined by "and" at most). It is a closed list on
+ * purpose: a word-by-word whitelist let "is that right", "please correct it" and "okay confirm
+ * it" through, because their words are each fine on their own.
+ */
+const APPROVAL_PHRASES = [
+	'go ahead',
+	'go for it',
+	'go',
+	'do it',
+	'do that',
+	'send it',
+	'send that',
+	'send them',
+	'send',
 	'approve',
+	'approve it',
+	'approve that',
+	'approve all',
 	'approved',
 	'i approve',
 	'i agree',
+	'confirm',
+	'confirmed',
 	'sounds good',
 	'sounds great',
+	'looks good',
+	'all good',
 	'that works',
-	'that is right',
 	'thats right',
-	'that is correct',
+	'that is right',
 	'thats correct',
-	'do it',
-	'do that',
+	'that is correct',
+	'correct',
 	'lets do it',
 	'lets do that',
+	'let us do it',
 	'lets go',
-	'go ahead',
-	'go for it',
-	'send it',
-	'send that',
-]
-const YES_START = new RegExp(`^(?:${YES_OPENERS.join('|')})(?:\\s|$)`)
+	'of course',
+	'for sure',
+].map((phrase) => phrase.split(' '))
 /** Any of these anywhere in the line makes it not a yes: it is a no, a condition or a change of mind. */
 const NO_WORDS = new Set([
 	'no',
@@ -100,33 +120,6 @@ const NO_WORDS = new Set([
 	'nej',
 ])
 const MAX_YES_WORDS = 8
-/**
- * Every word of a yes must be an approval word or plain filler. Opening with "sure" or
- * "please" is not enough: "sure, what does it say" and "please read it to me first" are
- * requests, not approvals, and on a held send or delete they must not count. A line with
- * any other word is not a yes; the person is asked again.
- */
-const YES_WORDS = new Set([
-	...YES_OPENERS.flatMap((opener) => opener.split(' ')),
-	'it',
-	'that',
-	'this',
-	'them',
-	'those',
-	'all',
-	'everything',
-	'now',
-	'please',
-	'thanks',
-	'thank',
-	'you',
-	'and',
-	'just',
-	'of',
-	'course',
-	'let',
-	'us',
-])
 
 function normalize(text: string): string {
 	return text
@@ -137,10 +130,23 @@ function normalize(text: string): string {
 		.trim()
 }
 
+/** True when `words` is one or more approval phrases, optionally joined by "and". */
+function isApprovalRun(words: string[]): boolean {
+	if (words.length === 0) return true
+	if (words[0] === 'and') return words.length > 1 && isApprovalRun(words.slice(1))
+	return APPROVAL_PHRASES.some(
+		(phrase) =>
+			phrase.length <= words.length &&
+			phrase.every((word, i) => words[i] === word) &&
+			isApprovalRun(words.slice(phrase.length)),
+	)
+}
+
 /**
- * A short, clear yes: a few words that open with a yes or an approval and are made only of
- * approval and filler words, with no "no", "but", "wait" or question. "Yes", "I approve",
- * "sounds good, send it" and "sure, do that" count; "sure, what does it say" does not.
+ * A short, clear yes: lead words ("yes", "okay sure"), then approval phrases ("go ahead and
+ * send it"), then tail words ("please", "now"), and nothing else. "I approve", "sounds good,
+ * send it" and "sure, do that" count; "sure, what does it say", "okay is that right" and
+ * "please correct it" do not, and neither does anything with a no, "but", "wait" or question mark.
  */
 export function isYes(text: string): boolean {
 	const normalized = normalize(text)
@@ -148,8 +154,15 @@ export function isYes(text: string): boolean {
 	const words = normalized.split(' ')
 	if (words.length > MAX_YES_WORDS) return false
 	if (words.some((word) => NO_WORDS.has(word))) return false
-	if (!words.every((word) => YES_WORDS.has(word))) return false
-	return YES_START.test(normalized)
+	let start = 0
+	while (start < words.length && LEAD_WORDS.has(words[start] as string)) start += 1
+	let end = words.length
+	while (end > start && TAIL_WORDS.has(words[end - 1] as string)) end -= 1
+	// "thank you" is two words; the loop above removes "you" only if "thank" is not a tail word.
+	if (end > start && words[end - 1] === 'you' && words[end - 2] === 'thank') end -= 2
+	const core = words.slice(start, end)
+	// Lead words alone ("yes", "okay sure") are a yes; otherwise the rest must be approvals.
+	return start > 0 ? isApprovalRun(core) : core.length > 0 && isApprovalRun(core)
 }
 
 /** True when the line turns the ask down. A line that is neither this nor a yes leaves the ask open. */
