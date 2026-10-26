@@ -75,7 +75,6 @@ export function McpServerRequestCard({
 	const [secretHeaders, setSecretHeaders] = useState<Record<string, string>>({})
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	// Saved but not yet given to the agent (the second step failed): a retry only gives access.
 	const [savedId, setSavedId] = useState<string | null>(null)
 	const [addedName, setAddedName] = useState<string | null>(null)
 	const [declinedNow, setDeclinedNow] = useState(false)
@@ -91,8 +90,16 @@ export function McpServerRequestCard({
 			!!i.createdAt &&
 			(!messageCreatedAt || i.createdAt >= messageCreatedAt),
 	)
+	const givenEarlier = addedEarlier?.agentGrants?.some(
+		(g) => g.actorId === askingAgentId && g.access !== 'none',
+	)
+	// Only "given" counts as done: a server saved whose grant failed offers to give it instead.
 	const doneName =
-		addedName ?? (storedAnswer === 'done' ? request.name : null) ?? addedEarlier?.displayName
+		addedName ??
+		(storedAnswer === 'done' ? request.name : null) ??
+		(givenEarlier ? addedEarlier?.displayName : null)
+	// Saved but not given: only the grant is left, so no secrets are asked for again.
+	const savedServerId = savedId ?? (addedEarlier && !givenEarlier ? addedEarlier.id : null)
 
 	const secretEnvNames = request.secret_env ?? []
 	const secretHeaderNames = request.secret_headers ?? []
