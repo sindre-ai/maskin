@@ -3453,11 +3453,33 @@ webhookApp.post('/resend/:token', async (c) => {
 	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
 	// Skjald stores the raw signing secret; Resend needs the API key alongside
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
-	let stored: { accessToken: string; webhookSecret: string }
+	//
+	// A row with no credentials (empty column, or a blob without both keys) is a
+	// permanent misconfiguration, not a transient fault. It answers 409 with a
+	// reason instead of a 500: Resend retries a 5xx on its backoff schedule and
+	// would hit the same failure every time.
+	const credentialsMissing = () => {
+		logger.warn('resend.webhook.credentials_missing', {
+			integration_id: integration.id,
+			workspace_id: integration.workspaceId,
+		})
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This Resend connection has no credentials. Reconnect Resend with POST /api/integrations/resend/connect.',
+				[{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' }],
+				'Reconnect Resend in this workspace, sending api_key and receive_subdomain.',
+			),
+			409,
+		)
+	}
+	if (!integration.credentials) return credentialsMissing()
+
+	let stored: { accessToken?: string; webhookSecret?: string }
 	try {
 		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
-			accessToken: string
-			webhookSecret: string
+			accessToken?: string
+			webhookSecret?: string
 		}
 	} catch {
 		logger.error('Resend webhook: credentials blob is unparseable', {
@@ -3465,9 +3487,11 @@ webhookApp.post('/resend/:token', async (c) => {
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
 	}
+	const { accessToken, webhookSecret } = stored
+	if (!accessToken || !webhookSecret) return credentialsMissing()
 
 	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
-	const verified = verifyResendSvix(body, headers, stored.webhookSecret)
+	const verified = verifyResendSvix(body, headers, webhookSecret)
 	if (!verified) {
 		logger.warn('Resend webhook: signature verification failed', {
 			integrationId: integration.id,
@@ -3582,7 +3606,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// so `events.data` carries the full body when the trigger fires.
 	let enriched: ResendEmailReceived
 	try {
-		enriched = await fetchResendBodyWithRetry(stored.accessToken, emailId, parsed.data)
+		enriched = await fetchResendBodyWithRetry(accessToken, emailId, parsed.data)
 	} catch (err) {
 		logger.error('resend.body_fetch.failed', {
 			email_id: emailId,
