@@ -10,6 +10,7 @@ import type {
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	ObjectFacetsResponse,
 	SafeMetadata,
 	SendRoundInput,
 	SendRoundResponse,
@@ -286,6 +287,11 @@ export const api = {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		// Exact totals under the list's filters — tab counts, group headers, filter chips.
+		facets: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<ObjectFacetsResponse>(`/objects/facets${qs}`, { workspaceId })
 		},
 		board: (workspaceId: string, params: Record<string, string>) => {
 			const qs = `?${new URLSearchParams(params)}`

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -35,6 +35,7 @@ import {
 	useBulkUpdateObjects,
 	useCreateObject,
 	useDeleteObject,
+	useGroupedObjects,
 	useObject,
 	useObjectGraph,
 	useObjects,
@@ -726,5 +727,108 @@ describe('useDeleteObject', () => {
 			via: 'single',
 			bulk_batch_size: 1,
 		})
+	})
+})
+
+describe('useGroupedObjects', () => {
+	const groups = [
+		{ value: 'active', total: 60 },
+		{ value: 'signal', total: 2 },
+	]
+	const rowsFor = (status: string, count: number, from = 0) =>
+		Array.from({ length: count }, (_, i) => buildObject({ id: `${status}-${from + i}`, status }))
+
+	beforeEach(() => {
+		vi.mocked(api.objects.list).mockImplementation(async (_ws, params) => {
+			const offset = Number(params?.offset ?? 0)
+			const limit = Number(params?.limit ?? 0)
+			const total = params?.group_value === 'active' ? 60 : 2
+			return rowsFor(params?.group_value ?? '', Math.min(limit, total - offset), offset)
+		})
+	})
+
+	function renderGrouped(isGroupOpen: (value: string) => boolean = () => true) {
+		return renderHook(
+			() =>
+				useGroupedObjects({
+					workspaceId,
+					params: { type: 'bet' },
+					groupBy: 'status',
+					groups,
+					isGroupOpen,
+					enabled: true,
+				}),
+			{ wrapper: TestWrapper },
+		)
+	}
+
+	it('fetches a first page per group and keeps the server totals', async () => {
+		const { result } = renderGrouped()
+
+		await waitFor(() => expect(result.current.rows).toHaveLength(25 + 2))
+		expect(result.current.groups).toEqual([
+			{ value: 'active', total: 60, loaded: 25 },
+			{ value: 'signal', total: 2, loaded: 2 },
+		])
+		expect(api.objects.list).toHaveBeenCalledWith(
+			workspaceId,
+			expect.objectContaining({
+				type: 'bet',
+				group_by: 'status',
+				group_value: 'active',
+				limit: '25',
+				offset: '0',
+			}),
+		)
+	})
+
+	it('loads the next page of one group only', async () => {
+		const { result } = renderGrouped()
+		await waitFor(() => expect(result.current.rows).toHaveLength(27))
+		vi.mocked(api.objects.list).mockClear()
+
+		act(() => result.current.loadMoreInGroup('active'))
+
+		await waitFor(() => expect(result.current.rows).toHaveLength(27 + 25))
+		expect(api.objects.list).toHaveBeenCalledTimes(1)
+		expect(api.objects.list).toHaveBeenCalledWith(
+			workspaceId,
+			expect.objectContaining({ group_value: 'active', offset: '25' }),
+		)
+	})
+
+	it('does not fetch a collapsed group', async () => {
+		const { result } = renderGrouped((value) => value !== 'active')
+
+		await waitFor(() => expect(result.current.rows).toHaveLength(2))
+		expect(api.objects.list).not.toHaveBeenCalledWith(
+			workspaceId,
+			expect.objectContaining({ group_value: 'active' }),
+		)
+	})
+
+	it('fetches groups beyond the first batch only as the list scrolls', async () => {
+		const many = Array.from({ length: 30 }, (_, i) => ({ value: `g-${i}`, total: 1 }))
+		vi.mocked(api.objects.list).mockImplementation(async (_ws, params) =>
+			rowsFor(params?.group_value ?? '', 1),
+		)
+		const { result } = renderHook(
+			() =>
+				useGroupedObjects({
+					workspaceId,
+					params: {},
+					groupBy: 'status',
+					groups: many,
+					isGroupOpen: () => true,
+					enabled: true,
+				}),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.rows).toHaveLength(12))
+		expect(result.current.hasMoreGroups).toBe(true)
+
+		act(() => result.current.loadMoreGroups())
+		await waitFor(() => expect(result.current.rows).toHaveLength(24))
 	})
 })

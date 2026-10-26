@@ -27,7 +27,12 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
-import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
+import {
+	useBulkResultHandlers,
+	useBulkUpdateObjects,
+	useGroupedObjects,
+	useObjectFacets,
+} from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -56,13 +61,16 @@ import {
 	toListParams,
 } from '@/lib/objects-filter-model'
 import type { ObjectsFilterModel } from '@/lib/objects-filter-model'
+import { NO_VALUE_GROUP } from '@/lib/objects-grouping'
 import {
 	UPDATED_BUCKETS,
 	UPDATED_BUCKET_LABELS,
 	type UpdatedBucket,
 	isUpdatedBucket,
 	isUpdatedWithinWeek,
+	startOfLocalDay,
 	updatedBucketOf,
+	updatedBucketWindow,
 } from '@/lib/objects-updated-buckets'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
@@ -438,30 +446,89 @@ function ObjectsRoute() {
 		[filterModel, supportsIncludeArchived],
 	)
 
-	// Infinite query — use search endpoint when q is present
+	// The quick filters (Starred, New last 7 days, Updated, Working, Waiting on you)
+	// narrow on the server, like every other filter, so a count and the rows it
+	// counts can never disagree — and so they reach rows that have not loaded yet.
+	const waitingIds = useMemo(
+		() => [...pendingAsksByObjectId.keys()].sort(),
+		[pendingAsksByObjectId],
+	)
+	const quickParams = useMemo(() => {
+		const params: Record<string, string> = {}
+		if (starred) params.starred = 'true'
+		if (attention === 'working') params.working = 'true'
+		if (attention === 'waiting') params.attention_ids = waitingIds.join(',')
+		let after: Date | undefined
+		let before: Date | undefined
+		if (fresh) after = new Date(Date.now() - 7 * 86_400_000)
+		if (updated) {
+			const window = updatedBucketWindow(updated)
+			if (window.after && (!after || window.after > after)) after = window.after
+			before = window.before
+		}
+		if (after) params.updated_after = after.toISOString()
+		if (before) params.updated_before = before.toISOString()
+		return params
+	}, [starred, attention, waitingIds, fresh, updated])
+
+	// Everything that decides WHICH rows match, with the sort that orders them.
+	const listParams = useMemo<Record<string, string>>(
+		() => ({ ...filters, ...quickParams, ...(q ? { q } : {}) }),
+		[filters, quickParams, q],
+	)
+
+	// Exact totals — tab counts, group headers and filter chips all read these,
+	// never a count of whichever rows have loaded.
+	const grouped = !!groupBy
+	const facetParams = useMemo(() => {
+		const { sort: _sort, order: _order, ...matching } = listParams
+		return {
+			...matching,
+			group_by: groupBy ?? 'status',
+			tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+			day_start: startOfLocalDay().toISOString(),
+			...(waitingIds.length > 0 ? { waiting_ids: waitingIds.join(',') } : {}),
+		}
+	}, [listParams, groupBy, waitingIds])
+	const facetsQuery = useObjectFacets(workspaceId, facetParams)
+	const facets = facetsQuery.data
+
+	// Flat list (no grouping): infinite scroll, ordered by the chosen sort.
 	const infiniteQuery = useInfiniteQuery({
-		queryKey: queryKeys.objects.listInfinite(workspaceId, { ...filters, q }),
-		queryFn: ({ pageParam }) => {
-			const params: Record<string, string> = {
-				...filters,
+		queryKey: queryKeys.objects.listInfinite(workspaceId, listParams),
+		queryFn: ({ pageParam }) =>
+			api.objects.list(workspaceId, {
+				...listParams,
 				limit: String(PAGE_SIZE),
 				offset: String(pageParam),
-			}
-			if (q) {
-				params.q = q
-				return api.objects.search(workspaceId, params)
-			}
-			return api.objects.list(workspaceId, params)
-		},
+			}),
 		getNextPageParam: (lastPage, allPages) => {
 			if (lastPage.length < PAGE_SIZE) return undefined
 			return allPages.flat().length
 		},
 		initialPageParam: 0,
 		placeholderData: keepPreviousData,
+		enabled: !grouped,
 	})
 
-	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	// Grouped list: headers and totals come from the facets above; each group
+	// fetches only its own rows, a page at a time.
+	const isGroupOpen = useCallback(
+		(value: string) => expanded[`${groupBy}:${value === '' ? NO_VALUE_GROUP : value}`] !== false,
+		[expanded, groupBy],
+	)
+	const groupedQuery = useGroupedObjects({
+		workspaceId,
+		params: listParams,
+		groupBy: groupBy ?? 'status',
+		groups: facets?.groups,
+		isGroupOpen,
+		enabled: grouped && !!facets,
+	})
+	const listLoading = grouped ? facetsQuery.isLoading : infiniteQuery.isLoading
+
+	const flatObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	const allObjects = grouped ? groupedQuery.rows : flatObjects
 
 	// Starred set — derived from server-truth `is_starred_by_me` on the loaded
 	// pages, mirroring the pre-D5 shape the Starred quick filter + its count
@@ -499,65 +566,35 @@ function ObjectsRoute() {
 			(!updated || updatedBucketOf(object.updatedAt) === updated),
 		[matchesAttention, fresh, starred, starredIds, updated],
 	)
-	const listObjects = useMemo(
-		() => (hasClientFilter ? allObjects.filter(matchesClientFilters) : allObjects),
-		[hasClientFilter, allObjects, matchesClientFilters],
-	)
+	// The list is already narrowed on the server; `matchesClientFilters` now only
+	// serves the board, whose columns come from a separate endpoint.
+	const listObjects = allObjects
 
-	// Per-tab live counts for the type tab strip. Counts reflect the objects
-	// loaded so far (the list paginates via infinite query) — they update as
-	// more pages load, which is the right trade-off vs. a separate count query.
-	// Any narrowing that makes a type's count unrepresentative of the workspace.
-	// `typeFilter` counts as a narrowing here too: with a type selected the API
-	// returns only that type, so every other tab's count is 0 and the hide rule
-	// below would prune the tabs you need to switch back with — a one-way door
-	// out of the All tab.
-	const hasActiveFilterForTabs =
-		!!typeFilter ||
-		!!statusFilter ||
-		!!driverFilter ||
-		!!attention ||
-		fresh ||
-		starred ||
-		!!updated ||
-		!!q
-
+	// Per-tab counts for the type tab strip — the server's totals, so a type never
+	// reads zero just because none of its rows have loaded yet. Type counts ignore
+	// the selected type, so the other tabs keep their numbers while one is open.
 	const countsByType = useMemo(() => {
-		const counts: Record<string, number> = { all: allObjects.length }
+		const byType = facets?.by_type
+		if (!byType) return undefined
+		const counts: Record<string, number> = {
+			all: Object.values(byType).reduce((sum, n) => sum + n, 0),
+		}
 		for (const tab of tabs) {
-			if (!tab.value) continue
-			counts[tab.value] = allObjects.filter((o) => o.type === tab.value).length
+			if (tab.value) counts[tab.value] = byType[tab.value] ?? 0
 		}
 		return counts
-	}, [tabs, allObjects])
-	// The mockup keeps `All` always and drops every type tab with nothing in it
-	// (`.filter(c => c.val === null || c.count > 0)`, script 5921) — an empty
-	// workspace shows one tab, not a row of zeroes.
-	//
-	// It counts those tabs from the pre-filter pool (script 5886's `activePool`),
-	// so a status or driver filter never removes a tab. Our counts come from the
-	// filtered API result instead, so the same rule would make every other type
-	// disappear the moment a filter is applied — the workspace would look like it
-	// had lost its types. While any filter is active we therefore show the full
-	// tab set; the hide rule only prunes types the workspace genuinely never uses.
-	//
-	// The same "count = loaded rows" trade-off also means a type whose objects sit
-	// past the first infinite-query page reads as `count === 0` until the user
-	// scrolls to load them — so pruning on that value would hide legitimate tabs
-	// on any workspace with more than one page of objects. Only apply the hide
-	// rule once the infinite query has drained (`!hasNextPage && !isLoading`);
-	// until then, assume every enabled type could still show up in a later page
-	// and keep its tab visible. Empty workspaces still collapse to `All` because
-	// their first page is under PAGE_SIZE, so `hasNextPage` is false immediately.
-	const canPruneZeroCountTabs = !infiniteQuery.hasNextPage && !infiniteQuery.isLoading
+	}, [tabs, facets])
+	// The mockup keeps `All` always and drops every type tab with nothing in it, so
+	// an empty workspace shows one tab, not a row of zeroes. The totals are exact,
+	// so the rule applies from the first paint; the open tab always stays.
 	const tabsWithCounts = useMemo(() => {
+		if (!countsByType) return tabs.map((t) => ({ ...t, count: undefined }))
 		const withCounts = tabs.map((t) => ({
 			...t,
 			count: t.value ? countsByType[t.value] : countsByType.all,
 		}))
-		if (hasActiveFilterForTabs || !canPruneZeroCountTabs) return withCounts
-		return withCounts.filter((t) => !t.value || t.count > 0 || t.value === typeFilter)
-	}, [tabs, countsByType, typeFilter, hasActiveFilterForTabs, canPruneZeroCountTabs])
+		return withCounts.filter((t) => !t.value || (t.count ?? 0) > 0 || t.value === typeFilter)
+	}, [tabs, countsByType, typeFilter])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -841,14 +878,14 @@ function ObjectsRoute() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fires once when the load-gate flips; ref reads current key
 	useEffect(() => {
 		if (!shouldRestoreScrollRef.current) return
-		if (infiniteQuery.isLoading) return
+		if (listLoading) return
 		if (allObjects.length === 0) return
 		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
 		if (firstVisibleRowId) {
 			listViewRef.current?.scrollToRowId(firstVisibleRowId)
 		}
 		shouldRestoreScrollRef.current = false
-	}, [infiniteQuery.isLoading, allObjects.length])
+	}, [listLoading, allObjects.length])
 
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
@@ -1074,53 +1111,20 @@ function ObjectsRoute() {
 		})
 	}, [boardQuery.data, attention, matchesAttention])
 
-	const attentionCounts = useMemo(() => {
-		let waiting = 0
-		let working = 0
-		for (const object of allObjects) {
-			if (pendingAsksByObjectId.has(object.id)) waiting++
-			if (object.activeSessionId) working++
-		}
-		return { waiting, working }
-	}, [allObjects, pendingAsksByObjectId])
-
-	// Wrapped rather than passed by reference: `filter` would hand the array
-	// index in as the `now` argument.
-	const freshCount = useMemo(
-		() => allObjects.filter((o) => isUpdatedWithinWeek(o)).length,
-		[allObjects],
+	// Chip counts are the server's totals under the other active filters — each
+	// facet ignores its own axis, so a chip shows what picking it would give.
+	const attentionCounts = useMemo(
+		() => ({ waiting: facets?.waiting ?? 0, working: facets?.working ?? 0 }),
+		[facets],
 	)
-	const starredCount = useMemo(
-		() => allObjects.filter((o) => starredIds.has(o.id)).length,
-		[allObjects, starredIds],
+	const freshCount = facets?.fresh ?? 0
+	const starredCount = facets?.starred ?? 0
+	const statusCounts = useMemo(() => new Map(Object.entries(facets?.by_status ?? {})), [facets])
+	const driverCounts = useMemo(() => new Map(Object.entries(facets?.by_driver ?? {})), [facets])
+	const updatedCounts = useMemo(
+		() => new Map(Object.entries(facets?.updated ?? {}) as Array<[UpdatedBucket, number]>),
+		[facets],
 	)
-
-	const statusCounts = useMemo(() => {
-		const counts = new Map<string, number>()
-		for (const object of allObjects) {
-			counts.set(object.status, (counts.get(object.status) ?? 0) + 1)
-		}
-		return counts
-	}, [allObjects])
-
-	const driverCounts = useMemo(() => {
-		const counts = new Map<string, number>()
-		for (const object of allObjects) {
-			if (!object.driver) continue
-			counts.set(object.driver, (counts.get(object.driver) ?? 0) + 1)
-		}
-		return counts
-	}, [allObjects])
-
-	const updatedCounts = useMemo(() => {
-		const counts = new Map<UpdatedBucket, number>()
-		for (const object of allObjects) {
-			const bucket = updatedBucketOf(object.updatedAt)
-			if (!bucket) continue
-			counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
-		}
-		return counts
-	}, [allObjects])
 
 	// Single-select toggles: picking the active value again clears the axis, so
 	// a chip is always its own off-switch (mockup `on ? null : key`).
@@ -1433,15 +1437,10 @@ function ObjectsRoute() {
 		q,
 	])
 
-	// Archived rows only exist in the loaded set while the toggle is on, so the
-	// count is only truthful then — omitted otherwise rather than shown as 0.
-	const archivedCount = useMemo(
-		() =>
-			supportsIncludeArchived && includeArchived
-				? allObjects.filter((o) => o.status === 'archived').length
-				: undefined,
-		[supportsIncludeArchived, includeArchived, allObjects],
-	)
+	// Archived rows only exist in the totals while the toggle is on, so the count
+	// is only truthful then — omitted otherwise rather than shown as 0.
+	const archivedCount =
+		supportsIncludeArchived && includeArchived ? (facets?.by_status.archived ?? 0) : undefined
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -1949,12 +1948,15 @@ function ObjectsRoute() {
 					showBetStatusIndicator={showBetStatusIndicator}
 					asksByObjectId={pendingAsksByObjectId}
 					pendingAskCountByObjectId={pendingAskCountByObjectId}
-					hasNextPage={infiniteQuery.hasNextPage}
-					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
-					isError={infiniteQuery.isError}
-					error={infiniteQuery.error}
-					fetchNextPage={infiniteQuery.fetchNextPage}
-					isLoading={infiniteQuery.isLoading}
+					groupTotals={grouped ? facets?.groups : undefined}
+					onLoadMoreInGroup={groupedQuery.loadMoreInGroup}
+					loadingGroups={groupedQuery.loadingGroups}
+					hasNextPage={grouped ? groupedQuery.hasMoreGroups : infiniteQuery.hasNextPage}
+					isFetchingNextPage={grouped ? false : infiniteQuery.isFetchingNextPage}
+					isError={grouped ? !!groupedQuery.error || facetsQuery.isError : infiniteQuery.isError}
+					error={grouped ? (groupedQuery.error ?? facetsQuery.error) : infiniteQuery.error}
+					fetchNextPage={grouped ? groupedQuery.loadMoreGroups : infiniteQuery.fetchNextPage}
+					isLoading={listLoading}
 					expanded={expanded}
 					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
