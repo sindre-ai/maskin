@@ -106,6 +106,15 @@ export const queryKeys = {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
 	},
+	extensions: {
+		all: (workspaceId: string) => ['extensions', workspaceId] as const,
+		detail: (workspaceId: string, id: string) => ['extensions', workspaceId, id] as const,
+		deliveries: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'deliveries'] as const,
+		recipes: (workspaceId: string) => ['extensions', workspaceId, 'recipes'] as const,
+		attempted: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'attempted'] as const,
+	},
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
 		detail: (workspaceId: string, name: string) => ['workspace-skills', workspaceId, name] as const,

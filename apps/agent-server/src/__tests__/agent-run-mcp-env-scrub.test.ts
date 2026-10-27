@@ -8,7 +8,12 @@ const script = readFileSync(
 	new URL('../../../../docker/agent-base/agent-run.sh', import.meta.url),
 	'utf8',
 )
-const fn = script.match(/^setup_mcps\(\) \{\n[\s\S]*?^\}$/m)?.[0] ?? ''
+const extractFn = (name: string) =>
+	script.match(new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm'))?.[0] ?? ''
+// setup_mcps calls the guard helpers, so the extracted script carries them too.
+const fn = ['mcp_guard_runs', 'drop_unavailable_guarded_servers', 'setup_mcps']
+	.map(extractFn)
+	.join('\n')
 const filter = new URL('../../../../docker/agent-base/mcp-scrub-env.jq', import.meta.url).pathname
 
 // Stand-in values; only the variable names matter to the filter.

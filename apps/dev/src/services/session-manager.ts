@@ -121,6 +121,10 @@ import {
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
 import {
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
+import {
 	byoApiKeyEnvName,
 	byoLoginEnvNames,
 	redactLaunchEnv,
@@ -195,6 +199,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -2335,11 +2340,12 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2678,6 +2684,21 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
+		const extensionMcp = await buildExtensionMcpServers(
+			this.db,
+			session.workspaceId,
+			agent.id,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
+		)
+		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
+		Object.assign(envVars, extensionMcp.env)
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -3114,6 +3135,16 @@ ${cont.continues_prompt}
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			if (Object.keys(keychainEnv).length > 0) {

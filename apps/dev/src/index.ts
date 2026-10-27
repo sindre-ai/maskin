@@ -34,6 +34,7 @@ import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
+import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
@@ -244,6 +245,10 @@ logger.info('Meet transcript reconciler started')
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
+
+const blockedToolCallsCleaner = new BlockedToolCallsCleaner(db)
+blockedToolCallsCleaner.start()
+logger.info('Blocked tool calls cleaner started')
 
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()

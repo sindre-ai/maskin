@@ -48,6 +48,19 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.285
 COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-server
 RUN github-mcp-server --version
 
+# Per-tool default-deny guard for customer-declared MCP servers. Single-file
+# node script, no dependencies. The session launch config starts it in front of
+# each guarded server: maskin-mcp-guard -- <real server command>. The --version
+# run fails the image build if the script is missing or broken. The image label
+# carries the wrapper version (read it without running the image: docker
+# inspect), and the build fails if the label and the script's own version differ,
+# so bump MASKIN_MCP_GUARD_VERSION together with VERSION in maskin-mcp-guard.js.
+ARG MASKIN_MCP_GUARD_VERSION=0.1.0
+LABEL io.maskin.mcp-guard.version=$MASKIN_MCP_GUARD_VERSION
+COPY maskin-mcp-guard.js /usr/local/bin/maskin-mcp-guard
+RUN chmod +x /usr/local/bin/maskin-mcp-guard \
+    && test "$(maskin-mcp-guard --version)" = "maskin-mcp-guard ${MASKIN_MCP_GUARD_VERSION}"
+
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 
