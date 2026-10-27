@@ -268,6 +268,21 @@ private let oneHourCallJSON = """
 		#expect(transcript?.lines.count == 2)
 	}
 
+	@Test func theDividersFrameTheCallAndTheSummaryComesLast() {
+		let items = ThreadLayout.items(
+			for: [line(1, "me", "hello", at: 5)], currentActorID: "me", calls: [record], callSummaries: true,
+			inlineTranscript: false)
+		var order: [String] = []
+		for item in items {
+			switch item {
+			case .callDivider(let d): order.append(d.edge == .started ? "start" : "end")
+			case .callSummary: order.append("summary")
+			default: break
+			}
+		}
+		#expect(order == ["start", "end", "summary"])
+	}
+
 	@Test func aDecisionAnsweredInTheDockMakesADecidedRow() {
 		let e = LiveReceiptEvent.decided(id: "d1", seconds: 31, question: "Lift the PostHog event cap", choice: "approved")
 		#expect(e.kind == .decided)

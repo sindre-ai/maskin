@@ -95,7 +95,7 @@ public enum LiveMeetingChrome {
 		for span in spans {
 			let start = LiveCallDivider(key: span.key, edge: .started, at: span.startedAt, calendar: calendar)
 			let from = span.startedAt.addingTimeInterval(-LiveCallWindow.skew)
-			let startIndex = items.firstIndex { ($0.time ?? .distantPast) >= from } ?? items.count
+			let startIndex = items.firstIndex { ($0.anchorTime ?? .distantPast) >= from } ?? items.count
 			items.insert(.callDivider(start), at: startIndex)
 			guard let endedAt = span.endedAt else { continue }
 			let limit = endedAt.addingTimeInterval(LiveCallWindow.grace)
@@ -113,7 +113,15 @@ extension ThreadItem {
 		case .message(let m, _), .system(let m): m.createdAt
 		case .liveCall(let card): card.record.startedAt
 		case .callDivider(let divider): divider.at
-		case .daySeparator, .unreadDivider, .handoff: nil
+		case .daySeparator, .unreadDivider, .handoff, .receipt, .callSummary: nil
 		}
+	}
+
+	/// Where the call's start divider may go: like `time`, but a call's summary card counts as
+	/// starting where its call did, so the divider lands before it. It stays out of `time` so the
+	/// end divider goes before the summary, not after it.
+	var anchorTime: Date? {
+		if case .callSummary(let summary, _) = self { return summary.startedAt }
+		return time
 	}
 }
