@@ -179,7 +179,9 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	/// A reply inside a thread (it hangs under a root message).
 	public var isThreadReply: Bool { threadRootID != nil }
 	/// Replies stay out of the main timeline unless the author also sent them there.
-	public var showsInTimeline: Bool { (threadRootID == nil || alsoInChannel) && !isHiddenFromChat }
+	/// A hidden nudge that failed to send stays visible, so there is something to retry or discard: otherwise
+	/// the card says "Allowed" and the agent was never told, with nothing on screen to show it.
+	public var showsInTimeline: Bool { (threadRootID == nil || alsoInChannel) && (!isHiddenFromChat || isFailed) }
 	public var isPending: Bool { serverID == nil }
 
 	/// An agent's end-of-turn reply that the backend marked as an error (model API failure,

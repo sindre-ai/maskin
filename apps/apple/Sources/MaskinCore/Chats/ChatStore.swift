@@ -1099,7 +1099,7 @@ public final class ChatStore {
 
 	/// The replies of one thread, oldest first, unconfirmed ones last.
 	public func replies(to rootID: Int) -> [ChatMessage] {
-		allMessages.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }
+		allMessages.filter { $0.threadRootID == rootID && (!$0.isHiddenFromChat || $0.isFailed) }
 	}
 
 	/// What the pill under a root says: the server's summary plus replies that arrived since.
@@ -1107,7 +1107,7 @@ public final class ChatStore {
 		guard let rootID = root.serverID else { return nil }
 		return ThreadSummary.current(
 			base: root.thread, rootAuthor: participant(for: root.actorID),
-			replies: confirmed.filter { $0.threadRootID == rootID }, currentActorID: currentActorID,
+			replies: confirmed.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }, currentActorID: currentActorID,
 			readThrough: threadReadThrough[rootID])
 	}
 
