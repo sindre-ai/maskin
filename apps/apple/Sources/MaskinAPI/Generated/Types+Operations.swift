@@ -46578,6 +46578,8 @@ public enum Operations {
                         public var source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/voice_session_id`.
                         public var voice_session_id: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/kind`.
+                        public var kind: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output`.
                         public struct final_outputPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/final_output/dedupe_key`.
@@ -47277,6 +47279,7 @@ public enum Operations {
                         ///   - context_notifications:
                         ///   - source:
                         ///   - voice_session_id:
+                        ///   - kind:
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
@@ -47301,6 +47304,7 @@ public enum Operations {
                             context_notifications: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.context_notificationsPayload? = nil,
                             source: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.sourcePayload? = nil,
                             voice_session_id: Swift.String? = nil,
+                            kind: Swift.String? = nil,
                             final_output: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.question_answerPayload? = nil,
@@ -47325,6 +47329,7 @@ public enum Operations {
                             self.context_notifications = context_notifications
                             self.source = source
                             self.voice_session_id = voice_session_id
+                            self.kind = kind
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
@@ -47350,6 +47355,7 @@ public enum Operations {
                             case context_notifications
                             case source
                             case voice_session_id
+                            case kind
                             case final_output
                             case question
                             case question_answer
@@ -51376,6 +51382,8 @@ public enum Operations {
                         public var source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/voice_session_id`.
                         public var voice_session_id: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/kind`.
+                        public var kind: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output`.
                         public struct final_outputPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/final_output/dedupe_key`.
@@ -52075,6 +52083,7 @@ public enum Operations {
                         ///   - context_notifications:
                         ///   - source:
                         ///   - voice_session_id:
+                        ///   - kind:
                         ///   - final_output:
                         ///   - question:
                         ///   - question_answer:
@@ -52099,6 +52108,7 @@ public enum Operations {
                             context_notifications: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.context_notificationsPayload? = nil,
                             source: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.sourcePayload? = nil,
                             voice_session_id: Swift.String? = nil,
+                            kind: Swift.String? = nil,
                             final_output: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.final_outputPayload? = nil,
                             question: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload? = nil,
                             question_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.question_answerPayload? = nil,
@@ -52123,6 +52133,7 @@ public enum Operations {
                             self.context_notifications = context_notifications
                             self.source = source
                             self.voice_session_id = voice_session_id
+                            self.kind = kind
                             self.final_output = final_output
                             self.question = question
                             self.question_answer = question_answer
@@ -52148,6 +52159,7 @@ public enum Operations {
                             case context_notifications
                             case source
                             case voice_session_id
+                            case kind
                             case final_output
                             case question
                             case question_answer

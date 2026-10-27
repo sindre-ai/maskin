@@ -37833,6 +37833,10 @@
 												"type": "string",
 												"format": "uuid"
 											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
+											},
 											"final_output": {
 												"type": "object",
 												"properties": {
@@ -40778,6 +40782,10 @@
 											"voice_session_id": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
 											},
 											"final_output": {
 												"type": "object",
