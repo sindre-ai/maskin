@@ -114,7 +114,7 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal' },
+					previous: { status: 'opportunity' },
 					updated: { status: 'proposed' },
 				},
 			})
@@ -212,7 +212,7 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal', content: 'old' },
+					previous: { status: 'opportunity', content: 'old' },
 					updated: { status: 'proposed', content: 'new' },
 				},
 			})
@@ -253,8 +253,8 @@ describe('formatEventDescription', () => {
 				action: 'updated',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal', title: 'same' },
-					updated: { status: 'signal', title: 'same' },
+					previous: { status: 'opportunity', title: 'same' },
+					updated: { status: 'opportunity', title: 'same' },
 				},
 			})
 
@@ -268,7 +268,7 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					changes: [{ field: 'status', old: 'signal', new: 'proposed' }],
+					changes: [{ field: 'status', old: 'opportunity', new: 'proposed' }],
 				},
 			})
 
@@ -312,7 +312,7 @@ describe('formatEventDescription', () => {
 				data: {
 					changes: [
 						{ field: 'content', old: 'old', new: 'new' },
-						{ field: 'status', old: 'signal', new: 'proposed' },
+						{ field: 'status', old: 'opportunity', new: 'proposed' },
 						{ field: 'driver', old: 'actor-alice', new: 'actor-bob' },
 					],
 				},

@@ -19,12 +19,12 @@ test.describe('Object title fidelity across back/forward navigation', () => {
 			const objectA = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Back-nav probe object A',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			const objectB = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Back-nav probe object B',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Open A first, confirm its title lands in the static heading.

@@ -25,7 +25,7 @@ async function seedViewerFile(api: TestAPI, workspaceId: string) {
 	const obj = await api.createObject(workspaceId, {
 		type: 'bet',
 		title: 'File viewer e2e',
-		status: 'signal',
+		status: 'opportunity',
 	})
 	const file = await api.createFile(workspaceId, {
 		name: 'e2e-file-viewer.html',

@@ -111,7 +111,7 @@ describe('get_objects `include:` expansions', () => {
 							{
 								id: 'ws-default-123',
 								name: 'Test WS',
-								settings: { statuses: { bet: ['signal', 'active'] } },
+								settings: { statuses: { bet: ['opportunity', 'active'] } },
 							},
 						]),
 				} as Response

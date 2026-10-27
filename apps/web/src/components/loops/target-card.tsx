@@ -28,7 +28,7 @@ interface PaceVerdict {
 /**
  * Pace pills carry their own success/warning/destructive tokens rather than
  * borrowing the status palette. The status tokens are not ordered by
- * good-to-bad — `--st-signal-*` (used for "Behind pace") and
+ * good-to-bad — `--st-opportunity-*` (used for "Behind pace") and
  * `--st-validated-*` (used for "Above target") are the *same* violet in both
  * light and dark mode, so the one thing the pill exists to say at a glance —
  * am I ahead or behind — did not come through at all. Green / amber / red is

@@ -157,7 +157,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer in their own words.',
 							targetActorId: 'actor-source-1',
 						},
@@ -197,7 +197,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer.',
 							targetActorId: 'actor-source-1',
 						},
@@ -232,7 +232,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer.',
 							targetActorId: 'actor-source-1',
 						},

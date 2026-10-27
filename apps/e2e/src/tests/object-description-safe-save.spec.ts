@@ -93,7 +93,7 @@ test.describe('Object description on the rich editor', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'No-edit open',
-			status: 'signal',
+			status: 'opportunity',
 			content: AGENT_DESCRIPTION,
 		})
 		const writes = watchObjectWrites(page, bet.id)
@@ -115,7 +115,7 @@ test.describe('Object description on the rich editor', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'One word',
-			status: 'signal',
+			status: 'opportunity',
 			content: AGENT_DESCRIPTION,
 		})
 		const writes = watchObjectWrites(page, bet.id)
