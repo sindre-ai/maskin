@@ -103,7 +103,7 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 
 /** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
 export const VOICE_LANGUAGE_RULE =
-	"Reply in the language the person is speaking, and follow them if they switch. People on this call speak Danish and English and often mix them. When you speak Danish, use natural spoken Danish, not a word-for-word translation of English, and pronounce Danish words and names as Danish. When you read out text that is written in Danish, read it as Danish."
+	'Reply in the language the person is speaking, and follow them if they switch. People on this call speak Danish and English and often mix them. When you speak Danish, use natural spoken Danish, not a word-for-word translation of English, and pronounce Danish words and names as Danish. When you read out text that is written in Danish, read it as Danish.'
 
 export interface VoiceInstructionsInput {
 	systemPrompt: string | null

@@ -701,9 +701,12 @@ describe('createRealtimeCall — session settings and the transcription retry', 
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValueOnce(
-				new Response('{"error":{"message":"Unknown parameter: session.audio.input.transcription.languages."}}', {
-					status: 400,
-				}),
+				new Response(
+					'{"error":{"message":"Unknown parameter: session.audio.input.transcription.languages."}}',
+					{
+						status: 400,
+					},
+				),
 			)
 			.mockResolvedValueOnce(ok())
 		vi.stubGlobal('fetch', fetchMock)
