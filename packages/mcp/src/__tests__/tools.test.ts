@@ -821,6 +821,13 @@ describe('list_for_you schema', () => {
 		expect(() => schema.parse({ actor_id: uuid, limit: 51 })).toThrow()
 	})
 
+	it('defaults offset to 0 and rejects a negative or fractional offset', () => {
+		expect(schema.parse({ actor_id: uuid }).offset).toBe(0)
+		expect(schema.parse({ actor_id: uuid, offset: 50 }).offset).toBe(50)
+		expect(() => schema.parse({ actor_id: uuid, offset: -1 })).toThrow()
+		expect(() => schema.parse({ actor_id: uuid, offset: 1.5 })).toThrow()
+	})
+
 	it('points list_notifications readers at list_for_you', () => {
 		expect(tools.list_notifications.description).toContain('list_for_you')
 	})

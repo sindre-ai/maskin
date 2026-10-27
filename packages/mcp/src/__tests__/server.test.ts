@@ -6883,6 +6883,58 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.total).toBe(40)
 			expect(result.content[0].text.length).toBeLessThan(20_000)
 		})
+
+		type Page = { total: number; items: Array<{ rank: number; notification_id: string | null }> }
+		const readPage = async (args: { limit: number; offset?: number }) =>
+			(
+				(await getHandler('list_for_you')({ actor_id: person, ...args })) as {
+					structuredContent: Page
+				}
+			).structuredContent
+
+		it('pages through 76 cards with offset, each once and in web order', async () => {
+			const cards = Array.from({ length: 76 }, (_, i) => route(i + 1))
+			mockFetchSuccess({ items: cards })
+			const first = await readPage({ limit: 50, offset: 0 })
+			mockFetchSuccess({ items: cards })
+			const second = await readPage({ limit: 50, offset: 50 })
+
+			expect(first.items).toHaveLength(50)
+			expect(second.items).toHaveLength(26)
+			expect(first.total).toBe(76)
+			expect(second.total).toBe(76)
+			const ranks = [...first.items, ...second.items].map((i) => i.rank)
+			expect(ranks).toEqual(Array.from({ length: 76 }, (_, i) => i + 1))
+		})
+
+		it('treats a missing offset as 0', async () => {
+			mockFetchSuccess({ items: [1, 2, 3].map(route) })
+			const page = await readPage({ limit: 2 })
+			expect(page.items.map((i) => i.rank)).toEqual([1, 2])
+		})
+
+		it('returns an empty page and the true total when the offset is past the end', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 76 }, (_, i) => route(i + 1)) })
+			const page = await readPage({ limit: 50, offset: 100 })
+			expect(page.items).toEqual([])
+			expect(page.total).toBe(76)
+		})
+
+		it('keeps a default-size page of cards with long text under the Live call cap', async () => {
+			const long = (n: number) => ({
+				...route(n),
+				headline: 'h'.repeat(200),
+				rationale: 'r'.repeat(300),
+				object: { id: `obj-${n}`, title: 't'.repeat(80), type: 'bet', status: 'proposed' },
+			})
+			mockFetchSuccess({ items: Array.from({ length: 76 }, (_, i) => long(i + 1)) })
+			const result = (await getHandler('list_for_you')({
+				actor_id: person,
+				limit: 10,
+				offset: 10,
+			})) as { content: Array<{ text: string }> }
+			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
 	})
 
 	describe('list_actors directory: skill names and name filter', () => {
