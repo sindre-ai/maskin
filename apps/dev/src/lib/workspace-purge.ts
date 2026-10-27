@@ -105,10 +105,12 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
 	'api_keys',
+	'blocked_tool_calls',
 	'conversation_participants',
 	'conversation_pending_turns',
 	'credential_access_log',
 	'credential_chain_snapshots',
+	'extensions',
 	'file_comments',
 	'files',
 	'google_meet_space_idempotency',

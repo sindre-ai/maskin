@@ -20,6 +20,8 @@ export type InsertConversationMessageArgs = {
 	threadRootId?: number | null
 	/** With threadRootId: also show the reply in the main timeline. */
 	threadAlsoInChannel?: boolean
+	/** Do not copy a message of an object's chat onto the object as a comment (a call receipt is not something said). */
+	skipObjectMirror?: boolean
 }
 
 export type InsertedConversationMessage = typeof messages.$inferSelect
@@ -83,7 +85,7 @@ export async function insertConversationMessage(
 		},
 	})
 
-	if ((args.kind ?? 'message') === 'message') {
+	if ((args.kind ?? 'message') === 'message' && !args.skipObjectMirror) {
 		await mirrorAsObjectComment(db, {
 			conversationId: args.conversationId,
 			workspaceId: args.workspaceId,

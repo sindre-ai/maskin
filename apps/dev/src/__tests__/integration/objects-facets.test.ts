@@ -39,7 +39,7 @@ describe('Objects facets and group filtering', () => {
 
 	it('counts every row, not just the first page', async () => {
 		await seed('bet', 'active', 7)
-		await seed('bet', 'signal', 5)
+		await seed('bet', 'opportunity', 5)
 		await seed('task', 'todo', 3)
 
 		const res = await createApp().request(jsonGet('/api/objects/facets?type=bet', headers()))
@@ -47,7 +47,7 @@ describe('Objects facets and group filtering', () => {
 		const body = await res.json()
 
 		expect(body.total).toBe(12)
-		expect(body.by_status).toEqual({ active: 7, signal: 5 })
+		expect(body.by_status).toEqual({ active: 7, opportunity: 5 })
 		// Type counts ignore the type filter, so the other tabs keep their numbers.
 		expect(body.by_type).toEqual({ bet: 12, task: 3 })
 		expect(
@@ -56,13 +56,13 @@ describe('Objects facets and group filtering', () => {
 			),
 		).toEqual({
 			active: 7,
-			signal: 5,
+			opportunity: 5,
 		})
 	})
 
 	it('status facets ignore the status filter so every chip shows its own count', async () => {
 		await seed('bet', 'active', 4)
-		await seed('bet', 'signal', 2)
+		await seed('bet', 'opportunity', 2)
 
 		const res = await createApp().request(
 			jsonGet('/api/objects/facets?type=bet&status=active', headers()),
@@ -70,12 +70,12 @@ describe('Objects facets and group filtering', () => {
 		const body = await res.json()
 
 		expect(body.total).toBe(4)
-		expect(body.by_status).toEqual({ active: 4, signal: 2 })
+		expect(body.by_status).toEqual({ active: 4, opportunity: 2 })
 	})
 
 	it('returns one group’s complete rows through group_by and group_value', async () => {
 		await seed('bet', 'active', 130)
-		await seed('bet', 'signal', 3)
+		await seed('bet', 'opportunity', 3)
 
 		const app = createApp()
 		const page1 = await app.request(

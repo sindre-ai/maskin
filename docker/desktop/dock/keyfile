@@ -11,3 +11,7 @@ lock-items=true
 show-dock-item=false
 pressure-reveal=false
 dock-items=['browser.dockitem', 'files.dockitem', 'terminal.dockitem']
+
+[org/gtk/settings/file-chooser]
+window-position=(240, 20)
+window-size=(800, 480)

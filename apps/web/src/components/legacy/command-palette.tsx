@@ -1,0 +1,715 @@
+// LEGACY: used only while the `search-v2` flag is off. This directory is deleted with the
+// flag (see routes/_authed/$workspaceId.tsx and routes/_authed/$workspaceId/search.tsx).
+// Do not add features here.
+
+import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
+import { SearchRowIcon, SearchRowTitle } from '@/components/shared/search-row'
+import { type SearchRow, useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
+import { useActors } from '@/hooks/use-actors'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useLoops } from '@/hooks/use-loops'
+import { useObjects } from '@/hooks/use-objects'
+import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import { type TaxonomyEntityType, trackCommandPaletteOpened } from '@/lib/analytics'
+import type { ObjectResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { useCommandPalette } from '@/lib/command-palette-context'
+import {
+	askRowTitle,
+	emptyStateText,
+	findChiefOfStaff,
+	searchRowSub,
+	shouldOfferAsk,
+} from '@/lib/palette/ask'
+import { TRIGGERS_PAGE, matchSettingsPages } from '@/lib/palette/go-to'
+import { initialsMatch, matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
+import { buildRecents } from '@/lib/palette/recents'
+import { isApplePlatform } from '@/lib/platform'
+import { getRecentObjectIds, pushRecentObject, pushRecentSearch } from '@/lib/search-recents'
+import {
+	PALETTE_SERVER_DEBOUNCE_MS,
+	searchRowEntityType,
+	trackSearchRowOpened,
+	useTrackSettledSearch,
+} from '@/lib/search-telemetry'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
+import { Command } from 'cmdk'
+import {
+	Bot,
+	Check,
+	CircleDot,
+	LayoutGrid,
+	type LucideIcon,
+	MessagesSquare,
+	Plus,
+	RefreshCw,
+	Search,
+	Settings,
+	Sparkles,
+	Store,
+	Table2,
+	Zap,
+} from 'lucide-react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+
+// The mockup caps the workspace index at six rows so the Commands / Go to
+// groups stay reachable without scrolling (mockup 5812).
+const MAX_JUMP_ROWS = 6
+
+// v2 restyle — the ⌘K palette (mockup 3234–3259). Four groups: Commands,
+// Go to (every primary view), Jump to (the workspace index — chats, loops,
+// agents, objects, automations, via the same hook the /search view uses) and
+// a terminal Search row. Solid popover surface (no glass, no blur),
+// `.eyebrow` mono section labels, a right-aligned kind column and a ↵ chip on
+// the highlighted row. `shouldFilter={false}` + server-side ranking keeps the
+// ordering identical to /search — one command layer shared across both.
+
+interface PaletteRow {
+	id: string
+	group: string
+	/** Right-aligned kind column: COMMAND / GO TO / the entity's own kind / SEARCH. */
+	kind: string
+	title: string
+	sub?: string
+	icon: ReactNode
+	run: () => void
+	/** Only object rows carry the analytics + recents side effects. */
+	object?: ObjectResponse
+}
+
+function GlyphTile({ icon: Icon }: { icon: LucideIcon }) {
+	return (
+		<span
+			aria-hidden="true"
+			className="grid size-[22px] shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+		>
+			<Icon className="size-[13px]" />
+		</span>
+	)
+}
+
+const GROUP_GLYPH: Record<string, LucideIcon> = {
+	chats: MessagesSquare,
+	loops: RefreshCw,
+	agents: Bot,
+	automations: Zap,
+	objects: Table2,
+}
+
+const VIEWS: { title: string; path: (workspaceId: string) => string; icon: LucideIcon }[] = [
+	{ title: 'For you', path: (w) => `/${w}`, icon: CircleDot },
+	{ title: 'Chats', path: (w) => `/${w}/chats`, icon: MessagesSquare },
+	{ title: 'Loops', path: (w) => `/${w}/loops`, icon: RefreshCw },
+	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
+	{ title: 'Objects', path: (w) => `/${w}/objects`, icon: Table2 },
+	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}`, icon: Zap },
+	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
+	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
+]
+
+export function CommandPalette() {
+	const { open, setOpen } = useCommandPalette()
+	const { workspace, workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const panelRef = useRef<HTMLDivElement>(null)
+	const triggerRef = useRef<HTMLElement | null>(null)
+
+	const [query, setQuery] = useState('')
+	const [selected, setSelected] = useState('')
+	const [debouncedQuery, setDebouncedQuery] = useState('')
+	const queryRef = useRef(query)
+	useEffect(() => {
+		queryRef.current = query
+	}, [query])
+	useEffect(() => {
+		const t = setTimeout(() => setDebouncedQuery(query), PALETTE_SERVER_DEBOUNCE_MS)
+		return () => clearTimeout(t)
+	}, [query])
+
+	// The workspace index behind "Jump to" — chats, loops, agents, objects and
+	// automations, the same hook the /search view ranks with. The local lists
+	// follow the keystroke; only the object search waits for the debounce, and
+	// nothing is fetched while the palette is closed.
+	const {
+		rows: searchRows,
+		total: searchTotal,
+		isSettled,
+		isError,
+		isPartial,
+	} = useWorkspaceSearch(workspaceId, {
+		q: query,
+		serverQ: debouncedQuery,
+		enabled: open,
+	})
+	const { data: objects } = useObjects(workspaceId)
+	// Chats, loops and agents feed the empty-field Recent list and the Ask row;
+	// the same cached queries the search hook already runs while the palette is open.
+	const { data: chatPages } = useConversationsInfinite(workspaceId, undefined, { enabled: open })
+	const { data: loops } = useLoops(workspaceId, { enabled: open })
+	const { data: actors } = useActors(workspaceId, { enabled: open })
+	const chiefOfStaff = findChiefOfStaff(actors)
+	const objectTypes = useAvailableObjectTypes()
+
+	// Mark all read runs the real per-entity mutation over the unread feed —
+	// the same call For You's own bulk action makes.
+	const { data: unread } = useUnread(workspaceId)
+	const markRead = useMarkRead(workspaceId)
+
+	// Mounted only once a create command runs, so the palette's own close
+	// doesn't tear the create surface down with it.
+	const [createTarget, setCreateTarget] = useState<{
+		type: CreatableType
+		subtype?: string
+	} | null>(null)
+
+	const navigateTo = useCallback(
+		(path: string) => {
+			navigate({ to: path })
+			setOpen(false)
+		},
+		[navigate, setOpen],
+	)
+
+	const openChat = useCallback(() => {
+		navigateTo(`/${workspaceId}/chats/new`)
+	}, [navigateTo, workspaceId])
+
+	const openCreate = useCallback(
+		(type: CreatableType, subtype?: string) => {
+			setCreateTarget({ type, subtype })
+			setOpen(false)
+		},
+		[setOpen],
+	)
+
+	const markAllRead = useCallback(async () => {
+		const items = (unread?.items ?? []).filter(
+			(item) => item.unread_count > 0 && (item.latest_event_id ?? 0) > 0,
+		)
+		setOpen(false)
+		if (items.length === 0) {
+			toast('Nothing unread')
+			return
+		}
+		const results = await Promise.allSettled(
+			items.map((item) =>
+				markRead.mutateAsync({
+					entityType: item.entity_type,
+					entityId: item.entity_id,
+					lastEventId: item.latest_event_id as number,
+				}),
+			),
+		)
+		const failed = results.filter((r) => r.status === 'rejected').length
+		if (failed === 0) {
+			toast('All caught up')
+		} else {
+			toast.error(`${items.length - failed} of ${items.length} marked read`, {
+				description: 'Some items failed — try again.',
+			})
+		}
+	}, [markRead, setOpen, unread])
+
+	// One `command_palette_opened` per open transition, fired on any route —
+	// the success-metric funnel denominator. The /search route fires the same
+	// event (surface: 'search_view') on mount, so the See-all footer's
+	// navigation to /search produces its palette-open event too.
+	const prevOpen = useRef(open)
+	useEffect(() => {
+		if (open && !prevOpen.current) {
+			trackCommandPaletteOpened({ surface: 'command_palette' })
+			// Remember what had focus so it can be restored on close — a dialog
+			// must never strand focus on a removed element.
+			triggerRef.current = document.activeElement as HTMLElement | null
+		} else if (!open && prevOpen.current) {
+			setQuery('')
+			triggerRef.current?.focus?.()
+			triggerRef.current = null
+		}
+		prevOpen.current = open
+	}, [open])
+
+	const openObject = useCallback(
+		(obj: ObjectResponse) => {
+			pushRecentObject(workspaceId, obj.id)
+			navigateTo(`/${workspaceId}/objects/${obj.id}`)
+		},
+		[navigateTo, workspaceId],
+	)
+
+	const trimmedQuery = query.trim()
+	const hasQuery = trimmedQuery.length > 0
+
+	// Only count a search while the palette is open and the results on screen
+	// belong to what is typed: right after a close and quick reopen the debounced
+	// query still holds the previous one.
+	useTrackSettledSearch({
+		surface: 'command_palette',
+		active: open && debouncedQuery.trim() === trimmedQuery,
+		query: debouncedQuery,
+		isSettled,
+		isError,
+		isPartial,
+		total: searchTotal,
+	})
+
+	const seeAll = useCallback(() => {
+		if (!trimmedQuery) return
+		pushRecentSearch(workspaceId, trimmedQuery)
+		setOpen(false)
+		// Typed navigation keeps `q` in the URL's search chunk — same shape the
+		// /search route's updateSearch() commits against.
+		navigate({
+			to: '/$workspaceId/search',
+			params: { workspaceId },
+			search: { q: trimmedQuery },
+		})
+	}, [navigate, setOpen, trimmedQuery, workspaceId])
+
+	// Until the top row has settled, ↵ on the Search row would hand off a query
+	// whose matches are still arriving, so it waits.
+	const searchPending = hasQuery && !isSettled
+
+	const openSearchView = useCallback(() => {
+		if (searchPending) return
+		if (trimmedQuery) {
+			seeAll()
+			return
+		}
+		setOpen(false)
+		navigate({ to: '/$workspaceId/search', params: { workspaceId }, search: { q: '' } })
+	}, [navigate, searchPending, seeAll, setOpen, trimmedQuery, workspaceId])
+
+	// The global key handler is registered once; reading seeAll through a ref
+	// keeps it current without re-binding the listener on every keystroke.
+	const seeAllRef = useRef(seeAll)
+	useEffect(() => {
+		seeAllRef.current = seeAll
+	}, [seeAll])
+
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault()
+				setOpen((o) => !o)
+			}
+			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault()
+				openChat()
+			}
+			if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+				// ⌘↵ — "search everything": hand the typed query to /search
+				// instead of running the highlighted item. Advertised in the
+				// palette footer (mockup line 3255), so it has to exist.
+				if (queryRef.current.trim()) {
+					e.preventDefault()
+					seeAllRef.current()
+				}
+			}
+			if (e.key === 'Escape') {
+				// First Esc clears the query; a second Esc closes the panel.
+				if (queryRef.current.trim()) {
+					setQuery('')
+				} else {
+					setOpen(false)
+				}
+			}
+			if (e.key === 'Tab' && panelRef.current) {
+				// Trap focus inside the panel while it's open — a dialog must not
+				// leak Tab into the page behind it.
+				const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+					'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				)
+				if (focusable.length === 0) return
+				const first = focusable[0] as HTMLElement
+				const last = focusable[focusable.length - 1] as HTMLElement
+				const active = document.activeElement
+				if (e.shiftKey && active === first) {
+					e.preventDefault()
+					last.focus()
+				} else if (!e.shiftKey && active === last) {
+					e.preventDefault()
+					first.focus()
+				}
+			}
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [openChat, setOpen])
+
+	// Commands and Go to rows match on their title, or when the query is the
+	// start of the group name ("com" shows every command). Matching the group
+	// name or the row description anywhere would put all seven commands above
+	// the result for any short query: "ma" is inside "command" and "to" is
+	// inside "go to", so typing "ma" for Magnus made ↵ run "New chat".
+	const matchesQuery = useCallback(
+		(title: string, groupName: string) =>
+			matches(trimmedQuery, title) ||
+			initialsMatch(trimmedQuery, title) ||
+			(trimmedQuery.length >= 3 && groupName.startsWith(trimmedQuery.toLowerCase())),
+		[trimmedQuery],
+	)
+
+	const commandRows = useMemo(() => {
+		const rows: PaletteRow[] = [
+			{
+				id: 'new-chat',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New chat',
+				sub: 'talk to your agents',
+				icon: <GlyphTile icon={MessagesSquare} />,
+				run: openChat,
+			},
+			...objectTypes.map((type) => ({
+				id: `new-${type.value}`,
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: `New ${type.label.replace(/s$/, '').toLowerCase()}`,
+				sub: 'an agent structures it from what you say',
+				icon: <GlyphTile icon={Plus} />,
+				run: () => openCreate('object', type.value),
+			})),
+			{
+				id: 'new-loop',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New loop',
+				sub: 'describe it and Maskin wires it',
+				icon: <GlyphTile icon={RefreshCw} />,
+				run: () => navigateTo(`/${workspaceId}/loops/new`),
+			},
+			{
+				id: 'new-agent',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New agent',
+				sub: 'hire one for an outcome',
+				icon: <GlyphTile icon={Sparkles} />,
+				run: () => openCreate('agent'),
+			},
+			{
+				id: 'mark-all-read',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'Mark all read',
+				sub: 'clear For you',
+				icon: <GlyphTile icon={Check} />,
+				run: markAllRead,
+			},
+		]
+		return rankTitleMatchesFirst(
+			rows.filter((row) => matchesQuery(row.title, 'command')),
+			trimmedQuery,
+		)
+	}, [
+		trimmedQuery,
+		matchesQuery,
+		markAllRead,
+		navigateTo,
+		objectTypes,
+		openChat,
+		openCreate,
+		workspaceId,
+	])
+
+	const goToRows = useMemo(() => {
+		const views = rankTitleMatchesFirst(
+			VIEWS.filter((view) => matchesQuery(view.title, 'go to')),
+			trimmedQuery,
+		).map((view) => ({
+			id: `go-${view.title}`,
+			group: 'Go to',
+			kind: 'GO TO',
+			title: view.title,
+			icon: <GlyphTile icon={view.icon} />,
+			run: () => navigateTo(view.path(workspaceId)),
+		}))
+		// Typing a settings page name ("keychain") adds a Settings › Keychain row.
+		const settings = matchSettingsPages(trimmedQuery, { enterprise: workspace?.enterprise }).map(
+			(page) => ({
+				id: `go-${page.path}`,
+				group: 'Go to',
+				kind: 'GO TO',
+				title: page.title,
+				icon: <GlyphTile icon={Settings} />,
+				run: () => navigateTo(`/${workspaceId}/${page.path}`),
+			}),
+		)
+		return [...views, ...settings]
+	}, [matchesQuery, navigateTo, trimmedQuery, workspace?.enterprise, workspaceId])
+
+	// Opening a Jump to row reports which row it was (1-based, rendered order)
+	// and the list it sat in. Recent rows (empty field) carry
+	// no search id.
+	const openJumpRow = useCallback(
+		(row: SearchRow, position: number, listSize: number) => {
+			trackSearchRowOpened({
+				surface: 'command_palette',
+				entityId: row.id,
+				entityType: searchRowEntityType(row),
+				group: row.group,
+				position,
+				hasQuery,
+				listSize,
+			})
+			if (row.object) {
+				openObject(row.object)
+				return
+			}
+			navigate({ to: row.to, params: row.params, search: row.search })
+			setOpen(false)
+		},
+		[hasQuery, navigate, openObject, setOpen],
+	)
+
+	const jumpRows = useMemo(() => {
+		if (hasQuery) {
+			const shown = searchRows.slice(0, MAX_JUMP_ROWS)
+			return shown.map((row, index) => ({
+				id: `jump-${row.group}-${row.id}`,
+				group: 'Jump to',
+				kind: row.kind,
+				title: row.title,
+				sub: row.sub || undefined,
+				icon: (
+					<SearchRowIcon
+						id={row.id}
+						title={row.title}
+						group={row.group}
+						object={row.object}
+						fallback={<GlyphTile icon={GROUP_GLYPH[row.group] ?? LayoutGrid} />}
+					/>
+				),
+				run: () => openJumpRow(row, index + 1, shown.length),
+				object: row.object,
+			}))
+		}
+		return []
+	}, [hasQuery, openJumpRow, searchRows])
+
+	// With an empty field: the last things opened, then recent chats and loops.
+	const recentRows = useMemo<PaletteRow[]>(() => {
+		if (!open || hasQuery) return []
+		const items = buildRecents({
+			objectIds: getRecentObjectIds(workspaceId),
+			objects: objects ?? [],
+			chats: chatPages?.pages?.flatMap((page) => page.conversations) ?? [],
+			loops: loops ?? [],
+		})
+		return items.map((item, index) => {
+			const object = item.kind === 'object' ? objects?.find((o) => o.id === item.id) : undefined
+			const track = () =>
+				trackSearchRowOpened({
+					surface: 'command_palette',
+					entityId: item.id,
+					entityType: (object?.type ??
+						(item.kind === 'chat' ? 'conversation' : item.kind)) as TaxonomyEntityType,
+					group: item.kind === 'chat' ? 'chats' : item.kind === 'loop' ? 'loops' : 'objects',
+					position: index + 1,
+					hasQuery: false,
+					listSize: items.length,
+				})
+			const common = {
+				id: `recent-${item.kind}-${item.id}`,
+				group: 'Recent',
+				kind: (item.type ?? item.kind).toUpperCase(),
+				title: item.title,
+			}
+			if (object) {
+				return {
+					...common,
+					icon: (
+						<SearchRowIcon
+							id={object.id}
+							title={item.title}
+							group="objects"
+							object={object}
+							fallback={null}
+						/>
+					),
+					run: () => {
+						track()
+						openObject(object)
+					},
+					object,
+				}
+			}
+			return {
+				...common,
+				icon: <GlyphTile icon={item.kind === 'chat' ? MessagesSquare : RefreshCw} />,
+				run: () => {
+					track()
+					navigateTo(`/${workspaceId}/${item.kind === 'chat' ? 'chats' : 'loops'}/${item.id}`)
+				},
+			}
+		})
+	}, [chatPages, hasQuery, loops, navigateTo, objects, open, openObject, workspaceId])
+
+	const searchTerminalRow: PaletteRow = {
+		id: 'search-everything',
+		group: 'Search',
+		kind: 'SEARCH',
+		title: hasQuery ? `Search everything for “${trimmedQuery}”` : 'Open search',
+		sub: hasQuery ? searchRowSub(searchRows.length) : 'browse and filter the whole workspace',
+		icon: <GlyphTile icon={Search} />,
+		run: openSearchView,
+	}
+
+	// Nothing found anywhere: the Search row alone would keep cmdk's own empty
+	// state from ever rendering, so the palette shows its own and offers to ask.
+	const nothingFound = hasQuery && commandRows.length + goToRows.length + jumpRows.length === 0
+	const noMatches = nothingFound && isSettled
+	const askRow: PaletteRow | null =
+		hasQuery && chiefOfStaff && shouldOfferAsk(trimmedQuery, !noMatches)
+			? {
+					id: 'ask-chief-of-staff',
+					group: 'Ask',
+					kind: 'ASK',
+					title: askRowTitle(trimmedQuery),
+					sub: 'opens a new chat, nothing is sent',
+					icon: <GlyphTile icon={Sparkles} />,
+					run: () => {
+						setOpen(false)
+						navigate({
+							to: '/$workspaceId/chats/new',
+							params: { workspaceId },
+							search: {
+								agentId: chiefOfStaff.id,
+								agentName: chiefOfStaff.name,
+								text: trimmedQuery,
+							},
+						})
+					},
+				}
+			: null
+
+	const groups: { label: string; rows: PaletteRow[] }[] = [
+		{ label: 'Recent', rows: recentRows },
+		{ label: 'Commands', rows: commandRows },
+		{ label: 'Go to', rows: goToRows },
+		{ label: 'Jump to', rows: jumpRows },
+		{ label: 'Search', rows: [searchTerminalRow] },
+		{ label: 'Ask', rows: askRow ? [askRow] : [] },
+	].filter((group) => group.rows.length > 0)
+
+	// cmdk keeps its highlight on whatever row it first selected. The jump rows
+	// arrive one debounce after the query is typed, so without this the Search
+	// row (the only row while the index is still loading) stays highlighted and
+	// ↵ hands off to /search instead of opening the top match. Re-point the
+	// selection at the first row whenever the top row changes; arrowing down
+	// moves `selected` without touching `firstRowId`, so it never clobbers a
+	// deliberate selection.
+	const firstRowId = groups[0]?.rows[0]?.id
+	useEffect(() => {
+		if (firstRowId) setSelected(firstRowId)
+	}, [firstRowId])
+
+	return (
+		<>
+			{open && (
+				<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
+					<button
+						type="button"
+						aria-label="Close palette"
+						className="fixed inset-0 bg-foreground/40"
+						onClick={() => setOpen(false)}
+					/>
+					<div
+						ref={panelRef}
+						// biome-ignore lint/a11y/useSemanticElements: native <dialog> is against project convention (apps/web/CLAUDE.md) — this is the same ARIA div-based modal pattern Radix's own Dialog primitive renders under the hood.
+						role="dialog"
+						aria-modal="true"
+						aria-label="Command palette"
+						className="relative w-full max-w-xl mx-auto overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:flex max-sm:flex-col max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+					>
+						<Command
+							shouldFilter={false}
+							value={selected}
+							onValueChange={setSelected}
+							className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"
+						>
+							<div className="relative flex items-center gap-2 border-b border-border px-3.5">
+								<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+								<Command.Input
+									value={query}
+									onValueChange={setQuery}
+									placeholder="Run a command or jump to…"
+									className="h-12 w-full bg-transparent text-[13.5px] text-foreground placeholder:text-muted-foreground outline-none"
+									autoFocus
+								/>
+								<kbd className="hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+									Esc
+								</kbd>
+								{searchPending && (
+									<div
+										aria-hidden="true"
+										data-testid="palette-progress"
+										className="absolute inset-x-0 bottom-0 h-px animate-pulse bg-primary"
+									/>
+								)}
+							</div>
+							<Command.List className="max-h-[360px] overflow-auto p-1.5 max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1">
+								{noMatches && (
+									<output className="block px-3 py-6 text-center text-[12.5px] text-muted-foreground">
+										{emptyStateText(trimmedQuery)}
+									</output>
+								)}
+
+								{groups.map((group) => (
+									<Command.Group key={group.label}>
+										<div className="eyebrow px-2.5 pb-1 pt-2">{group.label}</div>
+										{group.rows.map((row) => (
+											<Command.Item
+												key={row.id}
+												value={row.id}
+												className={cn(
+													'group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 cursor-pointer',
+													'data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground',
+												)}
+												onSelect={row.run}
+											>
+												{row.icon}
+												<SearchRowTitle
+													title={row.title}
+													sub={row.sub}
+													query={hasQuery ? trimmedQuery : ''}
+													className="min-w-0 flex-1 font-semibold"
+												/>
+												<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+													{row.kind}
+												</span>
+												<kbd className="hidden shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground group-data-[selected=true]:inline-flex">
+													↵
+												</kbd>
+											</Command.Item>
+										))}
+									</Command.Group>
+								))}
+							</Command.List>
+							<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
+								<span>↑↓ navigate</span>
+								<span>↵ run</span>
+								<span>{isApplePlatform() ? '⌘↵' : 'Ctrl+↵'} search everything</span>
+								<span className="ml-auto">esc closes</span>
+							</div>
+						</Command>
+					</div>
+				</div>
+			)}
+			{createTarget && (
+				<CreatePicker
+					open
+					onOpenChange={(next) => {
+						if (!next) setCreateTarget(null)
+					}}
+					defaultType={createTarget.type}
+					defaultObjectSubtype={createTarget.subtype}
+				/>
+			)}
+		</>
+	)
+}

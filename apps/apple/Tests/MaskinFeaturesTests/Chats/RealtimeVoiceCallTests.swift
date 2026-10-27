@@ -119,14 +119,6 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.createdFrom == [nil])
 	}
 
-	@Test("only a call started from a chat names that chat")
-	func requestNamesTheChat() {
-		let lead = ChatParticipant(id: "agent-1", name: "Chief", kind: .agent)
-		#expect(LiveMeetingRequest.conversation(id: "chat-1", lead: lead).startedFromConversationID == "chat-1")
-		#expect(LiveMeetingRequest.chiefOfStaff.startedFromConversationID == nil)
-		#expect(LiveMeetingRequest.dailyBriefing.startedFromConversationID == nil)
-	}
-
 	@Test("each finished line of the call is handed on, yours and the agent's, but not tool calls")
 	func handsOnFinishedLines() async {
 		let (call, _, transport) = make()
@@ -239,6 +231,99 @@ private actor FakeCalls: VoiceCalling {
 		transport.receive("session.created")
 		#expect(transport.iceRestarts == 1)
 		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+	}
+
+	private func chatMessage(_ id: Int, agent: Bool = false, _ text: String, name: String = "Me") -> ChatMessage {
+		.confirmed(
+			serverID: id, conversationID: "chat-1", actorID: agent ? "agent-1" : "me", actorName: agent ? "Chief" : name,
+			author: agent ? .agent : .human, content: text)
+	}
+
+	/// The text of each conversation item the call has sent, apart from the greeting.
+	private func handedOn(_ transport: FakeTransport) -> [String] {
+		transport.sent.compactMap { json in
+			guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+				object["type"] as? String == "conversation.item.create",
+				let item = object["item"] as? [String: Any], item["role"] as? String == "user",
+				let content = (item["content"] as? [[String: Any]])?.first
+			else { return nil }
+			return content["text"] as? String
+		}
+	}
+
+	@Test("a line typed in the chat during the call is handed to the agent, once, and an agent message is not")
+	func forwardsTypedMessages() async {
+		let (call, _, transport) = make(conversationID: "chat-1")
+		let earlier = chatMessage(1, "from before the call")
+		call.begin(existing: [earlier])
+		await settle()
+		transport.receive("session.created")
+		let typed = chatMessage(2, "The meeting moved to Thursday")
+		let reply = chatMessage(3, agent: true, "Noted.")
+		call.messagesChanged([earlier, typed, reply])
+		call.messagesChanged([earlier, typed, reply])
+		call.messagesChanged([earlier, typed, reply, chatMessage(4, "Also Anna is joining", name: "Anna")])
+		#expect(
+			handedOn(transport) == [
+				"Me typed in the chat during this call: The meeting moved to Thursday",
+				"Anna typed in the chat during this call: Also Anna is joining",
+			])
+		// Handing a line over does not ask the agent to talk over the person.
+		#expect(transport.sent.filter { $0.contains("response.create") } == [RealtimeCallMachine.greetingRequest])
+	}
+
+	@Test("the person's own spoken lines, saved into the chat during the call, are not fed back")
+	func skipsSpokenLines() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		let spoken = ChatMessage.confirmed(
+			serverID: 1, conversationID: "chat-1", actorID: "me", actorName: "Me", author: .human,
+			content: "what I just said aloud", metadata: .object(["source": .string("voice")]))
+		let typed = chatMessage(2, "typed after")
+		call.messagesChanged([spoken])
+		call.messagesChanged([spoken, typed])
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed after"])
+	}
+
+	@Test("a line typed before the connection is open waits for it")
+	func queuesUntilOpen() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.messagesChanged([chatMessage(1, "typed early")])
+		await settle()
+		#expect(handedOn(transport).isEmpty)
+		transport.receive("session.created")
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed early"])
+	}
+
+	@Test("a line that isn't sent yet is handed over when it is, and a failed one never is")
+	func waitsForTheSend() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		var line = chatMessage(1, "typed offline")
+		line.status = .waiting("Offline")
+		var broken = chatMessage(2, "refused")
+		broken.status = .failed("Refused")
+		call.messagesChanged([line, broken])
+		#expect(handedOn(transport).isEmpty)
+		line.status = .sent
+		call.messagesChanged([line, broken])
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed offline"])
+	}
+
+	@Test("nothing is handed on once the call has ended")
+	func silentAfterHangup() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		call.end()
+		call.messagesChanged([chatMessage(1, "the saved transcript")])
+		#expect(handedOn(transport).isEmpty)
 	}
 
 	@Test("tapping to interrupt cancels the response")

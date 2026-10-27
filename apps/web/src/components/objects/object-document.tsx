@@ -33,6 +33,7 @@ import type {
 	RelationshipResponse,
 } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
+import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -467,7 +468,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						attention: prev.attention,
 						fresh: prev.fresh,
 						starred: prev.starred,
-						updated: prev.updated,
+						updated: isUpdatedBucket(prev.updated) ? prev.updated : undefined,
 						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,

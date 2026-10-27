@@ -3,6 +3,7 @@ import {
 	isHtml,
 	isInlineImage,
 	isMarkdown,
+	isPdf,
 	isPlainText,
 } from '@/components/files/file-body'
 import type { FileDetail } from '@/lib/api'
@@ -200,9 +201,70 @@ describe('FileBody', () => {
 		})
 
 		it('falls back to a "preview not available" empty state for unknown types', () => {
-			const file = buildFile({ mimeType: 'application/pdf', name: 'doc.pdf' })
+			const file = buildFile({ mimeType: 'application/zip', name: 'archive.zip' })
 			renderBody(<FileBody file={file} />)
 			expect(screen.getByText('Preview not available')).toBeInTheDocument()
+		})
+	})
+
+	describe('PDF preview', () => {
+		const createObjectURL = vi.fn(() => 'blob:pdf-url')
+		const revokeObjectURL = vi.fn()
+		beforeEach(() => {
+			createObjectURL.mockClear()
+			revokeObjectURL.mockClear()
+			vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }))
+		})
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it('classifies only application/pdf as PDF', () => {
+			expect(isPdf('application/pdf')).toBe(true)
+			expect(isPdf('application/zip')).toBe(false)
+			expect(isPdf('text/html')).toBe(false)
+			expect(isPdf('image/svg+xml')).toBe(false)
+		})
+
+		it('renders the PDF in an unsandboxed frame backed by a pdf-typed blob URL', () => {
+			const file = buildFile({
+				mimeType: 'application/pdf',
+				name: 'doc.pdf',
+				encoding: 'base64',
+				content: b64('%PDF-1.4'),
+			})
+			renderBody(<FileBody file={file} />)
+			const frame = screen.getByTitle('Preview of doc.pdf') as HTMLIFrameElement
+			expect(frame.getAttribute('src')).toBe('blob:pdf-url')
+			expect(frame.hasAttribute('sandbox')).toBe(false)
+			const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0]
+			expect(blob.type).toBe('application/pdf')
+			expect(screen.queryByText('Preview not available')).toBeNull()
+		})
+
+		it('opens the PDF in a new tab without opener access', () => {
+			const open = vi.spyOn(window, 'open').mockReturnValue(null)
+			const file = buildFile({
+				mimeType: 'application/pdf',
+				name: 'doc.pdf',
+				encoding: 'base64',
+				content: b64('%PDF-1.4'),
+			})
+			renderBody(<FileBody file={file} />)
+			fireEvent.click(screen.getByRole('button', { name: /open in new tab/i }))
+			expect(open).toHaveBeenCalledWith('blob:pdf-url', '_blank', 'noopener,noreferrer')
+		})
+
+		it('revokes the blob URL on unmount', () => {
+			const file = buildFile({
+				mimeType: 'application/pdf',
+				name: 'doc.pdf',
+				encoding: 'base64',
+				content: b64('%PDF-1.4'),
+			})
+			const { unmount } = renderBody(<FileBody file={file} />)
+			unmount()
+			expect(revokeObjectURL).toHaveBeenCalledWith('blob:pdf-url')
 		})
 	})
 
@@ -364,7 +426,7 @@ describe('FileBody', () => {
 			['plain text', 'text/plain', 'notes.txt'],
 			['javascript', 'application/javascript', 'app.js'],
 			['svg', 'image/svg+xml', 'icon.svg'],
-			['unknown', 'application/pdf', 'doc.pdf'],
+			['unknown', 'application/zip', 'archive.zip'],
 		])('does not emit for a %s file open', (_label, mimeType, name) => {
 			const capture = captureSpy()
 			const file = buildFile({ mimeType, name } as Partial<FileDetail>)

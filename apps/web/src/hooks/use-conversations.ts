@@ -22,7 +22,11 @@ export interface ConversationListFilters {
 	unread_only?: boolean
 }
 
-export function useConversationsInfinite(workspaceId: string, filters?: ConversationListFilters) {
+export function useConversationsInfinite(
+	workspaceId: string,
+	filters?: ConversationListFilters,
+	options?: { enabled?: boolean },
+) {
 	return useInfiniteQuery({
 		queryKey: queryKeys.conversations.listInfinite(workspaceId, filters as Record<string, unknown>),
 		queryFn: ({ pageParam }) => {
@@ -43,7 +47,7 @@ export function useConversationsInfinite(workspaceId: string, filters?: Conversa
 		initialPageParam: 0,
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.has_more ? allPages.length * CONVERSATIONS_PAGE_SIZE : undefined,
-		enabled: !!workspaceId,
+		enabled: !!workspaceId && (options?.enabled ?? true),
 	})
 }
 

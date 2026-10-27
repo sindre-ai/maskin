@@ -6,6 +6,10 @@ export const queryKeys = {
 	webPush: {
 		config: () => ['web-push', 'config'] as const,
 	},
+	search: {
+		results: (workspaceId: string, params?: Record<string, unknown>) =>
+			['search', workspaceId, 'results', params] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -101,6 +105,15 @@ export const queryKeys = {
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
+	},
+	extensions: {
+		all: (workspaceId: string) => ['extensions', workspaceId] as const,
+		detail: (workspaceId: string, id: string) => ['extensions', workspaceId, id] as const,
+		deliveries: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'deliveries'] as const,
+		recipes: (workspaceId: string) => ['extensions', workspaceId, 'recipes'] as const,
+		attempted: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'attempted'] as const,
 	},
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,

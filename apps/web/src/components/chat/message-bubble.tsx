@@ -1,4 +1,4 @@
-import { renderLinkedCard } from '@/components/chat/linked-object-preview'
+import { renderLinkedCard, renderLinkedChip } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -337,10 +337,9 @@ export function MessageBubble({
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
 						    parser backs object comments — no new payload, just the render
-						    path the chat surface was missing. `linkedCards` draws a link to a
-						    draft or a page as its card, where the link stands, so it can be read
-						    (and a draft approved) without leaving the chat. A link in a sentence
-						    gets its card right after that paragraph; an id an earlier message
+						    path the chat surface was missing. `linkedCards` draws a link on its own
+						    line as a card where it stands (a draft can be approved without leaving
+						    the chat) and a link in a sentence as a chip; an id an earlier message
 						    already shows is not drawn again. */}
 						<MarkdownContent
 							content={message.content}
@@ -352,6 +351,7 @@ export function MessageBubble({
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
 								renderCard: renderLinkedCard,
+								renderChip: renderLinkedChip,
 							}}
 						/>
 					</div>
