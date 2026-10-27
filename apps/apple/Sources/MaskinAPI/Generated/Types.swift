@@ -298,6 +298,36 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
     func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output
+    /// Remove a saved API key or login at any time and destroy its secret (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/remove`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/remove/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Output
+    /// Audit log for one stored credential, newest first
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/audit-log`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/audit-log/get`.
+    func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Output
+    /// List which agents may use an integration, and how
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/get`.
+    func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output
+    /// Replace every explicit agent grant on an integration (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/put`.
+    func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output
+    /// Give an agent access to an integration, or change it (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/put`.
+    func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output
+    /// Remove an agent grant (humans only). The agent falls back to the default
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/delete`.
+    func delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(_ input: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output
     /// Let the agent that asked in a chat use this saved credential (humans only)
     ///
     /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
@@ -1401,6 +1431,90 @@ extension APIProtocol {
         try await post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input(
             headers: headers,
             body: body
+        ))
+    }
+    /// Remove a saved API key or login at any time and destroy its secret (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/remove`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/remove/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input.Headers
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Audit log for one stored credential, newest first
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/audit-log`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/audit-log/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(
+        path: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Path,
+        query: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Query = .init(),
+        headers: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Output {
+        try await get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input(
+            path: path,
+            query: query,
+            headers: headers
+        ))
+    }
+    /// List which agents may use an integration, and how
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(
+        path: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Path,
+        headers: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output {
+        try await get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Replace every explicit agent grant on an integration (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(
+        path: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Path,
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Headers,
+        body: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output {
+        try await put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Give an agent access to an integration, or change it (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+        path: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Path,
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Headers,
+        body: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output {
+        try await put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Remove an agent grant (humans only). The agent falls back to the default
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/delete`.
+    public func delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+        path: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output {
+        try await delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// Let the agent that asked in a chat use this saved credential (humans only)
