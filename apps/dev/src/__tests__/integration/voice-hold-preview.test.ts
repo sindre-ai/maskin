@@ -50,7 +50,10 @@ describe('a held send against real Postgres', () => {
 		const hold = await gate.review(TOOL, args, null)
 		if (hold.kind !== 'hold') throw new Error('expected a hold')
 		say('item_yes')
-		expect(await gate.review(TOOL, args, hold.id)).toEqual({ kind: 'run' })
+		expect(await gate.review(TOOL, args, hold.id)).toMatchObject({
+			kind: 'run',
+			confirmed: { yesCount: 1, readBackMatches: true },
+		})
 	})
 
 	it('does not run on a yes when the draft was edited between the hold and the repeat', async () => {
@@ -76,9 +79,12 @@ describe('a held send against real Postgres', () => {
 		if (again.kind !== 'hold') throw new Error('expected a hold')
 		expect(again.id).not.toBe(hold.id)
 
-		// A fresh yes to the new text runs it.
+		// A fresh yes to the new text runs it. The first yes was for the old text, so this send reads 2.
 		say('item_yes_2')
-		expect(await gate.review(TOOL, args, again.id)).toEqual({ kind: 'run' })
+		expect(await gate.review(TOOL, args, again.id)).toMatchObject({
+			kind: 'run',
+			confirmed: { yesCount: 2, readBackMatches: true },
+		})
 	})
 
 	it('does not read an email that belongs to another workspace', async () => {
