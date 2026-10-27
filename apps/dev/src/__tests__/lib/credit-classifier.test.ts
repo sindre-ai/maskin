@@ -392,7 +392,9 @@ describe('Claude auth death', () => {
 
 	it('recognises the CLI giving up on a 401, with or without the API error detail', () => {
 		expect(isClaudeAuthDeathText(DEAD)).toBe(true)
-		expect(isClaudeAuthDeathText(`  Failed to authenticate. API Error: 401 {"type":"error"}`)).toBe(true)
+		expect(isClaudeAuthDeathText(`  Failed to authenticate. API Error: 401 {"type":"error"}`)).toBe(
+			true,
+		)
 		expect(isClaudeAuthDeathText('Reviewed the PR, no problems')).toBe(false)
 	})
 
