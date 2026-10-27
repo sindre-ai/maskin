@@ -58,6 +58,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ]
 
@@ -71,7 +72,6 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'get_session_activity',
 	'get_chat_activity',
 	'list_notifications',
-	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ]
