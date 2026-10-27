@@ -76,24 +76,31 @@ test.describe('Chat — your own message carries the object card', () => {
 			// An object that is gone reads Deleted object.
 			await expect(message('An old one').getByText('Deleted object')).toBeVisible()
 
-			// A lone card fills the column up to 460px (about 343px on a phone, not a 68vw sliver).
+			// A lone card fills the column up to 460px (about 343px on a phone, not a 68vw sliver). The 8px
+			// gutter for the session marker bar sits inside that box, so a card with the bar is 452px.
 			const box = await lone.boundingBox()
 			expect(box?.width ?? 0).toBeLessThanOrEqual(461)
-			expect(box?.width ?? 0).toBeGreaterThanOrEqual(Math.min(460, vp.width * 0.8) - 1)
+			expect(box?.width ?? 0).toBeGreaterThanOrEqual(Math.min(460, vp.width * 0.8) - 9)
 
 			// A bubble that holds a card is min(520px, 88% of the column) wide and the card fills it.
 			const plate = await nested.locator('.bg-primary').boundingBox()
 			const nestedCard = await nested.locator('[data-linked-card]').boundingBox()
 			expect(plate?.width ?? 0).toBeLessThanOrEqual(521)
-			expect(plate?.width ?? 0).toBeGreaterThanOrEqual(Math.min(520, vp.width * 0.6))
+			const threadWidth = (await thread.boundingBox())?.width ?? 0
+			expect(plate?.width ?? 0).toBeGreaterThanOrEqual(Math.min(520, (threadWidth - 56) * 0.88) - 1)
 			expect(nestedCard?.width ?? 0).toBeGreaterThanOrEqual((plate?.width ?? 0) - 31)
 			const overflow = await page.evaluate(
 				() => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 			)
 			expect(overflow).toBeLessThanOrEqual(0)
 
-			for (const colorScheme of ['light', 'dark'] as const) {
-				await page.emulateMedia({ colorScheme })
+			// The app reads its theme from the "dark" class on the page, not from the browser's colour scheme.
+			for (const theme of ['light', 'dark'] as const) {
+				await page.evaluate(
+					(dark) => document.documentElement.classList.toggle('dark', dark),
+					theme === 'dark',
+				)
+				await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /dark/ : /^(?!.*dark)/)
 				await expect(lone).toBeVisible()
 				await expect(nested.locator('[data-linked-card]')).toBeVisible()
 			}
