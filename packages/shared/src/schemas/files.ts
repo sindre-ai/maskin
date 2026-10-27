@@ -2,6 +2,20 @@ import { z } from 'zod'
 
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 
+// Video gets a higher cap than other files. Uploads are still a single base64
+// JSON request held in memory (no streaming), so this stays well short of what
+// storage could hold: 50 MB of video is ~67 MB on the wire.
+export const MAX_VIDEO_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB
+
+export function isVideoMimeType(mime: string): boolean {
+	return mime.toLowerCase().startsWith('video/')
+}
+
+/** Upload cap for a file of this MIME type. Unknown type falls back to the general cap. */
+export function maxFileSizeBytesFor(mime: string | undefined): number {
+	return mime && isVideoMimeType(mime) ? MAX_VIDEO_FILE_SIZE_BYTES : MAX_FILE_SIZE_BYTES
+}
+
 export const mimeTypeSchema = z
 	.string()
 	.min(3)
@@ -36,6 +50,7 @@ function validateContent(
 	content: string,
 	encoding: FileEncoding,
 	ctx: z.RefinementCtx,
+	maxBytes: number,
 	path: (string | number)[] = ['content'],
 ) {
 	if (encoding === 'base64') {
@@ -48,19 +63,19 @@ function validateContent(
 			})
 			return
 		}
-		if (decodedByteLength(content) > MAX_FILE_SIZE_BYTES) {
+		if (decodedByteLength(content) > maxBytes) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Content exceeds ${MAX_FILE_SIZE_BYTES} bytes`,
+				message: `Content exceeds ${maxBytes} bytes`,
 				path,
 			})
 		}
 		return
 	}
-	if (utf8ByteLength(content) > MAX_FILE_SIZE_BYTES) {
+	if (utf8ByteLength(content) > maxBytes) {
 		ctx.addIssue({
 			code: z.ZodIssueCode.custom,
-			message: `Content exceeds ${MAX_FILE_SIZE_BYTES} bytes`,
+			message: `Content exceeds ${maxBytes} bytes`,
 			path,
 		})
 	}
@@ -122,7 +137,9 @@ export const createFileSchema = z
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
 	})
-	.superRefine((data, ctx) => validateContent(data.content, data.encoding, ctx))
+	.superRefine((data, ctx) =>
+		validateContent(data.content, data.encoding, ctx, maxFileSizeBytesFor(data.mime_type)),
+	)
 
 export type CreateFileInput = z.infer<typeof createFileSchema>
 
@@ -146,7 +163,9 @@ export const updateFileSchema = z
 	)
 	.superRefine((data, ctx) => {
 		if (data.content === undefined) return
-		validateContent(data.content, data.encoding ?? 'utf8', ctx)
+		// Without mime_type the stored type isn't known here, so the general cap
+		// applies. Replacing a video's bytes needs mime_type in the same request.
+		validateContent(data.content, data.encoding ?? 'utf8', ctx, maxFileSizeBytesFor(data.mime_type))
 	})
 
 export type UpdateFileInput = z.infer<typeof updateFileSchema>
