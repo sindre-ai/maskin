@@ -6,6 +6,7 @@ import type {
 } from '../../services/voice-realtime-call'
 
 vi.mock('../../lib/analytics/voice-events', () => ({
+	captureForYouCardActionByVoice: vi.fn(),
 	captureVoiceToolCall: vi.fn(),
 	captureVoiceTurnCompleted: vi.fn(),
 }))
