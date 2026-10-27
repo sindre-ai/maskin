@@ -35,6 +35,18 @@ final class LiveMeetingSession {
 	/// What was said in a voice call, as it was transcribed. Observed, so the thread's card follows it.
 	private(set) var lines: [LiveCallLine] = []
 
+	/// Answers given from the dock's "Deciding now" card, newest last. Optimistic: the server records
+	/// its own `decided` event for the same answer, and whoever draws the row de-duplicates.
+	private(set) var decisions: [LocalDecision] = []
+
+	/// One answer tapped in the dock: `atSecond` is call-relative (seconds since the call began).
+	struct LocalDecision: Identifiable, Equatable {
+		let id = UUID()
+		let atSecond: Int
+		let label: String
+		let question: String
+	}
+
 	@ObservationIgnored private let now: () -> Date
 	@ObservationIgnored let dictation: LiveVoiceController
 	@ObservationIgnored private let log: LiveCallLog
@@ -102,6 +114,23 @@ final class LiveMeetingSession {
 	var hasPendingWords: Bool { isDictating && dictation.phase != .speaking && dictation.machine.pendingText != nil }
 
 	func sendNow() { dictation.sendNow() }
+
+	/// Note a dock answer for the thread's DECIDED row. `atSecond` defaults to the call's clock now.
+	func recordDecision(label: String, question: String, atSecond: Int? = nil) {
+		let second = atSecond ?? Int(elapsed(at: now()))
+		decisions.append(LocalDecision(atSecond: max(0, second), label: label, question: question))
+	}
+
+	/// Tell the agent on the call what the person just did in the dock, so it carries on. The
+	/// Realtime call takes it as a spoken-turn note; the dictation call, which lives in the chat,
+	/// gets it as a message from the person.
+	func tellAgent(_ text: String) {
+		if let realtime = voice as? RealtimeVoiceCall {
+			realtime.tell(text)
+		} else {
+			_ = chat.send(text)
+		}
+	}
 
 	var isLive: Bool { startedAt != nil && endedAt == nil }
 

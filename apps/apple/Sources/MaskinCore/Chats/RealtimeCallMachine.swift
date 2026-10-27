@@ -192,6 +192,23 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 		return String(decoding: data, as: UTF8.self)
 	}
 
+	/// A plain note from the person as a conversation item, with no framing: what a tap in the dock
+	/// chose. Pair it with `responseRequest` to have the agent carry on.
+	public static func userNoteItem(_ text: String) -> String {
+		let event: [String: Any] = [
+			"type": "conversation.item.create",
+			"item": [
+				"type": "message", "role": "user",
+				"content": [["type": "input_text", "text": String(text.prefix(chatMessageLimit))]],
+			],
+		]
+		let data = (try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])) ?? Data()
+		return String(decoding: data, as: UTF8.self)
+	}
+
+	/// Asks the model to answer now, with no overrides (unlike `greetingRequest`).
+	public static let responseRequest: String = #"{"type":"response.create"}"#
+
 	/// Longest typed message handed to the call, in characters.
 	static let chatMessageLimit = 2000
 
