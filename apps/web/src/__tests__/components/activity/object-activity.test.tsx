@@ -304,7 +304,7 @@ describe('ObjectActivity', () => {
 		expect(screen.getByText('Comment in signal phase')).toBeInTheDocument()
 
 		// Clicking the phase divider toggles it closed
-		const signalTrigger = screen.getByRole('button', { name: /signal/ })
+		const signalTrigger = screen.getByRole('button', { name: /opportunity/ })
 		await user.click(signalTrigger)
 
 		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
