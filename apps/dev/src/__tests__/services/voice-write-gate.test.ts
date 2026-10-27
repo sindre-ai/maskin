@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
 	VOICE_CONFIRM_ARG,
 	createWriteGate,
@@ -229,5 +229,116 @@ describe('createWriteGate', () => {
 		gate.noteSpeechStarted('item_no')
 		gate.noteUserLine("no, don't send it", 'item_no')
 		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'refuse', reason: 'declined' })
+	})
+})
+
+describe('createWriteGate — the yes is tied to the text that was asked about', () => {
+	const TOOL = 'gmail_send_email'
+	const ARGS = { object_id: 'obj-1' }
+	const preview = (fingerprint: string, body = 'Hello') => ({
+		summary: 'Send this email',
+		recipients: ['Lars <lars@example.com>'],
+		subject: 'Meeting',
+		body,
+		note: null,
+		fingerprint,
+	})
+
+	/** A target whose text can be changed between the hold and the repeat. */
+	function target(initial: string) {
+		let fingerprint = initial
+		const previewFor = vi.fn(async () => preview(fingerprint, `text ${fingerprint}`))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const edit = (next: string) => {
+			fingerprint = next
+		}
+		return { gate, previewFor, edit }
+	}
+	const say = (gate: ReturnType<typeof createWriteGate>, item: string) => {
+		gate.noteSpeechStarted(item)
+		gate.noteUserLine('yes', item)
+	}
+
+	it('returns the preview of the target with the hold', async () => {
+		const { gate } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		expect(hold).toMatchObject({
+			kind: 'hold',
+			changed: false,
+			preview: { subject: 'Meeting', body: 'text v1' },
+		})
+	})
+
+	it('runs when the target is unchanged since the hold', async () => {
+		const { gate } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toEqual({ kind: 'run' })
+	})
+
+	it('does not run on a yes for old text: the same arguments and id give a new hold with the new text', async () => {
+		const { gate, edit } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		edit('v2')
+		const again = await gate.review(TOOL, ARGS, hold.id)
+		expect(again).toMatchObject({
+			kind: 'hold',
+			changed: true,
+			preview: { body: 'text v2' },
+		})
+		if (again.kind !== 'hold') throw new Error('expected a hold')
+		expect(again.id).not.toBe(hold.id)
+		// The old id is dead, and the new hold still needs its own yes.
+		expect((await gate.review(TOOL, ARGS, hold.id)).kind).toBe('hold')
+		const latest = await gate.review(TOOL, ARGS, null)
+		if (latest.kind !== 'hold') throw new Error('expected a hold')
+		expect((await gate.review(TOOL, ARGS, latest.id)).kind).toBe('refuse')
+	})
+
+	it('runs after a fresh yes to the new hold', async () => {
+		const { gate, edit } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		edit('v2')
+		const again = await gate.review(TOOL, ARGS, hold.id)
+		if (again.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes_2')
+		expect(await gate.review(TOOL, ARGS, again.id)).toEqual({ kind: 'run' })
+	})
+
+	it('works the fingerprint out from the target again each time and never takes it from the model', async () => {
+		const { gate, previewFor } = target('v1')
+		const hold = await gate.review(TOOL, { ...ARGS, fingerprint: 'v1' }, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		await gate.review(TOOL, { ...ARGS, fingerprint: 'v1' }, hold.id)
+		// Once for the hold, once more for the repeat.
+		expect(previewFor).toHaveBeenCalledTimes(2)
+	})
+
+	it('still holds, with no preview, when the lookup fails, and then runs on a yes', async () => {
+		const previewFor = vi.fn().mockRejectedValue(new Error('db down'))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const hold = await gate.review(TOOL, ARGS, null)
+		expect(hold).toMatchObject({ kind: 'hold', preview: null })
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toEqual({ kind: 'run' })
+	})
+
+	it('treats a lookup that failed at the hold but works at the repeat as changed text', async () => {
+		const previewFor = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('db down'))
+			.mockResolvedValue(preview('v1'))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toMatchObject({ kind: 'hold', changed: true })
 	})
 })
