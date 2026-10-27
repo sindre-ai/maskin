@@ -9,6 +9,12 @@ describe('splitLongMessage', () => {
 		expect(splitLongMessage('x'.repeat(MESSAGE_MAX_LENGTH), NOW)).toBeNull()
 	})
 
+	it('splits text one character over the cap into one file and a short body', () => {
+		const split = splitLongMessage('x'.repeat(MESSAGE_MAX_LENGTH + 1), NOW)
+		expect(split?.file.content).toHaveLength(MESSAGE_MAX_LENGTH + 1)
+		expect(split?.body.length).toBeLessThan(MESSAGE_MAX_LENGTH)
+	})
+
 	it('keeps all of the text in the file and a short body under the cap', () => {
 		const text = `${'word '.repeat(3000)}end`
 		const split = splitLongMessage(text, NOW)
