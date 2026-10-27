@@ -11,7 +11,8 @@ export interface CardMessage {
  */
 export type DraftHistory =
 	| { state: 'ready'; editedAt: readonly string[] }
-	| { state: 'loading' | 'failed' }
+	| { state: 'loading' }
+	| { state: 'failed' }
 
 /** What one message must do for the objects it links. */
 export interface MessagePlacement {
