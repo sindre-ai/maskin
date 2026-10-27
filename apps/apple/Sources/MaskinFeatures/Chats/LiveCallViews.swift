@@ -18,12 +18,19 @@ extension LiveMeetingSession {
 /// A round call control: 40 pt, with the 44 pt hit area the system adds around a button.
 private let callControlSize = MaskinSpace.s14 + MaskinSpace.s4
 
-private struct CallClock: View {
+struct CallClock: View {
 	let session: LiveMeetingSession
+	/// The thread header's capsule sets the time in the mono face.
+	var mono = false
 	var body: some View {
 		TimelineView(.periodic(from: .now, by: 1)) { context in
-			Text(LiveMeetingFormat.duration(session.elapsed(at: context.date)))
-				.maskinText(.subhead).foregroundStyle(MaskinColor.ink3).monospacedDigit()
+			let text = Text(LiveMeetingFormat.duration(session.elapsed(at: context.date)))
+			if mono {
+				text.font(MaskinTypeface.mono(MaskinFontSize.t13, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.sigInk).monospacedDigit()
+			} else {
+				text.maskinText(.subhead).foregroundStyle(MaskinColor.ink3).monospacedDigit()
+			}
 		}
 	}
 }

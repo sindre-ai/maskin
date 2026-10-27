@@ -13,6 +13,8 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	case handoff(SpawnedSession, behind: [String])
 	/// A live call: one card holding every line of the call, which the thread does not also show as bubbles.
 	case liveCall(LiveCallCard)
+	/// Where a live call started or ended: `LIVE MEETING · STARTED 14:02`.
+	case callDivider(LiveCallDivider)
 
 	public var id: String {
 		switch self {
@@ -22,6 +24,7 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 		case .message(let m, _): m.id
 		case .handoff(let session, _): "handoff-\(session.id)"
 		case .liveCall(let card): card.id
+		case .callDivider(let divider): divider.id
 		}
 	}
 }
@@ -60,7 +63,7 @@ public enum ThreadLayout {
 	///     the "new" divider goes (nil: no divider, e.g. a thread that was never read).
 	public static func items(
 		for messages: [ChatMessage], unreadAfter cursor: Int? = nil, currentActorID: String? = nil,
-		calls: [LiveCallRecord] = [], calendar: Calendar = .current
+		calls: [LiveCallRecord] = [], calendar: Calendar = .current, now: Date = Date()
 	) -> [ThreadItem] {
 		var items: [ThreadItem] = []
 		// Each message belongs to at most one call; the card sits where the call's first message was.
@@ -148,6 +151,8 @@ public enum ThreadLayout {
 		for index in calls.indices where !emitted.contains(index) && calls[index].showsCard {
 			items.append(card(index))
 		}
+		LiveMeetingChrome.insertDividers(
+			LiveMeetingChrome.spans(messages: messages, records: calls, now: now), into: &items, calendar: calendar)
 		return items
 	}
 

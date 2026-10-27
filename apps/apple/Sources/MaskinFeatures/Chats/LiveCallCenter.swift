@@ -71,7 +71,7 @@ final class LiveCallCenter {
 		Task {
 			defer { isStarting = false }
 			do {
-				let (id, lead, kind, navigate) = try await resolve(request, environment: environment)
+				let (id, lead, kind, navigate, origin) = try await resolve(request, environment: environment)
 				guard let chat = BriefingChat.chatStore(conversationID: id, environment: environment) else {
 					throw BriefingChat.Failure(message: "Choose a workspace first.")
 				}
@@ -81,6 +81,7 @@ final class LiveCallCenter {
 					kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
 					realtime: Self.realtimeCall(
 						with: lead, conversationID: id, environment: environment))
+				session.origin = origin
 				current = session
 				session.begin()
 				startTicker()
@@ -120,16 +121,16 @@ final class LiveCallCenter {
 
 	private func resolve(
 		_ request: LiveMeetingRequest, environment: AppEnvironment
-	) async throws -> (String, ChatParticipant, LiveMeetingKind, navigate: Bool) {
+	) async throws -> (String, ChatParticipant, LiveMeetingKind, navigate: Bool, origin: LiveCallOrigin) {
 		switch request {
-		case .thread(let chat, let lead): return (chat.conversationID, lead, .adHoc, false)
-		case .conversation(let id, let lead): return (id, lead, .adHoc, false)
+		case .thread(let chat, let lead): return (chat.conversationID, lead, .adHoc, false, .thread)
+		case .conversation(let id, let lead): return (id, lead, .adHoc, false, .ownThread)
 		case .chiefOfStaff:
 			let (id, lead) = try await BriefingChat.resolve(environment: environment, oneToOne: true)
-			return (id, lead, .adHoc, true)
+			return (id, lead, .adHoc, true, .ownThread)
 		case .dailyBriefing:
 			let (id, lead) = try await BriefingChat.resolve(environment: environment, oneToOne: false)
-			return (id, lead, .dailyBriefing, true)
+			return (id, lead, .dailyBriefing, true, .ownThread)
 		}
 	}
 

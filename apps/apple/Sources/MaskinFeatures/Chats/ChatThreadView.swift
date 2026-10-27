@@ -122,12 +122,18 @@ struct ChatThreadView: View {
 	}
 
 	private var navTitle: String {
-		topic ?? ThreadNav.title(
+		if call?.origin == .ownThread { return LiveMeetingChrome.ownThreadTitle }
+		return topic ?? ThreadNav.title(
 			participants: store.participants, currentActorID: store.currentActorID, fallback: store.title, flow: flow)
 	}
 
 	/// The live state if any; otherwise the person's name under a topic title.
 	private var navStatus: ThreadNavStatus? {
+		if let call, let startedAt = call.startedAt {
+			return .quiet(
+				LiveMeetingChrome.subline(
+					origin: call.origin, threadTitle: topic ?? store.title, leadName: call.lead.name, startedAt: startedAt))
+		}
 		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
 		guard topic != nil, let name = counterpart?.name else { return nil }
 		return .quiet(name)
@@ -252,6 +258,7 @@ struct ChatThreadView: View {
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
 			if !linkedEntries.isEmpty {
 				Button { showingLinked = true } label: {
 					HStack(spacing: MaskinSpace.s1) {
@@ -1075,6 +1082,8 @@ struct ThreadTranscript: View {
 			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .callDivider(let divider):
+			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
 		case .handoff(let session, let behind):

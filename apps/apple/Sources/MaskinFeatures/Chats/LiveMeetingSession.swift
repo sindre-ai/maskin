@@ -18,6 +18,8 @@ final class LiveMeetingSession {
 	/// server won't take the call) the dictation loop.
 	private(set) var voice: any LiveVoiceDriving
 
+	/// Whether the call began in a thread that already existed or made its own; the header's sub line differs.
+	var origin: LiveCallOrigin = .thread
 	private(set) var guests: [ChatParticipant] = []
 	private(set) var startedAt: Date?
 	private(set) var endedAt: Date?
