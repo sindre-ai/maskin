@@ -120,6 +120,91 @@ describe('isNo', () => {
 	)
 })
 
+describe('isYes in Danish', () => {
+	it.each([
+		'ja',
+		'Ja.',
+		'ja tak',
+		'jo',
+		'selvfølgelig',
+		'jep',
+		'perfekt',
+		'send den',
+		'ja, send den',
+		'send det afsted',
+		'send den bare',
+		'send den gerne',
+		'godkend',
+		'godkend alle',
+		'ja, godkend alle',
+		'godkendt',
+		'jeg godkender',
+		'det lyder godt',
+		'ja, det lyder godt, send den',
+		'det ser fint ud',
+		'det er i orden',
+		'det er fint',
+		'det passer',
+		'gør det',
+		'ja, gør det nu',
+		'kør på',
+		'sæt i gang',
+		'lad os gøre det',
+		'helt sikkert',
+		'gerne',
+		'ja gerne',
+		'fint, send den',
+		'ja og send den',
+		'ja, send den, og godkend alle',
+	])('takes "%s" for a yes', (line) => {
+		expect(isYes(line)).toBe(true)
+	})
+
+	it.each([
+		'nej',
+		'nej tak',
+		'ikke endnu',
+		'vent lidt',
+		'ja men vent',
+		'ja men kun til Casper',
+		'ja, send den ikke',
+		'ja, hvad står der?',
+		'hvad står der',
+		'ja, læs den højt',
+		'læs den højt',
+		'vis mig mailen',
+		'ja, vis mig den først',
+		'send den til Casper',
+		'ja send 500',
+		'godkend 2',
+		'ja 5',
+		'ja, kan du sende den',
+		'kan du læse den igen',
+		'fint',
+		'godt',
+		'super',
+		'ja, rediger den først',
+		'ja, ændre den',
+		'ja, send den senere',
+		'ja é',
+		'ja ü',
+		'ja 👍',
+		'gør det ikke',
+		'det er ikke fint',
+		'jeg ved det ikke',
+		'send',
+	])('does not take "%s" for a yes', (line) => {
+		// 'send' alone is an English approval phrase and stays a yes; it is listed in the
+		// accepted English tests. The line below keeps this table honest about that.
+		expect(isYes(line)).toBe(line === 'send')
+	})
+
+	it('still takes a Danish and English mix', () => {
+		expect(isYes('ja, send it')).toBe(true)
+		expect(isYes('yes, send den')).toBe(true)
+	})
+})
+
 describe('isRiskyTool', () => {
 	it.each([
 		'gmail_send_email',
