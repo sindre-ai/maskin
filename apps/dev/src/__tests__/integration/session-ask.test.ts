@@ -3,7 +3,9 @@ import type { Database } from '@maskin/db'
 import {
 	conversationParticipants,
 	conversations,
+	masterChats,
 	messages,
+	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
@@ -144,33 +146,190 @@ describe('POST /sessions/:id/ask', () => {
 		expect(rows[0]?.content).toContain('API token')
 	})
 
-	it('refuses an autonomous session — there is nobody to ask', async () => {
-		const session = await insertSession(db, workspaceId, agentId, humanId, {
-			interactive: false,
-			status: 'running',
-		})
-		if (!session) throw new Error('failed to seed session')
-		const app = createSessionsApp(agentId)
+	describe('with no chat and no helper parent', () => {
+		type QuestionMeta = {
+			question?: { reply_to_session?: boolean; routed_to?: string; session_id: string }
+		}
 
-		const res = await app.request(ask(session.id, workspaceId))
-		expect(res.status).toBe(409)
-		expect(await messagesFor(conversationId)).toHaveLength(0)
+		async function masterChatRows() {
+			return db.select().from(masterChats).where(eq(masterChats.workspaceId, workspaceId))
+		}
+
+		it("puts an autonomous session's question in the asking agent's master chat", async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(ask(session.id, workspaceId))
+			expect(res.status).toBe(200)
+			expect(((await res.json()) as { delivered_to: string }).delivered_to).toBe('master')
+
+			const [master] = await masterChatRows()
+			if (!master) throw new Error('no master chat was created')
+			expect(master).toMatchObject({ humanId, agentId })
+			const rows = await messagesFor(master.conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.actorId).toBe(agentId)
+			expect(rows[0]?.content).toContain('How should I reach Spotify?')
+			const metadata = rows[0]?.metadata as QuestionMeta
+			expect(metadata.question?.reply_to_session).toBe(true)
+			expect(metadata.question?.routed_to).toBe('master')
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('does the same for an interactive session started without a chat', async () => {
+			// Interactive alone is not a chat surface: a session started from the sessions UI has
+			// a live stdin but no conversation, so its question goes to the master chat too.
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId: null,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+			const app = createSessionsApp(agentId)
+
+			const res = await app.request(ask(session.id, workspaceId))
+			expect(res.status).toBe(200)
+			const [master] = await masterChatRows()
+			expect(await messagesFor(master?.conversationId as string)).toHaveLength(1)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('reuses the same master chat for every later question', async () => {
+			const first = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			const second = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!first || !second) throw new Error('failed to seed sessions')
+			const app = createSessionsApp(agentId)
+
+			expect((await app.request(ask(first.id, workspaceId))).status).toBe(200)
+			expect((await app.request(ask(second.id, workspaceId))).status).toBe(200)
+
+			const chats = await masterChatRows()
+			expect(chats).toHaveLength(1)
+			expect(await messagesFor(chats[0]?.conversationId as string)).toHaveLength(2)
+		})
+
+		it('never uses a topical chat that holds only the same two people', async () => {
+			await db.insert(conversationParticipants).values([
+				{ conversationId, actorId: humanId },
+				{ conversationId, actorId: agentId },
+			])
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+			const app = createSessionsApp(agentId)
+
+			expect((await app.request(ask(session.id, workspaceId))).status).toBe(200)
+
+			const [master] = await masterChatRows()
+			expect(master?.conversationId).not.toBe(conversationId)
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+		})
+
+		it('gives the Chief of Staff and a second agent a chat each, not a shared one', async () => {
+			const cos = await insertActor(db, { type: 'agent', name: 'Chief of Staff' })
+			if (!cos) throw new Error('failed to seed Chief of Staff')
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: cos.id, role: 'member' })
+			const fromAgent = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			const fromCos = await insertSession(db, workspaceId, cos.id, humanId, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!fromAgent || !fromCos) throw new Error('failed to seed sessions')
+
+			expect(
+				(await createSessionsApp(agentId).request(ask(fromAgent.id, workspaceId))).status,
+			).toBe(200)
+			expect((await createSessionsApp(cos.id).request(ask(fromCos.id, workspaceId))).status).toBe(
+				200,
+			)
+
+			const chats = await masterChatRows()
+			expect(chats.map((c) => c.agentId).sort()).toEqual([agentId, cos.id].sort())
+			expect(new Set(chats.map((c) => c.conversationId)).size).toBe(2)
+			for (const chat of chats) expect(await messagesFor(chat.conversationId)).toHaveLength(1)
+		})
+
+		it('still refuses with a 409 when no person can be found to ask', async () => {
+			// An agent-owned workspace with a run an agent started: no human to resolve.
+			const owner = await insertActor(db, { type: 'agent' })
+			if (!owner) throw new Error('failed to seed owner')
+			const ws = await insertWorkspace(db, owner.id)
+			if (!ws) throw new Error('failed to seed workspace')
+			const session = await insertSession(db, ws.id, owner.id, owner.id, {
+				interactive: false,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+
+			const res = await createSessionsApp(owner.id).request(ask(session.id, ws.id))
+			expect(res.status).toBe(409)
+			expect(await db.select().from(masterChats).where(eq(masterChats.workspaceId, ws.id))).toEqual(
+				[],
+			)
+		})
 	})
 
-	it('refuses an interactive session with no conversation attached', async () => {
-		// Interactive alone is not enough: a session started from the sessions UI
-		// has a live stdin but no chat surface to render options on.
-		const session = await insertSession(db, workspaceId, agentId, humanId, {
-			interactive: true,
-			conversationId: null,
-			status: 'running',
-		})
-		if (!session) throw new Error('failed to seed session')
-		const app = createSessionsApp(agentId)
+	describe('routing marker', () => {
+		const masterChatsOfWorkspace = () =>
+			db.select().from(masterChats).where(eq(masterChats.workspaceId, workspaceId))
 
-		const res = await app.request(ask(session.id, workspaceId))
-		expect(res.status).toBe(409)
-		expect(await messagesFor(conversationId)).toHaveLength(0)
+		async function questionMetadata(chat: string) {
+			const [row] = await messagesFor(chat)
+			return (row?.metadata as { question?: { reply_to_session?: boolean; routed_to?: string } })
+				.question
+		}
+
+		it("marks a chat session's question session_chat and not a reply to the session", async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId,
+				status: 'running',
+			})
+			if (!session) throw new Error('failed to seed session')
+
+			const res = await createSessionsApp(agentId).request(ask(session.id, workspaceId))
+			expect(((await res.json()) as { delivered_to: string }).delivered_to).toBe('chat')
+
+			const question = await questionMetadata(conversationId)
+			expect(question?.routed_to).toBe('session_chat')
+			expect(question?.reply_to_session).toBeUndefined()
+			expect(await masterChatsOfWorkspace()).toEqual([])
+		})
+
+		it("marks a helper's question helper_chat, a reply to the session, and waits on the person", async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId: null,
+				status: 'running',
+				config: { ask_conversation_id: conversationId },
+			})
+			if (!session) throw new Error('failed to seed session')
+
+			const res = await createSessionsApp(agentId).request(ask(session.id, workspaceId))
+			expect(((await res.json()) as { delivered_to: string }).delivered_to).toBe('chat')
+
+			const question = await questionMetadata(conversationId)
+			expect(question?.routed_to).toBe('helper_chat')
+			expect(question?.reply_to_session).toBe(true)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect((row?.config as { awaiting?: unknown }).awaiting).toBeDefined()
+			expect(await masterChatsOfWorkspace()).toEqual([])
+		})
 	})
 
 	it('refuses a caller who is not the agent running the session', async () => {
@@ -186,85 +345,6 @@ describe('POST /sessions/:id/ask', () => {
 		const res = await app.request(ask(session.id, workspaceId))
 		expect(res.status).toBe(403)
 		expect(await messagesFor(conversationId)).toHaveLength(0)
-	})
-
-	describe('with a Chief of Staff in the workspace', () => {
-		let cosId: string
-
-		beforeEach(async () => {
-			const cos = await insertActor(db, { type: 'agent', name: 'Chief of Staff' })
-			if (!cos) throw new Error('failed to seed Chief of Staff')
-			cosId = cos.id
-			await db.insert(workspaceMembers).values({ workspaceId, actorId: cosId, role: 'member' })
-		})
-
-		async function cosChats() {
-			const rows = await db
-				.select({ id: conversations.id })
-				.from(conversations)
-				.innerJoin(
-					conversationParticipants,
-					eq(conversationParticipants.conversationId, conversations.id),
-				)
-				.where(eq(conversationParticipants.actorId, cosId))
-			return rows.map((r) => r.id)
-		}
-
-		it('sends an autonomous session question to the 1-1 with the Chief of Staff', async () => {
-			const session = await insertSession(db, workspaceId, agentId, humanId, {
-				interactive: false,
-				status: 'running',
-			})
-			if (!session) throw new Error('failed to seed session')
-			const app = createSessionsApp(agentId)
-
-			const res = await app.request(ask(session.id, workspaceId))
-			expect(res.status).toBe(200)
-			const body = (await res.json()) as { delivered_to: string }
-			expect(body.delivered_to).toBe('chief_of_staff')
-
-			const [chatId] = await cosChats()
-			if (!chatId) throw new Error('no Chief of Staff conversation was created')
-			const rows = await messagesFor(chatId)
-			expect(rows).toHaveLength(1)
-			expect(rows[0]?.actorId).toBe(agentId)
-			expect(rows[0]?.content).toContain('How should I reach Spotify?')
-		})
-
-		it('reuses the same 1-1 for every later question', async () => {
-			const first = await insertSession(db, workspaceId, agentId, humanId, {
-				interactive: false,
-				status: 'running',
-			})
-			const second = await insertSession(db, workspaceId, agentId, humanId, {
-				interactive: false,
-				status: 'running',
-			})
-			if (!first || !second) throw new Error('failed to seed sessions')
-			const app = createSessionsApp(agentId)
-
-			expect((await app.request(ask(first.id, workspaceId))).status).toBe(200)
-			expect((await app.request(ask(second.id, workspaceId))).status).toBe(200)
-
-			const chats = await cosChats()
-			expect(chats).toHaveLength(1)
-			expect(await messagesFor(chats[0] as string)).toHaveLength(2)
-		})
-
-		it('still asks a chat session in its own chat, not the Chief of Staff 1-1', async () => {
-			const session = await insertSession(db, workspaceId, agentId, humanId, {
-				interactive: true,
-				conversationId,
-				status: 'running',
-			})
-			if (!session) throw new Error('failed to seed session')
-			const app = createSessionsApp(agentId)
-
-			const res = await app.request(ask(session.id, workspaceId))
-			expect(((await res.json()) as { delivered_to: string }).delivered_to).toBe('chat')
-			expect(await messagesFor(conversationId)).toHaveLength(1)
-			expect(await cosChats()).toHaveLength(0)
-		})
 	})
 
 	it('404s an unknown session', async () => {

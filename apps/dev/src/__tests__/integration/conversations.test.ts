@@ -17,6 +17,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
+import { findOrCreateMasterChat } from '../../services/master-chat'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
@@ -747,6 +748,99 @@ describe('Conversations Integration', () => {
 	})
 
 	describe('participants', () => {
+		describe('a master chat', () => {
+			async function masterChatWith(agentId: string) {
+				const chat = await findOrCreateMasterChat(db, workspaceId, ownerId, agentId)
+				if (!chat) throw new Error('master chat was not created')
+				return chat.id
+			}
+
+			const participantIds = async (
+				app: ReturnType<typeof createConversationsApp>['app'],
+				id: string,
+			) => {
+				const res = await app.request(
+					jsonGet(`/api/conversations/${id}`, { 'x-workspace-id': workspaceId }),
+				)
+				const body = (await res.json()) as { participants: Array<{ actorId: string }> }
+				return body.participants.map((p) => p.actorId).sort()
+			}
+
+			it('refuses a third participant with a 409 and adds nobody', async () => {
+				const agent = await insertActor(db, { type: 'agent' })
+				const third = await insertActor(db, { type: 'human' })
+				await addMember(workspaceId, agent.id)
+				await addMember(workspaceId, third.id)
+				const id = await masterChatWith(agent.id)
+				const { app } = createConversationsApp(ownerId)
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${id}/participants`,
+						{ actor_ids: [third.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+				expect(res.status).toBe(409)
+				expect(await participantIds(app, id)).toEqual([ownerId, agent.id].sort())
+			})
+
+			it('refuses a message that mentions someone outside the pair, and posts nothing', async () => {
+				const agent = await insertActor(db, { type: 'agent' })
+				const other = await insertActor(db, { type: 'agent' })
+				await addMember(workspaceId, agent.id)
+				await addMember(workspaceId, other.id)
+				const id = await masterChatWith(agent.id)
+				const { app } = createConversationsApp(ownerId)
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${id}/messages`,
+						{ content: `over to <@${other.id}>`, metadata: { mentions: [other.id] } },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+				expect(res.status).toBe(409)
+				expect(await participantIds(app, id)).toEqual([ownerId, agent.id].sort())
+				expect(await db.select().from(messages).where(eq(messages.conversationId, id))).toEqual([])
+			})
+
+			it('still lets one of its own two people be added again, and a normal chat grow', async () => {
+				const agent = await insertActor(db, { type: 'agent' })
+				const third = await insertActor(db, { type: 'human' })
+				await addMember(workspaceId, agent.id)
+				await addMember(workspaceId, third.id)
+				const id = await masterChatWith(agent.id)
+				const { app } = createConversationsApp(ownerId)
+				const add = (conversation: string, actorId: string) =>
+					app.request(
+						jsonRequest(
+							'POST',
+							`/api/conversations/${conversation}/participants`,
+							{ actor_ids: [actorId] },
+							{ 'x-workspace-id': workspaceId },
+						),
+					)
+
+				expect((await add(id, agent.id)).status).toBe(200)
+
+				const topical = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title: 'Topical', participant_actor_ids: [agent.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				const { id: topicalId } = (await topical.json()) as { id: string }
+				expect((await add(topicalId, third.id)).status).toBe(200)
+			})
+		})
+
 		it('auto-joins an @mentioned agent who is not yet a participant, so they become a responder candidate', async () => {
 			// Regression: @mentioning an agent via the composer used to be a
 			// no-op unless they were already a conversation participant, because

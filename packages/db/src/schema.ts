@@ -940,6 +940,36 @@ export const conversationParticipants = pgTable(
 export type ConversationParticipant = typeof conversationParticipants.$inferSelect
 export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
 
+// ── Master chats ────────────────────────────────────────────────────────────
+//
+// The one stored 1-1 chat between a person and an agent, the place that agent
+// puts a question when its session has no chat of its own. Stored, not derived:
+// a topical chat that happens to hold the same two people is not this chat.
+// Written only by findOrCreateMasterChat (services/master-chat.ts). The key on
+// the pair is what makes two concurrent first calls produce one chat; the unique
+// conversation_id keeps one chat from being the master of two pairs.
+export const masterChats = pgTable(
+	'master_chats',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		humanId: uuid('human_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		agentId: uuid('agent_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull()
+			.unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.humanId, t.agentId] })],
+)
+export type MasterChat = typeof masterChats.$inferSelect
+
 // ── Messages ────────────────────────────────────────────────────────────────
 //
 // One row per chat turn in a conversation, human- or agent-authored.
