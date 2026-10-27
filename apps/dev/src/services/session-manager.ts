@@ -223,7 +223,6 @@ import {
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
-	sumRunningSessionUsage,
 	sumSegmentResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
@@ -1818,7 +1817,7 @@ export class SessionManager extends EventEmitter {
 			// session that never technically "completes". Must run before
 			// cleanupSession() clears the in-memory stdout tail this reads.
 			const llmRoute = (session.config as Record<string, unknown>)?.llm_route
-			await this.accumulateSessionUsage(sessionId)
+			await this.accumulateSessionUsage(sessionId, { allTurns: true })
 			if (llmRoute === LLM_ROUTE_MASKIN_PLAN) {
 				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 			}
@@ -4120,7 +4119,7 @@ ${cont.continues_prompt}
 		// the helper returns null and the columns are left untouched. Parser
 		// failures must never block the status update below, which is why
 		// this is a separate try/catch'd write.
-		const usage = await this.accumulateSessionUsage(sessionId)
+		const usage = await this.accumulateSessionUsage(sessionId, { allTurns: true })
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
@@ -4472,7 +4471,7 @@ ${cont.continues_prompt}
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			// A close-out of a many-turn chat (idle close, helper finished) must add up
+			// Every close-out (pause, exit, timeout, idle close, helper finished) must add up
 			// every turn of this process. The tail below holds only the newest one.
 			if (opts.allTurns) {
 				usage = await sumSegmentResultUsage(this.db, sessionId)
@@ -4573,7 +4572,7 @@ ${cont.continues_prompt}
 	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
 	 * it's running, since those are only written on pause/completion) with a
 	 * fresh live scan of *this* session's own logs
-	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
+	 * (`sumSegmentResultUsage`), so no separate persistence step is needed
 	 * here — nothing is written until the session actually stops, at which
 	 * point `handleCompletion` → `accumulateSessionUsage` +
 	 * `debitCreditIfApplicable` record and bill it exactly as normal.
@@ -4604,7 +4603,7 @@ ${cont.continues_prompt}
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 		const [persistedUsedCents, liveUsage] = await Promise.all([
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
-			sumRunningSessionUsage(this.db, session.id),
+			sumSegmentResultUsage(this.db, session.id),
 		])
 		// Route-aware cost, not the live scan's own reported figure: only
 		// maskin_plan sessions reach this check (the watchdog query filters on
@@ -5042,7 +5041,7 @@ ${cont.continues_prompt}
 				// reads the in-memory stdout tail that settleSession's own scope
 				// can't see; settleSession's additive-overlay handles the delta
 				// once accumulateSessionUsage has written it.)
-				await this.accumulateSessionUsage(session.id)
+				await this.accumulateSessionUsage(session.id, { allTurns: true })
 
 				// settleSession is the only writer of terminal sessions.status. Its
 				// stopSandbox / pushAgentFiles callbacks fold what used to be the
@@ -6055,7 +6054,9 @@ ${cont.continues_prompt}
 		let stdoutChunks: string[] = []
 		try {
 			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
-			usage = parseUsageFromLogChunks(stdoutChunks)
+			// Every turn of this process, not the last result line only (see sumSegmentResultUsage).
+			usage =
+				(await sumSegmentResultUsage(this.db, sessionId)) ?? parseUsageFromLogChunks(stdoutChunks)
 		} catch (err) {
 			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
