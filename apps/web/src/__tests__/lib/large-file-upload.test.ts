@@ -15,8 +15,8 @@ import { assertUploadable, toUploadInput, uploadLargeFile } from '@/lib/large-fi
 
 const MiB = 1024 * 1024
 
-function fileOfSize(name: string, size: number) {
-	const file = new File(['x'], name, { type: 'video/mp4' })
+function fileOfSize(name: string, size: number, type = 'video/mp4') {
+	const file = new File(['x'], name, { type })
 	Object.defineProperty(file, 'size', { value: size })
 	return file
 }
@@ -87,6 +87,30 @@ describe('toUploadInput', () => {
 		const input = await toUploadInput(file)
 
 		expect(input).toEqual({ file })
+	})
+
+	// The JSON route caps a non-video file at 10 MB, so anything above that must go
+	// straight to storage; a 30 MB PDF used to be sent as JSON and refused.
+	it.each([
+		['report.pdf', 'application/pdf'],
+		['data.zip', 'application/zip'],
+		['blob.bin', ''],
+	])('sends a 30 MB %s straight to storage', async (name, type) => {
+		const file = fileOfSize(name, 30 * MiB, type)
+
+		expect(await toUploadInput(file)).toEqual({ file })
+	})
+
+	it('still reads a 10 MB document as base64 for the JSON path', async () => {
+		const input = await toUploadInput(fileOfSize('a.pdf', 10 * MiB, 'application/pdf'))
+
+		expect(input).toMatchObject({ encoding: 'base64', mime_type: 'application/pdf' })
+	})
+
+	it('reads a 40 MB video as base64 for the JSON path, which allows it', async () => {
+		const input = await toUploadInput(fileOfSize('a.mp4', 40 * MiB))
+
+		expect(input).toMatchObject({ encoding: 'base64' })
 	})
 
 	it('refuses a file over the limit', () => {

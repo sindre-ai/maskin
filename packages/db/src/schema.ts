@@ -1480,17 +1480,27 @@ export const fileUploads = pgTable(
 		s3UploadId: text('s3_upload_id').notNull(),
 		partSize: integer('part_size').notNull(),
 		partCount: integer('part_count').notNull(),
-		// pending → completed | aborted. Only pending uploads can be completed.
+		// pending → completing → completed, or → aborted. Only pending uploads can be
+		// completed; completing means one request is stitching it right now.
 		status: text('status').notNull().default('pending'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// When a complete request took the upload. A completing row older than a
+		// complete can take belongs to a request that died.
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
 	},
 	(t) => [
 		index('file_uploads_ws_status_idx').on(t.workspaceId, t.status),
-		check('file_uploads_status_check', sql`${t.status} IN ('pending', 'completed', 'aborted')`),
+		index('file_uploads_open_idx')
+			.on(t.expiresAt)
+			.where(sql`${t.status} IN ('pending', 'completing')`),
+		check(
+			'file_uploads_status_check',
+			sql`${t.status} IN ('pending', 'completing', 'completed', 'aborted')`,
+		),
 	],
 )
 

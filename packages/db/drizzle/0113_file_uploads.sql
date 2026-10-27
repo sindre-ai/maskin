@@ -25,10 +25,15 @@ CREATE TABLE IF NOT EXISTS "file_uploads" (
 	"created_by" uuid NOT NULL REFERENCES "actors"("id"),
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
+	"claimed_at" timestamp with time zone,
 	CONSTRAINT "file_uploads_file_id_unique" UNIQUE ("file_id"),
-	CONSTRAINT "file_uploads_status_check" CHECK ("status" IN ('pending', 'completed', 'aborted'))
+	CONSTRAINT "file_uploads_status_check" CHECK ("status" IN ('pending', 'completing', 'completed', 'aborted'))
 );
 --> statement-breakpoint
 ALTER TABLE "file_uploads" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "file_uploads_ws_status_idx" ON "file_uploads" ("workspace_id", "status");
+--> statement-breakpoint
+-- The reaper looks for abandoned uploads by age; only open ones matter.
+CREATE INDEX IF NOT EXISTS "file_uploads_open_idx" ON "file_uploads" ("expires_at")
+	WHERE "status" IN ('pending', 'completing');

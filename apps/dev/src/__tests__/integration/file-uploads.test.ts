@@ -6,6 +6,7 @@ import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: filesRoutes } = await import('../../routes/files')
+const { FileUploadReaperJob } = await import('../../jobs/file-upload-reaper')
 
 const MiB = 1024 * 1024
 const GiB = 1024 * MiB
@@ -32,7 +33,7 @@ function createStorage() {
 			return `https://storage.test/part/${part}`
 		},
 		async completeMultipartUpload(key: string, id: string) {
-			if (!open.has(id)) throw new Error('NoSuchUpload')
+			if (!open.has(id)) throw Object.assign(new Error('NoSuchUpload'), { name: 'NoSuchUpload' })
 			open.delete(id)
 			objects.set(key, declared)
 		},
@@ -202,5 +203,118 @@ describe('large file uploads', () => {
 		expect(
 			await db.select().from(fileUploads).where(eq(fileUploads.id, started.upload_id)),
 		).toHaveLength(0)
+	})
+
+	it('accepts the completing status and records when the upload was taken', async () => {
+		const storage = createStorage()
+		const started = await (await start(createApp(storage), 100 * MiB)).json()
+
+		await db
+			.update(fileUploads)
+			.set({ status: 'completing', claimedAt: new Date() })
+			.where(eq(fileUploads.id, started.upload_id))
+
+		const [row] = await db.select().from(fileUploads).where(eq(fileUploads.id, started.upload_id))
+		expect(row?.status).toBe('completing')
+		expect(row?.claimedAt).toBeInstanceOf(Date)
+	})
+
+	describe('file upload reaper', () => {
+		const rowOf = async (uploadId: string) => {
+			const [row] = await db.select().from(fileUploads).where(eq(fileUploads.id, uploadId))
+			return row
+		}
+		const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000)
+
+		it('aborts an expired pending upload and discards its parts', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+			await db
+				.update(fileUploads)
+				.set({ expiresAt: hoursAgo(1) })
+				.where(eq(fileUploads.id, started.upload_id))
+			expect(storage.open.size).toBe(1)
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('aborted')
+			expect(storage.open.size).toBe(0)
+		})
+
+		it('leaves an upload that is still open alone', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('pending')
+			expect(storage.open.size).toBe(1)
+		})
+
+		it('leaves a recent completing upload alone', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+			await db
+				.update(fileUploads)
+				.set({ status: 'completing', claimedAt: new Date() })
+				.where(eq(fileUploads.id, started.upload_id))
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('completing')
+		})
+
+		it('deletes the stitched object of a completing upload whose request died', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+			const upload = await rowOf(started.upload_id)
+			// The request died after storage stitched the object, before the file row.
+			storage.open.clear()
+			storage.objects.set(upload?.storageKey ?? '', 100 * MiB)
+			await db
+				.update(fileUploads)
+				.set({ status: 'completing', claimedAt: hoursAgo(1) })
+				.where(eq(fileUploads.id, started.upload_id))
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('aborted')
+			expect(storage.objects.size).toBe(0)
+			expect(await db.select().from(files).where(eq(files.id, started.file_id))).toHaveLength(0)
+		})
+
+		it('marks a stuck upload completed, and keeps its object, when the file exists', async () => {
+			const storage = createStorage()
+			const app = createApp(storage)
+			storage.setUploadedSize(100 * MiB)
+			const started = await (await start(app, 100 * MiB)).json()
+			expect((await complete(app, started.upload_id, started.parts.length)).status).toBe(201)
+			// Only the final status write was lost.
+			await db
+				.update(fileUploads)
+				.set({ status: 'completing', claimedAt: hoursAgo(1) })
+				.where(eq(fileUploads.id, started.upload_id))
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('completed')
+			expect(storage.objects.size).toBe(1)
+		})
+
+		it('keeps the row for a retry when storage will not delete the object', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+			await db
+				.update(fileUploads)
+				.set({ status: 'completing', claimedAt: hoursAgo(1) })
+				.where(eq(fileUploads.id, started.upload_id))
+			storage.delete = async () => {
+				throw new Error('storage down')
+			}
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('completing')
+		})
 	})
 })

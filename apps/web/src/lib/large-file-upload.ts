@@ -1,4 +1,4 @@
-import { MAX_INLINE_FILE_SIZE_BYTES, MAX_LARGE_FILE_SIZE_BYTES } from '@maskin/shared'
+import { MAX_LARGE_FILE_SIZE_BYTES, maxFileSizeBytesFor } from '@maskin/shared'
 import { type FileDetail, api } from './api'
 import { readFileAsBase64 } from './file-utils'
 
@@ -16,8 +16,19 @@ export interface UploadOptions {
 const PART_CONCURRENCY = 3
 const PART_ATTEMPTS = 3
 
+/** The type the upload is stored under; the JSON route and the direct upload must agree on it. */
+function uploadMimeType(file: File): string {
+	return file.type || 'application/octet-stream'
+}
+
+/**
+ * True when the JSON route would refuse this file, so it goes straight to storage.
+ * That cap depends on the type (video gets more than the rest), so the check has to
+ * use the same one: a plain size threshold sent a 30 MB PDF down the JSON path to
+ * be rejected.
+ */
 export function isLargeFile(file: File): boolean {
-	return file.size > MAX_INLINE_FILE_SIZE_BYTES
+	return file.size > maxFileSizeBytesFor(uploadMimeType(file))
 }
 
 export function assertUploadable(file: File): void {
@@ -42,7 +53,7 @@ export async function toUploadInput(
 	if (isLargeFile(file)) return { file }
 	return {
 		name: file.name,
-		mime_type: file.type || 'application/octet-stream',
+		mime_type: uploadMimeType(file),
 		content: await readFileAsBase64(file),
 		encoding: 'base64',
 	}
@@ -124,7 +135,7 @@ export async function uploadLargeFile(
 	assertUploadable(file)
 	const session = await api.files.startUpload(workspaceId, {
 		name: file.name,
-		mime_type: file.type || 'application/octet-stream',
+		mime_type: uploadMimeType(file),
 		size_bytes: file.size,
 	})
 

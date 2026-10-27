@@ -10,6 +10,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
@@ -280,6 +281,12 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Direct uploads: aborts uploads nobody finished and settles ones whose complete
+// request died, so no parts or stitched object are left behind.
+const fileUploadReaperJob = new FileUploadReaperJob(db, storageProvider)
+fileUploadReaperJob.start()
+logger.info('File upload reaper started')
+
 // Keychain: flips chat-captured keys from pending_undo to active once the undo
 // window has passed. One UPDATE per minute, no key use.
 const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
@@ -452,6 +459,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()

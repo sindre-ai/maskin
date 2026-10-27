@@ -7,10 +7,11 @@ export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 // storage could hold: 50 MB of video is ~67 MB on the wire.
 export const MAX_VIDEO_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB
 
-// Above this size a file never travels through the API as base64 JSON. It is
-// uploaded straight to storage in parts (presigned URLs) and, when read, comes
-// back as a download URL instead of inline content. Same number as the video
-// cap on purpose: everything the JSON path accepts stays on it unchanged.
+// Above this size a file is read back as a download URL instead of inline
+// content, and cannot be edited through the API. This is a read-side threshold
+// only: any file the JSON route's per-type cap (`maxFileSizeBytesFor`) refuses is
+// uploaded straight to storage in parts (presigned URLs), whatever its type, and
+// a file of 10 to 50 MB uploaded that way is still read back inline.
 export const MAX_INLINE_FILE_SIZE_BYTES = MAX_VIDEO_FILE_SIZE_BYTES
 
 // Ceiling for the direct upload path. Raising it later is a one-line change here:

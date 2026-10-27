@@ -32,6 +32,7 @@ import {
 	saveFile,
 	sha256Hex,
 } from '../lib/file-save'
+import { abortStoredUpload, classifyCompleteFailure, deleteStoredObject } from '../lib/file-uploads'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
@@ -801,7 +802,13 @@ app.openapi(startUploadRoute, (async (c) => {
 	} catch (err) {
 		logger.error('Failed to start file upload', { workspaceId, fileId, error: String(err) })
 		if (s3UploadId) {
-			await storage.abortMultipartUpload(storageKey, s3UploadId).catch(() => {})
+			await storage.abortMultipartUpload(storageKey, s3UploadId).catch((abortErr) =>
+				logger.error('Failed to abort a multipart upload that never got a row (parts left)', {
+					fileId,
+					storageKey,
+					error: String(abortErr),
+				}),
+			)
 		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start upload'), 500)
 	}
@@ -838,6 +845,10 @@ const completeUploadRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
 		},
+		503: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Storage is unavailable; the upload is intact and can be completed again',
+		},
 	},
 })
 
@@ -867,16 +878,44 @@ app.openapi(completeUploadRoute, (async (c) => {
 	const upload = await findOwnUpload(db, actorId, id)
 	if (!upload) return c.json(createApiError('NOT_FOUND', 'Upload not found'), 404)
 
-	// A retried complete (lost response) gets the file it already made.
-	if (upload.status === 'completed') {
-		const [existing] = await db.select().from(files).where(eq(files.id, upload.fileId)).limit(1)
-		if (existing) {
+	const setStatus = (status: 'pending' | 'completed' | 'aborted') =>
+		db
+			.update(fileUploads)
+			.set({ status })
+			.where(eq(fileUploads.id, upload.id))
+			.catch((err) =>
+				logger.error('Failed to update file upload status', {
+					uploadId: upload.id,
+					status,
+					error: String(err),
+				}),
+			)
+
+	const respondWithFile = async (file: typeof files.$inferSelect) => {
+		try {
 			return c.json(
-				(await buildLargeFileResponse(storage, existing, frontendUrl)) as z.infer<
+				(await buildLargeFileResponse(storage, file, frontendUrl)) as z.infer<
 					typeof fileDetailSchema
 				>,
 				201,
 			)
+		} catch (err) {
+			logger.error('Failed to presign file download', { fileId: file.id, error: String(err) })
+			return c.json(createApiError('INTERNAL_ERROR', 'File saved but its download URL failed'), 500)
+		}
+	}
+
+	// A retried complete (lost response) gets the file it already made. The file
+	// row is the proof: a row stuck in `completing` whose file exists lost only
+	// its final status write.
+	if (upload.status === 'completed' || upload.status === 'completing') {
+		const [existing] = await db.select().from(files).where(eq(files.id, upload.fileId)).limit(1)
+		if (existing) {
+			if (upload.status === 'completing') await setStatus('completed')
+			return respondWithFile(existing)
+		}
+		if (upload.status === 'completing') {
+			return c.json(createApiError('CONFLICT', 'This upload is already being completed'), 409)
 		}
 	}
 	if (upload.status !== 'pending') {
@@ -900,25 +939,17 @@ app.openapi(completeUploadRoute, (async (c) => {
 	}
 
 	// Claim it so two completes cannot both stitch the object.
+	// The row stays `completing` until the file row exists, never `completed`
+	// before: a request that dies in between leaves a row the reaper can settle,
+	// not a finished-looking upload with no file behind it.
 	const [claimed] = await db
 		.update(fileUploads)
-		.set({ status: 'completed' })
+		.set({ status: 'completing', claimedAt: new Date() })
 		.where(and(eq(fileUploads.id, upload.id), eq(fileUploads.status, 'pending')))
 		.returning({ id: fileUploads.id })
 	if (!claimed) {
 		return c.json(createApiError('CONFLICT', 'This upload is already being completed'), 409)
 	}
-	const setStatus = (status: 'pending' | 'aborted') =>
-		db
-			.update(fileUploads)
-			.set({ status })
-			.where(eq(fileUploads.id, upload.id))
-			.catch((err) =>
-				logger.error('Failed to update file upload status', {
-					uploadId: upload.id,
-					error: String(err),
-				}),
-			)
 
 	try {
 		await storage.completeMultipartUpload(
@@ -927,13 +958,31 @@ app.openapi(completeUploadRoute, (async (c) => {
 			body.parts.map((p) => ({ partNumber: p.part_number, etag: p.etag })),
 		)
 	} catch (err) {
-		// Wrong or missing ETags leave the upload intact, so the client may retry.
-		logger.warn('Storage rejected the uploaded parts', { uploadId: upload.id, error: String(err) })
+		const failure = classifyCompleteFailure(err)
+		if (failure === 'bad_parts') {
+			// Wrong or missing ETags leave the upload intact, so the client may retry.
+			logger.warn('Storage rejected the uploaded parts', {
+				uploadId: upload.id,
+				error: String(err),
+			})
+			await setStatus('pending')
+			return c.json(
+				createApiError('VALIDATION_ERROR', 'Storage did not accept the uploaded parts'),
+				400,
+			)
+		}
+		if (failure === 'gone') {
+			logger.warn('Storage no longer has the upload', { uploadId: upload.id, error: String(err) })
+			await setStatus('aborted')
+			return c.json(createApiError('CONFLICT', 'This upload expired; start a new one'), 409)
+		}
+		// Storage is down or unreachable: nothing is wrong with the request.
+		logger.error('Storage failed while completing an upload', {
+			uploadId: upload.id,
+			error: String(err),
+		})
 		await setStatus('pending')
-		return c.json(
-			createApiError('VALIDATION_ERROR', 'Storage did not accept the uploaded parts'),
-			400,
-		)
+		return c.json(createApiError('INTERNAL_ERROR', 'Storage is unavailable, try again'), 503)
 	}
 
 	// Trust the stored object, not the declaration: it is what readers will get.
@@ -943,12 +992,12 @@ app.openapi(completeUploadRoute, (async (c) => {
 	} catch (err) {
 		logger.error('Failed to read uploaded object', { uploadId: upload.id, error: String(err) })
 		await setStatus('aborted')
-		await storage.delete(upload.storageKey).catch(() => {})
+		await deleteStoredObject(storage, upload)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to verify the upload'), 500)
 	}
 	if (!stored || stored.size !== upload.sizeBytes) {
 		await setStatus('aborted')
-		await storage.delete(upload.storageKey).catch(() => {})
+		await deleteStoredObject(storage, upload)
 		return c.json(
 			createApiError('VALIDATION_ERROR', 'Uploaded size does not match the declared size'),
 			400,
@@ -981,9 +1030,13 @@ app.openapi(completeUploadRoute, (async (c) => {
 			error: String(err),
 		})
 		await setStatus('aborted')
-		await storage.delete(upload.storageKey).catch(() => {})
+		await deleteStoredObject(storage, upload)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create file'), 500)
 	}
+
+	// The file exists now; only then is the upload finished. If this write fails the
+	// row stays `completing` and a retried complete or the reaper settles it.
+	await setStatus('completed')
 
 	try {
 		await recordEvent(db, {
@@ -1008,17 +1061,7 @@ app.openapi(completeUploadRoute, (async (c) => {
 		})
 	}
 
-	try {
-		return c.json(
-			(await buildLargeFileResponse(storage, created, frontendUrl)) as z.infer<
-				typeof fileDetailSchema
-			>,
-			201,
-		)
-	} catch (err) {
-		logger.error('Failed to presign file download', { fileId: created.id, error: String(err) })
-		return c.json(createApiError('INTERNAL_ERROR', 'File saved but its download URL failed'), 500)
-	}
+	return respondWithFile(created)
 }) as RouteHandler<typeof completeUploadRoute, Env>)
 
 const abortUploadRoute = createRoute({
@@ -1039,7 +1082,11 @@ const abortUploadRoute = createRoute({
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Upload already finished',
+			description: 'Upload already finished or being finished',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Storage could not discard the parts; the upload stays open to be reclaimed',
 		},
 	},
 })
@@ -1052,7 +1099,7 @@ app.openapi(abortUploadRoute, (async (c) => {
 
 	const upload = await findOwnUpload(db, actorId, id)
 	if (!upload) return c.json(createApiError('NOT_FOUND', 'Upload not found'), 404)
-	if (upload.status === 'completed') {
+	if (upload.status === 'completed' || upload.status === 'completing') {
 		return c.json(createApiError('CONFLICT', 'This upload is already finished'), 409)
 	}
 
@@ -1063,14 +1110,25 @@ app.openapi(abortUploadRoute, (async (c) => {
 		.returning({ id: fileUploads.id })
 	if (claimed) {
 		try {
-			await storage.abortMultipartUpload(upload.storageKey, upload.s3UploadId)
+			await abortStoredUpload(storage, upload)
 		} catch (err) {
-			// The parts are inert without a complete; the bucket's lifecycle rule
-			// for incomplete multipart uploads reclaims the space.
-			logger.warn('Failed to abort multipart upload in storage', {
+			// Reopen the row instead of reporting an abort that did not happen: once it
+			// expires, the reaper retries the discard.
+			logger.error('Failed to abort multipart upload in storage', {
 				uploadId: upload.id,
 				error: String(err),
 			})
+			await db
+				.update(fileUploads)
+				.set({ status: 'pending' })
+				.where(eq(fileUploads.id, upload.id))
+				.catch((revertErr) =>
+					logger.error('Failed to reopen an upload whose abort failed (parts left)', {
+						uploadId: upload.id,
+						error: String(revertErr),
+					}),
+				)
+			return c.json(createApiError('INTERNAL_ERROR', 'Could not discard the upload'), 500)
 		}
 	}
 	return c.json({ aborted: true }, 200)
