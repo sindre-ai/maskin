@@ -454,7 +454,7 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
 			onOpenThread: { message in
 				guard let id = message.serverID else { return }
 				threadRoute = ThreadRoute(rootID: id)
@@ -888,6 +888,8 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// An intro's fill step: put its prompt in the composer.
+	var onFillStep: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -1083,6 +1085,13 @@ struct ThreadTranscript: View {
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
+				onSendStep: { prompt, introID, index in
+					_ = store.send(
+						prompt,
+						metadata: ChatSendMetadata(fromSuggestedStep: ChatSuggestedStepRef(introMessageID: introID, index: index)))
+				},
+				onFillStep: onFillStep,
+				introStepsOpen: AgentIntroView.stepsOpen(for: message, in: store.messages),
 				cardOutcome: message.asksForAnswer
 					? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 				chatAgents: store.participants.filter { $0.kind == .agent },
