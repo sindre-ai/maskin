@@ -2532,6 +2532,8 @@ export interface ConversationListItemResponse {
 	id: string
 	workspaceId: string
 	title: string
+	subjectType?: 'object' | 'loop' | null
+	subjectId?: string | null
 	createdBy: string
 	lastMessageAt: string | null
 	createdAt: string | null
@@ -2555,6 +2557,8 @@ export interface ConversationDetailResponse {
 	id: string
 	workspaceId: string
 	title: string
+	subjectType?: 'object' | 'loop' | null
+	subjectId?: string | null
 	createdBy: string
 	lastMessageAt: string | null
 	createdAt: string | null
@@ -2872,7 +2876,18 @@ export interface MessagesListResponse {
 	pending_handoffs?: SpawnedSession[]
 }
 
+/** What a group chat is about: a task/bet/insight or an installed loop. */
+export interface ConversationSubject {
+	type: 'object' | 'loop'
+	id: string
+}
+
 export interface CreateConversationInput {
+	/**
+	 * With a subject the server returns the chat that already exists for it
+	 * (adding the caller), so asking twice never makes two.
+	 */
+	subject?: ConversationSubject
 	title: string
 	participant_actor_ids: string[]
 	initial_message?: string

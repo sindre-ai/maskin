@@ -60,6 +60,12 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+// Comments are written in the object's group chat; the shell opens it through this mutation.
+const createChat = vi.hoisted(() => ({ mutate: vi.fn(), isPending: false }))
+vi.mock('@/hooks/use-conversations', () => ({
+	useCreateConversation: () => createChat,
+}))
+
 // Lazily read, like settingsStore, so a test can seed mentionable actors.
 const actorsStore: { data: Array<Record<string, unknown>> } = { data: [] }
 vi.mock('@/hooks/use-actors', () => ({
@@ -120,7 +126,8 @@ describe('ObjectDetailShell', () => {
 		expect(screen.getByText(/Should we ship this\?/)).toBeInTheDocument()
 	})
 
-	it('Answer it moves focus to the answer control', () => {
+	it('Answer it opens the object chat', () => {
+		createChat.mutate.mockClear()
 		const object = buildObjectResponse({
 			type: 'bet',
 			metadata: { _ask: 'Should we ship this?' },
@@ -129,10 +136,11 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
-		const textarea = screen.getByPlaceholderText(/commands, @ mentions/i)
-		const answerButton = screen.getByRole('button', { name: /answer it/i })
-		fireEvent.click(answerButton)
-		expect(document.activeElement).toBe(textarea)
+		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
+		expect(createChat.mutate).toHaveBeenCalledWith(
+			expect.objectContaining({ subject: { type: 'object', id: object.id } }),
+			expect.anything(),
+		)
 	})
 
 	it('omits the ask banner when no _ask metadata', () => {
@@ -143,31 +151,23 @@ describe('ObjectDetailShell', () => {
 		expect(screen.queryByText(/Open question/)).not.toBeInTheDocument()
 	})
 
-	it('renders comment input at the bottom of the shell', () => {
+	it('offers the object chat at the bottom of the shell, not a comment box', () => {
+		createChat.mutate.mockClear()
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		// The object page's composer is the single-row bar (mockup 1358–1366).
-		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
-	})
+		expect(screen.queryByPlaceholderText(/commands, @ mentions/i)).toBeNull()
 
-	// The bar is docked to the bottom of the scroller, so a dropdown opening below
-	// it is clipped and only visible once the page is scrolled to the end.
-	it('opens the @mention dropdown above the docked comment bar', () => {
-		actorsStore.data = [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }]
-		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
-		})
-
-		fireEvent.change(screen.getByPlaceholderText(/commands, @ mentions/i), {
-			target: { value: '@' },
-		})
-
-		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
-		expect(dropdown).toHaveClass('bottom-full', 'mb-1')
-		expect(dropdown).not.toHaveClass('mt-1')
+		fireEvent.click(screen.getByRole('button', { name: 'Chat about this' }))
+		expect(createChat.mutate).toHaveBeenCalledWith(
+			{
+				title: object.title ?? 'Untitled',
+				participant_actor_ids: [],
+				subject: { type: 'object', id: object.id },
+			},
+			expect.anything(),
+		)
 	})
 
 	// Mockup 1138–1143: one Activity heading + a 2-way Timeline | Related

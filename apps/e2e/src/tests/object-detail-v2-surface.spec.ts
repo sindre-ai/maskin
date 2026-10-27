@@ -71,11 +71,9 @@ test.describe('Object detail — v2 surface', () => {
 				await expect(page.getByRole('button', { name: new RegExp(`^${label} \\(`) })).toBeVisible()
 			}
 
-			// One-row composer with the mockup's placeholder and no hint line. The
-			// phone gets the short form so the bar stays one line at 375px.
-			await expect(
-				page.getByPlaceholder(vp.width >= 768 ? 'Comment — / commands, @ mentions' : 'Comment…'),
-			).toBeVisible()
+			// Comments are written in the object's group chat: one bar at the bottom
+			// opens it, with no hint line.
+			await expect(page.getByRole('button', { name: 'Chat about this' })).toBeVisible()
 			await expect(page.getByText(/is listening$/)).toHaveCount(0)
 
 			// Related tab: a bordered list under its edge label, with the two
@@ -243,46 +241,6 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(page.getByText(/Edited\./)).toBeVisible()
 	})
 
-	// "Reference an object" attaches removable chips that post as real
-	// references on the timeline.
-	test('the composer references an object and it lands on the timeline', async ({
-		page,
-		account,
-	}) => {
-		await page.setViewportSize({ width: 1024, height: 768 })
-		const bet = await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Reference probe',
-			status: 'active',
-		})
-		await account.api.createObject(account.workspaceId, {
-			type: 'task',
-			title: 'Referenced task',
-			status: 'todo',
-		})
-
-		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByRole('heading', { level: 1, name: 'Reference probe' })).toBeVisible({
-			timeout: 15000,
-		})
-
-		await page.getByRole('button', { name: /Add a file, object, or mention/i }).click()
-		await page.getByRole('menuitem', { name: /Reference an object/i }).click()
-		await page.getByPlaceholder('Search items…').fill('Referenced task')
-		await page.getByRole('option').filter({ hasText: 'Referenced task' }).first().click()
-
-		// A removable chip, not a pasted link.
-		const chip = page.getByRole('button', { name: /Remove reference to Referenced task/ })
-		await expect(chip).toBeVisible()
-
-		await page.getByPlaceholder(/^Comment/).fill('Linking the task.')
-		await page.getByRole('button', { name: /send comment/i }).click()
-
-		await expect(chip).toHaveCount(0)
-		await expect(page.getByText('Linking the task.')).toBeVisible()
-		await expect(page.getByRole('link', { name: /Referenced task/ }).first()).toBeVisible()
-	})
-
 	// The drawer states who the object waits on and who made it.
 	test('the properties drawer carries attention and the creator', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
@@ -339,7 +297,7 @@ test.describe('Object detail — v2 surface', () => {
 			await expect(bar.getByRole('link', { name: 'Objects' })).toBeVisible()
 			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
 			await expect(page.locator('[data-hero-status-trigger]')).toBeVisible()
-			await expect(page.getByPlaceholder('Comment — / commands, @ mentions')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Chat about this' })).toBeVisible()
 		})
 	}
 })

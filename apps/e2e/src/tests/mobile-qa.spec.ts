@@ -159,20 +159,13 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-// Both callers below are the object-detail surface, whose v2 shell passes its
-// own placeholder down to the composer rather than using comment-input.tsx's
-// default (object-detail-shell.tsx). The 768px split still mirrors
-// useIsMobile() (apps/web/src/hooks/use-mobile.tsx), which is what the shell
-// switches on.
-function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions'
-}
-
+// Both callers below are the object-detail surface, where comments are written in the
+// object's group chat: the bar at the bottom is the way in.
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
-	const composer = page.getByPlaceholder(commentPlaceholderFor(viewport)).first()
+	const chatEntry = page.getByRole('button', { name: 'Chat about this' })
 	await expect(
-		composer,
-		`${surface}: comment composer must be visible at ${viewport.label}`,
+		chatEntry,
+		`${surface}: chat entry must be visible at ${viewport.label}`,
 	).toBeVisible({ timeout: 5000 })
 }
 
@@ -400,15 +393,14 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		})
 		await assertNoHorizontalOverflow(page, 'Object detail (step 2)', VIEWPORTS.mobile)
 
-		// 3. Comment — type and send via the composer. The activity timeline is
-		//    T2 scope, so the send is confirmed by the composer clearing (the
-		//    posted comment row itself returns with the timeline).
-		const composer = page.getByPlaceholder(commentPlaceholderFor(VIEWPORTS.mobile))
-		await composer.click()
-		await composer.fill('QA comment from mobile')
-		await page.getByRole('button', { name: 'Send comment' }).click()
-		await expect(composer).toHaveValue('', { timeout: 10000 })
-		await assertNoHorizontalOverflow(page, 'Object detail after comment (step 3)', VIEWPORTS.mobile)
+		// 3. Comment — the bar at the bottom opens the object's group chat.
+		await page.getByRole('button', { name: 'Chat about this' }).click()
+		await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15000 })
+		await assertNoHorizontalOverflow(
+			page,
+			'Group chat opened from the object (step 3)',
+			VIEWPORTS.mobile,
+		)
 	})
 })
 

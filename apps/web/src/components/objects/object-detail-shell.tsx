@@ -1,7 +1,8 @@
-import { CommentInput } from '@/components/activity/comment-input'
 import { PageHeader } from '@/components/layout/page-header'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
+import { useCreateConversation } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
@@ -20,7 +21,7 @@ import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
-import { Pencil } from 'lucide-react'
+import { MessageSquare, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
@@ -113,7 +114,26 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		[workspaceId, object.title],
 	)
 
-	const answerRef = useRef<HTMLTextAreaElement>(null)
+	// Comments live in the object's group chat: the server hands back the chat that
+	// already exists for this object, or makes it the first time anyone opens it.
+	const createConversation = useCreateConversation(workspaceId)
+	const openChat = useCallback(() => {
+		createConversation.mutate(
+			{
+				title: object.title ?? 'Untitled',
+				participant_actor_ids: [],
+				subject: { type: 'object', id: object.id },
+			},
+			{
+				onSuccess: (conversation) =>
+					navigate({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId, conversationId: conversation.id },
+					}),
+				onError: () => toast.error("Couldn't open the chat"),
+			},
+		)
+	}, [createConversation, navigate, object.id, object.title, workspaceId])
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
 
@@ -122,9 +142,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// commit to the same answer surface. Kept off `pendingAsks` (not
 	// `liveAsk`) so the reference is stable across renders that don't change
 	// the pick.
-	const handleAnswerLatestAsk = useCallback(() => {
-		answerRef.current?.focus()
-	}, [])
+	const handleAnswerLatestAsk = openChat
 
 	// D4 verb-swap override published to the shared New button. `useMemo` on
 	// the notification cache — automatic re-render when SSE flushes new asks.
@@ -418,7 +436,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						{askText && (
 							<ObjectAskBanner
 								question={askText}
-								onAnswerClick={() => answerRef.current?.focus()}
+								onAnswerClick={openChat}
 								actorName={askActor?.name}
 								actorId={askActor?.id}
 								actorType={askActor?.type}
@@ -463,18 +481,15 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						{/* The mockup's composer is a single bar — `+`, the field, mic and
 						    send on one row (1358–1366), with no hint line under it. */}
 						<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
-							<CommentInput
-								workspaceId={workspaceId}
-								objectId={object.id}
-								focusRef={answerRef}
-								variant="bar"
-								// Docked to the bottom of the scroller, so a dropdown that opens
-								// below the bar is clipped and only shows at the end of the page.
-								mentionDropdownPlacement="above"
-								// The full prompt wraps to three lines in a 375px bar, so the
-								// phone gets the short form.
-								placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
-							/>
+							<Button
+								variant="outline"
+								className="w-full justify-start gap-2"
+								onClick={openChat}
+								disabled={createConversation.isPending || isReadOnly}
+							>
+								<MessageSquare aria-hidden="true" />
+								Chat about this
+							</Button>
 						</div>
 					</div>
 				</div>
