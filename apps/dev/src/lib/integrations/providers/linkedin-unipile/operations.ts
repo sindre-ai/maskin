@@ -61,6 +61,7 @@ import {
 	nextSentOffset,
 	parseSentInvitations,
 } from './invitations'
+import { parsePostId, withAcceptedForms } from './post-id'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -2162,18 +2163,34 @@ export async function readLinkedInPostComments(
 ): Promise<{ comments: LinkedInComment[]; next_cursor?: string }> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const parsed = parsePostId(postId)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.readPostComments({
-			account_id: pre.credentials.account_id,
-			post_id: postId,
-			limit: input.limit,
-			cursor: input.cursor,
-		}),
-	)
-	return normalizeCommentsList(upstream.body)
+	const accountId = pre.credentials.account_id
+	try {
+		// The comments route takes the id a Get a Post response carries, so an activity
+		// number is resolved first. The opaque id list_user_posts returns goes straight through.
+		let subRoutePostId = parsed.kind === 'opaque' ? parsed.id : ''
+		if (parsed.kind === 'activity') {
+			const activityId = parsed.activityId
+			const postResp = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+				client.retrievePost({ account_id: accountId, post_id: activityId }),
+			)
+			subRoutePostId = resolvedPostId(postResp.body) || activityId
+		}
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.readPostComments({
+				account_id: accountId,
+				post_id: subRoutePostId,
+				limit: input.limit,
+				cursor: input.cursor,
+			}),
+		)
+		return normalizeCommentsList(upstream.body)
+	} catch (err) {
+		throw withAcceptedForms(err)
+	}
 }
 
 export type PostEngagementResult = {
@@ -2400,15 +2417,20 @@ export async function getLinkedInPostEngagement(
 ): Promise<PostEngagementResult> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const parsed = parsePostId(postId)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const acc = pre.credentials.account_id
+	// A URL or URN is reduced to its activity number before the call.
+	const retrieveId = parsed.kind === 'activity' ? parsed.activityId : parsed.id
 	// retrievePost first — if the base post read fails, there's nothing to
 	// return but an empty envelope, so treat that as terminal.
 	const postResp = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.retrievePost({ account_id: acc, post_id: postId }),
-	)
+		client.retrievePost({ account_id: acc, post_id: retrieveId }),
+	).catch((err) => {
+		throw withAcceptedForms(err)
+	})
 	const summary = summarisePost(postResp.body)
 	// Sub-routes take the id *retrievePost* returns, never the caller's input —
 	// Unipile's reactions/comments endpoints only accept the Get-a-Post id. Fall

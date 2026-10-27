@@ -50,6 +50,7 @@ import {
 	sendLinkedInMessage,
 	withdrawLinkedInInvitation,
 } from './operations'
+import { POST_ID_DESCRIPTION } from './post-id'
 import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
 import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
 import { sendApprovedLinkedInObject } from './send-object'
@@ -296,7 +297,7 @@ export function registerLinkedInMcpInstance(
 			{
 				description: scopedDescription('Read comments on a LinkedIn post', cfg),
 				inputSchema: {
-					post_id: z.string().min(1).describe('Post id.'),
+					post_id: z.string().min(1).describe(POST_ID_DESCRIPTION),
 					limit: z.number().int().min(1).max(100).optional(),
 					cursor: z.string().optional(),
 				},
@@ -422,7 +423,7 @@ export function registerLinkedInMcpInstance(
 					'Fetch engagement metrics (reactions + comments) for a LinkedIn post',
 					cfg,
 				),
-				inputSchema: { post_id: z.string().min(1) },
+				inputSchema: { post_id: z.string().min(1).describe(POST_ID_DESCRIPTION) },
 			},
 			async (args) => {
 				try {
