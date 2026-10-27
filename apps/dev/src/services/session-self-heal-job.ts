@@ -55,14 +55,17 @@ export class SessionSelfHealJob {
 		try {
 			const now = Date.now()
 			const fullSweep = now - this.lastFullSweepAt >= FULL_SWEEP_INTERVAL_MS
-			await this.reconciler.selfHealTerminalWithoutEvents(
+			const result = await this.reconciler.selfHealTerminalWithoutEvents(
 				now,
 				SELF_HEAL_GRACE_MS,
 				SELF_HEAL_DEFAULT_LIMIT,
 				fullSweep ? SELF_HEAL_LOOKBACK_MS : SELF_HEAL_RECENT_LOOKBACK_MS,
 			)
-			// Only a pass that finished counts: a failed sweep is retried next tick.
-			if (fullSweep) this.lastFullSweepAt = now
+			// Only a pass that finished counts: a failed sweep is retried next tick. A full
+			// batch means more rows are waiting beyond the limit, so keep sweeping the wide
+			// window every tick until it comes back short (drains a post-outage backlog at
+			// the old 500-per-minute pace instead of 500 per hour).
+			if (fullSweep && result.staleConsidered < SELF_HEAL_DEFAULT_LIMIT) this.lastFullSweepAt = now
 		} catch (err) {
 			logger.error('Session self-heal tick failed', {
 				error: err instanceof Error ? err.message : String(err),

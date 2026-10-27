@@ -62,6 +62,24 @@ describe('SessionSelfHealJob', () => {
 		])
 	})
 
+	it('keeps sweeping the full window while a full batch comes back, then settles', async () => {
+		selfHealMock.mockResolvedValueOnce({ staleConsidered: 500, backFilled: [] })
+		selfHealMock.mockResolvedValueOnce({ staleConsidered: 500, backFilled: [] })
+		const job = new SessionSelfHealJob({} as never)
+
+		await job.tick()
+		await job.tick()
+		await job.tick()
+		await job.tick()
+
+		expect(selfHealMock.mock.calls.map((call) => call[3])).toEqual([
+			SELF_HEAL_LOOKBACK_MS,
+			SELF_HEAL_LOOKBACK_MS,
+			SELF_HEAL_LOOKBACK_MS,
+			SELF_HEAL_RECENT_LOOKBACK_MS,
+		])
+	})
+
 	it('start() is idempotent and stop() halts ticking', async () => {
 		const job = new SessionSelfHealJob({} as never, 1_000)
 		job.start()
