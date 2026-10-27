@@ -105,6 +105,13 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 export const VOICE_LANGUAGE_RULE =
 	'Reply in the language the person is speaking, and follow them if they switch. People on this call speak Danish and English and often mix them. When you speak Danish, use natural spoken Danish, not a word-for-word translation of English, and pronounce Danish words and names as Danish. When you read out text that is written in Danish, read it as Danish.'
 
+/**
+ * What needs the caller comes from the same ranked list the web For You page shows. Its own
+ * constant, apart from VOICE_CALL_CONDUCT, so edits to the conduct bullets do not collide with it.
+ */
+export const VOICE_FOR_YOU_RULE =
+	'To say what needs the caller, call list_for_you with their actor id (given above), not list_notifications. Start with the top card, and say first any card whose due_at is today.'
+
 export interface VoiceInstructionsInput {
 	systemPrompt: string | null
 	workspaceId: string
@@ -126,6 +133,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\n${VOICE_WRITE_CONFIRMATION}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
 		`\n\n${VOICE_LANGUAGE_RULE}`,
+		`\n\n${VOICE_FOR_YOU_RULE}`,
 		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(
 			(row) => `\n\n## Skill: ${row.name}\n\n${row.content}`,
 		),

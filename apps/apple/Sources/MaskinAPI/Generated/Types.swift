@@ -2186,8 +2186,14 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
-    public func get_sol_api_sol_for_hyphen_you(headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
-        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(headers: headers))
+    public func get_sol_api_sol_for_hyphen_you(
+        query: Operations.get_sol_api_sol_for_hyphen_you.Input.Query = .init(),
+        headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
+        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(
+            query: query,
+            headers: headers
+        ))
     }
     /// Get the current actor’s push notification preferences
     ///

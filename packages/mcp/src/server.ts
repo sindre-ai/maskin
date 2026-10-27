@@ -11,12 +11,15 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	FOR_YOU_TOOL_DEFAULT_LIMIT,
+	type ForYouItemLike,
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
+	slimForYouItems,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -6921,6 +6924,31 @@ export function createMcpServer(config: McpConfig) {
 					(args as { workspace_id?: string }).workspace_id,
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_for_you',
+		{
+			description: tools.list_for_you.description,
+			inputSchema: tools.list_for_you.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as { items?: ForYouItemLike[] }
+			const payload = slimForYouItems(
+				Array.isArray(result?.items) ? result.items : [],
+				args.limit ?? FOR_YOU_TOOL_DEFAULT_LIMIT,
+			)
+			return {
+				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
