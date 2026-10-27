@@ -653,7 +653,9 @@ describe('voice channel — a risky write waits for the person to say yes', () =
 		expect(postHoldPreview).not.toHaveBeenCalled()
 	})
 
-	it('tells the model to read the whole text when it could not be put in the chat', async () => {
+	it('tells the model to read the whole text when a long text could not be put in the chat', async () => {
+		const long = `Opening line. ${'Filler sentence here. '.repeat(60)}Slot one is Tuesday. Slot two is Wednesday.`
+		buildHoldPreview.mockResolvedValue(heldPreview('v1', long))
 		postHoldPreview.mockRejectedValue(new Error('chat down'))
 		const { toolCall, results, outputOf } = writeSetup()
 		await toolCall('gmail_send_email', { object_id: ENTITY })
