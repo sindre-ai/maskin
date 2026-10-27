@@ -353,6 +353,7 @@ export function MessageBubble({
 								conversationId: message.conversationId,
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
+								updatedIds: updatedLinkedObjectIds,
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
 							}}
