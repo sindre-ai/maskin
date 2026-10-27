@@ -225,6 +225,12 @@ public enum ThreadLayout {
 		return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
 	}
 
+	/// Title for a conversation the client creates: a chat made to start a live call is a
+	/// "Live meeting"; any other new chat is named for its people.
+	public static func newChatTitle(for names: [String], startsLiveCall: Bool) -> String {
+		startsLiveCall ? LiveMeetingChrome.ownThreadTitle : defaultTitle(for: names)
+	}
+
 	/// Title for a new conversation when the user doesn't type one: "Alex, Relay".
 	public static func defaultTitle(for names: [String]) -> String {
 		let list = names.prefix(3).joined(separator: ", ")

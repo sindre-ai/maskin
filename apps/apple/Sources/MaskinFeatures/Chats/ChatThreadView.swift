@@ -122,8 +122,7 @@ struct ChatThreadView: View {
 	}
 
 	private var navTitle: String {
-		if call?.origin == .ownThread { return LiveMeetingChrome.ownThreadTitle }
-		return topic ?? ThreadNav.title(
+		topic ?? ThreadNav.title(
 			participants: store.participants, currentActorID: store.currentActorID, fallback: store.title, flow: flow)
 	}
 

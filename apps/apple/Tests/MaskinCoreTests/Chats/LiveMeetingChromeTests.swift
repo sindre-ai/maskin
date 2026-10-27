@@ -102,4 +102,9 @@ import Testing
 			for: [plain(1, at: -60)], calls: [record], calendar: calendar, now: start.addingTimeInterval(30))
 		#expect(dividers(items) == ["m1", "LIVE MEETING · STARTED 14:02"])
 	}
+
+	@Test func aChatMadeForACallIsTitledLiveMeetingAndOtherChatsKeepTheirNames() {
+		#expect(ThreadLayout.newChatTitle(for: ["Chief of Staff"], startsLiveCall: true) == "Live meeting")
+		#expect(ThreadLayout.newChatTitle(for: ["Alex", "Relay"], startsLiveCall: false) == "Alex, Relay")
+	}
 }
