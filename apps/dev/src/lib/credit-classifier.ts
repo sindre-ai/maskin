@@ -298,5 +298,5 @@ export function isClaudeAuthDeathText(text: string): boolean {
  */
 export function endsInClaudeAuthDeath(tail: string): boolean {
 	const result = findFinalResult(tail)
-	return result !== null && result.isError && isClaudeAuthDeathText(result.text)
+	return result?.isError === true && isClaudeAuthDeathText(result.text)
 }
