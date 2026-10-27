@@ -14,6 +14,7 @@ import {
 } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 
@@ -24,6 +25,50 @@ import { serializeArray } from '../lib/serialize'
  * whole `/api/loops` response with a Postgres "invalid input syntax for type
  * uuid" error — it's just silently dropped, same as any other stale id. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Ids per `events` lookup. One query over every closed member of every loop
+ * (1,000+ ids) is a long scan that outlives the statement timeout on a busy
+ * database; small batches stay on the index and fail independently. */
+const EVENT_LOOKUP_CHUNK = 200
+
+type LoopEventRow = { entityId: string; data: unknown; createdAt: Date | null }
+
+/** Events for a set of objects, fetched in id batches. Best-effort: the close
+ * times these feed are enrichment with an `updated_at` fallback, so a slow or
+ * failed batch is logged and skipped rather than failing the whole loops list.
+ * A skipped object simply has no events and takes that fallback. */
+async function fetchEventsForObjects(
+	db: Database,
+	workspaceId: string,
+	entityIds: string[],
+	actions: string[],
+): Promise<LoopEventRow[]> {
+	const rows: LoopEventRow[] = []
+	for (let i = 0; i < entityIds.length; i += EVENT_LOOKUP_CHUNK) {
+		const chunk = entityIds.slice(i, i + EVENT_LOOKUP_CHUNK)
+		try {
+			const part = await db
+				.select({ entityId: events.entityId, createdAt: events.createdAt, data: events.data })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						inArray(events.entityId, chunk),
+						inArray(events.action, actions),
+					),
+				)
+				.orderBy(events.id)
+			rows.push(...part)
+		} catch (err) {
+			logger.warn('Loop close-time event lookup failed; falling back to updated_at', {
+				workspaceId,
+				chunkSize: chunk.length,
+				error: String(err),
+			})
+		}
+	}
+	return rows
+}
 
 /** Relationship `type` marking "this object is a member of this loop's
  * pipeline" — `source_id` is the loop, `target_id` is the child object.
@@ -369,17 +414,10 @@ app.openapi(listLoopsRoute, (async (c) => {
 	)
 	const stageEventsByObject = new Map<string, Array<{ createdAt: Date | null; data: unknown }>>()
 	if (stageClosedIds.length > 0) {
-		const stageEvents = await db
-			.select({ entityId: events.entityId, createdAt: events.createdAt, data: events.data })
-			.from(events)
-			.where(
-				and(
-					eq(events.workspaceId, workspaceId),
-					inArray(events.entityId, stageClosedIds),
-					inArray(events.action, ['updated', 'status_changed']),
-				),
-			)
-			.orderBy(events.id)
+		const stageEvents = await fetchEventsForObjects(db, workspaceId, stageClosedIds, [
+			'updated',
+			'status_changed',
+		])
 		for (const ev of stageEvents) {
 			const list = stageEventsByObject.get(ev.entityId) ?? []
 			list.push({ createdAt: ev.createdAt, data: ev.data })
@@ -413,17 +451,9 @@ app.openapi(listLoopsRoute, (async (c) => {
 	)
 	const statusEventsByObject = new Map<string, Array<{ status: unknown; at: Date }>>()
 	if (closedObjectIds.length > 0) {
-		const statusEventRows = await db
-			.select({ entityId: events.entityId, data: events.data, createdAt: events.createdAt })
-			.from(events)
-			.where(
-				and(
-					eq(events.workspaceId, workspaceId),
-					eq(events.action, 'status_changed'),
-					inArray(events.entityId, closedObjectIds),
-				),
-			)
-			.orderBy(events.id)
+		const statusEventRows = await fetchEventsForObjects(db, workspaceId, closedObjectIds, [
+			'status_changed',
+		])
 		for (const ev of statusEventRows) {
 			if (!ev.createdAt) continue
 			const status = findChange(getChangesFromEventData(ev.data, ['status']), 'status')?.new
