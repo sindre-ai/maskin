@@ -17,8 +17,34 @@ final class LiveCallCenter {
 	private(set) var isStarting = false
 	/// Why a call could not start, shown once.
 	var problem: String?
-	/// The conversation whose thread is on screen right now, so the pill stays out of its way.
+	/// The conversation whose thread is on screen right now, so a request to start a call can tell
+	/// whether to open the thread first.
 	var visibleConversationID: String?
+
+	/// How many call panels (the dock, or the bar it minimises to) each conversation has on
+	/// screen. Counted, not a single flag: SwiftUI can create a thread's panel for a new screen
+	/// before the old one has gone, and the old one disappearing must not hide the new one.
+	private(set) var panelsOnScreen: [String: Int] = [:]
+
+	func panelAppeared(for conversationID: String) {
+		panelsOnScreen[conversationID, default: 0] += 1
+	}
+
+	func panelDisappeared(for conversationID: String) {
+		let remaining = (panelsOnScreen[conversationID] ?? 0) - 1
+		panelsOnScreen[conversationID] = remaining > 0 ? remaining : nil
+	}
+
+	func isPanelOnScreen(for conversationID: String) -> Bool {
+		(panelsOnScreen[conversationID] ?? 0) > 0
+	}
+
+	/// The pill is for every screen where the call's own panel is not. Never both at once: the
+	/// panel in the thread is either the dock or, minimised, the bar, and that bar is the pill.
+	var showsPill: Bool {
+		guard let current else { return false }
+		return !isPanelOnScreen(for: current.chat.conversationID)
+	}
 
 	/// Opens a conversation's thread (set by the shell: selects the Chats tab and requests it).
 	@ObservationIgnored var openConversation: (String) -> Void = { _ in }
