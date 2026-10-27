@@ -215,8 +215,7 @@ export function useCreateByoLogin(workspaceId: string) {
 			username: string
 			password: string
 			email?: string
-		}) =>
-			api.integrations.createByoLogin(workspaceId, input),
+		}) => api.integrations.createByoLogin(workspaceId, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
