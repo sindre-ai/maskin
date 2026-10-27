@@ -35,6 +35,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
@@ -1838,6 +1839,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		.set({
 			agentState: 'paused',
 			agentStateUpdatedAt: new Date(),
+			metadata: withHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1999,6 +2001,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		.set({
 			agentState: 'running',
 			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
