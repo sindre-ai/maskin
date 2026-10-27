@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { logger } from '../lib/logger'
+import type { HoldPreview } from './voice-hold-preview'
 
 /**
  * The yes-before-a-write rule for a live voice call, enforced on the server.
@@ -10,6 +11,11 @@ import { logger } from '../lib/logger'
  * and it only runs when two things both happen: the model repeats the same call
  * with the id of the hold, and the person's next spoken line after the hold,
  * heard by our own socket to the Realtime call, is a clear yes.
+ *
+ * The yes is tied to the text the person was asked about. A hold carries a preview of what the
+ * call will do (voice-hold-preview.ts) and a fingerprint of it. When the model repeats the call,
+ * the fingerprint is worked out again from the target. If the text changed since the question,
+ * the yes does not count: the repeat becomes a new hold with the new text.
  *
  * Ordinary changes inside the workspace (a comment, a status, a new task) run at
  * once. They are recorded in the events log and can be changed back, and making
@@ -285,6 +291,8 @@ interface PendingAction {
 	argsKey: string
 	/** How many times the person had started speaking when the hold was made. */
 	speechMark: number
+	/** What the call would do when it was held; null when no preview could be made. */
+	fingerprint: string | null
 	answer: 'yes' | 'no' | null
 	state: PendingState
 	timer: ReturnType<typeof setTimeout>
@@ -293,7 +301,14 @@ interface PendingAction {
 
 export type WriteReview =
 	| { kind: 'run' }
-	| { kind: 'hold'; id: string; risky: boolean }
+	| {
+			kind: 'hold'
+			id: string
+			risky: boolean
+			preview: HoldPreview | null
+			/** True when the person had been asked about other text, so their yes was thrown away. */
+			changed: boolean
+	  }
 	| { kind: 'refuse'; reason: 'declined' | 'no_yes' }
 
 export interface WriteGate {
@@ -308,8 +323,10 @@ export interface WriteGate {
 export function createWriteGate(deps: {
 	voiceSessionId: string
 	isReadOnlyTool: (name: string) => boolean
+	/** What the call would do right now, from its target. Without it a hold has no preview. */
+	previewFor?: (tool: string, args: unknown) => Promise<HoldPreview>
 }): WriteGate {
-	const { voiceSessionId, isReadOnlyTool } = deps
+	const { voiceSessionId, isReadOnlyTool, previewFor } = deps
 	let pending: PendingAction | null = null
 	// Ids of holds the person turned down, so a model that repeats one is told no, not asked to ask again.
 	const declinedIds = new Set<string>()
@@ -327,7 +344,22 @@ export function createWriteGate(deps: {
 		for (const wake of action.waiters.splice(0)) wake()
 	}
 
-	function hold(tool: string, argsKey: string): PendingAction {
+	/** The preview, or null when there is none or the lookup failed: a failure must not drop the call. */
+	async function currentPreview(tool: string, args: unknown): Promise<HoldPreview | null> {
+		if (!previewFor) return null
+		try {
+			return await previewFor(tool, args)
+		} catch (err) {
+			logger.warn('Voice hold preview failed', {
+				voice_session_id: voiceSessionId,
+				tool_name: tool,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return null
+		}
+	}
+
+	function hold(tool: string, argsKey: string, fingerprint: string | null): PendingAction {
 		if (pending) {
 			log('superseded', pending.tool)
 			close(pending, 'superseded')
@@ -337,6 +369,7 @@ export function createWriteGate(deps: {
 			tool,
 			argsKey,
 			speechMark: speechStarts,
+			fingerprint,
 			answer: null,
 			state: 'open',
 			waiters: [],
@@ -350,6 +383,19 @@ export function createWriteGate(deps: {
 		pending = action
 		log('held', tool)
 		return action
+	}
+
+	async function holdWithPreview(
+		tool: string,
+		args: unknown,
+		argsKey: string,
+		known?: HoldPreview | null,
+	): Promise<WriteReview> {
+		// Looked up before the hold is made, so nothing awaits between making it and returning it.
+		const preview = known !== undefined ? known : await currentPreview(tool, args)
+		const changed = known !== undefined
+		const action = hold(tool, argsKey, preview?.fingerprint ?? null)
+		return { kind: 'hold', id: action.id, risky: isRiskyTool(tool), preview, changed }
 	}
 
 	/** Resolves when the person has answered the hold, it was closed, or the wait ran out. */
@@ -409,15 +455,23 @@ export function createWriteGate(deps: {
 				action.id === confirmationId &&
 				action.tool === tool &&
 				action.argsKey === argsKey
-			if (!repeats) return { kind: 'hold', id: hold(tool, argsKey).id, risky: isRiskyTool(tool) }
+			if (!repeats) return holdWithPreview(tool, args, argsKey)
 
 			if (action.answer === null) await waitForAnswer(action)
 			if (action.state === 'declined') return { kind: 'refuse', reason: 'declined' }
 			if (action.state !== 'open') {
 				// Expired or replaced while we waited: the yes, if any, no longer counts.
-				return { kind: 'hold', id: hold(tool, argsKey).id, risky: isRiskyTool(tool) }
+				return holdWithPreview(tool, args, argsKey)
 			}
 			if (action.answer !== 'yes') return { kind: 'refuse', reason: 'no_yes' }
+			// The yes was for the text the person was asked about. Work the fingerprint out again from the
+			// target now: the arguments (an object id) stay the same when the text behind them changes.
+			const latest = await currentPreview(tool, args)
+			if (action.state !== 'open') return holdWithPreview(tool, args, argsKey, latest)
+			if ((latest?.fingerprint ?? null) !== action.fingerprint) {
+				log('stale', tool)
+				return holdWithPreview(tool, args, argsKey, latest)
+			}
 			log('confirmed', tool)
 			close(action, 'confirmed')
 			return { kind: 'run' }
