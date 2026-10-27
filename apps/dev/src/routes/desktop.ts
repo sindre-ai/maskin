@@ -6,11 +6,12 @@ import {
 	desktopExecResultSchema,
 	desktopInputActionSchema,
 } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { resolveDesktopAgent } from '../lib/desktop-access'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { resolveKeychainTyping } from '../lib/integrations/keychain-typing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
@@ -340,14 +341,72 @@ const execRoute = createRoute({
 
 type ControlAction = 'screenshot' | 'input' | 'exec'
 
+/**
+ * The session a call comes from, so a credential allowed for only this chat counts. Taken
+ * only when it is this actor's own session in this workspace; anything else is ignored.
+ */
+async function ownSession(
+	db: Database,
+	header: string | undefined,
+	workspaceId: string,
+	actorId: string,
+): Promise<{ sessionId?: string; conversationId?: string | null }> {
+	if (!header || !z.string().uuid().safeParse(header).success) return {}
+	const [row] = await db
+		.select({ id: sessions.id, conversationId: sessions.conversationId })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.id, header),
+				eq(sessions.workspaceId, workspaceId),
+				eq(sessions.actorId, actorId),
+			),
+		)
+		.limit(1)
+	return row ? { sessionId: row.id, conversationId: row.conversationId } : {}
+}
+
 async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 	const gated = await gate(c)
 	if (isResponse(gated)) return gated
 	const { workspaceId, actorId, agentId } = gated
 
+	// A saved login typed by reference: swap the real value in here, after the grant check,
+	// so the agent never holds it. `forwarded` is what reaches the computer; `body` (what the
+	// agent sent) is all that is ever logged.
+	let forwarded = body
+	let typedCredential: { credentialName: string; field: string } | null = null
+	const typing = body as { action?: string; text?: string }
+	if (action === 'input' && typing.action === 'type' && typeof typing.text === 'string') {
+		const db = c.get('db') as Database
+		const resolved = await resolveKeychainTyping(
+			db,
+			{
+				workspaceId,
+				actorId,
+				actorType: c.get('actorType') as string | undefined,
+				...(await ownSession(db, c.req.header('x-maskin-session-id'), workspaceId, actorId)),
+			},
+			typing.text,
+		)
+		if (resolved.kind === 'error') {
+			const code =
+				resolved.status === 400
+					? 'BAD_REQUEST'
+					: resolved.status === 403
+						? 'FORBIDDEN'
+						: 'NOT_FOUND'
+			return c.json(createApiError(code, resolved.message), resolved.status)
+		}
+		if (resolved.kind === 'resolved') {
+			forwarded = { ...(body as object), text: resolved.text }
+			typedCredential = { credentialName: resolved.credentialName, field: resolved.field }
+		}
+	}
+
 	let result: Awaited<ReturnType<WorkspaceDesktopService['control']>>
 	try {
-		result = await serviceFor(c).control(workspaceId, agentId, action, body)
+		result = await serviceFor(c).control(workspaceId, agentId, action, forwarded)
 	} catch (err) {
 		logger.error('desktop control failed', { workspaceId, agentId, action, error: String(err) })
 		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
@@ -367,6 +426,13 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 				agent_id: agentId,
 				control: action,
 				...(action === 'input' ? { input_action: (body as { action: string }).action } : {}),
+				// The credential's name and which part, never its value.
+				...(typedCredential
+					? {
+							keychain_credential: typedCredential.credentialName,
+							keychain_field: typedCredential.field,
+						}
+					: {}),
 			},
 		}).catch((err) => logger.warn('desktop control event failed', { error: String(err) }))
 	}
