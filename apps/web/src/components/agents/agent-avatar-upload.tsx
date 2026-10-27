@@ -18,7 +18,7 @@ function readAvatarUrl(agent: ActorResponse): string | undefined {
 	return typeof url === 'string' && url.length > 0 ? url : undefined
 }
 
-function isCurrentActorAdmin(members: { actorId: string; role?: string }[] | undefined): boolean {
+export function isCurrentActorAdmin(members: { actorId: string; role?: string }[] | undefined): boolean {
 	const actorId = getStoredActor()?.id
 	if (!actorId || !members) return false
 	const member = members.find((m) => m.actorId === actorId)
