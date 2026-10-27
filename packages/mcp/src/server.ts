@@ -6944,6 +6944,7 @@ export function createMcpServer(config: McpConfig) {
 			const payload = slimForYouItems(
 				Array.isArray(result?.items) ? result.items : [],
 				args.limit ?? FOR_YOU_TOOL_DEFAULT_LIMIT,
+				args.offset ?? 0,
 			)
 			return {
 				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),

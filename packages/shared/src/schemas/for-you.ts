@@ -87,10 +87,11 @@ export interface SlimForYouCard {
 export function slimForYouItems(
 	items: ForYouItemLike[],
 	limit: number = FOR_YOU_TOOL_DEFAULT_LIMIT,
+	offset = 0,
 ): { total: number; items: SlimForYouCard[] } {
 	return {
 		total: items.length,
-		items: items.slice(0, limit).map((item) => {
+		items: items.slice(offset, offset + limit).map((item) => {
 			const ask = item.latest_mention?.content?.trim()
 			return {
 				rank: item.rank,
