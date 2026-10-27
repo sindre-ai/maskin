@@ -49,10 +49,7 @@ describe('Actor avatar routes', () => {
 				actorAvatarRoutes,
 				'/api/actors',
 			)
-			mockResults.selectQueue = [
-				...ADMIN_CHECKS,
-				[{ metadata: { avatar_version: 'old-version' } }],
-			]
+			mockResults.selectQueue = [...ADMIN_CHECKS, [{ metadata: { avatar_version: 'old-version' } }]]
 
 			const res = await app.request(upload(PNG))
 
