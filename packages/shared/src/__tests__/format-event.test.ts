@@ -119,7 +119,7 @@ describe('formatEventDescription', () => {
 				},
 			})
 
-			expect(formatEventDescription(event)).toBe('changed status from Signal to Proposed')
+			expect(formatEventDescription(event)).toBe('changed status from Opportunity to Proposed')
 		})
 
 		it('formats multi-word status with title case', () => {
@@ -218,7 +218,7 @@ describe('formatEventDescription', () => {
 			})
 
 			expect(formatEventDescription(event)).toBe(
-				'changed status from Signal to Proposed and updated content',
+				'changed status from Opportunity to Proposed and updated content',
 			)
 		})
 
@@ -272,7 +272,7 @@ describe('formatEventDescription', () => {
 				},
 			})
 
-			expect(formatEventDescription(event)).toBe('changed status from Signal to Proposed')
+			expect(formatEventDescription(event)).toBe('changed status from Opportunity to Proposed')
 		})
 
 		it('formats title change from a changes array', () => {
@@ -319,7 +319,7 @@ describe('formatEventDescription', () => {
 			})
 
 			expect(formatEventDescription(event, { actorsById: actorsMap([alice, bob]) })).toBe(
-				'changed status from Signal to Proposed, changed driver from Alice to Bob, and updated content',
+				'changed status from Opportunity to Proposed, changed driver from Alice to Bob, and updated content',
 			)
 		})
 

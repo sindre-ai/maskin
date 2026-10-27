@@ -169,7 +169,7 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.getByText('The loop, once installed')).toBeInTheDocument()
 		// "Relay" appears once in the flow and once in "What it brings".
 		expect(screen.getAllByText('Relay')).toHaveLength(2)
-		expect(screen.getByText('When signal is created')).toBeInTheDocument()
+		expect(screen.getByText('When opportunity is created')).toBeInTheDocument()
 		expect(screen.getByText('Acknowledge the customer in their own words.')).toBeInTheDocument()
 	})
 
