@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { selfHealMock } = vi.hoisted(() => ({ selfHealMock: vi.fn() }))
 
-vi.mock('../../services/session-reconciler', () => ({
+vi.mock('../../services/session-reconciler', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/session-reconciler')>()),
 	SessionReconciler: class {
 		selfHealTerminalWithoutEvents = selfHealMock
 	},
 }))
 
+import {
+	SELF_HEAL_LOOKBACK_MS,
+	SELF_HEAL_RECENT_LOOKBACK_MS,
+} from '../../services/session-reconciler'
 import { SessionSelfHealJob } from '../../services/session-self-heal-job'
 
 describe('SessionSelfHealJob', () => {
@@ -27,6 +32,34 @@ describe('SessionSelfHealJob', () => {
 		await vi.advanceTimersByTimeAsync(3_000)
 		job.stop()
 		expect(selfHealMock).toHaveBeenCalledTimes(3)
+	})
+
+	it('sweeps the full window on the first tick, then only the recent one, then the full one hourly', async () => {
+		const lookbacks = () => selfHealMock.mock.calls.map((call) => call[3])
+		const job = new SessionSelfHealJob({} as never, 60_000)
+
+		await job.tick()
+		await job.tick()
+		expect(lookbacks()).toEqual([SELF_HEAL_LOOKBACK_MS, SELF_HEAL_RECENT_LOOKBACK_MS])
+
+		await vi.advanceTimersByTimeAsync(60 * 60_000)
+		await job.tick()
+		expect(lookbacks().at(-1)).toBe(SELF_HEAL_LOOKBACK_MS)
+		await job.tick()
+		expect(lookbacks().at(-1)).toBe(SELF_HEAL_RECENT_LOOKBACK_MS)
+	})
+
+	it('retries the full sweep on the next tick when it fails', async () => {
+		selfHealMock.mockRejectedValueOnce(new Error('db down'))
+		const job = new SessionSelfHealJob({} as never)
+
+		await job.tick()
+		await job.tick()
+
+		expect(selfHealMock.mock.calls.map((call) => call[3])).toEqual([
+			SELF_HEAL_LOOKBACK_MS,
+			SELF_HEAL_LOOKBACK_MS,
+		])
 	})
 
 	it('start() is idempotent and stop() halts ticking', async () => {
