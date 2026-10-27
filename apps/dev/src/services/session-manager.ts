@@ -80,10 +80,15 @@ import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
+	reportClaudeSessionAuthDeath,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifySessionExit } from '../lib/credit-classifier'
+import {
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -4261,6 +4266,14 @@ ${cont.continues_prompt}
 			void this.emitCompletedWithSkills(session, status)
 		}
 
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
+
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -4867,6 +4880,14 @@ ${cont.continues_prompt}
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
+
+		if (outcome.isError && isClaudeAuthDeathText(outcome.text)) {
+			reportClaudeSessionAuthDeath({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
 
 		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
 
@@ -6332,6 +6353,14 @@ ${cont.continues_prompt}
 		// on both the started and completed events. Best-effort. A user stop has
 		// no outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
+
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				config: updated.config as Record<string, unknown> | null,
+			})
+		}
 
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({

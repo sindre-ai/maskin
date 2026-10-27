@@ -276,3 +276,27 @@ export function classifySessionExit(
 	}
 	return classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
 }
+
+/**
+ * What the Claude Code CLI writes as the final result when the model API
+ * answered 401 and the CLI could not renew its login ("Failed to authenticate:
+ * OAuth session expired and could not be refreshed"). It is not one of
+ * CLI_BANNERS on purpose: classifying it would feed the failover path, which
+ * must not move a healthy slot over a login that simply expired in a container.
+ */
+const CLI_AUTH_DEATH_PREFIX = 'Failed to authenticate'
+
+/** True when a session's final error text is the CLI giving up on a 401. */
+export function isClaudeAuthDeathText(text: string): boolean {
+	return text.trimStart().startsWith(CLI_AUTH_DEATH_PREFIX)
+}
+
+/**
+ * True when the tail's final stream-json result is an error that opens with the
+ * CLI's authentication failure. Only the final result is read, so the same
+ * words in a tool's output (an agent reading these logs) do not count.
+ */
+export function endsInClaudeAuthDeath(tail: string): boolean {
+	const result = findFinalResult(tail)
+	return result !== null && result.isError && isClaudeAuthDeathText(result.text)
+}
