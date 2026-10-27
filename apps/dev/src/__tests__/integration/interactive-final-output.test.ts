@@ -1018,7 +1018,7 @@ ${surviving}
 			// the human's next message here spawns a fresh session on the new slot.
 			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
 			expect(rows[0]?.content).toContain('stopped this session')
-			expect(rows[0]?.content).toContain("Send your next message here and I'll pick up")
+			expect(rows[0]?.content).toContain("I'm picking your message back up on the new subscription")
 			expect(
 				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output
 					?.subscription_moved_to,

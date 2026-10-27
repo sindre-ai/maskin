@@ -706,6 +706,34 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// The human's message went unanswered on the spent subscription. Re-run
+			// the responder for it so a fresh session answers on the new one —
+			// the same call as the chat's "retry" action, so nobody re-sends by hand.
+			onResumeAfterMove: async ({ conversationId, workspaceId, agentId }) => {
+				const [latest] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.conversationId, conversationId),
+							eq(messages.kind, 'message'),
+							ne(messages.actorId, agentId),
+						),
+					)
+					.orderBy(desc(messages.id))
+					.limit(1)
+				if (!latest) return
+				// Lazy import: conversation-responder imports this module's types.
+				const { evaluateAndRespond } = await import('./conversation-responder')
+				await evaluateAndRespond({
+					db,
+					sessionManager: this,
+					workspaceId,
+					conversationId,
+					messageId: latest.id,
+					options: { forceRespond: true, targetAgentId: agentId },
+				})
+			},
 			// An empty completion that survives the retries is tried once on
 			// another model. Both are optional: with no env var set the finalizer
 			// still retries and still tells the human.
