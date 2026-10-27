@@ -12,13 +12,15 @@ let qualifying = new Set<string>()
 const renderCard = (
 	target: { kind: string; id: string },
 	fallback: ReactNode,
-	context: { label?: string; inList?: boolean; after?: boolean },
+	context: { label?: string; inList?: boolean; after?: boolean; updated?: boolean },
 ) => {
 	if (qualifying.has(target.id)) {
 		return (
 			<>
 				{context.label && context.inList ? <p>{context.label}</p> : null}
-				<div data-testid="card">{`${target.kind}:${target.id}`}</div>
+				<div data-testid="card" data-updated={context.updated ? '' : undefined}>
+					{`${target.kind}:${target.id}`}
+				</div>
 			</>
 		)
 	}
@@ -51,12 +53,19 @@ const fileUrl = (id: string) => `https://maskin.io/${WS}/files/${id}`
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
 
-function renderMessage(content: string, withCards = true, skipIds?: ReadonlySet<string>) {
+function renderMessage(
+	content: string,
+	withCards = true,
+	skipIds?: ReadonlySet<string>,
+	updatedIds?: ReadonlySet<string>,
+) {
 	return render(
 		<MarkdownContent
 			content={content}
 			size="sm"
-			linkedCards={withCards ? { workspaceId: WS, renderCard, renderChip, skipIds } : undefined}
+			linkedCards={
+				withCards ? { workspaceId: WS, renderCard, renderChip, skipIds, updatedIds } : undefined
+			}
 		/>,
 		{ wrapper: TestWrapper },
 	)
@@ -324,6 +333,23 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.getAllByTestId('card')).toHaveLength(1)
 		expect(screen.getByTestId('card')).toHaveTextContent(`object:${B}`)
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
+	})
+
+	it('tells the card of a revised draft it is updated, in place and under a sentence', () => {
+		renderMessage(
+			`[Email](${objectUrl(A)})\n\nSee [b](${objectUrl(B)}) for the other one.`,
+			true,
+			undefined,
+			new Set([A, B]),
+		)
+		const cards = screen.getAllByTestId('card')
+		expect(cards).toHaveLength(2)
+		for (const card of cards) expect(card).toHaveAttribute('data-updated')
+	})
+
+	it('does not tag a card whose id is not in the updated set', () => {
+		renderMessage(`[Email](${objectUrl(A)})`, true, undefined, new Set([B]))
+		expect(screen.getByTestId('card')).not.toHaveAttribute('data-updated')
 	})
 
 	it('draws a draft once, where it stands alone, even when a sentence mentioned it before', () => {
