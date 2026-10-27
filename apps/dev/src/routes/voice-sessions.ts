@@ -16,6 +16,7 @@ import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
+	captureLiveCallStarted,
 	captureVoiceSessionDenied,
 	captureVoiceSessionStarted,
 } from '../lib/analytics/voice-events'
@@ -25,6 +26,7 @@ import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
+import { cardIdOf, readStartCards } from '../services/voice-call-state'
 import {
 	findReadableConversationId,
 	formatVoiceChatHistory,
@@ -40,7 +42,12 @@ import {
 	realtimeCallsUrl,
 	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
-import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
+import { postClosingReceipt } from '../services/voice-receipt'
+import {
+	endVoiceSession,
+	setCloseVendorSessionFn,
+	setEndedReceiptFn,
+} from '../services/voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, voiceShowInChatTool } from '../services/voice-show-in-chat'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
 import { withConfirmationArg } from '../services/voice-write-gate'
@@ -57,6 +64,8 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 // Ending a call (hangup, sweeper, shutdown, socket drop) closes the server
 // socket and hangs the call up at OpenAI.
 setCloseVendorSessionFn(closeVoiceCall)
+// ...and leaves one closing receipt in the call's chat, whichever path ended it.
+setEndedReceiptFn((db, ended, info) => postClosingReceipt(db, ended, { reason: info.reason }))
 
 // ── Schemas ──────────────────────────────────────────────────────────
 
@@ -655,6 +664,9 @@ app.openapi(postOfferRoute, async (c) => {
 		throw err
 	}
 
+	// The top of the ranked list is read before the call is attached, so the call's channel and its
+	// closing receipt share the same list.
+	const startCards = await readStartCards(db, session)
 	const [toolsAvailable, persistTranscripts] = await Promise.all([
 		attachVoiceCall({
 			db,
@@ -677,6 +689,13 @@ app.openapi(postOfferRoute, async (c) => {
 		conversation_id: session.conversationId,
 		model: VOICE_REALTIME_MODEL,
 		vendor: 'openai_realtime',
+	})
+	const topCard = startCards?.[0]
+	void captureLiveCallStarted(humanActorId, {
+		voice_session_id: session.id,
+		actor_id: humanActorId,
+		workspace_id: session.workspaceId,
+		rank_1_card_id: topCard ? cardIdOf(topCard) : null,
 	})
 
 	return c.json(

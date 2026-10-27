@@ -66,6 +66,39 @@ export type CloseVendorSessionFn = (session: {
 	vendorSessionId: string | null
 }) => Promise<void>
 
+/**
+ * Writes the call's closing receipt into its chat and returns the counts the voice_session_ended
+ * event carries. routes/voice-sessions.ts wires this to postClosingReceipt (services/voice-receipt.ts).
+ * It runs here, in the one place every call ends, so a hangup that reaches the route and a socket
+ * that drops in the channel leave the same receipt, once. The default posts nothing, for callers
+ * (tests, scripts) that load this module without the route. Failures are logged, never thrown.
+ */
+export interface EndedReceiptCounts {
+	cardsCleared: number
+	writesHeld: number
+	writesDone: number
+	posted: boolean
+}
+
+export type EndedReceiptFn = (
+	db: Database,
+	ended: typeof voiceSessions.$inferSelect,
+	info: { reason: VoiceEndedReason },
+) => Promise<EndedReceiptCounts>
+
+const NO_RECEIPT: EndedReceiptCounts = {
+	cardsCleared: 0,
+	writesHeld: 0,
+	writesDone: 0,
+	posted: false,
+}
+
+let endedReceiptFn: EndedReceiptFn = async () => NO_RECEIPT
+
+export function setEndedReceiptFn(fn: EndedReceiptFn | null): void {
+	endedReceiptFn = fn ?? (async () => NO_RECEIPT)
+}
+
 let closeVendorSessionFn: CloseVendorSessionFn = async (session) => {
 	logger.debug('Voice vendor session closed (no teardown wired)', {
 		voice_session_id: session.voiceSessionId,
@@ -150,7 +183,19 @@ export async function endVoiceSession(
 		captureVoiceException(ended.id, err)
 	})
 
+	// After the vendor side is closed, so no new write can land, and before the event, so the
+	// event carries the same counts as the receipt.
+	const receipt = await endedReceiptFn(db, ended, { reason: input.reason }).catch((err) => {
+		logger.warn('Voice closing receipt failed', {
+			voice_session_id: ended.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		captureVoiceException(ended.id, err)
+		return NO_RECEIPT
+	})
+
 	await emitEnded(db, ended, {
+		receipt,
 		reason: input.reason,
 		durationMs: now.getTime() - ended.startedAt.getTime(),
 		inputAudioSeconds,
@@ -166,6 +211,7 @@ async function emitEnded(
 	db: Database,
 	session: VoiceSessionEnded,
 	stats: {
+		receipt: EndedReceiptCounts
 		reason: VoiceEndedReason
 		durationMs: number
 		inputAudioSeconds: number
@@ -196,6 +242,10 @@ async function emitEnded(
 			total_cost_usd: stats.totalCostUsd,
 			tool_calls_count: stats.toolCallsCount,
 			turn_count: stats.turnCount,
+			cards_cleared: stats.receipt.cardsCleared,
+			writes_held: stats.receipt.writesHeld,
+			writes_done: stats.receipt.writesDone,
+			receipt_posted: stats.receipt.posted,
 		})
 	} catch (err) {
 		// Analytics must never undo a call that has already been closed.
