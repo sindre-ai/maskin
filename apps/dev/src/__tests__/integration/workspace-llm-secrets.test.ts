@@ -127,18 +127,40 @@ describe('LLM keys are stored sealed', () => {
 		expect(openSecret(settings.custom_llm?.api_key as string)).toBe(CUSTOM)
 	})
 
-	it('leaves the admin response unchanged: the owner still gets the plain keys back', async () => {
+	it('never returns a key to the owner: only whether one is saved and its last four characters', async () => {
 		const ws = await newWorkspace()
 		const res = await patch(ws.id, { llm_keys: { anthropic: ANTHROPIC }, custom_llm: CUSTOM_LLM })
-		const body = await res.json()
-		expect(body.settings.llm_keys.anthropic).toBe(ANTHROPIC)
-		expect(body.settings.custom_llm.api_key).toBe(CUSTOM)
+		const patched = await res.text()
+		const list = await (await app.request(jsonGet('/api/workspaces'))).text()
 
-		const list = await (await app.request(jsonGet('/api/workspaces'))).json()
-		const listed = list.find((w: { id: string }) => w.id === ws.id)
-		expect(listed.settings.llm_keys.anthropic).toBe(ANTHROPIC)
-		expect(listed.settings.custom_llm.api_key).toBe(CUSTOM)
+		for (const raw of [patched, list]) {
+			for (const secret of [ANTHROPIC, CUSTOM]) expect(raw).not.toContain(secret)
+			expect(raw).not.toContain(SEALED_PREFIX)
+		}
+
+		const body = JSON.parse(patched)
+		expect(body.settings.llm_keys).toBeUndefined()
+		expect(body.settings.custom_llm).toEqual({
+			enabled: true,
+			base_url: CUSTOM_LLM.base_url,
+			model: 'model-a',
+		})
+		expect(body.llm_key_hints).toEqual({
+			anthropic: ANTHROPIC.slice(-4),
+			openai: null,
+			custom_llm: CUSTOM.slice(-4),
+		})
+
+		const listed = JSON.parse(list).find((w: { id: string }) => w.id === ws.id)
 		expect(listed.llm_configured).toEqual({ anthropic: true, openai: false, custom_llm: true })
+		expect(listed.llm_key_hints).toEqual(body.llm_key_hints)
+	})
+
+	it('gives no hint for a key too short to hint at', async () => {
+		const ws = await newWorkspace()
+		const body = await (await patch(ws.id, { llm_keys: { openai: 'FAKE-short' } })).json()
+		expect(body.llm_configured.openai).toBe(true)
+		expect(body.llm_key_hints.openai).toBeNull()
 	})
 
 	it('writes no events row that carries a key', async () => {
@@ -172,6 +194,38 @@ describe('saving, replacing and clearing', () => {
 		expect(after.max_concurrent_sessions).toBe(5)
 	})
 
+	it('saving the settings read back from GET, without retyping a key, leaves the row unchanged', async () => {
+		const ws = await newWorkspace()
+		await patch(ws.id, {
+			llm_keys: { anthropic: ANTHROPIC, openai: OPENAI },
+			custom_llm: CUSTOM_LLM,
+		})
+		const [before] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id))
+
+		const list = await (await app.request(jsonGet('/api/workspaces'))).json()
+		const read = list.find((w: { id: string }) => w.id === ws.id)
+		const res = await patch(ws.id, read.settings)
+		expect(res.status).toBe(200)
+
+		const [after] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id))
+		expect(after.settings).toEqual(before.settings)
+	})
+
+	it('editing custom_llm without sending api_key keeps the stored key', async () => {
+		const ws = await newWorkspace()
+		await patch(ws.id, { custom_llm: CUSTOM_LLM })
+		const before = await storedSettings(ws.id)
+
+		const { api_key: _omitted, ...withoutKey } = CUSTOM_LLM
+		const res = await patch(ws.id, { custom_llm: { ...withoutKey, model: 'model-b' } })
+		expect(res.status).toBe(200)
+
+		const after = await storedSettings(ws.id)
+		expect(after.custom_llm?.model).toBe('model-b')
+		expect(after.custom_llm?.api_key).toBe(before.custom_llm?.api_key)
+		expect(openSecret(after.custom_llm?.api_key as string)).toBe(CUSTOM)
+	})
+
 	it('replaces a key with a new sealed value and clears it with null', async () => {
 		const ws = await newWorkspace()
 		await patch(ws.id, { llm_keys: { anthropic: ANTHROPIC, openai: OPENAI } })
@@ -182,7 +236,8 @@ describe('saving, replacing and clearing', () => {
 		expect(openSecret(replaced.llm_keys?.anthropic as string)).toBe('FAKE-anthropic-key-NEW')
 		expect(openSecret(replaced.llm_keys?.openai as string)).toBe(OPENAI)
 
-		await patch(ws.id, { llm_keys: { anthropic: null } })
+		const clear = await patch(ws.id, { llm_keys: { anthropic: null } })
+		expect((await clear.json()).llm_configured).toMatchObject({ anthropic: false, openai: true })
 		const cleared = await storedSettings(ws.id)
 		expect(cleared.llm_keys?.anthropic).toBeUndefined()
 		expect(openSecret(cleared.llm_keys?.openai as string)).toBe(OPENAI)
