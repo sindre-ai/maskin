@@ -5,7 +5,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * What a live call leaves in its thread: a row per real change, then a summary
- * card whose button reveals the transcript. The messages are posted the way the
+ * card whose button opens the Transcript view. The messages are posted the way the
  * server will post them (metadata.source 'voice', kind 'receipt' /
  * 'receipt_summary'), so no WebRTC call is needed. The live panel and bar need a
  * real microphone and the voice backend; they are covered by the component tests
@@ -74,7 +74,7 @@ async function threadWithCall(account: { api: TestAPI; workspaceId: string }) {
 
 test.describe('Live meeting — what the call leaves in the thread', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`shows event rows and a summary card with a transcript @ ${vp.label}`, async ({
+		test(`shows event rows, a summary card and the Transcript view @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -107,12 +107,29 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
-			// Read transcript reveals the spoken lines, and hides them again.
+			// The spoken lines are not in the thread: only the summary card's
+			// Transcript view shows them.
+			await expect(thread.getByText('Could you check the cancel flow?')).toHaveCount(0)
+			await expect(thread.getByTestId('voice-call-boundary').first()).toBeVisible()
+
 			const card = thread.getByRole('article', { name: 'Live meeting summary' })
 			await card.getByRole('button', { name: 'Read transcript' }).click()
-			await expect(card.getByText('Could you check the cancel flow?')).toBeVisible()
-			await card.getByRole('button', { name: 'Hide transcript' }).click()
-			await expect(card.getByText('Could you check the cancel flow?')).toHaveCount(0)
+			const view = page.getByRole('dialog', { name: 'Transcript' })
+			await expect(view).toBeVisible()
+			await expect(view.getByText('Could you check the cancel flow?')).toBeVisible()
+			await expect(view.getByText('0:00', { exact: true })).toBeVisible()
+			await expect(view.getByText('You', { exact: true })).toBeVisible()
+			const box = await view.boundingBox()
+			if (vp.width < 700) {
+				// Full screen on narrow viewports.
+				expect(box?.width ?? 0).toBeGreaterThanOrEqual(vp.width - 1)
+			} else {
+				// A drawer on the right otherwise.
+				expect(box?.width ?? 0).toBeLessThan(vp.width)
+			}
+			await assertNoHorizontalOverflow(page, `${vp.label} transcript`)
+			await page.keyboard.press('Escape')
+			await expect(view).toHaveCount(0)
 
 			// Clicking a row opens the object.
 			await thread.getByText('Aggregate review + open bet PR + manual test').click()

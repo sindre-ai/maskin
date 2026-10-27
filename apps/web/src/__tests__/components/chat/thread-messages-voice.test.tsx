@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -111,34 +112,56 @@ describe('ThreadMessages — voice call boundaries', () => {
 		expect(boundaries[0]?.textContent).toMatch(/^Voice call · 2:14 · /)
 		expect(boundaries[1]?.textContent).toBe('Call ended')
 
-		const rows = [1, 2, 3, 4].map((id) =>
-			document.querySelector(`[data-message-id="${id}"]`),
-		) as HTMLElement[]
-		// Head sits inside the first voice message's row, above its bubble.
-		expect(
-			within(rows[1] as HTMLElement).getByText('Voice call', { exact: false }),
-		).toBeInTheDocument()
-		expect(within(rows[2] as HTMLElement).getByText('Call ended')).toBeInTheDocument()
-		expect(within(rows[0] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
-		expect(within(rows[3] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
+		// The call's dividers stay even though its spoken lines are not drawn.
+		expect(screen.getByText('typed before')).toBeInTheDocument()
+		expect(screen.getByText('typed after')).toBeInTheDocument()
+		expect(screen.queryByText('search for the loops v4 bet')).toBeNull()
+		expect(screen.queryByText('The top hit is Loops v4 polish.')).toBeNull()
+		expect(document.querySelector('[data-message-id="2"]')).toBeNull()
 	})
 
-	it('tags each voice message with the mono "voice" meta tag, and only those', async () => {
+	it('keeps spoken lines out of the thread, and shows them in the Transcript view from the summary card', async () => {
 		await renderThread([
 			buildMessage({ id: 1, content: 'typed', metadata: null }),
-			buildMessage({ id: 2, content: 'spoken', metadata: voice() }),
 			buildMessage({
-				id: 3,
+				id: 2,
 				actorId: 'me',
 				actorName: 'Me',
 				actorType: 'human',
 				content: 'spoken by me',
 				metadata: voice(),
+				createdAt: '2026-09-30T10:05:00.000Z',
+			}),
+			buildMessage({
+				id: 3,
+				content: 'spoken back',
+				metadata: voice(),
+				createdAt: '2026-09-30T10:05:18.000Z',
+			}),
+			buildMessage({
+				id: 4,
+				content: 'Review with the Developer',
+				metadata: {
+					...voice(),
+					kind: 'receipt_summary',
+					duration_seconds: 18,
+					decided: ['Ship it'],
+					created: [],
+					next: [],
+					not_done: [],
+				},
+				createdAt: '2026-09-30T10:05:20.000Z',
 			}),
 		])
-		expect(screen.getAllByTestId('voice-message-meta-tag')).toHaveLength(2)
-		const typedRow = document.querySelector('[data-message-id="1"]') as HTMLElement
-		expect(within(typedRow).queryByTestId('voice-message-meta-tag')).toBeNull()
+		expect(screen.queryByText('spoken by me')).toBeNull()
+		expect(screen.queryByText('spoken back')).toBeNull()
+		expect(screen.queryByTestId('voice-message-meta-tag')).toBeNull()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Read transcript' }))
+		const view = await screen.findByRole('dialog', { name: 'Transcript' })
+		expect(within(view).getByText('spoken by me')).toBeInTheDocument()
+		expect(within(view).getByText('spoken back')).toBeInTheDocument()
+		expect(within(view).getByText('0:18')).toBeInTheDocument()
 	})
 
 	it('draws a separate head and tail for two different calls in one conversation', async () => {

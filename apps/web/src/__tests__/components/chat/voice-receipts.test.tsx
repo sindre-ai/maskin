@@ -58,9 +58,8 @@ describe('VoiceEventRow', () => {
 describe('VoiceSummaryCard', () => {
 	const base = {
 		workspaceId: 'ws-1',
-		transcriptOpen: false,
 		canReadTranscript: true,
-		onToggleTranscript: () => {},
+		onReadTranscript: () => {},
 	}
 
 	it('shows the duration and the Decided, Created and Next sections', () => {
@@ -79,29 +78,11 @@ describe('VoiceSummaryCard', () => {
 		expect(screen.getByText('Send the invoice')).toBeInTheDocument()
 	})
 
-	it('asks to read the transcript, and shows it once opened', async () => {
-		const onToggle = vi.fn()
-		const { rerender } = render(
-			<VoiceSummaryCard
-				summary={summary}
-				{...base}
-				onToggleTranscript={onToggle}
-				transcript={<p>You: hello</p>}
-			/>,
-		)
+	it('opens the Transcript view from Read transcript', async () => {
+		const onRead = vi.fn()
+		render(<VoiceSummaryCard summary={summary} {...base} onReadTranscript={onRead} />)
 		await userEvent.click(screen.getByRole('button', { name: 'Read transcript' }))
-		expect(onToggle).toHaveBeenCalled()
-		expect(screen.queryByText('You: hello')).toBeNull()
-		rerender(
-			<VoiceSummaryCard
-				summary={summary}
-				{...base}
-				transcriptOpen
-				transcript={<p>You: hello</p>}
-			/>,
-		)
-		expect(screen.getByText('You: hello')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Hide transcript' })).toBeInTheDocument()
+		expect(onRead).toHaveBeenCalledTimes(1)
 	})
 
 	it('has no transcript button when the call left no transcript', () => {

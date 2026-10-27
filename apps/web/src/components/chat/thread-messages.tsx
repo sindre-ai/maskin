@@ -31,6 +31,7 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
+import { buildVoiceTranscript, isSpokenVoiceLine } from '@/lib/voice-transcript'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
@@ -41,6 +42,7 @@ import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 import { VoiceEventRow, VoiceSummaryCard } from './voice-receipts'
+import { VoiceTranscriptView } from './voice-transcript-view'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -118,25 +120,22 @@ export function ThreadMessages({
 	// Head/tail dividers for each run of voice-call messages. Derived from the
 	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
-	// The spoken lines of one call, for the summary card's transcript.
-	const voiceTranscript = (voiceSessionId: string | null) =>
-		voiceSessionId
-			? messages.filter(
-					(m) =>
-						m.metadata?.source === 'voice' &&
-						m.metadata.voice_session_id === voiceSessionId &&
-						!parseVoiceReceipt(m.metadata) &&
-						m.content,
-				)
-			: []
-	// Calls whose transcript the person opened from the summary card.
-	const [openTranscripts, setOpenTranscripts] = useState<ReadonlySet<string>>(new Set())
-	const toggleTranscript = (voiceSessionId: string) =>
-		setOpenTranscripts((prev) => {
-			const next = new Set(prev)
-			if (!next.delete(voiceSessionId)) next.add(voiceSessionId)
-			return next
-		})
+	// The call whose Transcript view is open. The spoken lines are saved as
+	// messages but never drawn in the thread; this view is where they are read.
+	const [transcriptCall, setTranscriptCall] = useState<{
+		voiceSessionId: string
+		durationSeconds: number
+	} | null>(null)
+	const transcriptLines = useMemo(
+		() => (transcriptCall ? buildVoiceTranscript(messages, transcriptCall.voiceSessionId) : []),
+		[messages, transcriptCall],
+	)
+	const hasSpokenLines = (voiceSessionId: string | null) =>
+		voiceSessionId !== null &&
+		messages.some(
+			(m) =>
+				m.metadata?.voice_session_id === voiceSessionId && isSpokenVoiceLine(m) && m.content.trim(),
+		)
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -434,6 +433,21 @@ export function ThreadMessages({
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
+					// A spoken line is saved with the call but not drawn here: the summary
+					// card's Transcript view shows it. Only the call's start and end
+					// dividers, which ride on its first and last message, stay.
+					if (isSpokenVoiceLine(message)) {
+						const boundaries = voiceBoundaries.get(message.id)
+						if (!boundaries) return null
+						return (
+							<Fragment key={message.id}>
+								{boundaries.start ? (
+									<VoiceCallBoundary variant="start" {...boundaries.start} />
+								) : null}
+								{boundaries.end ? <VoiceCallBoundary variant="end" /> : null}
+							</Fragment>
+						)
+					}
 					const helperQuestion = message.metadata?.question?.reply_to_session
 						? message.metadata.question
 						: null
@@ -494,23 +508,13 @@ export function ThreadMessages({
 										summary={voiceReceipt}
 										workspaceId={workspaceId}
 										title={message.content || undefined}
-										canReadTranscript={voiceTranscript(voiceReceipt.voiceSessionId).length > 0}
-										transcriptOpen={
-											voiceReceipt.voiceSessionId != null &&
-											openTranscripts.has(voiceReceipt.voiceSessionId)
-										}
-										onToggleTranscript={() =>
-											voiceReceipt.voiceSessionId && toggleTranscript(voiceReceipt.voiceSessionId)
-										}
-										transcript={
-											<ul className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 text-sm">
-												{voiceTranscript(voiceReceipt.voiceSessionId).map((line) => (
-													<li key={line.id}>
-														<span className="font-medium text-foreground">{line.actorName}:</span>{' '}
-														<span className="text-muted-foreground">{line.content}</span>
-													</li>
-												))}
-											</ul>
+										canReadTranscript={hasSpokenLines(voiceReceipt.voiceSessionId)}
+										onReadTranscript={() =>
+											voiceReceipt.voiceSessionId &&
+											setTranscriptCall({
+												voiceSessionId: voiceReceipt.voiceSessionId,
+												durationSeconds: voiceReceipt.durationSeconds,
+											})
 										}
 									/>
 								) : (
@@ -580,6 +584,14 @@ export function ThreadMessages({
 				{renderHandoffCards(handoffsByNextMessage.get('end'))}
 			</div>
 			<div ref={bottomAnchorRef} />
+			<VoiceTranscriptView
+				open={transcriptCall !== null}
+				onOpenChange={(open) => {
+					if (!open) setTranscriptCall(null)
+				}}
+				lines={transcriptLines}
+				durationSeconds={transcriptCall?.durationSeconds}
+			/>
 		</div>
 	)
 }

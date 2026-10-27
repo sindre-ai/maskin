@@ -129,19 +129,16 @@ export function VoiceSummaryCard({
 	summary,
 	workspaceId,
 	title,
-	transcriptOpen,
 	canReadTranscript,
-	onToggleTranscript,
-	transcript,
+	onReadTranscript,
 }: {
 	summary: VoiceReceiptSummary
 	workspaceId: string
 	/** The agent-written body of the summary message, when it has one. */
 	title?: string
-	transcriptOpen: boolean
 	canReadTranscript: boolean
-	onToggleTranscript: () => void
-	transcript?: ReactNode
+	/** Opens the full Transcript view. */
+	onReadTranscript: () => void
 }) {
 	return (
 		<article
@@ -203,17 +200,10 @@ export function VoiceSummaryCard({
 				</SummarySection>
 			) : null}
 			{canReadTranscript ? (
-				<footer className="flex flex-col gap-2">
-					<Button
-						type="button"
-						size="sm"
-						className="self-start"
-						aria-expanded={transcriptOpen}
-						onClick={onToggleTranscript}
-					>
-						{transcriptOpen ? 'Hide transcript' : 'Read transcript'}
+				<footer>
+					<Button type="button" size="sm" onClick={onReadTranscript}>
+						Read transcript
 					</Button>
-					{transcriptOpen ? transcript : null}
 				</footer>
 			) : null}
 		</article>
