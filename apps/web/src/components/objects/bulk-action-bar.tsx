@@ -186,200 +186,204 @@ export function BulkActionBar({
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
-					'overflow-x-auto rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
+					'rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
 					'transition-[transform,opacity] duration-200 ease-out',
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
 						: 'pointer-events-none opacity-0 translate-y-4',
 				)}
 			>
-				<span
-					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
-					aria-label={`${selectedCount} selected`}
-				>
-					{selectedCount}
-				</span>
-				<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
-
-				{canSelectAll && (
-					<button
-						type="button"
-						onClick={onSelectAll}
-						title="Select all (a)"
-						className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
+				<div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+					<span
+						className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
+						aria-label={`${selectedCount} selected`}
 					>
-						Select all {totalCount}
-					</button>
-				)}
+						{selectedCount}
+					</span>
+					<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
 
-				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+					{canSelectAll && (
+						<button
+							type="button"
+							onClick={onSelectAll}
+							title="Select all (a)"
+							className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
+						>
+							Select all {totalCount}
+						</button>
+					)}
 
-				{onAskAgent && (
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="shrink-0"
-						onClick={onAskAgent}
-						title="Send these to a new chat as references"
-					>
-						<MessageSquare className="size-4" />
-						Ask an agent
-					</Button>
-				)}
+					<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
-				{onAnswerAsks && askCount > 0 && (
-					<ViewerTooltip>
+					{onAskAgent && (
 						<Button
 							type="button"
+							variant="outline"
 							size="sm"
 							className="shrink-0"
-							disabled={!canWrite}
-							onClick={onAnswerAsks}
-							aria-label={`Answer ${askCount} asks`}
+							onClick={onAskAgent}
+							title="Send these to a new chat as references"
 						>
-							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+							<MessageSquare className="size-4" />
+							Ask an agent
 						</Button>
-					</ViewerTooltip>
-				)}
+					)}
 
-				{onStatusChange && statusOptions.length > 0 && (
+					{onAnswerAsks && askCount > 0 && (
+						<ViewerTooltip>
+							<Button
+								type="button"
+								size="sm"
+								className="shrink-0"
+								disabled={!canWrite}
+								onClick={onAnswerAsks}
+								aria-label={`Answer ${askCount} asks`}
+							>
+								Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+							</Button>
+						</ViewerTooltip>
+					)}
+
+					{onStatusChange && statusOptions.length > 0 && (
+						<ViewerTooltip>
+							<Select
+								key={`status-${statusKey}`}
+								onValueChange={(value) => {
+									emitCommit('status_change')
+									onStatusChange(value)
+									setStatusKey((k) => k + 1)
+								}}
+								disabled={!canWrite}
+							>
+								<SelectTrigger
+									aria-label="Set status"
+									className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
+								>
+									<SelectValue placeholder="Status" />
+								</SelectTrigger>
+								<SelectContent>
+									{statusOptions.map((opt) => (
+										<SelectItem key={opt.value} value={opt.value}>
+											{opt.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</ViewerTooltip>
+					)}
+
 					<ViewerTooltip>
 						<Select
-							key={`status-${statusKey}`}
+							key={`owner-${ownerKey}`}
 							onValueChange={(value) => {
-								emitCommit('status_change')
-								onStatusChange(value)
-								setStatusKey((k) => k + 1)
+								if (onOwnerChange) {
+									emitCommit('owner_change')
+									onOwnerChange(value)
+								}
+								setOwnerKey((k) => k + 1)
 							}}
-							disabled={!canWrite}
+							disabled={ownerOptions.length === 0 || !onOwnerChange || !canWrite}
 						>
 							<SelectTrigger
-								aria-label="Set status"
+								aria-label="Set driver"
 								className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 							>
-								<SelectValue placeholder="Status" />
+								<SelectValue placeholder="Driver" />
 							</SelectTrigger>
 							<SelectContent>
-								{statusOptions.map((opt) => (
-									<SelectItem key={opt.value} value={opt.value}>
-										{opt.label}
+								{ownerOptions.map((opt) => (
+									<SelectItem key={opt.id} value={opt.id}>
+										{opt.name}
 									</SelectItem>
 								))}
 							</SelectContent>
 						</Select>
 					</ViewerTooltip>
-				)}
 
-				<ViewerTooltip>
-					<Select
-						key={`owner-${ownerKey}`}
-						onValueChange={(value) => {
-							if (onOwnerChange) {
-								emitCommit('owner_change')
-								onOwnerChange(value)
-							}
-							setOwnerKey((k) => k + 1)
-						}}
-						disabled={ownerOptions.length === 0 || !onOwnerChange || !canWrite}
-					>
-						<SelectTrigger
-							aria-label="Set driver"
-							className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
-						>
-							<SelectValue placeholder="Driver" />
-						</SelectTrigger>
-						<SelectContent>
-							{ownerOptions.map((opt) => (
-								<SelectItem key={opt.id} value={opt.id}>
-									{opt.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</ViewerTooltip>
-
-				<div className="ml-auto flex shrink-0 items-center gap-1">
-					{onCopyLink && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyLink()
-									}}
-									aria-label={copyLinkLabel}
-								>
-									<Link className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{copyLinkLabel}</TooltipContent>
-						</Tooltip>
-					)}
-					{onCopyTitle && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyTitle()
-									}}
-									aria-label={copyTitleLabel}
-								>
-									<Type className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{copyTitleLabel}</TooltipContent>
-						</Tooltip>
-					)}
-					{onCopyTitleAsLink && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyTitleAsLink()
-									}}
-									aria-label={copyTitleAsLinkLabel}
-								>
-									<Brackets className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
-						</Tooltip>
-					)}
-					{onOpenLinks && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onOpenLinks()
-									}}
-									aria-label={openLinksLabel}
-								>
-									<ExternalLink className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{openLinksLabel}</TooltipContent>
-						</Tooltip>
-					)}
+					<div className="ml-auto flex shrink-0 items-center gap-1">
+						{onCopyLink && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyLink()
+										}}
+										aria-label={copyLinkLabel}
+									>
+										<Link className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{copyLinkLabel}</TooltipContent>
+							</Tooltip>
+						)}
+						{onCopyTitle && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyTitle()
+										}}
+										aria-label={copyTitleLabel}
+									>
+										<Type className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{copyTitleLabel}</TooltipContent>
+							</Tooltip>
+						)}
+						{onCopyTitleAsLink && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyTitleAsLink()
+										}}
+										aria-label={copyTitleAsLinkLabel}
+									>
+										<Brackets className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
+							</Tooltip>
+						)}
+						{onOpenLinks && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onOpenLinks()
+										}}
+										aria-label={openLinksLabel}
+									>
+										<ExternalLink className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{openLinksLabel}</TooltipContent>
+							</Tooltip>
+						)}
+					</div>
+				</div>
+				<div className="flex shrink-0 items-center gap-1">
 					{onArchive && (
 						<ViewerTooltip>
 							<Button
