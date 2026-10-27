@@ -718,7 +718,7 @@ describe('createRealtimeCall — session settings and the transcription retry', 
 
 	it('reports the second answer when the old block is refused too, and does not retry again', async () => {
 		const body = '{"error":{"message":"bad transcription"}}'
-		const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 400 }))
+		const fetchMock = vi.fn().mockImplementation(async () => new Response(body, { status: 400 }))
 		vi.stubGlobal('fetch', fetchMock)
 		expect(await createRealtimeCall(input)).toEqual({ kind: 'error', status: 400, body })
 		expect(fetchMock).toHaveBeenCalledTimes(2)
