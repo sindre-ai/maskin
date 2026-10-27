@@ -7,7 +7,12 @@ import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
-import { classifyTurnError } from '../lib/turn-error-classifier'
+import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import {
+	classifyTurnError,
+	extractCloudflareRayId,
+	isProviderBlockPage,
+} from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
 
@@ -112,6 +117,23 @@ const RETRY_EXHAUSTED_MESSAGE =
  */
 const RETRY_UNAVAILABLE_MESSAGE =
 	"I hit a temporary error from the Claude API and couldn't finish that. Send the message again and I'll pick it up."
+
+/**
+ * What the human reads when the provider's edge blocked the request (a 403
+ * Cloudflare page) and the replays did not get past it. Says who blocked it,
+ * because the CLI's own wording ("Failed to authenticate") points at a key
+ * problem that does not exist.
+ */
+const providerBlockedMessage = (provider: string): string =>
+	`${provider} briefly blocked this request. This is usually temporary. Try again in a minute, and tell us if it keeps happening.`
+
+/**
+ * The provider's display name for the user. Only the Maskin-funded route is
+ * known to be OpenRouter; any other route is the user's own endpoint, which the
+ * session does not record, so it is named generically rather than guessed.
+ */
+const providerDisplayName = (llmRoute: string): string =>
+	llmRoute === LLM_ROUTE_MASKIN_PLAN ? 'OpenRouter' : 'Your model provider'
 
 /** What the human reads when the replay could not reach a session that has gone. */
 const RETRY_UNDELIVERABLE_MESSAGE =
@@ -1278,6 +1300,33 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
+	 * Leave a trace of a provider block in the session's own log, so a block can
+	 * be traced to the rule that fired: provider, status and the Cloudflare Ray ID
+	 * when the page text carries one. Never throws, since it sits ahead of the
+	 * retry and a failed write must not cost the human their reply.
+	 */
+	private async recordProviderBlock(
+		sessionId: string,
+		gate: SessionGate,
+		raw: string,
+		logId: number,
+	): Promise<void> {
+		const provider = providerDisplayName(gate.llmRoute)
+		const rayId = extractCloudflareRayId(raw)
+		const note = `provider_block provider="${provider}" route=${gate.llmRoute || 'unknown'} status=403 cf_ray=${rayId ?? 'not_in_page'} source_log=${logId}`
+		logger.warn(`Interactive session ${sessionId} hit a provider block page: ${note}`)
+		try {
+			await this.db
+				.insert(sessionLogs)
+				.values({ sessionId, stream: 'system', content: `${note}\n` })
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} could not log a provider block: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
 	 *
@@ -1303,6 +1352,8 @@ export class InteractiveTurnFinalizer {
 
 		const detail = result.text.trim() || 'no detail reported'
 		const kind = classifyTurnError(detail)
+		const providerBlock = isProviderBlockPage(detail)
+		if (providerBlock) await this.recordProviderBlock(sessionId, gate, result.raw, logId)
 
 		if (kind === 'permanent') {
 			logger.warn(
@@ -1357,7 +1408,9 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_UNAVAILABLE_MESSAGE,
+				providerBlock
+					? providerBlockedMessage(providerDisplayName(gate.llmRoute))
+					: RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
 					retry: 'unavailable',
@@ -1383,7 +1436,9 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_EXHAUSTED_MESSAGE,
+				providerBlock
+					? providerBlockedMessage(providerDisplayName(gate.llmRoute))
+					: RETRY_EXHAUSTED_MESSAGE,
 				{
 					error_kind: 'transient',
 					retries: spent,
