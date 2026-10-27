@@ -46,7 +46,8 @@ describe('VoiceTranscriptView', () => {
 		const cls = screen.getByRole('dialog', { name: 'Transcript' }).className
 		expect(cls).toContain('w-full')
 		expect(cls).toContain('sm:max-w-none')
-		expect(cls).toContain('min-[700px]:max-w-md')
+		// 43.75rem is 700px; in rem it sorts after sm: in the stylesheet, which min-[700px] does not.
+		expect(cls).toContain('min-[43.75rem]:max-w-md')
 		expect(cls).not.toContain('sm:max-w-sm')
 	})
 
