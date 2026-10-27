@@ -1407,9 +1407,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				providerBlock
-					? PROVIDER_BLOCKED_MESSAGE
-					: RETRY_UNAVAILABLE_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
 					retry: 'unavailable',
@@ -1435,9 +1433,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				providerBlock
-					? PROVIDER_BLOCKED_MESSAGE
-					: RETRY_EXHAUSTED_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_EXHAUSTED_MESSAGE,
 				{
 					error_kind: 'transient',
 					retries: spent,
