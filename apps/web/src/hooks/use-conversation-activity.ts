@@ -511,7 +511,9 @@ export function useConversationActivity(
 			resultSegments.includes(lastSegment) &&
 			!pairedSegments.has(lastSegment)
 
-		if (!idle && lastSegment && !lastSegmentAlreadyPaired && !lastSegmentEmittedAsFinal) {
+		const emitsLiveTurn =
+			!idle && lastSegment && !lastSegmentAlreadyPaired && !lastSegmentEmittedAsFinal
+		if (emitsLiveTurn && lastSegment) {
 			const list = byTriggerMessageId.get(lastSegment.conversationMessageId) ?? []
 			list.push({
 				sessionId: session.id,
@@ -545,7 +547,12 @@ export function useConversationActivity(
 		// Still working but nothing tagged yet — either a turn that just
 		// started (log rows haven't caught up) or unassigned steps left over
 		// from a pre-tagging turn.
-		if (!idle && (segments.length === 0 || unassigned.length > 0)) {
+		//
+		// Never alongside a live turn from the same session: one session is one
+		// agent doing one thing, and leftover untagged steps are older work. Drawing
+		// both put two "is working on it" rows under a single message, with the
+		// stale one frozen while the other moved.
+		if (!idle && !emitsLiveTurn && (segments.length === 0 || unassigned.length > 0)) {
 			fallback.push({
 				sessionId: session.id,
 				actorId: session.actorId,
