@@ -19,14 +19,14 @@ test.describe('Objects filter parity (List -> Board)', () => {
 			// configured status, so make it deterministic: set bet statuses.
 			await account.api.updateWorkspace(account.workspaceId, {
 				settings: {
-					statuses: { bet: ['signal', 'active'] },
+					statuses: { bet: ['opportunity', 'active'] },
 					field_definitions: { bet: [{ name: 'region', type: 'text' }] },
 				},
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Parity EMEA Bet',
-				status: 'signal',
+				status: 'opportunity',
 				metadata: { region: 'emea' },
 			})
 			await account.api.createObject(account.workspaceId, {

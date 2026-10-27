@@ -6,7 +6,7 @@ import Testing
 @Suite("Status and type mapping") struct BadgeMappingTests {
 	/// Every key of `statusColors` in apps/web/src/lib/constants.ts.
 	static let webStatuses = [
-		"new", "backlog", "todo", "processing", "in_progress", "active", "signal", "proposed",
+		"new", "backlog", "todo", "processing", "in_progress", "active", "opportunity", "proposed",
 		"clustered", "done", "completed", "succeeded", "queued", "blocked", "failed", "paused",
 		"discarded", "qualified", "define", "live", "scored", "parked", "archived", "in_review",
 		"validated", "holding", "at-risk", "breached", "pending", "starting", "running",

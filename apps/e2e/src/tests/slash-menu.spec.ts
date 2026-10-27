@@ -31,7 +31,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu placeholder',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await expect(editor.locator('p.is-editor-empty')).toHaveAttribute(
@@ -47,7 +47,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu rows',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -77,7 +77,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu announce',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -93,7 +93,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu no match',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -108,7 +108,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu mid-word',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -125,7 +125,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu filter',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -143,7 +143,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu heading',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -161,7 +161,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu blocks',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -198,7 +198,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu backspace',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -215,7 +215,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu mobile',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()

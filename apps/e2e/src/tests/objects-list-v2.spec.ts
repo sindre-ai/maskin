@@ -173,7 +173,7 @@ test.describe('Objects list — v2 control row', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Signal bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)

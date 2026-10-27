@@ -77,7 +77,7 @@ describe('describeToolCall', () => {
 		const args = {
 			workspace_id: WORKSPACE,
 			nodes: [
-				{ $id: 'n1', type: 'bet', status: 'signal', title: 'Live receipts' },
+				{ $id: 'n1', type: 'bet', status: 'opportunity', title: 'Live receipts' },
 				{ $id: 'n2', type: 'task', status: 'todo', title: 'Reply to Anna' },
 				{ $id: 'n3', type: 'insight', status: 'new', title: 'A gap' },
 			],

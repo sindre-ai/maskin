@@ -42,7 +42,7 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
-const object = buildObjectResponse({ id: 'obj-1', status: 'signal' })
+const object = buildObjectResponse({ id: 'obj-1', status: 'opportunity' })
 
 describe('ObjectActivity', () => {
 	it('shows "No activity yet" when events is empty', () => {
@@ -92,7 +92,7 @@ describe('ObjectActivity', () => {
 			buildEventResponse({
 				id: 1,
 				action: 'status_changed',
-				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 			}),
 		]
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
@@ -111,7 +111,7 @@ describe('ObjectActivity', () => {
 			buildEventResponse({
 				id: 2,
 				action: 'status_changed',
-				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 			}),
 			buildEventResponse({
 				id: 1,
@@ -167,7 +167,7 @@ describe('ObjectActivity', () => {
 					id: 2,
 					action: 'status_changed',
 					createdAt: '2026-06-22T00:00:00Z',
-					data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+					data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 				}),
 			]
 			const rel = buildRelationshipResponse({
@@ -212,7 +212,7 @@ describe('ObjectActivity', () => {
 		})
 
 		it('buckets a relationship created during an empty non-terminal phase into that phase', () => {
-			// Object created in 'signal' at T0, then signal→active at T1, then
+			// Object created in 'opportunity' at T0, then signal→active at T1, then
 			// active→done at T2 — the signal phase carries no events of its own.
 			// A relationship created at T0.5 falls inside the signal window and
 			// must surface there, not in the next phase.
@@ -233,7 +233,7 @@ describe('ObjectActivity', () => {
 					id: 1,
 					action: 'status_changed',
 					createdAt: '2026-06-21T00:00:00Z',
-					data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+					data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 				}),
 			]
 			const linked = buildObjectResponse({ id: 'obj-signal-rel', title: 'Signal-era link' })
@@ -259,7 +259,7 @@ describe('ObjectActivity', () => {
 			const linkRow = screen.getByText('Signal-era link')
 			const phaseSection = linkRow.closest('section')
 			expect(phaseSection).not.toBeNull()
-			expect(within(phaseSection as HTMLElement).getByText('signal')).toBeInTheDocument()
+			expect(within(phaseSection as HTMLElement).getByText('opportunity')).toBeInTheDocument()
 		})
 
 		it('shows the Timeline ↔ Table toggle when relationships are present', () => {
@@ -290,7 +290,7 @@ describe('ObjectActivity', () => {
 			buildEventResponse({
 				id: 2,
 				action: 'status_changed',
-				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 			}),
 			buildEventResponse({
 				id: 1,
