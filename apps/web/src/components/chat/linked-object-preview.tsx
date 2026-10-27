@@ -15,7 +15,7 @@ import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 
 interface PreviewProps {
 	workspaceId: string
@@ -50,6 +50,28 @@ export function LinkedObjectCard({
 	// Contracted shows the header and title; the text and the next-phase button
 	// appear once the top of the card is clicked.
 	const [expanded, setExpanded] = useState(defaultExpanded)
+	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
+	// text they opened in full, so a draft that changes underneath them is clamped again.
+	const [revealedHash, setRevealedHash] = useState<string | null>(null)
+	const textRef = useRef<HTMLDivElement>(null)
+	const hintId = useId()
+	const [overflowing, setOverflowing] = useState(false)
+	const draftHash = object?.preview?.content_hash
+	const clamped = Boolean(draftHash) && draftHash !== revealedHash
+
+	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
+	// paragraph is as many lines as it looks. Only meaningful while the clamp is on.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
+	useLayoutEffect(() => {
+		const el = textRef.current
+		if (!el || !clamped) return
+		const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [clamped, expanded, object?.content])
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -79,6 +101,9 @@ export function LinkedObjectCard({
 	// what the card shows. Such a text is edited on the object page, where the header is.
 	const shown = preview ? preview.body : body
 	const editable = canAct && (!preview || preview.body.trim() === body)
+	// A draft that does not fit the clamp cannot be approved until its full text has been opened.
+	// Checked in the handler too, so no path (button, keyboard, repeat click) approves clamped text.
+	const gated = clamped && overflowing
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -92,7 +117,7 @@ export function LinkedObjectCard({
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
 	// so it does not have to guess what was approved.
 	const approveDraft = () => {
-		if (!preview) return
+		if (!preview || gated) return
 		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
@@ -209,8 +234,11 @@ export function LinkedObjectCard({
 						</div>
 					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
-					    A very long text scrolls inside the card instead of being cut off. */}
-					<div className="max-h-50 overflow-y-auto px-3 pt-2 text-[13.5px]">
+					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
+					<div
+						ref={textRef}
+						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
+					>
 						<MarkdownContent
 							content={shown}
 							size="sm"
@@ -221,8 +249,22 @@ export function LinkedObjectCard({
 							}}
 						/>
 					</div>
+					{preview && (gated || (overflowing && !clamped)) ? (
+						<div className="px-3 pt-1">
+							<Button
+								type="button"
+								variant="link"
+								size="sm"
+								className="h-auto px-0 py-1 text-xs"
+								aria-expanded={!gated}
+								onClick={() => setRevealedHash(gated ? (draftHash ?? null) : null)}
+							>
+								{gated ? 'Show all' : 'Show less'}
+							</Button>
+						</div>
+					) : null}
 					{preview ? (
-						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
@@ -231,20 +273,32 @@ export function LinkedObjectCard({
 							) : delivery === 'approved' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
-									Approved, sending
+									Approved, waiting for send
 								</span>
 							) : (
-								<Button
-									type="button"
-									size="sm"
-									disabled={
-										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
-									}
-									onClick={approveDraft}
-								>
-									Approve and send
-									<ArrowRight size={14} aria-hidden />
-								</Button>
+								<>
+									{gated ? (
+										<span id={hintId} className="text-xs text-muted-foreground">
+											Read the full draft first
+										</span>
+									) : null}
+									<Button
+										type="button"
+										size="sm"
+										aria-describedby={gated ? hintId : undefined}
+										disabled={
+											gated ||
+											!canAct ||
+											approve.isPending ||
+											update.isPending ||
+											preview.missing.length > 0
+										}
+										onClick={approveDraft}
+									>
+										Approve draft
+										<ArrowRight size={14} aria-hidden />
+									</Button>
+								</>
 							)}
 						</div>
 					) : canAct && nextStatus ? (
