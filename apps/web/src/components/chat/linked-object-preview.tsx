@@ -246,7 +246,7 @@ export function LinkedObjectCard({
 								size="sm"
 								className="h-auto px-0 py-1 text-xs"
 								aria-expanded={!gated}
-								onClick={() => setRevealedHash(gated ? draftHash : null)}
+								onClick={() => setRevealedHash(gated ? (draftHash ?? null) : null)}
 							>
 								{gated ? 'Show all' : 'Show less'}
 							</Button>
