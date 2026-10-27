@@ -51082,6 +51082,17 @@
 					{
 						"schema": {
 							"type": "string",
+							"format": "uuid",
+							"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own."
+						},
+						"required": false,
+						"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own.",
+						"name": "for_actor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -51129,6 +51140,12 @@
 														"type": "string"
 													},
 													"rationale": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"due_at": {
 														"type": [
 															"string",
 															"null"
@@ -51900,6 +51917,7 @@
 													"latest_event_id",
 													"headline",
 													"rationale",
+													"due_at",
 													"created_at",
 													"entity_type",
 													"entity_id",
@@ -51917,6 +51935,120 @@
 					},
 					"400": {
 						"description": "Missing workspace ID",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "A person asked for someone else's list",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "for_actor_id is not a member of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {
