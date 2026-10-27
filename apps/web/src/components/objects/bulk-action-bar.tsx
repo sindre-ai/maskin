@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -15,6 +16,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	type BulkEditCommitAction,
 	type PlatformDevice,
@@ -97,6 +99,8 @@ export function BulkActionBar({
 	onClear,
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
+	// Selecting is reading; everything this bar does to the selection is a write.
+	const canWrite = useCanWrite()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -152,7 +156,7 @@ export function BulkActionBar({
 				onSelectAll?.()
 				return
 			}
-			if (e.key === 'e' && onArchive) {
+			if (e.key === 'e' && onArchive && canWrite) {
 				e.preventDefault()
 				emitCommit('archive')
 				onArchive()
@@ -160,7 +164,7 @@ export function BulkActionBar({
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit])
+	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit, canWrite])
 
 	// Close the confirm dialog automatically when the selection is cleared.
 	React.useEffect(() => {
@@ -225,67 +229,75 @@ export function BulkActionBar({
 				)}
 
 				{onAnswerAsks && askCount > 0 && (
-					<Button
-						type="button"
-						size="sm"
-						className="shrink-0"
-						onClick={onAnswerAsks}
-						aria-label={`Answer ${askCount} asks`}
-					>
-						Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							type="button"
+							size="sm"
+							className="shrink-0"
+							disabled={!canWrite}
+							onClick={onAnswerAsks}
+							aria-label={`Answer ${askCount} asks`}
+						>
+							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+						</Button>
+					</ViewerTooltip>
 				)}
 
 				{onStatusChange && statusOptions.length > 0 && (
+					<ViewerTooltip>
+						<Select
+							key={`status-${statusKey}`}
+							onValueChange={(value) => {
+								emitCommit('status_change')
+								onStatusChange(value)
+								setStatusKey((k) => k + 1)
+							}}
+							disabled={!canWrite}
+						>
+							<SelectTrigger
+								aria-label="Set status"
+								className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
+							>
+								<SelectValue placeholder="Status" />
+							</SelectTrigger>
+							<SelectContent>
+								{statusOptions.map((opt) => (
+									<SelectItem key={opt.value} value={opt.value}>
+										{opt.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</ViewerTooltip>
+				)}
+
+				<ViewerTooltip>
 					<Select
-						key={`status-${statusKey}`}
+						key={`owner-${ownerKey}`}
 						onValueChange={(value) => {
-							emitCommit('status_change')
-							onStatusChange(value)
-							setStatusKey((k) => k + 1)
+							if (onOwnerChange) {
+								emitCommit('owner_change')
+								onOwnerChange(value)
+							}
+							setOwnerKey((k) => k + 1)
 						}}
+						disabled={ownerOptions.length === 0 || !onOwnerChange || !canWrite}
 					>
 						<SelectTrigger
-							aria-label="Set status"
+							aria-label="Set driver"
 							className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 						>
-							<SelectValue placeholder="Status" />
+							<SelectValue placeholder="Driver" />
 						</SelectTrigger>
 						<SelectContent>
-							{statusOptions.map((opt) => (
-								<SelectItem key={opt.value} value={opt.value}>
-									{opt.label}
+							{ownerOptions.map((opt) => (
+								<SelectItem key={opt.id} value={opt.id}>
+									{opt.name}
 								</SelectItem>
 							))}
 						</SelectContent>
 					</Select>
-				)}
-
-				<Select
-					key={`owner-${ownerKey}`}
-					onValueChange={(value) => {
-						if (onOwnerChange) {
-							emitCommit('owner_change')
-							onOwnerChange(value)
-						}
-						setOwnerKey((k) => k + 1)
-					}}
-					disabled={ownerOptions.length === 0 || !onOwnerChange}
-				>
-					<SelectTrigger
-						aria-label="Set driver"
-						className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
-					>
-						<SelectValue placeholder="Driver" />
-					</SelectTrigger>
-					<SelectContent>
-						{ownerOptions.map((opt) => (
-							<SelectItem key={opt.id} value={opt.id}>
-								{opt.name}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				</ViewerTooltip>
 
 				<div className="ml-auto flex shrink-0 items-center gap-1">
 					{onCopyLink && (
@@ -369,34 +381,40 @@ export function BulkActionBar({
 						</Tooltip>
 					)}
 					{onArchive && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-							onClick={() => {
-								emitCommit('archive')
-								onArchive()
-							}}
-							aria-label="Archive selected"
-							title="Archive (e)"
-						>
-							<Archive className="size-4" />
-							Archive
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+								disabled={!canWrite}
+								onClick={() => {
+									emitCommit('archive')
+									onArchive()
+								}}
+								aria-label="Archive selected"
+								title="Archive (e)"
+							>
+								<Archive className="size-4" />
+								Archive
+							</Button>
+						</ViewerTooltip>
 					)}
 					{onDelete && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-							onClick={() => setConfirmOpen(true)}
-							aria-label="Delete selected"
-						>
-							<Trash2 className="size-4" />
-							Delete
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+								disabled={!canWrite}
+								onClick={() => setConfirmOpen(true)}
+								aria-label="Delete selected"
+							>
+								<Trash2 className="size-4" />
+								Delete
+							</Button>
+						</ViewerTooltip>
 					)}
 					<Button
 						type="button"

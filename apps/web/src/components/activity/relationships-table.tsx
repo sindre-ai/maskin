@@ -1,9 +1,11 @@
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
 import { useMemo } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { Button } from '../ui/button'
 
 interface RelationshipsTableProps {
@@ -34,6 +36,7 @@ export function RelationshipsTable({
 	workspaceId,
 	onDelete,
 }: RelationshipsTableProps) {
+	const canWrite = useCanWrite()
 	const grouped = useMemo(() => {
 		const seen = new Set<string>()
 		const byType = new Map<string, RelationshipRow[]>()
@@ -89,16 +92,19 @@ export function RelationshipsTable({
 								{linked && <TypeBadge type={linked.type} />}
 								{linked && <StatusBadge status={linked.status} />}
 								{onDelete && (
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-6 w-6 opacity-0 group-hover:opacity-100"
-										aria-label="Remove link"
-										title="Remove link"
-										onClick={() => onDelete(rel.id)}
-									>
-										<Trash2 size={12} />
-									</Button>
+									<ViewerTooltip>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-6 w-6 opacity-0 group-hover:opacity-100"
+											aria-label="Remove link"
+											title="Remove link"
+											disabled={!canWrite}
+											onClick={() => onDelete(rel.id)}
+										>
+											<Trash2 size={12} />
+										</Button>
+									</ViewerTooltip>
 								)}
 							</div>
 						))}

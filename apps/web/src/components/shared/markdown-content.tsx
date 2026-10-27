@@ -1,6 +1,7 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
@@ -997,7 +998,7 @@ export function MarkdownContent({
 	preserveSource,
 	surface,
 	objectId,
-	...props
+	...rest
 }: Parameters<typeof TextareaMarkdownContent>[0] & {
 	/**
 	 * Rich editor only. Treat `content` as stored text to protect: a save rewrites
@@ -1010,6 +1011,9 @@ export function MarkdownContent({
 	objectId?: string
 }) {
 	const editorEnabled = useFeatureFlag('rich-markdown-editor')
+	// A viewer reads the rendered text and never drops into an editor.
+	const canWrite = useCanWrite()
+	const props = canWrite ? rest : { ...rest, editable: false }
 
 	if (props.editable && editorEnabled) {
 		return (

@@ -1,6 +1,7 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -12,6 +13,7 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { CommentDecisionBlock } from './comment-decision-block'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
@@ -81,6 +83,7 @@ function CommentRow({
 	footer,
 }: CommentRowProps) {
 	const isBubble = variant === 'bubble'
+	const canWrite = useCanWrite()
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -281,15 +284,18 @@ function CommentRow({
 					)}
 				</div>
 				{onReply && (
-					<button
-						type="button"
-						onClick={() => onReply(actor?.name ?? 'this message')}
-						aria-label="Reply"
-						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
-						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -my-1 -ml-1"
-					>
-						<Reply size={14} />
-					</button>
+					<ViewerTooltip className="inline-flex self-end shrink-0">
+						<button
+							type="button"
+							onClick={() => onReply(actor?.name ?? 'this message')}
+							aria-label="Reply"
+							disabled={!canWrite}
+							/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
+							className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -my-1 -ml-1 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<Reply size={14} />
+						</button>
+					</ViewerTooltip>
 				)}
 			</div>
 			{humanDialogActorId && (
