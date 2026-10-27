@@ -1,3 +1,4 @@
+import { ObjectReferenceCard, ObjectReferenceChip } from '@/components/chat/linked-object-reference'
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
@@ -267,9 +268,11 @@ export function LinkedObjectCard({
 }
 
 /**
- * A link's card once it is known to deserve one, otherwise `fallback` (the original link or
- * paragraph; nothing for a card that is only ever added). While the object or file is loading,
- * missing, in another workspace or not worth a card, the fallback stays, so a link never vanishes.
+ * A link's card. A draft an integration can deliver gets its approval card; any other object gets
+ * the reference card (what it is, where it stands, who has it), except in a list, where only a
+ * draft is a card. A file is a card once it is known to be previewable. Otherwise `fallback` (the
+ * original link or paragraph; nothing for a card that is only ever added) stays, so a link never
+ * vanishes.
  */
 export function LinkedCardOrLink({
 	workspaceId,
@@ -278,6 +281,8 @@ export function LinkedCardOrLink({
 	agentId,
 	fallback = null,
 	label,
+	inList = false,
+	after = false,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -286,6 +291,10 @@ export function LinkedCardOrLink({
 	fallback?: ReactNode
 	/** Text that led the link ("Draft:"); kept above the card once it replaces the link. */
 	label?: string
+	/** The link stood in a list item. */
+	inList?: boolean
+	/** The card goes under the sentence that links it: only a draft is drawn. */
+	after?: boolean
 }) {
 	return target.kind === 'object' ? (
 		<ObjectCardOrLink
@@ -295,13 +304,15 @@ export function LinkedCardOrLink({
 			agentId={agentId}
 			fallback={fallback}
 			label={label}
+			inList={inList}
+			after={after}
 		/>
 	) : (
 		<FileCardOrLink
 			workspaceId={workspaceId}
 			fileId={target.id}
 			fallback={fallback}
-			label={label}
+			label={inList ? label : undefined}
 		/>
 	)
 }
@@ -321,9 +332,33 @@ function withLabel(label: string | undefined, card: ReactNode): ReactNode {
 export function renderLinkedCard(
 	target: LinkedTarget,
 	fallback: ReactNode,
-	context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+	context: {
+		workspaceId: string
+		conversationId?: string
+		agentId?: string
+		label?: string
+		inList?: boolean
+		after?: boolean
+	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
+export function renderLinkedChip(
+	target: LinkedTarget,
+	fallback: ReactNode,
+	context: { workspaceId: string },
+): ReactNode {
+	return target.kind === 'object' ? (
+		<ObjectReferenceChip
+			workspaceId={context.workspaceId}
+			objectId={target.id}
+			fallback={fallback}
+		/>
+	) : (
+		fallback
+	)
 }
 
 function ObjectCardOrLink({
@@ -333,6 +368,8 @@ function ObjectCardOrLink({
 	agentId,
 	fallback,
 	label,
+	inList,
+	after,
 }: {
 	workspaceId: string
 	objectId: string
@@ -340,18 +377,26 @@ function ObjectCardOrLink({
 	agentId?: string
 	fallback: ReactNode
 	label?: string
+	inList: boolean
+	after: boolean
 }) {
 	const { data: object } = useObject(objectId)
-	if (!showsObjectCard(object, workspaceId)) return <>{fallback}</>
-	return withLabel(
-		label,
-		<LinkedObjectCard
-			workspaceId={workspaceId}
-			objectId={objectId}
-			conversationId={conversationId}
-			agentId={agentId}
-		/>,
-	)
+	// A draft keeps today's card, and its lead-in only in a list.
+	if (showsObjectCard(object, workspaceId)) {
+		return withLabel(
+			inList ? label : undefined,
+			<LinkedObjectCard
+				workspaceId={workspaceId}
+				objectId={objectId}
+				conversationId={conversationId}
+				agentId={agentId}
+			/>,
+		)
+	}
+	// Under a sentence, and in a list, only a draft is a card; any other link there is a chip.
+	if (after) return null
+	if (inList) return <>{fallback}</>
+	return withLabel(label, <ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} />)
 }
 
 function FileCardOrLink({

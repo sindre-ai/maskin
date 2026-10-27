@@ -12,6 +12,7 @@ import {
 	type LinkedTarget,
 	type StandaloneCard,
 	placeLinkedCards,
+	targetOfHref,
 } from '@/lib/linked-objects'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
 import {
@@ -367,9 +368,10 @@ function locateOffset(root: HTMLElement, target: number): { node: Node; offset: 
 }
 
 /**
- * Where a message's links to objects and files turn into cards. A link that stands alone in its
- * paragraph or list item is replaced by its card in place; any other link's card goes under the
- * text, and an id drawn in place is never drawn again there.
+ * Where a message's links to objects and files turn into cards and chips. A link that stands
+ * alone on its line, or alone in a list item, is replaced by its card in place. Any other link to
+ * an object is a chip where it stands; a draft or file linked in a sentence gets its card under
+ * the text. An id drawn in place is never drawn again.
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
@@ -385,7 +387,24 @@ export interface LinkedCardsOptions {
 	renderCard: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+		context: {
+			workspaceId: string
+			conversationId?: string
+			agentId?: string
+			label?: string
+			inList?: boolean
+			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
+			after?: boolean
+		},
+	) => ReactNode
+	/**
+	 * Draws a link to an object that is not replaced by a card as a chip, or `fallback` (the
+	 * original link) while it cannot. Keep its identity stable.
+	 */
+	renderChip?: (
+		target: LinkedTarget,
+		fallback: ReactNode,
+		context: { workspaceId: string },
 	) => ReactNode
 }
 
@@ -460,6 +479,7 @@ function TextareaMarkdownContent({
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
+	const chipRenderer = linkedCardsOption?.renderChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
@@ -469,13 +489,14 @@ function TextareaMarkdownContent({
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						renderCard: cardsRenderer,
+						renderChip: chipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer],
+		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer, chipRenderer],
 	)
-	// With linkedCards on, a paragraph or list item that is only a link to a draft or a
-	// previewable file renders as its card; the original element is what shows until the
-	// card is known to qualify, so a link never vanishes.
+	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
+	// any other link to an object as a chip; the original element is what shows until the card or
+	// chip is known to apply, so a link never vanishes.
 	const getComponentOverrides = useMemo(() => {
 		if (!linkedCards) return undefined
 		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
@@ -484,6 +505,7 @@ function TextareaMarkdownContent({
 			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
 				...linkedCards,
 				label: card.label ?? undefined,
+				inList: card.inList,
 			})
 		}
 		return ({ wrap }: ComponentOverridesContext) =>
@@ -493,6 +515,28 @@ function TextareaMarkdownContent({
 				li: ({ children }: { children?: ReactNode }) => (
 					<li className={CARD_ITEM_CLASS}>{wrap(children)}</li>
 				),
+				a: ({
+					node,
+					href,
+					children,
+					...rest
+				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					// Same as the renderer's own link: an address on the web opens in a new tab.
+					const external = typeof href === 'string' && /^https?:\/\//.test(href)
+					const link = (
+						<a
+							{...rest}
+							href={href}
+							{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+						>
+							{wrap(children)}
+						</a>
+					)
+					const target = node?.data?.linkedChip ? targetOfHref(href) : null
+					return target && linkedCards.renderChip
+						? linkedCards.renderChip(target, link, linkedCards)
+						: link
+				},
 				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
 					const list = (key: string) =>
 						String(node?.properties?.[key] ?? '')
@@ -502,7 +546,10 @@ function TextareaMarkdownContent({
 						<>
 							{list('objects').map((id) => (
 								<Fragment key={`object:${id}`}>
-									{linkedCards.renderCard({ kind: 'object', id }, null, linkedCards)}
+									{linkedCards.renderCard({ kind: 'object', id }, null, {
+										...linkedCards,
+										after: true,
+									})}
 								</Fragment>
 							))}
 							{list('files').map((id) => (
