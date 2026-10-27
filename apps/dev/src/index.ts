@@ -37,6 +37,7 @@ import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
+import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -264,6 +265,9 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Daily budget 1a: one summary event per workspace per day, no model call.
+const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
+dailyBudgetSummaryScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
@@ -457,6 +461,7 @@ const shutdown = async (signal: string) => {
 	notificationPush.stop()
 	briefingPushScheduler.stop()
 	lifecyclePushScheduler.stop()
+	dailyBudgetSummaryScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.
