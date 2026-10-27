@@ -26,7 +26,9 @@ vi.mock('@/hooks/use-actors', () => ({
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
 }))
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: { settings: { statuses: { task: ['backlog', 'in_review', 'done'] } } },
 	}),
