@@ -50,6 +50,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { MASTER_CHAT_FULL_MESSAGE, wouldWidenMasterChat } from '../services/master-chat'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -939,6 +940,10 @@ const addParticipantsRoute = createRoute({
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The conversation is a master chat, which only ever holds its own two people',
+		},
 	},
 })
 
@@ -953,6 +958,10 @@ app.openapi(addParticipantsRoute, (async (c) => {
 	const row = await loadConversationWithAuth(db, id, callerId)
 	if (!row || row.conversation.workspaceId !== workspaceId) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	if (await wouldWidenMasterChat(db, id, body.actor_ids)) {
+		return c.json(createApiError('CONFLICT', MASTER_CHAT_FULL_MESSAGE), 409)
 	}
 
 	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, body.actor_ids)
@@ -1171,6 +1180,10 @@ const postMessageRoute = createRoute({
 			description: 'Body contains a raw secret (RAW_SECRET_DETECTED)',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The message mentions someone who cannot join this master chat',
+		},
 	},
 })
 
@@ -1199,6 +1212,12 @@ app.openapi(postMessageRoute, (async (c) => {
 		entityId: id,
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
+
+	// A mention pulls the person or agent into the chat. A master chat only ever holds its two
+	// people, so refuse before anything is posted rather than after.
+	if (await wouldWidenMasterChat(db, id, body.metadata?.mentions ?? [])) {
+		return c.json(createApiError('CONFLICT', MASTER_CHAT_FULL_MESSAGE), 409)
+	}
 
 	// Stamp session_id only when the caller is the agent that ran that
 	// session, for this same conversation — otherwise silently drop it
