@@ -111,6 +111,16 @@ export const FLAGS = {
 	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
+	/**
+	 * Gates the redesigned search page (bet
+	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
+	 * Frontend only, read once in the search route component, which swaps the
+	 * legacy page for the v2 page. Off means the page behaves as before. The
+	 * search endpoint, the shared types and the analytics events are not flagged:
+	 * they are additive and safe for everyone. Stays off until the 14-day
+	 * baseline has run. Retire once search v2 is on for everyone.
+	 */
+	SEARCH_V2: 'search-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

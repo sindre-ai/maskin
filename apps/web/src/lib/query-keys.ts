@@ -6,6 +6,10 @@ export const queryKeys = {
 	webPush: {
 		config: () => ['web-push', 'config'] as const,
 	},
+	search: {
+		results: (workspaceId: string, params?: Record<string, unknown>) =>
+			['search', workspaceId, 'results', params] as const,
+	},
 	objects: {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>

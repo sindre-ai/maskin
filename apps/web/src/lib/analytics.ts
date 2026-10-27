@@ -595,6 +595,16 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 
 export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
 
+// Which search UI produced the event. Events from the old page and launcher carry
+// 'legacy' (or nothing, when they predate the field), so the two stay comparable.
+export type SearchUiVersion = 'legacy' | 'v2'
+
+// How a v2 search began: typed in the field, restored from the URL, handed over
+// from the launcher, or picked from the recent searches.
+export type SearchEntry = 'typed' | 'url' | 'palette_handover' | 'recent'
+
+export type SearchSortKey = 'rel' | 'recent' | 'az'
+
 // Fires once per settled query on either surface. Never carries the query text
 // (queries can name customers and PostHog is a third party): only its length
 // and word count. `result_count` is the hook's full total across all five
@@ -609,8 +619,14 @@ export function trackSearchPerformed(p: {
 	words_count: number
 	type_filter: string | null
 	status_filter: string | null
+	// Added by the v2 page. The names above are frozen; these are new and optional.
+	ui_version?: SearchUiVersion
+	entry?: SearchEntry
+	pill_count?: number
+	filter_count?: number
+	sort?: SearchSortKey
 }): void {
-	trackEvent('search_performed', { ...p, source: 'web' })
+	trackEvent('search_performed', { ...p, ui_version: p.ui_version ?? 'legacy', source: 'web' })
 }
 
 // Fires for every result row on both surfaces. `search_id` joins the open to
@@ -626,10 +642,12 @@ export function trackSearchResultOpened(
 		result_count: number
 		position: number
 		result_group: SearchResultGroup
+		ui_version?: SearchUiVersion
 	},
 ): void {
 	trackEvent('search_result_opened', {
 		...fillBase(p),
+		ui_version: p.ui_version ?? 'legacy',
 		surface: p.surface,
 		search_id: p.search_id,
 		has_query: p.has_query,
@@ -637,6 +655,26 @@ export function trackSearchResultOpened(
 		position: p.position,
 		result_group: p.result_group,
 	})
+}
+
+export type SearchFilterDimension = 'type' | 'status' | 'updated' | 'sort' | 'clear'
+export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
+export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
+export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
+
+// Fires when a person changes a search filter on the v2 page: a chip, a pill, the
+// Display menu or Clear filters. Never fires for a change that comes from the URL
+// (a reload, back, a hand-over). `value` is a type key, a status group key or a
+// sort / updated key, empty for a clear. Never carries the query text.
+export function trackSearchFilterChanged(p: {
+	surface: SearchSurface
+	dimension: SearchFilterDimension
+	action: SearchFilterAction
+	value: string
+	kind: SearchFilterKind
+	via: SearchFilterVia
+}): void {
+	trackEvent('search_filter_changed', { ...p, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when

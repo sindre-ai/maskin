@@ -12,6 +12,7 @@ import type {
 	NeededTool,
 	ObjectFacetsResponse,
 	SafeMetadata,
+	SearchResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	SuggestedStep,
@@ -96,10 +97,12 @@ type RequestOptions = {
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
 	 *  requires it back to prove the same browser started the flow. */
 	credentials?: RequestCredentials
+	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
+	signal?: AbortSignal
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -129,6 +132,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
+			...(signal ? { signal } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -283,6 +287,17 @@ function uploadFileWithProgress(
 
 // Objects
 export const api = {
+	// The unified search endpoint: all five sources, true counts, AND matching.
+	search: {
+		query: (
+			workspaceId: string,
+			params: Record<string, string>,
+			opts?: { signal?: AbortSignal },
+		) => {
+			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
+			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
+		},
+	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''

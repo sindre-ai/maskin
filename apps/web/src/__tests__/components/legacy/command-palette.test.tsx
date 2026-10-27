@@ -1,10 +1,10 @@
-import { CommandPalette } from '@/components/command-palette'
-import type { SearchRow } from '@/hooks/use-workspace-search'
+import { CommandPalette } from '@/components/legacy/command-palette'
+import type { SearchRow } from '@/hooks/legacy/use-workspace-search'
 import { pushRecentObject } from '@/lib/search-recents'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { buildObjectResponse } from '../factories'
+import { buildObjectResponse } from '../../factories'
 
 // cmdk uses ResizeObserver and scrollIntoView internally. Established here and
 // re-established in beforeEach so `vi.restoreAllMocks()` in any single test
@@ -43,7 +43,7 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObjects: vi.fn(() => ({ data: [] })),
 }))
 
-vi.mock('@/hooks/use-workspace-search', () => ({
+vi.mock('@/hooks/legacy/use-workspace-search', () => ({
 	useWorkspaceSearch: vi.fn(() => ({ rows: [], isSettled: true })),
 }))
 
@@ -102,12 +102,12 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
+import { useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 import { useActors } from '@/hooks/use-actors'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjects } from '@/hooks/use-objects'
 import { useUnread } from '@/hooks/use-subscriptions'
-import { useWorkspaceSearch } from '@/hooks/use-workspace-search'
 
 function buildSearchRow(overrides: Partial<SearchRow> = {}): SearchRow {
 	return {

@@ -40,7 +40,7 @@ vi.mock('@/hooks/use-conversations', () => ({
 	},
 }))
 
-import { matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
+import { matches, useWorkspaceSearch } from '@/hooks/legacy/use-workspace-search'
 
 beforeEach(() => {
 	objectsRef.current = { data: [] }

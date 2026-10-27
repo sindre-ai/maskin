@@ -42232,6 +42232,340 @@
 				}
 			}
 		},
+		"/api/search": {
+			"get": {
+				"tags": [
+					"Search"
+				],
+				"summary": "Search chats, loops, agents, objects and automations together",
+				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "q",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 50,
+								"pattern": "^[a-z][a-z0-9_]*$"
+							},
+							"maxItems": 30
+						},
+						"required": false,
+						"name": "types",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"enum": [
+									"needs_you",
+									"in_progress",
+									"new",
+									"done",
+									"archived"
+								]
+							},
+							"maxItems": 5
+						},
+						"required": false,
+						"name": "statuses",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "updated_after",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"rel",
+								"recent",
+								"az"
+							],
+							"default": "rel"
+						},
+						"required": false,
+						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 150,
+							"default": 150
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Results with true counts",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"results": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"group": {
+														"type": "string",
+														"enum": [
+															"chats",
+															"loops",
+															"agents",
+															"objects",
+															"automations"
+														]
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": "string"
+													},
+													"sub": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"snippet": {
+														"type": [
+															"string",
+															"null"
+														],
+														"maxLength": 160
+													},
+													"status": {
+														"type": "string"
+													},
+													"statusGroup": {
+														"type": "string",
+														"enum": [
+															"needs_you",
+															"in_progress",
+															"new",
+															"done",
+															"archived"
+														]
+													},
+													"updatedAt": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													}
+												},
+												"required": [
+													"id",
+													"group",
+													"type",
+													"title",
+													"sub",
+													"snippet",
+													"status",
+													"statusGroup",
+													"updatedAt"
+												]
+											},
+											"maxItems": 150
+										},
+										"total": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"capped": {
+											"type": "boolean"
+										},
+										"facets": {
+											"type": "object",
+											"properties": {
+												"types": {
+													"type": "object",
+													"additionalProperties": {
+														"type": "integer",
+														"minimum": 0
+													}
+												},
+												"statuses": {
+													"type": "object",
+													"properties": {
+														"needs_you": {
+															"type": "integer",
+															"minimum": 0
+														},
+														"in_progress": {
+															"type": "integer",
+															"minimum": 0
+														},
+														"new": {
+															"type": "integer",
+															"minimum": 0
+														},
+														"done": {
+															"type": "integer",
+															"minimum": 0
+														},
+														"archived": {
+															"type": "integer",
+															"minimum": 0
+														}
+													},
+													"required": [
+														"needs_you",
+														"in_progress",
+														"new",
+														"done",
+														"archived"
+													]
+												}
+											},
+											"required": [
+												"types",
+												"statuses"
+											]
+										},
+										"relaxed": {
+											"type": "object",
+											"properties": {
+												"withoutFilters": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"withoutStatuses": {
+													"type": "integer",
+													"minimum": 0
+												}
+											},
+											"required": [
+												"withoutFilters",
+												"withoutStatuses"
+											]
+										},
+										"partial": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"chats",
+													"loops",
+													"agents",
+													"objects",
+													"automations"
+												]
+											}
+										}
+									},
+									"required": [
+										"results",
+										"total",
+										"capped",
+										"facets",
+										"relaxed",
+										"partial"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid query",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions": {
 			"post": {
 				"x-viewer-policy": "writer",

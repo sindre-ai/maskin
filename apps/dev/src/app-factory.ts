@@ -74,6 +74,7 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import searchRoutes from './routes/search'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -474,6 +475,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/conversations', conversationsRoutes)
+	app.route('/api/search', searchRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildObjectResponse, buildWorkspaceWithRole } from '../factories'
+import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
 // URL is the source of truth for the search view: the input syncs from
 // `search.q`, and every filter interaction commits back through navigate().
@@ -30,7 +30,7 @@ const triggersRef = vi.hoisted(() => ({ current: { data: [] as unknown[] } }))
 const conversationsRef = vi.hoisted(() => ({ current: { data: undefined as unknown } }))
 
 vi.mock('@tanstack/react-router', async () => {
-	const { mockTanStackRouter } = await import('../mocks/router')
+	const { mockTanStackRouter } = await import('../../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => options,
