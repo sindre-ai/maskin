@@ -11,7 +11,14 @@ import { defaultTypeColor, statusLabel, typeColors } from '@/lib/constants'
 import { plainSnippet, showsObjectCard } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight } from 'lucide-react'
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from 'react'
 
 const HOVER =
 	'transition-colors duration-180 ease-standard hover:border-border-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
@@ -94,7 +101,10 @@ function ChipPreview({
 	useLayoutEffect(() => {
 		if (shown && root.current) {
 			setAlignEnd(
-				previewOverflows(root.current.getBoundingClientRect(), document.documentElement.clientWidth),
+				previewOverflows(
+					root.current.getBoundingClientRect(),
+					document.documentElement.clientWidth,
+				),
 			)
 		}
 	}, [shown])
