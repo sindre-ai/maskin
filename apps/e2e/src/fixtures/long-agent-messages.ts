@@ -18,6 +18,8 @@ export interface FixtureObject {
 	status: string
 	/** Plain words, one to three sentences: what a card shows under the title. */
 	content: string
+	/** A message a person approves before it goes out: made as a task an integration can deliver. */
+	draft?: boolean
 }
 
 export interface LongAgentMessage {
@@ -34,7 +36,7 @@ export function renderLongMessage(
 	workspaceId: string,
 	idsByKey: Record<string, string>,
 ): string {
-	return message.body.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+	return message.body.replace(/\{\{([\w-]+)\}\}/g, (_, key: string) => {
 		const id = idsByKey[key]
 		if (!id) throw new Error(`Fixture "${message.name}" has no object for {{${key}}}`)
 		return `/${workspaceId}/objects/${id}`
@@ -66,7 +68,8 @@ export const STATUS_REPORT_MESSAGE: LongAgentMessage = {
 			type: 'bet',
 			title: 'One ferry for every device',
 			status: 'define',
-			content: 'Every signed-in device gets its own key, so one lost device does not log out the rest.',
+			content:
+				'Every signed-in device gets its own key, so one lost device does not log out the rest.',
 		},
 		{
 			key: 'lantern',
@@ -141,7 +144,8 @@ export const REVIEW_TABLE_MESSAGE: LongAgentMessage = {
 			type: 'insight',
 			title: 'People lose their place after a long reply',
 			status: 'new',
-			content: 'Three people said they scroll back up to find the thing the agent was talking about.',
+			content:
+				'Three people said they scroll back up to find the thing the agent was talking about.',
 		},
 		{
 			key: 'chart',
@@ -277,6 +281,143 @@ export const TEN_LINK_MESSAGE: LongAgentMessage = {
 		'[How a draft becomes a sent email]({{l9}})',
 		'Last, some cleanup.\n[Archive the old pier notes]({{l10}})',
 		'None of this needs a decision from you today. Tell me which one to start with and I will hand it on.',
+	].join('\n\n'),
+}
+
+/**
+ * The long message in the designer's clickable prototype: a short opening, four bets each alone
+ * on a line, the build task and a page each alone on a line, a draft for approval, a closing line.
+ * Every title and text is invented here. The prototype's contact is left out: it is an object like
+ * any other to the card, and this workspace has no contact type.
+ */
+export const PROTOTYPE_LONG_MESSAGE: LongAgentMessage = {
+	name: 'prototype long message',
+	shape:
+		'Opening of two sentences, a lead-in line and four bets each alone on a line, a lead-in line and a task and a page each alone on a line, a lead-in line and a draft alone on a line, one closing sentence.',
+	objects: [
+		{
+			key: 'p1',
+			type: 'bet',
+			title: 'Weather vane for the weekly plan',
+			status: 'define',
+			content:
+				'The weekly plan shows which way the week is leaning, so people see changes before they hit.',
+		},
+		{
+			key: 'p2',
+			type: 'bet',
+			title: 'Lighthouse tags for page titles',
+			status: 'active',
+			content: 'Pages carry a clear title when someone pastes the address into another tool.',
+		},
+		{
+			key: 'p3',
+			type: 'bet',
+			title: 'Ledger that agrees to the cent',
+			status: 'active',
+			content: 'Totals on the dashboard and in the export match, down to the last digit.',
+		},
+		{
+			key: 'p4',
+			type: 'bet',
+			title: 'One stamp per chat',
+			status: 'active',
+			content: 'A stamp no longer repeats under every message in the same chat.',
+		},
+		{
+			key: 'p5',
+			type: 'task',
+			title: 'Place the stamp by how many links a message has',
+			status: 'in_progress',
+			content: 'Count the links when the message is placed. Nothing changes size after it loads.',
+		},
+		{
+			key: 'p6',
+			type: 'knowledge',
+			title: 'What counts as a win for the stamp bet',
+			status: 'draft',
+			content: 'A win is a clean run at three widths. A loss is one complaint about clutter.',
+		},
+		{
+			key: 'p7',
+			type: 'task',
+			title: 'Reply to the harbour office about timing',
+			status: 'todo',
+			content: 'Hello, thanks for the quick answer. We can start on the ninth with a team of six.',
+			draft: true,
+		},
+	],
+	body: [
+		'Short version: the bet is at the first stage and the design is the last open item. Everything below is linked so you can open it.',
+		'Related bets in flight:',
+		'[Weather vane for the weekly plan]({{p1}})',
+		'[Lighthouse tags for page titles]({{p2}})',
+		'[Ledger that agrees to the cent]({{p3}})',
+		'[One stamp per chat]({{p4}})',
+		'The open build task and the page with the win and loss rules:',
+		'[Place the stamp by how many links a message has]({{p5}})',
+		'[What counts as a win for the stamp bet]({{p6}})',
+		'The harbour office asked about timing, so I drafted the reply. It needs your yes:',
+		'[Reply to the harbour office about timing]({{p7}})',
+		'Nothing else is blocked on you.',
+	].join('\n\n'),
+}
+
+/**
+ * A draft sits between plain objects, each alone on a line. A draft shares the cap of three
+ * cards a message with the other cards, so the bet, the draft and the task are drawn and the two
+ * links after them are chips.
+ */
+export const DRAFT_IN_CAP_MESSAGE: LongAgentMessage = {
+	name: 'a draft among five objects on their own lines',
+	shape:
+		'One opening sentence, then five links each alone on a line with a short lead-in, the second of them a draft, then one closing sentence.',
+	objects: [
+		{
+			key: 'c1',
+			type: 'bet',
+			title: 'Raft for the quiet weekend',
+			status: 'active',
+			content: 'Weekend alerts only reach you when something is on fire.',
+		},
+		{
+			key: 'c2',
+			type: 'task',
+			title: 'Note to the dock manager',
+			status: 'todo',
+			content: 'Hello, could we move the handover to Tuesday? It fits the delivery better.',
+			draft: true,
+		},
+		{
+			key: 'c3',
+			type: 'task',
+			title: 'Count the spare keys',
+			status: 'in_progress',
+			content: 'Check the cabinet and write down how many are missing.',
+		},
+		{
+			key: 'c4',
+			type: 'insight',
+			title: 'Handover notes get lost on Fridays',
+			status: 'new',
+			content: 'Two people said the Friday notes were gone by Monday.',
+		},
+		{
+			key: 'c5',
+			type: 'knowledge',
+			title: 'How the weekend rota works',
+			status: 'draft',
+			content: 'The rota is set on Wednesday and shared with everyone on the team.',
+		},
+	],
+	body: [
+		'Five things came up while I went through the weekend plan.',
+		'The big one first:\n[Raft for the quiet weekend]({{c1}})',
+		'This needs your yes before it goes out:\n[Note to the dock manager]({{c2}})',
+		'A small job to start on:\n[Count the spare keys]({{c3}})',
+		'Something people told us:\n[Handover notes get lost on Fridays]({{c4}})',
+		'The page to read first:\n[How the weekend rota works]({{c5}})',
+		'Tell me which one to pick up and I will hand it on.',
 	].join('\n\n'),
 }
 
