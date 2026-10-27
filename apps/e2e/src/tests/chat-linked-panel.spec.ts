@@ -6,7 +6,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * The Overview drawer's Items tab: everything the chat's messages link to, worked on in one
  * place. An agent message links a LinkedIn draft, a contact and a markdown file; the drawer
- * counts them, draws the draft as a card with Approve, the contact as a compact row and the
+ * counts them, draws the draft as a card with Approve, the contact as the reference card and the
  * file as itself.
  */
 
