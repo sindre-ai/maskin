@@ -216,6 +216,8 @@ describe('POST /api/integrations/byo-login', () => {
 		['a password with a line break', { password: 'abc\ndef' }],
 		['a username with surrounding whitespace', { username: ' someone ' }],
 		['a missing username', { username: undefined }],
+		['an empty email', { email: '' }],
+		['an email with surrounding whitespace', { email: ' me@work.test ' }],
 	])('refuses %s with a 400 that never repeats the value', async (_label, override) => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)
@@ -365,6 +367,30 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 
 		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME).toBe(USERNAME)
 		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+	})
+
+	it('gives the email as _EMAIL only for a login saved with one', async () => {
+		const s = await setupWithAgent()
+		await vaultLogin(s, 'e-conomic')
+		const withEmail = await post(
+			appFor(s.human),
+			'byo-login',
+			s.ws.id,
+			loginBody({ displayName: 'Dinero', email: 'me@work.test' }),
+		)
+		expect(withEmail.status).toBe(201)
+		const { integrationId } = (await withEmail.json()) as { integrationId: string }
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId,
+			actorId: s.agent.id,
+		})
+
+		const env = await launchEnv(s.session)
+
+		expect(env.KEYCHAIN_BYO_LOGIN_DINERO_EMAIL).toBe('me@work.test')
+		expect(env.KEYCHAIN_BYO_LOGIN_DINERO_USERNAME).toBe(USERNAME)
+		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_EMAIL).toBeUndefined()
 	})
 
 	it('gives an agent that was not ticked nothing', async () => {

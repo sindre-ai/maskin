@@ -132,6 +132,14 @@ export const FLAGS = {
 	 * baseline has run. Retire once search v2 is on for everyone.
 	 */
 	SEARCH_V2: 'search-v2',
+	/**
+	 * Gates the optional Email field on a Keychain login, in the add-credential form and the
+	 * edit dialog. Frontend only, read once in each. Off means a login is a username and a
+	 * password as before. The API accepts an email, and agents get it as
+	 * KEYCHAIN_BYO_LOGIN_<NAME>_EMAIL only when one was saved, so nothing changes for a login
+	 * saved without one. Retire once the field is on for everyone.
+	 */
+	KEYCHAIN_LOGIN_EMAIL: 'keychain-login-email',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

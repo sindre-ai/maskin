@@ -2,9 +2,9 @@ import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { encryptEnvelope } from '../crypto'
+import { decryptStoredCredential, encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
-import { encodeLogin } from './byo-login'
+import { type LoginFields, decodeLogin, encodeLogin } from './byo-login'
 import { insertCredentialAccessLog } from './credential-audit'
 import { assertSlugFree, assertValidCredentialName, lockCredentialSlug } from './credential-name'
 import { assertValidCredentialValue } from './credential-value'
@@ -19,8 +19,11 @@ export interface CredentialUpdateInput {
 	displayName?: string
 	/** A new API key. Only for a key. Consumed here, never stored in the clear, logged or put on an event. */
 	rawSecret?: string
-	/** A new username and password, together. Only for a login. */
-	login?: { username: string; password: string }
+	/**
+	 * Any of a new username, password and email. Only for a login. What is left out stays as saved.
+	 * An email is added or replaced here, not removed.
+	 */
+	login?: Partial<LoginFields>
 }
 
 export type CredentialUpdateOutcome =
@@ -29,10 +32,13 @@ export type CredentialUpdateOutcome =
 	| { kind: 'forbidden' }
 	| { kind: 'not_editable' }
 	| { kind: 'wrong_shape' }
+	| { kind: 'unreadable_login' }
 
 /**
- * Renames a saved key or login, replaces its secret, or both. Only an active key or login: an OAuth
- * connection is reconnected on the Integrations page, and a removed one has no secret left.
+ * Renames a saved key or login, replaces its secret, or both. A login may change one part (just the
+ * password, say): the rest is read from the saved login and written back with it. Only an active
+ * key or login: an OAuth connection is reconnected on the Integrations page, and a removed one has
+ * no secret left.
  *
  * The name is the env var an agent reads (KEYCHAIN_BYO_APIKEY_<NAME>), so a rename changes what
  * agents and tool servers must call it. The new name goes through the same rule and uniqueness as
@@ -52,7 +58,6 @@ export async function updateCredential(
 	// Validate before anything is read or encrypted. Messages never repeat a value.
 	if (input.displayName !== undefined) assertValidCredentialName(input.displayName)
 	if (input.rawSecret !== undefined) assertValidCredentialValue(input.rawSecret)
-	if (input.login) assertValidLoginFields(input.login.username, input.login.password)
 
 	const [row] = await db
 		.select({
@@ -61,6 +66,8 @@ export async function updateCredential(
 			status: integrations.status,
 			displayName: integrations.displayName,
 			source: integrations.source,
+			credentials: integrations.credentials,
+			dekCiphertext: integrations.dekCiphertext,
 		})
 		.from(integrations)
 		.where(and(eq(integrations.id, integrationId), eq(integrations.workspaceId, workspaceId)))
@@ -81,6 +88,20 @@ export async function updateCredential(
 		return { kind: 'wrong_shape' }
 	}
 
+	// A login changes a part at a time, so start from what is saved. Validate the whole result: the
+	// saved parts passed the rules when they were saved, the new ones are checked here.
+	let login: LoginFields | undefined
+	if (input.login) {
+		const saved = decodeLogin(await decryptStoredCredential(kms, { workspaceId, ...row }))
+		const username = input.login.username ?? saved?.username
+		const password = input.login.password ?? saved?.password
+		const email = input.login.email ?? saved?.email
+		// A login that cannot be read can still be replaced whole, but not changed a part at a time.
+		if (username === undefined || password === undefined) return { kind: 'unreadable_login' }
+		login = { username, password, ...(email !== undefined ? { email } : {}) }
+		assertValidLoginFields(login.username, login.password, login.email)
+	}
+
 	const renamed = input.displayName !== undefined && input.displayName !== row.displayName
 	if (renamed && input.displayName !== undefined) {
 		await assertSlugFree(db, workspaceId, input.displayName, integrationId)
@@ -90,7 +111,7 @@ export async function updateCredential(
 		? await encryptEnvelope(
 				kms,
 				workspaceId,
-				input.login ? encodeLogin(input.login) : (input.rawSecret as string),
+				login ? encodeLogin(login) : (input.rawSecret as string),
 			)
 		: null
 

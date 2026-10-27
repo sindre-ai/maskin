@@ -747,7 +747,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -762,6 +762,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(

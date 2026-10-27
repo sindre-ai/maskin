@@ -3474,6 +3474,7 @@ ${cont.continues_prompt}
 					}
 					env[loginNames.username] = login.username
 					env[loginNames.password] = login.password
+					if (login.email !== undefined) env[loginNames.email] = login.email
 				} else {
 					env[name] = credential.value
 				}
