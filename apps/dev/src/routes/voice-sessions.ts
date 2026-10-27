@@ -41,6 +41,7 @@ import {
 	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
 import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
+import { VOICE_SHOW_IN_CHAT_TOOL, voiceShowInChatTool } from '../services/voice-show-in-chat'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
 import { withConfirmationArg } from '../services/voice-write-gate'
 
@@ -549,10 +550,13 @@ app.openapi(postOfferRoute, async (c) => {
 		await releasePendingSession(db, session.id)
 		throw err
 	}
+	// show_in_chat is the call's own tool (see services/voice-show-in-chat.ts): not in the MCP
+	// toolkit, and not a write, so it takes no confirmation_id and is never held.
+	const readOnlyTools = new Set([...toolkit.readOnlyTools, VOICE_SHOW_IN_CHAT_TOOL])
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
+			tools: withConfirmationArg([...toolkit.tools, voiceShowInChatTool], readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
@@ -657,7 +661,7 @@ app.openapi(postOfferRoute, async (c) => {
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
-			readOnlyTools: toolkit.readOnlyTools,
+			readOnlyTools,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,

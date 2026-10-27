@@ -29,6 +29,12 @@ vi.mock('../../lib/sentry-voice', () => ({
 	captureVoiceException: (...args: unknown[]) => captureException(...args),
 }))
 
+const showInChat = vi.fn()
+vi.mock('../../services/voice-show-in-chat', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/voice-show-in-chat')>()),
+	showInChat: (...args: unknown[]) => showInChat(...args),
+}))
+
 const { createVoiceChannel } = await import('../../services/voice-session-channel')
 type Channel = ReturnType<typeof createVoiceChannel>
 
@@ -95,6 +101,7 @@ beforeEach(() => {
 	recordToolCall.mockReset()
 	captureException.mockReset()
 	writeLine.mockReset()
+	showInChat.mockReset()
 	persistenceEnabled.mockReset().mockResolvedValue(true)
 })
 
@@ -567,5 +574,34 @@ describe('voice channel — a risky write waits for the person to say yes', () =
 		const { invoke, toolCall } = writeSetup()
 		await toolCall('get_objects', { ids: [ENTITY] })
 		expect(invoke).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('voice channel — show_in_chat', () => {
+	const CONV = '8ec06d7f-ea92-4476-90b3-af5c2b46d997'
+
+	it('posts into the call chat itself and never reaches the MCP server', async () => {
+		showInChat.mockResolvedValue({ conversationId: CONV, messageId: 7 })
+		const { toolCall, sent, invokeTool } = setup()
+		await toolCall('show_in_chat', { object_ids: [ENTITY], workspace_id: OTHER_WORKSPACE })
+
+		expect(invokeTool).not.toHaveBeenCalled()
+		const args = showInChat.mock.calls[0]?.[0]
+		expect(args.session).toBe(session)
+		// The session decides where it writes; a workspace_id the model passes is not read.
+		expect(args.session.workspaceId).toBe(WORKSPACE)
+		expect(sent).toContainEqual({ type: 'conversation', conversation_id: CONV })
+		const result = sent.find((m) => m.type === 'tool_result')
+		expect(result).toMatchObject({ ok: true, error_code: null })
+	})
+
+	it('hands a refusal back to the model as a failed call', async () => {
+		const { VoiceShowInChatError } = await import('../../services/voice-show-in-chat')
+		showInChat.mockRejectedValue(new VoiceShowInChatError('Show at most 5 things.'))
+		const { toolCall, sent } = setup()
+		await toolCall('show_in_chat', { links: [] })
+		const result = sent.find((m) => m.type === 'tool_result') as { ok: boolean; event: never }
+		expect(result.ok).toBe(false)
+		expect(JSON.stringify(result.event)).toContain('Show at most 5 things.')
 	})
 })

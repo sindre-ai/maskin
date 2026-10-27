@@ -128,6 +128,12 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_WRITE_CONFIRMATION).toContain('confirmation_id')
 	})
 
+	it('tells the agent to show drafts, lists and links in the chat instead of reading them out', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('show_in_chat')
+		expect(VOICE_CALL_CONDUCT).toContain('short summary')
+		expect(VOICE_CALL_CONDUCT).toContain('never read an address out loud')
+	})
+
 	it('keeps the agent prompt first, then skills, then the earlier chat', () => {
 		const text = buildVoiceInstructions({
 			...base,
