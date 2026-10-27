@@ -8160,6 +8160,8 @@ public enum Operations {
                         public var role: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/voice_enabled`.
                         public var voice_enabled: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/avatar_url`.
+                        public var avatar_url: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8208,6 +8210,7 @@ public enum Operations {
                         ///   - createdAt:
                         ///   - role:
                         ///   - voice_enabled:
+                        ///   - avatar_url:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8221,6 +8224,7 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             role: Swift.String? = nil,
                             voice_enabled: Swift.Bool? = nil,
+                            avatar_url: Swift.String? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8234,6 +8238,7 @@ public enum Operations {
                             self.createdAt = createdAt
                             self.role = role
                             self.voice_enabled = voice_enabled
+                            self.avatar_url = avatar_url
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8248,6 +8253,7 @@ public enum Operations {
                             case createdAt
                             case role
                             case voice_enabled
+                            case avatar_url
                             case workspaces
                             case skills
                         }
