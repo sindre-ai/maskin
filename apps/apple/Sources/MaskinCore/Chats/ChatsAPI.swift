@@ -110,6 +110,10 @@ extension ChatAPI {
 /// A non-2xx answer from a write, kept as a status so the outbox can tell "will never work"
 /// (4xx) from "try again" (5xx, offline).
 public struct ChatsHTTPError: Error, Equatable, Sendable {
+	/// What a send refused for holding a secret says (`RAW_SECRET_DETECTED` on the server).
+	public static let rawSecretMessage =
+		"That message looks like it contains a secret, so it wasn't sent. Cut the secret out, or save it to the Keychain."
+
 	public var status: Int
 	public var message: String
 	public init(status: Int, message: String) {
