@@ -11,7 +11,7 @@
 --
 -- Lives under drizzle/down/ so the forward runner never sees it.
 
-UPDATE "objects" SET "status" = 'signal', "updated_at" = now()
+UPDATE "objects" SET "status" = 'signal'
 WHERE "type" = 'bet' AND "status" = 'opportunity';
 --> statement-breakpoint
 UPDATE "workspaces"

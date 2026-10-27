@@ -76,8 +76,10 @@ BEGIN
 	--    exactly the rows this migration moved ("events on every mutation").
 	WITH updated AS (
 		UPDATE objects
-		SET status = 'opportunity',
-			updated_at = now()
+		-- updated_at is left alone: a rename is not an edit, and bumping it would float
+		-- every moved bet to the top of "recently updated" views. The events row below
+		-- records when the change happened.
+		SET status = 'opportunity'
 		WHERE type = 'bet'
 			AND status = 'signal'
 		RETURNING id, workspace_id, created_by

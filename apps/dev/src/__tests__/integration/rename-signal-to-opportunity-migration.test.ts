@@ -66,11 +66,14 @@ describe('migration 0113_rename_bet_status_signal_to_opportunity (Integration)',
 			INSERT INTO workspace_skills (workspace_id, name, description, content, storage_key, size_bytes)
 			VALUES (${ws.id}, 'shape-bets', ${SKILL_DESCRIPTION}, ${STATUS_PROMPT}, 'k/shape-bets', 1)`
 
+		const updatedAtBefore = signalBet.updatedAt
 		await runMigration()
 
 		// 1. Bets: moved, audited, other rows untouched.
 		const [moved] = await db.select().from(objects).where(eq(objects.id, signalBet.id))
 		expect(moved.status).toBe('opportunity')
+		// A rename is not an edit: the bet must not float to the top of "recently updated".
+		expect(moved.updatedAt).toEqual(updatedAtBefore)
 		const [stillActive] = await db.select().from(objects).where(eq(objects.id, activeBet.id))
 		expect(stillActive.status).toBe('active')
 		const [insight] = await db.select().from(objects).where(eq(objects.id, otherType.id))
