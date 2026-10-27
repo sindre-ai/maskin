@@ -120,17 +120,16 @@ const RETRY_UNAVAILABLE_MESSAGE =
 
 /**
  * What the human reads when the provider's edge blocked the request (a 403
- * Cloudflare page) and the replays did not get past it. Says who blocked it,
- * because the CLI's own wording ("Failed to authenticate") points at a key
- * problem that does not exist.
+ * Cloudflare page) and the replays did not get past it. Kept short on purpose
+ * and free of the CLI's own wording ("Failed to authenticate"), which points at
+ * a key problem that does not exist. The detail stays in the session log.
  */
-const providerBlockedMessage = (provider: string): string =>
-	`${provider} briefly blocked this request. This is usually temporary. Try again in a minute, and tell us if it keeps happening.`
+const PROVIDER_BLOCKED_MESSAGE = 'Something went wrong. Try again in a minute.'
 
 /**
- * The provider's display name for the user. Only the Maskin-funded route is
- * known to be OpenRouter; any other route is the user's own endpoint, which the
- * session does not record, so it is named generically rather than guessed.
+ * The provider's display name for the session log. Only the Maskin-funded route
+ * is known to be OpenRouter; any other route is the user's own endpoint, which
+ * the session does not record, so it is named generically rather than guessed.
  */
 const providerDisplayName = (llmRoute: string): string =>
 	llmRoute === LLM_ROUTE_MASKIN_PLAN ? 'OpenRouter' : 'Your model provider'
@@ -1409,7 +1408,7 @@ export class InteractiveTurnFinalizer {
 				result,
 				logId,
 				providerBlock
-					? providerBlockedMessage(providerDisplayName(gate.llmRoute))
+					? PROVIDER_BLOCKED_MESSAGE
 					: RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
@@ -1437,7 +1436,7 @@ export class InteractiveTurnFinalizer {
 				result,
 				logId,
 				providerBlock
-					? providerBlockedMessage(providerDisplayName(gate.llmRoute))
+					? PROVIDER_BLOCKED_MESSAGE
 					: RETRY_EXHAUSTED_MESSAGE,
 				{
 					error_kind: 'transient',

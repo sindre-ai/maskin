@@ -928,7 +928,7 @@ ${surviving}
 			expect(finalOutput?.retries).toBe(2)
 		})
 
-		it('retries a provider 403 block page, then names the provider and logs it', async () => {
+		it('retries a provider 403 block page, then shows a short message and logs the provider', async () => {
 			const session = await seedSession({ config: { llm_route: 'maskin_plan' } })
 			if (!session) throw new Error('no session')
 			const { instance, calls } = withRetry()
@@ -948,7 +948,7 @@ ${surviving}
 			expect(calls).toHaveLength(2)
 			const rows = await messagesFor(conversationId)
 			expect(rows).toHaveLength(1)
-			expect(rows[0]?.content).toContain('OpenRouter briefly blocked this request')
+			expect(rows[0]?.content).toContain('Something went wrong. Try again in a minute.')
 			expect(rows[0]?.content).not.toContain('Failed to authenticate')
 
 			const logged = await db
