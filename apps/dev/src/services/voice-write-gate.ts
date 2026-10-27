@@ -391,8 +391,14 @@ export interface HoldEnd {
 	summary: string
 	state: 'declined' | 'expired' | 'superseded'
 	yesCount: number
-	/** For superseded: the tool of the call that replaced it. The same tool means the same send, asked again. */
+	/** The arguments of the held call, in a stable form. */
+	argsKey: string
+	/**
+	 * For superseded: the call that replaced it. The same tool with the same arguments means the same
+	 * send, asked again; the same tool with other arguments is a different send.
+	 */
 	replacedByTool?: string
+	replacedByArgsKey?: string
 }
 
 export interface PendingHoldInfo {
@@ -443,7 +449,11 @@ export function createWriteGate(deps: {
 		logger.info(`Voice write ${event}`, { voice_session_id: voiceSessionId, tool_name: tool })
 	}
 
-	function close(action: PendingAction, state: PendingState, replacedByTool?: string) {
+	function close(
+		action: PendingAction,
+		state: PendingState,
+		replacedBy?: { tool: string; argsKey: string },
+	) {
 		const wasOpen = action.state === 'open'
 		action.state = state
 		clearTimeout(action.timer)
@@ -457,7 +467,10 @@ export function createWriteGate(deps: {
 					summary: action.summary,
 					state,
 					yesCount: action.yesCarried + (action.answer === 'yes' ? 1 : 0),
-					...(replacedByTool ? { replacedByTool } : {}),
+					argsKey: action.argsKey,
+					...(replacedBy
+						? { replacedByTool: replacedBy.tool, replacedByArgsKey: replacedBy.argsKey }
+						: {}),
 				})
 			} catch (err) {
 				logger.warn('Voice hold-ended listener failed', {
@@ -492,7 +505,7 @@ export function createWriteGate(deps: {
 	): PendingAction {
 		if (pending) {
 			log('superseded', pending.tool)
-			close(pending, 'superseded', tool)
+			close(pending, 'superseded', { tool, argsKey })
 		}
 		const action: PendingAction = {
 			id: randomUUID(),

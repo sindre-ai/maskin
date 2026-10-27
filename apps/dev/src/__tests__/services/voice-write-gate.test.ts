@@ -581,6 +581,28 @@ describe('createWriteGate: what the call receipt reads from the gate', () => {
 		})
 	})
 
+	it('carries the held arguments, and the replacing calls, so a different send can be told apart', async () => {
+		const ended = vi.fn()
+		const { previewFor } = target('v1')
+		const gate = createWriteGate({
+			voiceSessionId: 's1',
+			isReadOnlyTool: () => false,
+			previewFor,
+			onHoldEnded: ended,
+		})
+		await gate.review(TOOL, { ...ARGS, to: 'anna' }, null)
+		await gate.review(TOOL, { ...ARGS, to: 'lars' }, null)
+		const end = ended.mock.calls[0]?.[0]
+		expect(end).toMatchObject({ state: 'superseded', replacedByTool: TOOL })
+		expect(end.argsKey).toEqual(expect.any(String))
+		expect(end.replacedByArgsKey).toEqual(expect.any(String))
+		expect(end.replacedByArgsKey).not.toBe(end.argsKey)
+		// The same arguments asked again give the same key on both sides.
+		await gate.review(TOOL, { ...ARGS, to: 'lars' }, null)
+		const again = ended.mock.calls[1]?.[0]
+		expect(again.replacedByArgsKey).toBe(again.argsKey)
+	})
+
 	it('does not tell the listener about a hold that ran', async () => {
 		const ended = vi.fn()
 		const { previewFor } = target('v1')

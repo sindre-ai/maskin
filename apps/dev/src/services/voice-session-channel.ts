@@ -272,9 +272,16 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	}
 
 	// A hold that ended without running (turned down, timed out, replaced by another request) is a
-	// write that was not done. A hold replaced by the same send asked again is not: it carries on.
+	// write that was not done. A hold replaced by the same send asked again (same tool, same
+	// arguments) is not: it carries on. Another send with the same tool is a different write.
 	function noteHoldEnded(end: HoldEnd) {
-		if (end.state === 'superseded' && end.replacedByTool === end.tool) return
+		if (
+			end.state === 'superseded' &&
+			end.replacedByTool === end.tool &&
+			end.replacedByArgsKey === end.argsKey
+		) {
+			return
+		}
 		const reason =
 			end.state === 'declined'
 				? 'You said no.'
@@ -319,12 +326,14 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		}
 		const targets = targetIdsOf(args)
 		for (const draft of drafts) {
+			// One item of a batch can fail inside a call that otherwise ran.
+			const lineOutcome = draft.outcome ?? outcome
 			const ids = draft.objectId ? [draft.objectId] : targets
-			const card = outcome === 'ran' && !readOnly ? matchStartCard(callState, ids) : null
-			if (outcome === 'ran') noteCardNamed(callState, ids)
+			const card = lineOutcome === 'ran' && !readOnly ? matchStartCard(callState, ids) : null
+			if (lineOutcome === 'ran') noteCardNamed(callState, ids)
 			const cardId = card ? cardIdOf(card) : null
-			await postReceipt(toolName, draft, outcome, {
-				reason: detail.reason,
+			await postReceipt(toolName, draft, lineOutcome, {
+				reason: draft.reason ?? detail.reason,
 				send: detail.send,
 				cardId,
 			})

@@ -747,7 +747,9 @@ describe('voice channel — receipts', () => {
 			if ((items[0] as { type?: string }).type === 'tool_result') order.push('result')
 			return original(...items)
 		}
-		await toolCall('create_objects', { objects: [{ type: 'task', title: 'Reply to Anna' }] })
+		await toolCall('create_objects', {
+			nodes: [{ $id: 'n1', type: 'task', status: 'todo', title: 'Reply to Anna' }],
+		})
 
 		expect(order).toEqual(['line', 'result'])
 		expect(receiptCalls()[0]).toMatchObject({
@@ -781,6 +783,17 @@ describe('voice channel — receipts', () => {
 		await toolCall('update_objects', { updates: [{ id: ENTITY }] })
 		expect(receiptCalls()[0]).toMatchObject({ outcome: 'failed', reason: 'API 500: boom' })
 		expect(lastResult(sent)).toMatchObject({ ok: false })
+	})
+
+	it('writes a failed line for the one item that failed inside a call that ran', async () => {
+		describeToolCall.mockResolvedValue([
+			draft,
+			{ ...draft, outcome: 'failed', reason: 'status is not allowed' },
+		])
+		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('{"results":[]}')))
+		await toolCall('update_objects', { updates: [{ id: ENTITY }, { id: ENTITY }] })
+		expect(receiptCalls().map((c) => c.outcome)).toEqual(['ran', 'failed'])
+		expect(receiptCalls()[1]?.reason).toBe('status is not allowed')
 	})
 
 	it('leaves no line for a read, for show_in_chat or for a held write', async () => {
@@ -840,8 +853,20 @@ describe('voice channel — receipts', () => {
 	it('does not record the same send asked again as not done', async () => {
 		const { toolCall } = setup(vi.fn())
 		await toolCall('gmail_send_email', { object_id: ENTITY })
-		await toolCall('gmail_send_email', { object_id: ENTITY, note: 'again' }, 'call_2')
+		await toolCall('gmail_send_email', { object_id: ENTITY }, 'call_2')
 		expect(postReceiptLine).not.toHaveBeenCalled()
+	})
+
+	it('records a hold replaced by another send with the same tool as not done', async () => {
+		const { toolCall } = setup(vi.fn())
+		await toolCall('gmail_send_email', { to: 'anna@example.com' })
+		await toolCall('gmail_send_email', { to: 'lars@example.com' }, 'call_2')
+		await vi.waitFor(() => expect(postReceiptLine).toHaveBeenCalledTimes(1))
+		expect(receiptCalls()[0]).toMatchObject({
+			tool: 'gmail_send_email',
+			outcome: 'not_done',
+			reason: 'It was replaced by a newer request.',
+		})
 	})
 
 	it('records a hold replaced by a different request as not done', async () => {
@@ -870,7 +895,7 @@ describe('voice channel — receipts', () => {
 		describeToolCall.mockResolvedValue([draft])
 		postReceiptLine.mockRejectedValue(new Error('db down'))
 		const { sent, toolCall } = setup(vi.fn().mockResolvedValue(textResult('done')))
-		await toolCall('create_objects', { objects: [] })
+		await toolCall('create_objects', { nodes: [] })
 		expect(lastResult(sent)).toMatchObject({ ok: true })
 	})
 

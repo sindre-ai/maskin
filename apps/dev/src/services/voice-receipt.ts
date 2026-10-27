@@ -46,8 +46,8 @@ export const VOICE_SUMMARY_MAX_LINES = 25
 export const VOICE_SUMMARY_MAX_CHARS = 2_000
 const TITLE_MAX = 120
 const REASON_MAX = 120
-/** Most objects a single create or update call gets a line for. */
-const LINES_PER_CALL_MAX = 5
+/** Most objects a single call gets a line for: what create_objects takes. Past it, one "Another N" line. */
+const LINES_PER_CALL_MAX = 50
 
 const oneLine = (value: string, max: number) => value.replace(/\s+/g, ' ').trim().slice(0, max)
 const escapeLabel = (text: string) => text.replace(/[[\]\\]/g, '\\$&')
@@ -69,6 +69,11 @@ export interface ReceiptDraft {
 	objectTitle: string | null
 	/** The sentence with {title} where the object's name goes. */
 	template: string
+	/** Set when this one object went differently from the call as a whole (one failed item in a batch). */
+	outcome?: ReceiptOutcome
+	reason?: string
+	/** For the overflow line: how many more writes it stands for. */
+	more?: number
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -105,16 +110,58 @@ async function lookupObjects(db: Database, workspaceId: string, ids: string[]) {
 	return new Map(rows.map((r) => [r.id, { title: r.title ?? '', type: r.type }]))
 }
 
-/** The ids a tool's JSON result reports it created, in order. Empty when the result is not that shape. */
-function createdIdsOf(resultText: string | null): string[] {
-	if (!resultText) return []
+function parseResult(resultText: string | null): Record<string, unknown> | null {
+	if (!resultText) return null
 	try {
-		const parsed = asRecord(JSON.parse(resultText))
-		const results = parsed?.results
-		if (!Array.isArray(results)) return []
-		return results.map((r) => (isUuid(asRecord(r)?.id) ? String(asRecord(r)?.id) : ''))
+		return asRecord(JSON.parse(resultText))
 	} catch {
-		return []
+		return null
+	}
+}
+
+/**
+ * The ids create_objects reports for the nodes it created ({ nodes: [{ id, $id, type, ... }], edges }),
+ * in the order the nodes were sent. Matched on $id, else by position; '' when the result has none.
+ */
+function createdIdsOf(resultText: string | null, sentIds: Array<string | null>): string[] {
+	const created = parseResult(resultText)?.nodes
+	if (!Array.isArray(created)) return sentIds.map(() => '')
+	const byTempId = new Map<string, string>()
+	for (const node of created) {
+		const n = asRecord(node)
+		if (typeof n?.$id === 'string' && isUuid(n.id)) byTempId.set(n.$id, n.id)
+	}
+	return sentIds.map((tempId, i) => {
+		const id = (tempId !== null ? byTempId.get(tempId) : undefined) ?? asRecord(created[i])?.id
+		return isUuid(id) ? id : ''
+	})
+}
+
+/**
+ * The objects update_objects reports it could not update ({ results: [{ type, id, success, error }] }),
+ * by id. The call as a whole still reads as ok when one item in the batch failed.
+ */
+function updateFailuresOf(resultText: string | null): Map<string, string> {
+	const failures = new Map<string, string>()
+	const results = parseResult(resultText)?.results
+	if (!Array.isArray(results)) return failures
+	for (const entry of results) {
+		const r = asRecord(entry)
+		if (r?.type !== 'object' || r.success !== false || typeof r.id !== 'string') continue
+		failures.set(r.id.toLowerCase(), typeof r.error === 'string' ? r.error : 'It was not updated.')
+	}
+	return failures
+}
+
+/** The line that stands for the writes of a big call that did not get a line each. */
+function overflowDraft(more: number): ReceiptDraft {
+	return {
+		event: 'other',
+		objectId: null,
+		objectType: null,
+		objectTitle: null,
+		template: `Another ${more} ${more === 1 ? 'change' : 'changes'}`,
+		more,
 	}
 }
 
@@ -136,9 +183,15 @@ export async function describeToolCall(input: {
 	const args = asRecord(input.args) ?? {}
 
 	if (tool === 'create_objects') {
-		const list = Array.isArray(args.objects) ? args.objects : []
-		const createdIds = createdIdsOf(input.resultText)
-		return list.slice(0, LINES_PER_CALL_MAX).map((entry, i) => {
+		const list = (Array.isArray(args.nodes) ? args.nodes : []).slice(0, LINES_PER_CALL_MAX)
+		const createdIds = createdIdsOf(
+			input.resultText,
+			list.map((entry) => {
+				const tempId = asRecord(entry)?.$id
+				return typeof tempId === 'string' ? tempId : null
+			}),
+		)
+		return list.map((entry, i) => {
 			const o = asRecord(entry) ?? {}
 			const type = typeof o.type === 'string' ? o.type : 'object'
 			const title = typeof o.title === 'string' ? oneLine(o.title, TITLE_MAX) : ''
@@ -157,10 +210,12 @@ export async function describeToolCall(input: {
 	const nameOf = (id: string) => oneLine(known.get(id)?.title ?? '', TITLE_MAX) || null
 
 	if (tool === 'update_objects') {
-		const updates = (Array.isArray(args.updates) ? args.updates : []).slice(0, LINES_PER_CALL_MAX)
-		return updates.map((entry) => {
+		const all = Array.isArray(args.updates) ? args.updates : []
+		const failures = updateFailuresOf(input.resultText)
+		const lines: ReceiptDraft[] = all.slice(0, LINES_PER_CALL_MAX).map((entry) => {
 			const u = asRecord(entry) ?? {}
 			const id = isUuid(u.id) ? u.id.toLowerCase() : null
+			const failure = id ? failures.get(id) : undefined
 			const type = id ? (known.get(id)?.type ?? null) : null
 			const status = typeof u.status === 'string' ? u.status : null
 			const moved = status === 'in_review' && type === 'task'
@@ -174,8 +229,10 @@ export async function describeToolCall(input: {
 					: status
 						? `Set {title} to ${statusLabel(status)}`
 						: 'Edited {title}',
+				...(failure ? { outcome: 'failed' as const, reason: failure } : {}),
 			}
 		})
+		return all.length > lines.length ? [...lines, overflowDraft(all.length - lines.length)] : lines
 	}
 
 	if (tool === 'get_objects') {
@@ -292,6 +349,7 @@ export async function postReceiptLine(input: ReceiptLineInput): Promise<string> 
 			tool: input.tool,
 			...(draft.objectType ? { object_type: draft.objectType } : {}),
 			...(draft.objectTitle ? { object_title: draft.objectTitle } : {}),
+			...(draft.more ? { more: draft.more } : {}),
 			...(input.send
 				? {
 						held: true,
@@ -336,6 +394,8 @@ export interface ReceiptRow {
 	yesCount: number | null
 	readBackMatches: boolean | null
 	cardId: string | null
+	/** Writes the line stands for beyond itself (the overflow line of a big call). */
+	more: number
 }
 
 async function loadReceiptRows(
@@ -370,6 +430,7 @@ async function loadReceiptRows(
 			yesCount: typeof m.yes_count === 'number' ? m.yes_count : null,
 			readBackMatches: typeof m.read_back_matches === 'boolean' ? m.read_back_matches : null,
 			cardId: str('card_id'),
+			more: typeof m.more === 'number' ? m.more : 0,
 		}
 	})
 }
@@ -493,7 +554,7 @@ export async function postClosingReceipt(
 				rows.filter((r) => r.outcome === 'ran' && r.cardId).map((r) => r.cardId),
 			).size,
 			writesHeld: rows.filter((r) => r.held).length + (pending ? 1 : 0),
-			writesDone: rows.filter((r) => r.outcome === 'ran').length,
+			writesDone: rows.filter((r) => r.outcome === 'ran').reduce((n, r) => n + 1 + r.more, 0),
 			posted: false,
 		}
 		// A call that never got going leaves nothing to report and does not get a chat made for it.

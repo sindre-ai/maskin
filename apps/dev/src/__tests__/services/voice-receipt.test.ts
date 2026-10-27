@@ -1,4 +1,5 @@
 import type { Database } from '@maskin/db'
+import { tools } from '@maskin/mcp'
 import { describe, expect, it } from 'vitest'
 import {
 	type ReceiptRow,
@@ -48,6 +49,7 @@ const row = (over: Partial<ReceiptRow>): ReceiptRow => ({
 	yesCount: null,
 	readBackMatches: null,
 	cardId: null,
+	more: 0,
 	...over,
 })
 
@@ -71,18 +73,26 @@ describe('targetIdsOf', () => {
 
 describe('describeToolCall', () => {
 	it('maps create_objects to created_bet and created_task, with the new id from the result', async () => {
-		const drafts = await describe_(
-			[],
-			'create_objects',
-			{
-				objects: [
-					{ type: 'bet', title: 'Live receipts' },
-					{ type: 'task', title: 'Reply to Anna' },
-					{ type: 'insight', title: 'A gap' },
+		// The arguments and the result are the real shapes: nodes in, { nodes, edges } out.
+		const args = {
+			workspace_id: WORKSPACE,
+			nodes: [
+				{ $id: 'n1', type: 'bet', status: 'signal', title: 'Live receipts' },
+				{ $id: 'n2', type: 'task', status: 'todo', title: 'Reply to Anna' },
+				{ $id: 'n3', type: 'insight', status: 'new', title: 'A gap' },
+			],
+		}
+		expect(tools.create_objects.inputSchema.safeParse(args).success).toBe(true)
+		const drafts = await describe_([], 'create_objects', args, {
+			resultText: JSON.stringify({
+				// Returned out of order on purpose: ids are matched on $id.
+				nodes: [
+					{ id: B, $id: 'n2', type: 'task', title: 'Reply to Anna' },
+					{ id: A, $id: 'n1', type: 'bet', title: 'Live receipts' },
 				],
-			},
-			{ resultText: JSON.stringify({ results: [{ id: A }, { id: B }, { id: '' }] }) },
-		)
+				edges: [],
+			}),
+		})
 		expect(drafts.map((d) => [d.event, d.objectType, d.objectTitle, d.objectId])).toEqual([
 			['created_bet', 'bet', 'Live receipts', A],
 			['created_task', 'task', 'Reply to Anna', B],
@@ -91,9 +101,50 @@ describe('describeToolCall', () => {
 		expect(drafts[0]?.template).toBe('Created bet {title}')
 	})
 
-	it('writes at most five lines for one call', async () => {
-		const objects = Array.from({ length: 9 }, (_, i) => ({ type: 'task', title: `T${i}` }))
-		expect(await describe_([], 'create_objects', { objects })).toHaveLength(5)
+	it('gives every object of a call a line, up to what create_objects takes', async () => {
+		const nodes = Array.from({ length: 50 }, (_, i) => ({
+			$id: `n${i}`,
+			type: 'task',
+			status: 'todo',
+			title: `T${i}`,
+		}))
+		expect(await describe_([], 'create_objects', { nodes })).toHaveLength(50)
+	})
+
+	it('ends a very big update with one line that says how many more there were', async () => {
+		const updates = Array.from({ length: 53 }, () => ({ id: A, content: 'x' }))
+		const drafts = await describe_([], 'update_objects', { updates })
+		expect(drafts).toHaveLength(51)
+		expect(drafts[50]).toMatchObject({ template: 'Another 3 changes', more: 3 })
+	})
+
+	it('marks the one item that failed inside an update that otherwise ran', async () => {
+		const args = {
+			updates: [
+				{ id: A, status: 'in_review' },
+				{ id: B, status: 'nope' },
+			],
+		}
+		expect(tools.update_objects.inputSchema.safeParse(args).success).toBe(true)
+		const drafts = await describe_(
+			[
+				{ id: A, title: 'Reply to Anna', type: 'task' },
+				{ id: B, title: 'Live receipts', type: 'bet' },
+			],
+			'update_objects',
+			args,
+			{
+				resultText: JSON.stringify({
+					results: [
+						{ type: 'object', id: A, success: true, result: {} },
+						{ type: 'object', id: B, success: false, error: 'Error: status is not allowed' },
+					],
+					setup: {},
+				}),
+			},
+		)
+		expect(drafts[0]?.outcome).toBeUndefined()
+		expect(drafts[1]).toMatchObject({ outcome: 'failed', reason: 'Error: status is not allowed' })
 	})
 
 	it('maps a task moved to in_review to moved_to_review, and other updates to other', async () => {
