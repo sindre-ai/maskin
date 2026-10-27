@@ -437,6 +437,22 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 		}).catch((err) => logger.warn('desktop control event failed', { error: String(err) }))
 	}
 	c.header('Cache-Control', 'no-store')
+	// The desktop received the real value. Whatever it says back about a failed call could
+	// quote it, so the agent gets a fixed message, never the downstream body.
+	if (typedCredential && result.status !== 200) {
+		logger.warn('desktop refused a typed saved login', {
+			workspaceId,
+			agentId,
+			status: result.status,
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'The computer could not type the saved login. Nothing was shown.',
+			),
+			502,
+		)
+	}
 	return c.json(result.body, result.status)
 }
 

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { MasterKeyProvider } from '@maskin/auth/kms'
-import { credentialAccessLog } from '@maskin/db/schema'
+import { credentialAccessLog, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -131,6 +131,68 @@ describe('resolveKeychainTyping', () => {
 		expect(
 			await resolveKeychainTyping(db, s.ctx(s.granted.id), '{{keychain:Nope.password}}'),
 		).toMatchObject({ kind: 'error', status: 404 })
+	})
+
+	it('refuses a name that two saved logins share, and reads neither', async () => {
+		const s = await setup()
+		const { integrationId: other } = await createByoLogin(db, kms, {
+			workspaceId: s.ws.id,
+			actorId: s.human,
+			displayName: 'Other',
+			username: 'other-user',
+			password: 'other-pass',
+			agentIds: [s.granted.id],
+		})
+		// Creation refuses a shared name now; older rows can still hold one.
+		await db
+			.update(integrations)
+			.set({ displayName: 'Face book' })
+			.where(eq(integrations.id, other))
+		await db
+			.update(integrations)
+			.set({ displayName: 'Face-book' })
+			.where(eq(integrations.id, s.integrationId))
+
+		const result = await resolveKeychainTyping(
+			db,
+			s.ctx(s.granted.id),
+			'{{keychain:Face-book.password}}',
+		)
+
+		expect(result).toMatchObject({ kind: 'error', status: 400 })
+		expect(JSON.stringify(result)).not.toContain(PASSWORD)
+		const reads = await db
+			.select()
+			.from(credentialAccessLog)
+			.where(eq(credentialAccessLog.action, 'read'))
+		expect(reads.filter((r) => [s.integrationId, other].includes(r.integrationId))).toHaveLength(0)
+	})
+
+	it('refuses a login the owner switched off for agents, and reads nothing', async () => {
+		const s = await setup()
+		await db
+			.update(integrations)
+			.set({ config: { expose_to_agent_sessions: false } })
+			.where(eq(integrations.id, s.integrationId))
+
+		const result = await resolveKeychainTyping(
+			db,
+			s.ctx(s.granted.id),
+			'{{keychain:Facebook.password}}',
+		)
+
+		expect(result).toMatchObject({ kind: 'error', status: 403 })
+		expect(JSON.stringify(result)).not.toContain(PASSWORD)
+		const reads = await db
+			.select()
+			.from(credentialAccessLog)
+			.where(
+				and(
+					eq(credentialAccessLog.integrationId, s.integrationId),
+					eq(credentialAccessLog.action, 'read'),
+				),
+			)
+		expect(reads).toHaveLength(0)
 	})
 
 	it('leaves ordinary text alone', async () => {
