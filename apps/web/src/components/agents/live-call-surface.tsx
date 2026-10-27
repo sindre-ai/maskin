@@ -26,8 +26,13 @@ import {
 	Volume2,
 	VolumeX,
 } from 'lucide-react'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+
+// Set by the minimise button so the bar that replaces the panel takes focus;
+// without it focus falls to the page body when the button unmounts. Not set by
+// anything that remounts the bar (navigating between a thread and another page).
+let focusBarNext = false
 
 /** Seconds since `liveSince`, ticking every second. */
 function useElapsed(liveSince: number): number {
@@ -94,17 +99,25 @@ export function LiveCapsule({ className }: { className?: string }) {
 
 function LiveCapsuleInner({ view, className }: { view: VoiceCallView; className?: string }) {
 	const elapsed = useElapsed(view.liveSince)
+	// The clock changes every second, so it is hidden from assistive tech; the
+	// label states the time in whole minutes and so changes once a minute.
+	const minutes = Math.floor(elapsed / 60)
+	const label = `Live call with ${view.agent.name}, ${
+		minutes === 0 ? 'under a minute' : `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+	}`
 	return (
-		<output
-			aria-label={`Live call with ${view.agent.name}`}
+		<span
+			role="timer"
+			aria-live="off"
+			aria-label={label}
 			className={cn(
 				'inline-flex h-8 shrink-0 items-center gap-2 rounded-full bg-brand-subtle px-3 font-mono text-[13px] font-semibold text-brand-subtle-foreground md:h-9',
 				className,
 			)}
 		>
 			<span aria-hidden="true" className="size-2 rounded-full bg-brand" />
-			{formatCallClock(elapsed)}
-		</output>
+			<span aria-hidden="true">{formatCallClock(elapsed)}</span>
+		</span>
 	)
 }
 
@@ -178,6 +191,29 @@ function Caption({ view }: { view: VoiceCallView }) {
 	)
 }
 
+/** What the status line alone does not explain: a dropped connection, a muted mic. */
+function Notice({ view }: { view: VoiceCallView }) {
+	const text =
+		view.state === 'reconnecting'
+			? 'Network dipped, retrying for 15s. The call auto-resumes if we get back.'
+			: view.state === 'live-muted'
+				? 'Muted. The agent still hears silence.'
+				: null
+	if (!text) return null
+	return (
+		<output
+			className={cn(
+				'block rounded-md border px-3 py-2 text-center text-sm font-medium',
+				view.state === 'reconnecting'
+					? 'border-border bg-muted text-muted-foreground'
+					: 'border-warning/40 bg-warning/10 text-warning',
+			)}
+		>
+			{text}
+		</output>
+	)
+}
+
 /** The expanded call: a right-hand column (`panel`) or a card above the composer (`dock`). */
 function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' | 'dock' }) {
 	const elapsed = useElapsed(view.liveSince)
@@ -187,7 +223,10 @@ function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' 
 		<button
 			type="button"
 			aria-label="Minimise call"
-			onClick={() => view.setMinimized(true)}
+			onClick={() => {
+				focusBarNext = true
+				view.setMinimized(true)
+			}}
 			className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 		>
 			<ChevronDown size={18} />
@@ -215,7 +254,8 @@ function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' 
 					</span>
 					{collapse}
 				</div>
-				<div className="px-3.5">
+				<div className="flex flex-col gap-2 px-3.5">
+					<Notice view={view} />
 					<Caption view={view} />
 				</div>
 				<Controls view={view} />
@@ -246,7 +286,8 @@ function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' 
 					<Bars active={speaking} />
 					{status}
 				</p>
-				<div className="w-full">
+				<div className="flex w-full flex-col gap-2">
+					<Notice view={view} />
 					<Caption view={view} />
 				</div>
 			</div>
@@ -261,6 +302,12 @@ function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' 
 function LiveCallBar({ view, floating }: { view: VoiceCallView; floating: boolean }) {
 	const elapsed = useElapsed(view.liveSince)
 	const muted = view.state === 'live-muted'
+	const expandRef = useRef<HTMLButtonElement>(null)
+	useEffect(() => {
+		if (!focusBarNext) return
+		focusBarNext = false
+		expandRef.current?.focus()
+	}, [])
 	return (
 		<section
 			aria-label={`Call with ${view.agent.name}`}
@@ -272,6 +319,7 @@ function LiveCallBar({ view, floating }: { view: VoiceCallView; floating: boolea
 		>
 			<Bars active={view.state === 'live-agent-speaking'} />
 			<button
+				ref={expandRef}
 				type="button"
 				aria-label="Expand call"
 				onClick={() => view.setMinimized(false)}
@@ -335,7 +383,7 @@ export function LiveCallSurface() {
 	}
 
 	if (wide) return <LiveCallPanel view={view} layout="panel" />
-	// Narrow, outside a thread: nowhere to dock, so keep the call as the bar.
+	// Narrow, outside a thread: the same dock, pinned to the bottom of the screen.
 	return slot ? (
 		createPortal(
 			<div className="px-[var(--chat-gut)] pb-2">
@@ -344,6 +392,8 @@ export function LiveCallSurface() {
 			slot,
 		)
 	) : (
-		<LiveCallBar view={view} floating />
+		<div className="fixed inset-x-2 bottom-2 z-50">
+			<LiveCallPanel view={view} layout="dock" />
+		</div>
 	)
 }

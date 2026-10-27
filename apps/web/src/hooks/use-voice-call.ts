@@ -26,7 +26,6 @@ export interface VoiceCall {
 	 *  screen (mint failed, handshake failed, connection dropped). Microphone
 	 *  problems have their own states instead. */
 	notice: string | null
-	transcriptOpen: boolean
 	/** Finished turns plus tool-in-flight tags, in order, for the transcript pane. */
 	transcriptLines: VoiceTranscriptLine[]
 	/** Kick off the WebRTC handshake — call this from the Permission screen's
@@ -40,7 +39,6 @@ export interface VoiceCall {
 	/** Silence the agent's audio locally; the call and the mic carry on. */
 	speakerOn: boolean
 	toggleSpeaker: () => void
-	toggleTranscript: () => void
 	end: () => void
 }
 
@@ -73,7 +71,6 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	toastContextRef.current = { agentName, navigate }
 	const [state, setState] = useState<VoiceCallState>('permission')
 	const [notice, setNotice] = useState<string | null>(null)
-	const [transcriptOpen, setTranscriptOpen] = useState(false)
 	const [transcriptLines, setTranscriptLines] = useState<VoiceTranscriptLine[]>([])
 	const [speakerOn, setSpeakerOn] = useState(true)
 	const speakerOnRef = useRef(true)
@@ -200,7 +197,6 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		finish('user_hangup')
 		setState('permission')
 		setNotice(null)
-		setTranscriptOpen(false)
 		setTranscriptLines([])
 	}, [finish])
 
@@ -213,7 +209,6 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			finish('user_hangup')
 			setState('permission')
 			setNotice(null)
-			setTranscriptOpen(false)
 			setTranscriptLines([])
 		}
 		return () => {
@@ -433,19 +428,15 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		setSpeakerOn(next)
 	}, [])
 
-	const toggleTranscript = useCallback(() => setTranscriptOpen((v) => !v), [])
-
 	return {
 		state,
 		notice,
-		transcriptOpen,
 		transcriptLines,
 		start,
 		retryMic,
 		toggleMute,
 		speakerOn,
 		toggleSpeaker,
-		toggleTranscript,
 		end,
 	}
 }

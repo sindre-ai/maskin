@@ -20,14 +20,12 @@ function callIn(state: VoiceCallState, overrides: Partial<VoiceCall> = {}): Voic
 	return {
 		state,
 		notice: null,
-		transcriptOpen: false,
 		transcriptLines: [],
 		start: vi.fn(),
 		retryMic: vi.fn(),
 		toggleMute: vi.fn(),
 		speakerOn: true,
 		toggleSpeaker: vi.fn(),
-		toggleTranscript: vi.fn(),
 		end: vi.fn(),
 		...overrides,
 	}
@@ -97,5 +95,39 @@ describe('VoiceCallDialog — going live', () => {
 		renderDialog(callIn('live-agent-speaking'))
 		act(() => getView()?.setMinimized(true))
 		expect(getView()?.minimized).toBe(true)
+	})
+
+	it('starts the next call from zero, expanded, after the first one drops', () => {
+		vi.useFakeTimers()
+		try {
+			vi.setSystemTime(new Date('2026-10-27T10:00:00Z'))
+			mockUseVoiceCall.mockReturnValue(callIn('live-agent-speaking'))
+			// A fresh element each time: React skips an identical one, and the call's
+			// state here comes from the mocked hook.
+			const ui = () => (
+				<CommandPaletteProvider>
+					<TooltipProvider>
+						<VoiceCallDialog agent={agent} open onOpenChange={vi.fn()} />
+					</TooltipProvider>
+				</CommandPaletteProvider>
+			)
+			const { rerender } = render(ui())
+			const first = getView()?.liveSince
+			act(() => getView()?.setMinimized(true))
+			expect(getView()?.minimized).toBe(true)
+
+			// The call drops: the dialog falls back to the permission screen.
+			mockUseVoiceCall.mockReturnValue(callIn('permission'))
+			rerender(ui())
+			expect(getView()).toBeNull()
+
+			vi.setSystemTime(new Date('2026-10-27T10:30:00Z'))
+			mockUseVoiceCall.mockReturnValue(callIn('live-agent-speaking'))
+			rerender(ui())
+			expect(getView()?.liveSince).toBeGreaterThan((first ?? 0) + 29 * 60_000)
+			expect(getView()?.minimized).toBe(false)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

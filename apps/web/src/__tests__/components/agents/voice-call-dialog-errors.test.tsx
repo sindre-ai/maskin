@@ -20,14 +20,12 @@ function callIn(state: VoiceCallState, overrides: Partial<VoiceCall> = {}): Voic
 	return {
 		state,
 		notice: null,
-		transcriptOpen: false,
 		transcriptLines: [],
 		start: vi.fn(),
 		retryMic: vi.fn(),
 		toggleMute: vi.fn(),
 		speakerOn: true,
 		toggleSpeaker: vi.fn(),
-		toggleTranscript: vi.fn(),
 		end: vi.fn(),
 		...overrides,
 	}

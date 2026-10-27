@@ -5,11 +5,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * What a live call leaves in its thread: a row per real change, then a summary
- * card whose button opens the Transcript view. The messages are posted the way the
- * server will post them (metadata.source 'voice', kind 'receipt' /
- * 'receipt_summary'), so no WebRTC call is needed. The live panel and bar need a
- * real microphone and the voice backend; they are covered by the component tests
- * in apps/web (live-call-surface.test.tsx).
+ * card whose button opens the Transcript view, plus a call with no receipts,
+ * whose spoken lines stay. The metadata is the server's own (source 'voice', kind
+ * 'receipt' / 'receipt_summary'), so no WebRTC call is needed. The live panel and bar need a
+ * microphone and the voice backend; voice-call-relay.spec.ts drives them with
+ * fakes (including the thread-width check) and live-call-surface.test.tsx in
+ * apps/web covers their states.
  */
 
 const VOICE_SESSION_ID = '5d6f3c1e-0b0e-4c4b-8a53-6f8a2d3b7c10'
@@ -23,7 +24,19 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 	expect(scrollWidth, `${label}: page overflows horizontally`).toBeLessThanOrEqual(innerWidth + 1)
 }
 
-async function threadWithCall(account: { api: TestAPI; workspaceId: string }) {
+type Seed = { content: string; metadata: Record<string, unknown> }
+
+/**
+ * The messages route strips `source` and `voice_session_id` from what a client
+ * posts (they are server-owned) and the e2e package has no database access, so a
+ * thread cannot be seeded with them. The messages are posted plainly and the
+ * list response the page renders is given the metadata the server will write.
+ */
+async function threadWithCall(
+	page: Page,
+	account: { api: TestAPI; workspaceId: string },
+	seeds: (taskId: string) => Seed[],
+) {
 	const agent = await account.api.createAgentActor(`Live Meeting QA ${Date.now()}`)
 	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 	const task = await account.api.createObject(account.workspaceId, {
@@ -37,40 +50,74 @@ async function threadWithCall(account: { api: TestAPI; workspaceId: string }) {
 		initial_message: 'Opening the thread',
 	})
 	const post = new TestAPI(agent.api_key)
-	const voice = { source: 'voice', voice_session_id: VOICE_SESSION_ID }
-	const send = (content: string, metadata: Record<string, unknown>) =>
-		post.postConversationMessage(conversation.id, account.workspaceId, {
-			content,
-			metadata: { ...voice, ...metadata },
+	const planned = seeds(task.id)
+	for (const seed of planned) {
+		await post.postConversationMessage(conversation.id, account.workspaceId, {
+			content: seed.content,
 		})
-
-	await send('Could you check the cancel flow?', {})
-	await send('Opened the task', {
-		kind: 'receipt',
-		event: 'opened_task',
-		object_id: task.id,
-		text: 'A cancel after a create is accepted as a new delivery',
-		t: 12,
-		outcome: 'ran',
-	})
-	await send('Moved to review', {
-		kind: 'receipt',
-		event: 'moved_to_review',
-		object_id: task.id,
-		text: 'Aggregate review + open bet PR + manual test',
-		t: 16,
-		outcome: 'ran',
-	})
-	await send('Webhook dedup review with the Developer', {
-		kind: 'receipt_summary',
-		duration_seconds: 3604,
-		decided: ['Backfill cancelled bookings'],
-		created: [{ type: 'task', title: 'Backfill cancelled bookings', object_id: task.id }],
-		next: ['Code Reviewer picks up the PR today'],
-		not_done: [],
+	}
+	const metadataByContent = new Map(planned.map((s) => [s.content, s.metadata]))
+	await page.route(`**/api/conversations/${conversation.id}/messages*`, async (route) => {
+		if (route.request().method() !== 'GET') return route.continue()
+		const response = await route.fetch()
+		const body = await response.json()
+		if (Array.isArray(body.messages)) {
+			body.messages = body.messages.map((m: { content: string; metadata: unknown }) => ({
+				...m,
+				metadata: metadataByContent.get(m.content) ?? m.metadata,
+			}))
+		}
+		return route.fulfill({ response, json: body })
 	})
 	return { conversation, task }
 }
+
+const voice = { source: 'voice', voice_session_id: VOICE_SESSION_ID }
+
+const withReceipts = (taskId: string): Seed[] => [
+	{ content: 'Could you check the cancel flow?', metadata: voice },
+	{
+		content: 'Opened the task',
+		metadata: {
+			...voice,
+			kind: 'receipt',
+			event: 'opened_task',
+			object_id: taskId,
+			text: 'A cancel after a create is accepted as a new delivery',
+			t: 12,
+			outcome: 'ran',
+		},
+	},
+	{
+		content: 'Moved to review',
+		metadata: {
+			...voice,
+			kind: 'receipt',
+			event: 'moved_to_review',
+			object_id: taskId,
+			text: 'Aggregate review + open bet PR + manual test',
+			t: 16,
+			outcome: 'ran',
+		},
+	},
+	{
+		content: 'Webhook dedup review with the Developer',
+		metadata: {
+			...voice,
+			kind: 'receipt_summary',
+			duration_seconds: 3604,
+			decided: ['Backfill cancelled bookings'],
+			created: [{ type: 'task', title: 'Backfill cancelled bookings', object_id: taskId }],
+			next: ['Code Reviewer picks up the PR today'],
+			not_done: [],
+		},
+	},
+]
+
+const withoutReceipts = (): Seed[] => [
+	{ content: 'Could you check the cancel flow?', metadata: voice },
+	{ content: 'Yes, the cancel flow looks fine to me.', metadata: voice },
+]
 
 test.describe('Live meeting — what the call leaves in the thread', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -79,7 +126,7 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			const { conversation, task } = await threadWithCall(account)
+			const { conversation, task } = await threadWithCall(page, account, withReceipts)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
@@ -134,6 +181,29 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 			// Clicking a row opens the object.
 			await thread.getByText('Aggregate review + open bet PR + manual test').click()
 			await expect(page).toHaveURL(new RegExp(`/objects/${task.id}`))
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`keeps the spoken lines in the thread when the call has no receipts @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await threadWithCall(page, account, withoutReceipts)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread).toBeVisible({ timeout: 10_000 })
+
+			// Nothing stands in for the lines, so they stay, tagged as spoken.
+			await expect(thread.getByText('Could you check the cancel flow?')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('Yes, the cancel flow looks fine to me.')).toBeVisible()
+			await expect(thread.getByTestId('voice-message-meta-tag').first()).toBeVisible()
+			await expect(thread.getByRole('article', { name: 'Live meeting summary' })).toHaveCount(0)
+			await assertNoHorizontalOverflow(page, vp.label)
 		})
 	}
 })

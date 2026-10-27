@@ -146,23 +146,53 @@ describe('LiveCallSurface — narrow', () => {
 		expect(screen.queryByRole('complementary')).toBeNull()
 	})
 
-	it('falls back to the bar where there is no thread to dock in', () => {
+	it('pins the dock to the bottom of the screen where there is no thread to dock in', () => {
 		render(<LiveCallSurface />)
 		act(() => publishVoiceCallView(makeView()))
-		expect(screen.getByRole('region', { name: 'Call with Developer' })).toHaveAttribute(
-			'data-voice-call-surface',
-			'bar',
-		)
+		const dock = screen.getByRole('region', { name: 'Call with Developer' })
+		expect(dock).toHaveAttribute('data-voice-call-surface', 'dock')
+		expect(dock.parentElement).toHaveClass('fixed')
 	})
 })
 
 describe('LiveCapsule', () => {
 	it('renders only during a call, with the running time', () => {
 		render(<LiveCapsule />)
-		expect(screen.queryByRole('status')).toBeNull()
+		expect(screen.queryByRole('timer')).toBeNull()
 		act(() => publishVoiceCallView(makeView()))
-		expect(screen.getByRole('status', { name: 'Live call with Developer' })).toHaveTextContent(
-			'0:37',
+		expect(screen.getByRole('timer')).toHaveTextContent('0:37')
+	})
+
+	it('is not a live region, and its label changes by the minute, not the second', () => {
+		render(<LiveCapsule />)
+		act(() => publishVoiceCallView(makeView({ liveSince: Date.now() - 125_000 })))
+		const timer = screen.getByRole('timer', { name: 'Live call with Developer, 2 minutes' })
+		expect(timer).toHaveAttribute('aria-live', 'off')
+		expect(timer.querySelector('output, [aria-live="polite"]')).toBeNull()
+		act(() => publishVoiceCallView(makeView({ liveSince: Date.now() - 5_000 })))
+		expect(
+			screen.getByRole('timer', { name: 'Live call with Developer, under a minute' }),
+		).toBeInTheDocument()
+	})
+})
+
+describe('LiveCallSurface — notices and focus', () => {
+	it('explains a dropped connection and a muted mic beside the status line', () => {
+		render(<LiveCallSurface />)
+		act(() => publishVoiceCallView(makeView({ state: 'reconnecting' })))
+		expect(screen.getByText(/retrying for 15s/)).toBeInTheDocument()
+		act(() => publishVoiceCallView(makeView({ state: 'live-muted' })))
+		expect(screen.getByText(/The agent still hears silence/)).toBeInTheDocument()
+	})
+
+	it('moves focus to the bar when the panel is minimised from its own button', async () => {
+		const view = makeView()
+		const setMinimized = vi.fn((minimized: boolean) =>
+			act(() => publishVoiceCallView({ ...view, setMinimized, minimized })),
 		)
+		render(<LiveCallSurface />)
+		act(() => publishVoiceCallView({ ...view, setMinimized }))
+		await userEvent.click(screen.getByRole('button', { name: 'Minimise call' }))
+		expect(screen.getByRole('button', { name: 'Expand call' })).toHaveFocus()
 	})
 })

@@ -7,24 +7,35 @@
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { formatCallClock } from '@/lib/voice-receipts'
 import type { VoiceTranscriptEntry } from '@/lib/voice-transcript'
+import type { RefObject } from 'react'
 
 export function VoiceTranscriptView({
 	open,
 	onOpenChange,
 	lines,
 	durationSeconds,
+	returnFocusTo,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	lines: VoiceTranscriptEntry[]
 	durationSeconds?: number
+	/** What opened the view: it gets focus back when the view closes. */
+	returnFocusTo?: RefObject<HTMLElement | null>
 }) {
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="flex w-full flex-col gap-0 p-0 min-[700px]:max-w-md"
+				// Full screen below 700px (the sheet's own sm:max-w-sm would cap it at
+				// 384px from 640), a drawer from there up.
+				className="flex w-full flex-col gap-0 p-0 sm:max-w-none min-[700px]:max-w-md"
 				aria-label="Transcript"
+				onCloseAutoFocus={(e) => {
+					if (!returnFocusTo?.current) return
+					e.preventDefault()
+					returnFocusTo.current.focus()
+				}}
 			>
 				<header className="flex flex-col gap-1 border-b border-border px-5 py-4 pr-16">
 					<SheetTitle className="text-lg font-bold tracking-tight">Transcript</SheetTitle>

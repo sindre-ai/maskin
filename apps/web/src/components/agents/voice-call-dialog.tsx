@@ -57,8 +57,16 @@ export function VoiceCallDialog({
 	const [minimized, setMinimized] = useState(false)
 	const [captionsOn, setCaptionsOn] = useState(true)
 
+	// A call that ends or drops (the dialog falls back to the permission screen)
+	// leaves nothing behind: the next call counts from its own start, expanded.
 	useEffect(() => {
-		if (isLive) setLiveSince((prev) => prev ?? Date.now())
+		if (isLive) {
+			setLiveSince((prev) => prev ?? Date.now())
+		} else {
+			setLiveSince(null)
+			setMinimized(false)
+			setCaptionsOn(true)
+		}
 	}, [isLive])
 
 	const handleOpenChange = (nextOpen: boolean) => {
@@ -114,9 +122,10 @@ export function VoiceCallDialog({
 	])
 	useEffect(() => () => publishVoiceCallView(null), [])
 
-	// Keyboard shortcut inside the dialog: M toggles mute. Esc ends the call
-	// (handled natively by Radix' close on escape, wired via `onOpenChange`). V
-	// is a page-scoped shortcut and lives on the trigger side (AgentCallButton).
+	// M toggles mute for as long as the call is open, including once it is live
+	// and this component draws nothing. Esc ends the call from the pre-live
+	// screens (Radix' close on escape, wired via `onOpenChange`). V is a
+	// page-scoped shortcut and lives on the trigger side (AgentCallButton).
 	useEffect(() => {
 		if (!open) return
 		function onKey(e: KeyboardEvent) {

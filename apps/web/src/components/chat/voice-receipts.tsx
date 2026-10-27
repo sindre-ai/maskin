@@ -112,11 +112,21 @@ function SummarySection({ label, children }: { label: string; children: ReactNod
 	)
 }
 
+/** Keys for a list of plain strings: the text, with a count added to a repeat. */
+function keyed(items: string[]): { key: string; text: string }[] {
+	const seen = new Map<string, number>()
+	return items.map((text) => {
+		const n = seen.get(text) ?? 0
+		seen.set(text, n + 1)
+		return { key: n === 0 ? text : `${text}#${n}`, text }
+	})
+}
+
 function CheckList({ items }: { items: string[] }) {
 	return (
 		<ul className="flex flex-col gap-1">
-			{items.map((text) => (
-				<li key={text} className="flex items-start gap-2 text-sm text-foreground">
+			{keyed(items).map(({ key, text }) => (
+				<li key={key} className="flex items-start gap-2 text-sm text-foreground">
 					<Check size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-brand" />
 					<span className="min-w-0">{text}</span>
 				</li>
@@ -138,7 +148,7 @@ export function VoiceSummaryCard({
 	title?: string
 	canReadTranscript: boolean
 	/** Opens the full Transcript view. */
-	onReadTranscript: () => void
+	onReadTranscript: (trigger: HTMLButtonElement) => void
 }) {
 	return (
 		<article
@@ -165,8 +175,8 @@ export function VoiceSummaryCard({
 			{summary.created.length > 0 ? (
 				<SummarySection label={`Created · ${summary.created.length}`}>
 					<ul className="flex flex-wrap gap-1.5">
-						{summary.created.map((c) => (
-							<li key={`${c.type}-${c.objectId ?? c.title}`}>
+						{summary.created.map((c, i) => (
+							<li key={c.objectId ?? `${c.type}-${c.title}-${i}`}>
 								<ObjectLink
 									workspaceId={workspaceId}
 									objectId={c.objectId}
@@ -191,8 +201,8 @@ export function VoiceSummaryCard({
 			{summary.notDone.length > 0 ? (
 				<SummarySection label={`Not done · ${summary.notDone.length}`}>
 					<ul className="flex flex-col gap-1">
-						{summary.notDone.map((text) => (
-							<li key={text} className="text-sm text-muted-foreground">
+						{keyed(summary.notDone).map(({ key, text }) => (
+							<li key={key} className="text-sm text-muted-foreground">
 								{text}
 							</li>
 						))}
@@ -201,7 +211,7 @@ export function VoiceSummaryCard({
 			) : null}
 			{canReadTranscript ? (
 				<footer>
-					<Button type="button" size="sm" onClick={onReadTranscript}>
+					<Button type="button" size="sm" onClick={(e) => onReadTranscript(e.currentTarget)}>
 						Read transcript
 					</Button>
 				</footer>

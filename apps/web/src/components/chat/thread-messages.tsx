@@ -128,6 +128,8 @@ export function ThreadMessages({
 	// Calls with receipts fold their spoken lines away; a call without any keeps
 	// its lines in the thread, the only record the person has of it.
 	const callsWithReceipts = useMemo(() => sessionsWithReceipts(messages), [messages])
+	// The Read transcript button that opened the view, so focus can return to it.
+	const transcriptTriggerRef = useRef<HTMLElement | null>(null)
 	// The call whose Transcript view is open. The spoken lines are saved as
 	// messages but never drawn in the thread; this view is where they are read.
 	const [transcriptCall, setTranscriptCall] = useState<{
@@ -518,13 +520,14 @@ export function ThreadMessages({
 										workspaceId={workspaceId}
 										title={message.content || undefined}
 										canReadTranscript={hasSpokenLines(voiceReceipt.voiceSessionId)}
-										onReadTranscript={() =>
-											voiceReceipt.voiceSessionId &&
+										onReadTranscript={(trigger) => {
+											transcriptTriggerRef.current = trigger
+											if (!voiceReceipt.voiceSessionId) return
 											setTranscriptCall({
 												voiceSessionId: voiceReceipt.voiceSessionId,
 												durationSeconds: voiceReceipt.durationSeconds,
 											})
-										}
+										}}
 									/>
 								) : (
 									<MessageBubble
@@ -600,6 +603,7 @@ export function ThreadMessages({
 				}}
 				lines={transcriptLines}
 				durationSeconds={transcriptCall?.durationSeconds}
+				returnFocusTo={transcriptTriggerRef}
 			/>
 		</div>
 	)

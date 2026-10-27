@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { VoiceTranscriptView } from '@/components/chat/voice-transcript-view'
@@ -39,5 +39,37 @@ describe('VoiceTranscriptView', () => {
 	it('renders nothing while closed', () => {
 		render(<VoiceTranscriptView open={false} onOpenChange={() => {}} lines={lines} />)
 		expect(screen.queryByRole('dialog')).toBeNull()
+	})
+
+	it("is full screen below 700px and a drawer above, not the sheet's 384px cap", () => {
+		render(<VoiceTranscriptView open onOpenChange={() => {}} lines={lines} />)
+		const cls = screen.getByRole('dialog', { name: 'Transcript' }).className
+		expect(cls).toContain('w-full')
+		expect(cls).toContain('sm:max-w-none')
+		expect(cls).toContain('min-[700px]:max-w-md')
+		expect(cls).not.toContain('sm:max-w-sm')
+	})
+
+	it('hands focus back to what opened it', async () => {
+		const trigger = document.createElement('button')
+		document.body.appendChild(trigger)
+		const { rerender } = render(
+			<VoiceTranscriptView
+				open
+				onOpenChange={() => {}}
+				lines={lines}
+				returnFocusTo={{ current: trigger }}
+			/>,
+		)
+		rerender(
+			<VoiceTranscriptView
+				open={false}
+				onOpenChange={() => {}}
+				lines={lines}
+				returnFocusTo={{ current: trigger }}
+			/>,
+		)
+		await waitFor(() => expect(trigger).toHaveFocus())
+		trigger.remove()
 	})
 })

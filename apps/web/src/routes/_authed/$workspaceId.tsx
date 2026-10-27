@@ -10,6 +10,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
@@ -29,6 +30,7 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
+import { useVoiceCallView } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
@@ -68,6 +70,13 @@ function WorkspaceLayout() {
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
 	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	// While a call is open below 1100px the sidebar folds to its icon rail so the
+	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
+	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
+	// is left alone, so it is back as they had it when the call ends.
+	const onCall = useVoiceCallView() !== null
+	const narrowForCall = useMediaQuery('(max-width: 1099px)')
+	const railForCall = onCall && narrowForCall
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -118,8 +127,10 @@ function WorkspaceLayout() {
 						<PageHeaderProvider>
 							<ContentPushShell>
 								<SidebarProvider
-									open={open}
-									onOpenChange={setOpen}
+									open={open && !railForCall}
+									onOpenChange={(next) => {
+										if (!railForCall) setOpen(next)
+									}}
 									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
