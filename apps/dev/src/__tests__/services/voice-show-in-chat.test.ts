@@ -61,6 +61,32 @@ describe('showInChat', () => {
 		expect(content.split('\n\n')[0]).not.toMatch(/[[\]()<>!]|https?:\/\//)
 	})
 
+	it('refuses a link that is too long once encoded, and posts nothing', async () => {
+		const { db } = dbReturning([])
+		const long = `https://example.com/${'(a)'.repeat(300)}`
+		await expect(run(db, { links: [{ url: long }] })).rejects.toBeInstanceOf(VoiceShowInChatError)
+		expect(insertMessage).not.toHaveBeenCalled()
+	})
+
+	it('keeps the longest allowed message under the chat limit', async () => {
+		const { db } = dbReturning([])
+		const near = `https://example.com/${'(a)'.repeat(60)}` // under the cap once encoded
+		const links = Array.from({ length: 5 }, (_, i) => ({
+			url: `${near}${i}`,
+			label: '[x]'.repeat(40),
+		}))
+		await run(db, { links, caption: 'c'.repeat(1000) })
+		const content = insertMessage.mock.calls[0]?.[1].content as string
+		expect(content.length).toBeLessThan(8000)
+	})
+
+	it('drops @ from a caption so an address cannot turn into a mail link', async () => {
+		const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
+		await run(db, { object_ids: [OBJECT_A], caption: 'mail evil@example.com now' })
+		const content = insertMessage.mock.calls[0]?.[1].content as string
+		expect(content.split('\n\n')[0]).toBe('mail evilexample.com now')
+	})
+
 	it('posts one message as the agent into the call conversation, tagged voice', async () => {
 		const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
 		const result = await run(db, {

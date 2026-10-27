@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
+import { MESSAGE_MAX_LENGTH, buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { insertConversationMessage } from './conversation-messages'
@@ -22,6 +22,8 @@ export const VOICE_SHOW_IN_CHAT_MAX_ITEMS = 5
 const CAPTION_MAX_LENGTH = 200
 const LABEL_MAX_LENGTH = 120
 const URL_MAX_LENGTH = 2000
+/** A shown link is at most this long once encoded, so five of them plus labels stay far under the chat limit. */
+const HREF_MAX_LENGTH = 600
 
 export const voiceShowInChatTool = {
 	type: 'function' as const,
@@ -73,7 +75,7 @@ const escapeLabel = (text: string) => text.replace(/[[\]\\]/g, '\\$&')
 // The caption is the one piece of model text that sits outside a link, so it is made plain text:
 // no link, image, html or emphasis syntax, and no address that a renderer would turn into a link.
 const plainCaption = (text: string) =>
-	text.replace(/(?:https?:\/\/|www\.)/gi, '').replace(/[[\]()<>!*_`~#|\\]/g, '')
+	text.replace(/(?:https?:\/\/|www\.)/gi, '').replace(/[[\]()<>!*_`~#|\\@]/g, '')
 
 function cleanLink(rawUrl: string): string {
 	let url: URL
@@ -89,7 +91,13 @@ function cleanLink(rawUrl: string): string {
 		throw new VoiceShowInChatError('A link with a login in it cannot be shown.')
 	}
 	// Parentheses would end the markdown destination early.
-	return url.href.replace(/\(/g, '%28').replace(/\)/g, '%29')
+	const href = url.href.replace(/\(/g, '%28').replace(/\)/g, '%29')
+	if (href.length > HREF_MAX_LENGTH) {
+		throw new VoiceShowInChatError(
+			`A link longer than ${HREF_MAX_LENGTH} characters cannot be shown. Give a shorter address.`,
+		)
+	}
+	return href
 }
 
 export interface ShowInChatInput {
@@ -153,12 +161,18 @@ export async function showInChat(
 		paragraphs.push(`[${escapeLabel(label)}](${link.href})`)
 	}
 
+	const content = paragraphs.join('\n\n')
+	// The caps above keep this far under the chat limit; this is the backstop, not a truncation.
+	if (content.length > MESSAGE_MAX_LENGTH) {
+		throw new VoiceShowInChatError('That is too much to show at once. Show fewer things.')
+	}
+
 	const conversationId = await ensureVoiceConversation(db, session, input.agentName)
 	const message = await insertConversationMessage(db, {
 		conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.agentActorId,
-		content: paragraphs.join('\n\n'),
+		content,
 		metadata: { source: 'voice', voice_session_id: session.id },
 		sessionId: null,
 	})
