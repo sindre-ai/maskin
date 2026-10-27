@@ -101,6 +101,11 @@ export function ViewerStage({
 	onPinPlace,
 }: ViewerStageProps) {
 	const editableMarkdown = useEditableMarkdown(file)
+	// Large files arrive without bytes: only media with a storage URL can be shown.
+	if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/'))
+		return <MediaViewerStage file={file} />
+	if (file.contentOmitted && !(isInlineImage(file.mimeType) && file.downloadUrl))
+		return <PreviewUnavailableStage file={file} />
 	if (isHtml(file.mimeType))
 		return (
 			<HtmlViewerStage
@@ -121,6 +126,10 @@ export function ViewerStage({
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
 	if (isPlainText(file.mimeType)) return <TextViewerStage file={file} />
+	return <PreviewUnavailableStage file={file} />
+}
+
+function PreviewUnavailableStage({ file }: { file: FileDetail }) {
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center p-8">
@@ -128,6 +137,27 @@ export function ViewerStage({
 					title="Preview not available"
 					description={`Files of type ${file.mimeType} can't be previewed here. Use the download action to open them locally.`}
 				/>
+			</div>
+		</StageFrame>
+	)
+}
+
+function MediaViewerStage({ file }: { file: FileDetail }) {
+	// A large file streams from its storage URL (seekable, nothing buffered);
+	// a small one is rebuilt from its inline bytes.
+	const src = useMemo(() => {
+		if (file.downloadUrl) return file.downloadUrl
+		return URL.createObjectURL(
+			new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType }),
+		)
+	}, [file.downloadUrl, file.content, file.mimeType])
+	const Tag = file.mimeType.startsWith('audio/') ? 'audio' : 'video'
+	return (
+		<StageFrame>
+			<div className="flex h-full w-full items-center justify-center overflow-auto p-6">
+				<Tag src={src} controls preload="metadata" className="max-h-full max-w-full">
+					<track kind="captions" />
+				</Tag>
 			</div>
 		</StageFrame>
 	)
@@ -171,16 +201,16 @@ function TextViewerStage({ file }: { file: FileDetail }) {
 }
 
 function ImageViewerStage({ file }: { file: FileDetail }) {
-	// Base64 for binary bytes; utf8 files that happen to be image-typed still
-	// b64-encode inline. Same fallback pattern as file-body.tsx.
 	const src = useMemo(() => {
+		// A large image streams from storage instead of being decoded from inline bytes.
+		if (file.downloadUrl) return file.downloadUrl
 		if (file.encoding === 'base64') return `data:${file.mimeType};base64,${file.content}`
 		return URL.createObjectURL(
 			new Blob([base64ToBytes(btoa(file.content)).buffer as ArrayBuffer], {
 				type: file.mimeType,
 			}),
 		)
-	}, [file.content, file.encoding, file.mimeType])
+	}, [file.content, file.encoding, file.mimeType, file.downloadUrl])
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center overflow-auto p-6">

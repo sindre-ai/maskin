@@ -1,8 +1,9 @@
-import { useCreateFile } from '@/hooks/use-files'
+import { useCreateFile, useUploadFile } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
 import type { RelationshipCreatedSource } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { readFileAsBase64 } from '@/lib/file-utils'
+import { assertUploadable, isLargeFile } from '@/lib/large-file-upload'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -27,6 +28,7 @@ export function useObjectFileAttachments({
 	objectType: string
 }) {
 	const createFile = useCreateFile(workspaceId)
+	const uploadFile = useUploadFile(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 	const [isUploading, setIsUploading] = useState(false)
 
@@ -41,13 +43,16 @@ export function useObjectFileAttachments({
 					// around the whole loop did.
 					let createdId: string | null = null
 					try {
-						const content = await readFileAsBase64(file)
-						const created = await createFile.mutateAsync({
-							name: file.name,
-							mime_type: file.type || 'application/octet-stream',
-							content,
-							encoding: 'base64',
-						})
+						assertUploadable(file)
+						// Past the JSON path's size the bytes go to storage in parts instead.
+						const created = isLargeFile(file)
+							? await uploadFile({ file })
+							: await createFile.mutateAsync({
+									name: file.name,
+									mime_type: file.type || 'application/octet-stream',
+									content: await readFileAsBase64(file),
+									encoding: 'base64',
+								})
 						createdId = created.id
 						await createRelationship.mutateAsync({
 							source_type: objectType,
@@ -74,7 +79,7 @@ export function useObjectFileAttachments({
 				setIsUploading(false)
 			}
 		},
-		[createFile, createRelationship, objectId, objectType, workspaceId],
+		[createFile, uploadFile, createRelationship, objectId, objectType, workspaceId],
 	)
 
 	return { upload, isUploading }

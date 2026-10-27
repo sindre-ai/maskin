@@ -103,6 +103,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
       S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       # Product analytics. A variable that is not listed in this block never
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.

@@ -124,6 +124,7 @@ const storageProvider = new S3StorageProvider({
 	accessKeyId: process.env.S3_ACCESS_KEY ?? 'admin',
 	secretAccessKey: process.env.S3_SECRET_KEY ?? 'admin',
 	region: process.env.S3_REGION ?? 'us-east-1',
+	publicEndpoint: process.env.S3_PUBLIC_ENDPOINT || undefined,
 })
 
 try {
