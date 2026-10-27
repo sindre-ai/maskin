@@ -218,7 +218,7 @@ const permanentErrorMessage = (detail: string): string =>
  * see what happened, not to prompt any action.
  */
 const subscriptionMovedMessage = (detail: string): string =>
-	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and I'm picking your message back up on the new subscription.\n\nThe error was:\n\n${detail}`
 
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
@@ -331,6 +331,19 @@ export type InteractiveTurnFinalizerOptions = {
 	 */
 	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 	/**
+	 * Called once the spent session is stopped after a subscription move, to
+	 * answer the human's unanswered message on the new subscription without
+	 * making them send it again. Injected for the same reason as the options
+	 * above. Best-effort: a failure is logged and the notice already tells the
+	 * human to send their message again.
+	 */
+	onResumeAfterMove?: (args: {
+		sessionId: string
+		conversationId: string
+		workspaceId: string
+		agentId: string
+	}) => Promise<void>
+	/**
 	 * Switches the running CLI onto another model for its next turns. Injected
 	 * for the same reason as the options above. Without it an empty turn can
 	 * only be retried on the model that produced it.
@@ -407,6 +420,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
@@ -420,6 +434,7 @@ export class InteractiveTurnFinalizer {
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
+		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
@@ -1338,6 +1353,23 @@ export class InteractiveTurnFinalizer {
 				} catch (err) {
 					logger.warn(
 						`Interactive session ${sessionId} could not be stopped after subscription move: ${err instanceof Error ? err.message : String(err)}`,
+					)
+				}
+			}
+			// Answer the unanswered message on the new subscription ourselves. Only
+			// reached when the pointer actually moved, so a spent chain (movedTo
+			// null) cannot loop: each resume consumes one slot of the chain.
+			if (movedTo && this.onResumeAfterMove) {
+				try {
+					await this.onResumeAfterMove({
+						sessionId,
+						conversationId,
+						workspaceId: gate.workspaceId,
+						agentId: gate.actorId,
+					})
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not resume the chat after subscription move: ${describeError(err)}`,
 					)
 				}
 			}
