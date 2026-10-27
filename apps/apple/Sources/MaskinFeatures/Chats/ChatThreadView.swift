@@ -698,6 +698,8 @@ struct ChatThreadView: View {
 			onInvite: onInvite,
 			onOpenObject: { runtime?.openObject($0.id) },
 			onEnd: { liveCalls?.end() })
+		.onAppear { liveCalls?.panelAppeared(for: call.chat.conversationID) }
+		.onDisappear { liveCalls?.panelDisappeared(for: call.chat.conversationID) }
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
