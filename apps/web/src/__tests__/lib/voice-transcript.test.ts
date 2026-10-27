@@ -1,7 +1,9 @@
 import {
 	type VoiceTranscriptMessage,
 	buildVoiceTranscript,
+	isFoldedSpokenLine,
 	isSpokenVoiceLine,
+	sessionsWithReceipts,
 } from '@/lib/voice-transcript'
 import { describe, expect, it } from 'vitest'
 
@@ -105,5 +107,58 @@ describe('buildVoiceTranscript', () => {
 	it('uses zero when timestamps are missing', () => {
 		const lines = buildVoiceTranscript([msg(1, 0, { createdAt: null })], 'vs-1')
 		expect(lines[0]?.t).toBe(0)
+	})
+})
+
+const withKind = (id: number, kind: string, call = 'vs-1') =>
+	msg(id, id, { metadata: { source: 'voice', voice_session_id: call, kind } })
+
+describe('sessionsWithReceipts', () => {
+	it('lists the calls that have a receipt or a summary', () => {
+		const set = sessionsWithReceipts([
+			msg(1, 0),
+			withKind(2, 'receipt', 'vs-1'),
+			withKind(3, 'receipt_summary', 'vs-2'),
+		])
+		expect([...set].sort()).toEqual(['vs-1', 'vs-2'])
+	})
+
+	it('ignores spoken lines, show_in_chat messages and ordinary messages', () => {
+		const set = sessionsWithReceipts([
+			msg(1, 0),
+			withKind(2, 'show'),
+			msg(3, 3, { metadata: null }),
+			msg(4, 4, { metadata: { source: 'text', kind: 'receipt', voice_session_id: 'vs-9' } }),
+		])
+		expect(set.size).toBe(0)
+	})
+
+	it('ignores a receipt that names no call', () => {
+		expect(
+			sessionsWithReceipts([msg(1, 0, { metadata: { source: 'voice', kind: 'receipt' } })]).size,
+		).toBe(0)
+	})
+})
+
+describe('isFoldedSpokenLine', () => {
+	const calls = new Set(['vs-1'])
+
+	it('folds a spoken line of a call that has receipts', () => {
+		expect(isFoldedSpokenLine(msg(1, 0), calls)).toBe(true)
+	})
+
+	it('keeps a spoken line of a call without receipts', () => {
+		expect(
+			isFoldedSpokenLine(
+				msg(1, 0, { metadata: { source: 'voice', voice_session_id: 'vs-2' } }),
+				calls,
+			),
+		).toBe(false)
+	})
+
+	it('never folds a line that names no call, or anything that has a kind', () => {
+		expect(isFoldedSpokenLine(msg(1, 0, { metadata: { source: 'voice' } }), calls)).toBe(false)
+		expect(isFoldedSpokenLine(withKind(2, 'show'), calls)).toBe(false)
+		expect(isFoldedSpokenLine(withKind(3, 'receipt'), calls)).toBe(false)
 	})
 })

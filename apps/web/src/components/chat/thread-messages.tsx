@@ -31,7 +31,12 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
-import { buildVoiceTranscript, isSpokenVoiceLine } from '@/lib/voice-transcript'
+import {
+	buildVoiceTranscript,
+	isFoldedSpokenLine,
+	isSpokenVoiceLine,
+	sessionsWithReceipts,
+} from '@/lib/voice-transcript'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
@@ -120,6 +125,9 @@ export function ThreadMessages({
 	// Head/tail dividers for each run of voice-call messages. Derived from the
 	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
+	// Calls with receipts fold their spoken lines away; a call without any keeps
+	// its lines in the thread, the only record the person has of it.
+	const callsWithReceipts = useMemo(() => sessionsWithReceipts(messages), [messages])
 	// The call whose Transcript view is open. The spoken lines are saved as
 	// messages but never drawn in the thread; this view is where they are read.
 	const [transcriptCall, setTranscriptCall] = useState<{
@@ -433,10 +441,11 @@ export function ThreadMessages({
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
-					// A spoken line is saved with the call but not drawn here: the summary
-					// card's Transcript view shows it. Only the call's start and end
+					// Once a call has receipts, its spoken lines are saved but not drawn
+					// here: the rows and the summary card stand in, and the card's
+					// Transcript view shows the lines. Only the call's start and end
 					// dividers, which ride on its first and last message, stay.
-					if (isSpokenVoiceLine(message)) {
+					if (isFoldedSpokenLine(message, callsWithReceipts)) {
 						const boundaries = voiceBoundaries.get(message.id)
 						if (!boundaries) return null
 						return (
