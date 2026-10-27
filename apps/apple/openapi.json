@@ -38000,6 +38000,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -39969,6 +39977,63 @@
 								}
 							}
 						}
+					},
+					"409": {
+						"description": "The conversation is a master chat, which only ever holds its own two people",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
 					}
 				}
 			}
@@ -40946,6 +41011,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -41537,6 +41610,63 @@
 					},
 					"404": {
 						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The message mentions someone who cannot join this master chat",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -46386,7 +46516,8 @@
 											"type": "string",
 											"enum": [
 												"chat",
-												"chief_of_staff"
+												"chief_of_staff",
+												"master"
 											]
 										}
 									},
