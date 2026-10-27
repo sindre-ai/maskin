@@ -637,10 +637,11 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 		expect(plan.routedTo).toBe('for_you')
 	})
 
-	it('a helper that carries only ask_conversation_id still routes to its chat', async () => {
+	it('a helper that carries only ask_conversation_id is not routed to its chat either', async () => {
 		const f = await seed()
 		const plan = await planCommentRouting(db, base(f, { sessionId: f.askOnlySession.id }))
-		expect(plan.delivery?.conversationId).toBe(f.chat.id)
+		expect(plan.delivery).toBeNull()
+		expect(plan.routeReason).toBe('kept_helper')
 		expect(plan.sessionOrigin).toBe('chat_helper')
 	})
 
@@ -658,7 +659,7 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 })
 
 describe('POST /api/events from a chat-started helper', () => {
-	it('leaves no For You item, one chat message with the pill, unread 1, and no needs_input row', async () => {
+	it('stays on the object: nothing is posted in the chat it was started from', async () => {
 		const f = await seed()
 
 		const { id, data } = await postComment(f, {
@@ -667,20 +668,12 @@ describe('POST /api/events from a chat-started helper', () => {
 		})
 		await dispatch(f, id)
 
-		// The object comment is the audit record: it exists, minus the routed human.
-		expect(data.mentions).toEqual([f.other.id])
-		expect(await forYouEntityIds(f)).not.toContain(f.object.id)
-		expect(await needsInputFor(f.human.id)).toHaveLength(0)
-
-		const inChat = await chatMessages(f.chat.id)
-		expect(inChat).toHaveLength(1)
-		expect(inChat[0]?.actorId).toBe(f.agent.id)
-		expect(inChat[0]?.content).toBe('Backfill finished, 12 rows updated.')
-		expect(inChat[0]?.metadata).toMatchObject({
-			delivery: { kind: 'routed_comment', object_id: f.object.id, comment_event_id: id },
-			context_objects: [{ id: f.object.id, title: 'Backfill report', type: 'task' }],
-		})
-		expect(await chatUnreadCount(f)).toBe(1)
+		// The comment keeps every mention, so the person finds it in For You as for any
+		// agent; the chat never hears a helper talk.
+		expect(data.mentions).toEqual([f.human.id, f.other.id])
+		expect(await forYouEntityIds(f)).toContain(f.object.id)
+		expect(await chatMessages(f.chat.id)).toHaveLength(0)
+		expect(await chatUnreadCount(f)).toBe(0)
 	})
 
 	it('starts no session', async () => {
@@ -690,21 +683,11 @@ describe('POST /api/events from a chat-started helper', () => {
 		expect((await db.select().from(sessions)).length).toBe(before)
 	})
 
-	it('cuts a long comment and ends the chat message with a link to the rest', async () => {
-		const f = await seed()
-		const paragraphs = Array.from({ length: 6 }, (_, i) => `Part ${i} ${'y'.repeat(500)}`)
-		await postComment(f, { session: f.helperSession.id, content: paragraphs.join('\n\n') })
-		const [msg] = await chatMessages(f.chat.id)
-		expect(msg?.content).toContain('Read the rest: [Backfill report](')
-		expect(msg?.content).toContain(`/${f.ws.id}/objects/${f.object.id})`)
-		expect(msg?.content.length).toBeLessThan(1500 + 300)
-	})
-
 	it('posts a one-line pointer when the commenting session is the chat session', async () => {
 		const f = await seed()
 		await postComment(f, { session: f.chatSession.id, content: 'Long update. '.repeat(50) })
 		const [msg] = await chatMessages(f.chat.id)
-		expect(msg?.content).toMatch(/^I posted an update on \[Backfill report\]\(.+\)\.$/)
+		expect(msg?.content).toMatch(/^I posted an update on [Backfill report](.+).$/)
 	})
 
 	it('keeps the For You card and the notification for a decision block (zero-miss guard)', async () => {
@@ -780,7 +763,7 @@ describe('agent_comment_posted: session_origin, has_decision_block, routed_to', 
 		{
 			name: 'chat-spawned helper, plain comment',
 			pick: (f) => ({ session: f.helperSession.id }),
-			on: ['chat_helper', false, 'chat'],
+			on: ['chat_helper', false, 'for_you'],
 		},
 		{
 			name: 'cron session',
@@ -813,7 +796,7 @@ describe('agent_comment_posted: session_origin, has_decision_block, routed_to', 
 
 	it('carries a reason for the split', async () => {
 		const f = await seed()
-		await postComment(f, { session: f.helperSession.id })
+		await postComment(f, { session: f.chatSession.id })
 		await vi.waitFor(() => expect(lastCommentProps().route_reason).toBe('routed'))
 	})
 })
