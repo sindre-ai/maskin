@@ -1,5 +1,6 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { VoiceCall, VoiceCallState } from '@/hooks/use-voice-call'
+import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -24,6 +25,8 @@ function callIn(state: VoiceCallState, overrides: Partial<VoiceCall> = {}): Voic
 		start: vi.fn(),
 		retryMic: vi.fn(),
 		toggleMute: vi.fn(),
+		speakerOn: true,
+		toggleSpeaker: vi.fn(),
 		toggleTranscript: vi.fn(),
 		end: vi.fn(),
 		...overrides,
@@ -33,9 +36,11 @@ function callIn(state: VoiceCallState, overrides: Partial<VoiceCall> = {}): Voic
 function renderDialog(call: VoiceCall, onOpenChange = vi.fn()) {
 	mockUseVoiceCall.mockReturnValue(call)
 	render(
-		<TooltipProvider>
-			<VoiceCallDialog agent={agent} open onOpenChange={onOpenChange} />
-		</TooltipProvider>,
+		<CommandPaletteProvider>
+			<TooltipProvider>
+				<VoiceCallDialog agent={agent} open onOpenChange={onOpenChange} />
+			</TooltipProvider>
+		</CommandPaletteProvider>,
 	)
 	return onOpenChange
 }

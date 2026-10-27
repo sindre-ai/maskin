@@ -1,3 +1,4 @@
+import { LiveCallComposerSlot } from '@/components/agents/live-call-surface'
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
@@ -320,6 +321,7 @@ function ConversationThreadPage() {
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
+						<LiveCallComposerSlot />
 						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
 							<ThreadComposer
 								workspaceId={workspaceId}

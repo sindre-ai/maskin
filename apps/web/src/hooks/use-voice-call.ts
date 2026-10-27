@@ -37,6 +37,9 @@ export interface VoiceCall {
 	 *  once an input exists. */
 	retryMic: () => Promise<void>
 	toggleMute: () => void
+	/** Silence the agent's audio locally; the call and the mic carry on. */
+	speakerOn: boolean
+	toggleSpeaker: () => void
 	toggleTranscript: () => void
 	end: () => void
 }
@@ -72,6 +75,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	const [notice, setNotice] = useState<string | null>(null)
 	const [transcriptOpen, setTranscriptOpen] = useState(false)
 	const [transcriptLines, setTranscriptLines] = useState<VoiceTranscriptLine[]>([])
+	const [speakerOn, setSpeakerOn] = useState(true)
+	const speakerOnRef = useRef(true)
 	const mutedRef = useRef(false)
 	const preMuteStateRef = useRef<VoiceCallState>('live-agent-speaking')
 
@@ -298,6 +303,7 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		// during the connect phase.
 		const audio = document.createElement('audio')
 		audio.autoplay = true
+		audio.muted = !speakerOnRef.current
 		audio.setAttribute('data-voice-call-audio', 'true')
 		document.body.appendChild(audio)
 		remoteAudioRef.current = audio
@@ -420,6 +426,13 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		})
 	}, [])
 
+	const toggleSpeaker = useCallback(() => {
+		const next = !speakerOnRef.current
+		speakerOnRef.current = next
+		if (remoteAudioRef.current) remoteAudioRef.current.muted = !next
+		setSpeakerOn(next)
+	}, [])
+
 	const toggleTranscript = useCallback(() => setTranscriptOpen((v) => !v), [])
 
 	return {
@@ -430,6 +443,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		start,
 		retryMic,
 		toggleMute,
+		speakerOn,
+		toggleSpeaker,
 		toggleTranscript,
 		end,
 	}

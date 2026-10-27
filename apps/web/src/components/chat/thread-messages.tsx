@@ -30,6 +30,7 @@ import {
 } from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
@@ -39,6 +40,7 @@ import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
+import { VoiceEventRow, VoiceSummaryCard } from './voice-receipts'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -116,6 +118,25 @@ export function ThreadMessages({
 	// Head/tail dividers for each run of voice-call messages. Derived from the
 	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
+	// The spoken lines of one call, for the summary card's transcript.
+	const voiceTranscript = (voiceSessionId: string | null) =>
+		voiceSessionId
+			? messages.filter(
+					(m) =>
+						m.metadata?.source === 'voice' &&
+						m.metadata.voice_session_id === voiceSessionId &&
+						!parseVoiceReceipt(m.metadata) &&
+						m.content,
+				)
+			: []
+	// Calls whose transcript the person opened from the summary card.
+	const [openTranscripts, setOpenTranscripts] = useState<ReadonlySet<string>>(new Set())
+	const toggleTranscript = (voiceSessionId: string) =>
+		setOpenTranscripts((prev) => {
+			const next = new Set(prev)
+			if (!next.delete(voiceSessionId)) next.add(voiceSessionId)
+			return next
+		})
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -435,6 +456,7 @@ export function ThreadMessages({
 					}
 					// An agent intro written with steps and tools: the buttons and rows replace
 					// the plain list and tools sentence at the end of its body.
+					const voiceReceipt = parseVoiceReceipt(message.metadata)
 					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
 					const bubbleMessage = intro
 						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
@@ -465,26 +487,54 @@ export function ThreadMessages({
 							    a stray line belonging to nothing. Live turns stay
 							    standalone below their trigger, where they carry their
 							    own avatar. */}
-								<MessageBubble
-									workspaceId={workspaceId}
-									message={bubbleMessage}
-									questionAnswered={answeredQuestionIds.has(message.id)}
-									spawnInfo={spawnByMessageId.get(message.id)}
-									onRetried={handleRetried}
-									shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
-									// Keyed by index as well as session: one session can put two
-									// turns under the same message (a result segment plus the
-									// live turn that follows it), so `sessionId` alone is not
-									// unique and React would reconcile the two as one row.
-									activity={turnsAbove.map((turn, turnIndex) => (
-										<MessageActivity
-											key={`${turn.sessionId}-above-${turnIndex}`}
-											workspaceId={workspaceId}
-											turn={turn}
-											layout="inline"
-										/>
-									))}
-								/>
+								{voiceReceipt?.kind === 'receipt' ? (
+									<VoiceEventRow receipt={voiceReceipt} workspaceId={workspaceId} />
+								) : voiceReceipt?.kind === 'receipt_summary' ? (
+									<VoiceSummaryCard
+										summary={voiceReceipt}
+										workspaceId={workspaceId}
+										title={message.content || undefined}
+										canReadTranscript={voiceTranscript(voiceReceipt.voiceSessionId).length > 0}
+										transcriptOpen={
+											voiceReceipt.voiceSessionId != null &&
+											openTranscripts.has(voiceReceipt.voiceSessionId)
+										}
+										onToggleTranscript={() =>
+											voiceReceipt.voiceSessionId && toggleTranscript(voiceReceipt.voiceSessionId)
+										}
+										transcript={
+											<ul className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 text-sm">
+												{voiceTranscript(voiceReceipt.voiceSessionId).map((line) => (
+													<li key={line.id}>
+														<span className="font-medium text-foreground">{line.actorName}:</span>{' '}
+														<span className="text-muted-foreground">{line.content}</span>
+													</li>
+												))}
+											</ul>
+										}
+									/>
+								) : (
+									<MessageBubble
+										workspaceId={workspaceId}
+										message={bubbleMessage}
+										questionAnswered={answeredQuestionIds.has(message.id)}
+										spawnInfo={spawnByMessageId.get(message.id)}
+										onRetried={handleRetried}
+										shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
+										// Keyed by index as well as session: one session can put two
+										// turns under the same message (a result segment plus the
+										// live turn that follows it), so `sessionId` alone is not
+										// unique and React would reconcile the two as one row.
+										activity={turnsAbove.map((turn, turnIndex) => (
+											<MessageActivity
+												key={`${turn.sessionId}-above-${turnIndex}`}
+												workspaceId={workspaceId}
+												turn={turn}
+												layout="inline"
+											/>
+										))}
+									/>
+								)}
 								{intro && (showSteps || intro.tools) ? (
 									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
 										{showSteps && intro.steps ? (

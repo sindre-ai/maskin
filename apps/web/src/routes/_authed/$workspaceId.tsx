@@ -1,3 +1,4 @@
+import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header } from '@/components/layout/header'
@@ -130,6 +131,7 @@ function WorkspaceLayout() {
 											<Outlet />
 										</MainScrollArea>
 									</SidebarInset>
+									<LiveCallSurface />
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
