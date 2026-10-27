@@ -453,6 +453,8 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 			502,
 		)
 	}
+	// Same reason on success: a desktop that echoes the typed text would hand it to the agent.
+	if (typedCredential) return c.json({ ok: true }, 200)
 	return c.json(result.body, result.status)
 }
 

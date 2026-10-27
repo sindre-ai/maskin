@@ -270,6 +270,36 @@ describe('agent control routes', () => {
 		expect(inserts).toHaveLength(0)
 	})
 
+	it('never returns the reply of the desktop to the agent when a typed saved login succeeds', async () => {
+		const SECRET = 'fake-pass-abcdefghij'
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: SECRET,
+			credentialName: 'Facebook',
+			field: 'password',
+		})
+		// A desktop that echoes the text it typed, even on success.
+		const controlFn = vi.fn(async (_ws, _agent, _action, sent: { text: string }) => ({
+			status: 200,
+			body: { ok: true, typed: sent.text },
+		}))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'type',
+			text: '{{keychain:Facebook.password}}',
+		})
+
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: SECRET })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(inserts).toHaveLength(1)
+		expect(inserts[0]).toMatchObject({
+			data: { keychain_credential: 'Facebook', keychain_field: 'password' },
+		})
+		expect(JSON.stringify(inserts[0])).not.toContain(SECRET)
+	})
+
 	it.each([
 		['out-of-range x', { action: 'click', x: 5000, y: 10 }],
 		['unknown action', { action: 'format-disk' }],
