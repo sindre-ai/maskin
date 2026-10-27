@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CALL_CONDUCT,
+	VOICE_FOR_YOU_RULE,
 	VOICE_LANGUAGE_RULE,
 	VOICE_SKILLS_TOTAL_MAX_CHARS,
 	VOICE_WRITE_CONFIRMATION,
@@ -109,6 +110,14 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_LANGUAGE_RULE).toContain('language the person is speaking')
 		expect(VOICE_LANGUAGE_RULE).toContain('natural spoken Danish')
 		expect(VOICE_LANGUAGE_RULE).toContain('pronounce Danish')
+	})
+
+	it('tells the agent to read what needs the caller from list_for_you, top card first', () => {
+		const text = buildVoiceInstructions(base)
+		expect(text).toContain(VOICE_FOR_YOU_RULE)
+		expect(VOICE_FOR_YOU_RULE).toContain('list_for_you')
+		expect(VOICE_FOR_YOU_RULE).toContain('top card')
+		expect(VOICE_FOR_YOU_RULE).toContain('due_at is today')
 	})
 
 	it('tells the agent to just do ordinary changes, and for a held one to call first and ask once', () => {

@@ -6805,6 +6805,86 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('list_for_you handler', () => {
+		const person = '9f3a1c52-7d0e-4b8a-a1b2-3c4d5e6f7a8b'
+		const bigDraft = 'x'.repeat(20_000)
+		const route = (n: number) => ({
+			notification_id: n === 3 ? null : `n-${n}`,
+			source: n === 3 ? 'decision' : 'curated',
+			rank: n,
+			latest_event_id: n,
+			headline: `Card ${n}`,
+			rationale: 'why',
+			due_at: n === 1 ? '2026-10-26T08:00:00.000Z' : null,
+			created_at: null,
+			entity_type: n === 2 ? null : 'object',
+			entity_id: n === 2 ? null : `obj-${n}`,
+			session_id: null,
+			object:
+				n === 2
+					? undefined
+					: {
+							id: `obj-${n}`,
+							title: `Obj ${n}`,
+							type: 'bet',
+							status: 'proposed',
+							content: bigDraft,
+						},
+			latest_mention: { content: `${'ask '.repeat(100)}`, decision: { draft: { body: bigDraft } } },
+		})
+
+		it('asks the For You route for that person and returns a slim card per item', async () => {
+			mockFetchSuccess({ items: [1, 2, 3].map(route) })
+
+			const result = (await getHandler('list_for_you')({ actor_id: person, limit: 10 })) as {
+				content: Array<{ text: string }>
+				structuredContent: { total: number; items: Array<Record<string, unknown>> }
+			}
+
+			expect(fetch).toHaveBeenCalledWith(
+				`http://localhost:3000/api/for-you?for_actor_id=${person}`,
+				expect.objectContaining({ method: 'GET' }),
+			)
+			const { items, total } = result.structuredContent
+			expect(total).toBe(3)
+			expect(items.map((i) => i.rank)).toEqual([1, 2, 3])
+			expect(items[0]).toMatchObject({
+				source: 'curated',
+				headline: 'Card 1',
+				notification_id: 'n-1',
+				object_id: 'obj-1',
+				title: 'Obj 1',
+				type: 'bet',
+				status: 'proposed',
+				due_at: '2026-10-26T08:00:00.000Z',
+			})
+			expect((items[0].ask as string).length).toBe(200)
+			// A decision card has no notification; a card with no object keeps its headline.
+			expect(items[2]).toMatchObject({ source: 'decision', notification_id: null })
+			expect(items[1]).toMatchObject({
+				headline: 'Card 2',
+				object_id: null,
+				title: null,
+				type: null,
+			})
+			// content and structuredContent carry the same payload.
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('returns only the limit, counts the whole list and stays under the Live call cap', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 40 }, (_, i) => route(i + 1)) })
+
+			const result = (await getHandler('list_for_you')({ actor_id: person, limit: 15 })) as {
+				content: Array<{ text: string }>
+				structuredContent: { total: number; items: unknown[] }
+			}
+
+			expect(result.structuredContent.items).toHaveLength(15)
+			expect(result.structuredContent.total).toBe(40)
+			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
+	})
+
 	describe('list_actors directory: skill names and name filter', () => {
 		type DirectoryResult = {
 			isError?: boolean
