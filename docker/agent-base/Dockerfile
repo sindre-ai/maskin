@@ -10,10 +10,14 @@ FROM node:22-slim
 # System tools. fontconfig + DejaVu + Liberation give headless Chromium glyphs
 # to paint when it rasterises inside the session sandbox (qa-deck.sh); without
 # them text renders blank. Add fonts-noto-color-emoji only if emoji are needed.
+# ffmpeg (with ffprobe) is for the Video Producer cut/subtitle/end-card
+# pipeline; it comes from the Debian repo, so the version follows the
+# node:22-slim base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq ca-certificates openssh-client gettext-base \
+    git curl jq ca-certificates openssh-client gettext-base ffmpeg \
     fontconfig fonts-dejavu-core fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -1 && ffprobe -version | head -1
 
 # Shared libraries headless Chromium needs to start. Sessions run as a
 # non-root user and cannot apt-get, so a Chromium that a session downloads
