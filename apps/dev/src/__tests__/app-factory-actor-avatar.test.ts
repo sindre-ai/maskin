@@ -8,8 +8,8 @@ import type { SessionManager } from '../services/session-manager'
 
 /**
  * An <img> tag cannot send an API key, so GET /api/actors/:uuid/avatar skips
- * authentication. The exemption must stay exactly that wide: one GET path, agents
- * only (checked in the handler), and every write still needs a key.
+ * authentication. The exemption must stay exactly that wide: one GET path, answered
+ * only for the current ?v= (checked in the handler), and every write still needs a key.
  */
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])
@@ -38,20 +38,27 @@ describe('actor avatar auth exemption', () => {
 	const path = `/api/actors/${randomUUID()}/avatar`
 
 	it('serves an agent avatar without an API key', async () => {
-		const res = await buildApp(agentRow).request(path)
+		const res = await buildApp(agentRow).request(`${path}?v=v1`)
 
 		expect(res.status).toBe(200)
 		expect(res.headers.get('content-type')).toBe('image/png')
 	})
 
-	it('returns 404 for a human', async () => {
-		const res = await buildApp({ ...agentRow, type: 'human' }).request(path)
+	it('serves a human avatar the same way', async () => {
+		const res = await buildApp({ ...agentRow, type: 'human' }).request(`${path}?v=v1`)
 
-		expect(res.status).toBe(404)
+		expect(res.status).toBe(200)
+	})
+
+	it('returns 404 without the current ?v=', async () => {
+		const app = buildApp(agentRow)
+
+		expect((await app.request(path)).status).toBe(404)
+		expect((await app.request(`${path}?v=old`)).status).toBe(404)
 	})
 
 	it('returns 404 for a missing actor', async () => {
-		const res = await buildApp(undefined).request(path)
+		const res = await buildApp(undefined).request(`${path}?v=v1`)
 
 		expect(res.status).toBe(404)
 	})

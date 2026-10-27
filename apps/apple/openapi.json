@@ -12094,7 +12094,7 @@
 						}
 					},
 					"403": {
-						"description": "Caller is not a workspace admin or owner",
+						"description": "Caller is neither the actor itself nor a workspace admin or owner",
 						"content": {
 							"application/json": {
 								"schema": {

@@ -64,7 +64,7 @@ const uploadAvatarRoute = createRoute({
 		400: { content: { 'application/json': { schema: errorSchema } }, description: 'No file' },
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Caller is not a workspace admin or owner',
+			description: 'Caller is neither the actor itself nor a workspace admin or owner',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
 		413: { content: { 'application/json': { schema: errorSchema } }, description: 'Over 2 MB' },
@@ -82,16 +82,20 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
-	if (!(await isAdminOfSharedWorkspace(db, callerId, id, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Only workspace admins can upload avatars'), 403)
+	// An actor may set its own picture; anyone else needs to be an admin of a shared workspace.
+	if (callerId !== id && !(await isAdminOfSharedWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the actor or a workspace admin can upload avatars'),
+			403,
+		)
 	}
 
 	const [target] = await db
-		.select({ type: actors.type, metadata: actors.metadata })
+		.select({ metadata: actors.metadata })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
-	if (target?.type !== 'agent') {
+	if (!target) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -142,9 +146,10 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	return c.json({ id, avatar_url: `/api/actors/${id}/avatar?v=${version}` }, 200)
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
 
-// GET /:id/avatar - Serve an agent's picture. Public (see the auth bypass in app-factory):
-// an <img> tag cannot send an API key. Agents only, since human photos are personal data.
-// ?v= changes on every upload, so the response is cached forever.
+// GET /:id/avatar - Serve an actor's picture. Public (see the auth bypass in app-factory):
+// an <img> tag cannot send an API key. The current ?v= is required, which makes the URL a
+// capability: it cannot be guessed from the actor id, and a replaced picture's old URL stops
+// working. ?v= changes on every upload, so the response is cached forever.
 const getAvatarRoute = createRoute({
 	method: 'get',
 	path: '/{id}/avatar',
@@ -161,15 +166,16 @@ app.openapi(getAvatarRoute, (async (c) => {
 	const db = c.get('db')
 	const storage = c.get('storageProvider')
 	const { id } = c.req.valid('param')
+	const version = c.req.query('v')
 
 	const [row] = await db
-		.select({ type: actors.type, metadata: actors.metadata })
+		.select({ metadata: actors.metadata })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
 	const meta = row?.metadata as { avatar_version?: string; avatar_content_type?: string } | null
-	// Public route: a human, a missing actor and an agent without a picture all answer the same 404.
-	if (row?.type !== 'agent' || !meta?.avatar_version) {
+	// Public route: a missing actor, no picture, and a missing or stale ?v= all answer the same 404.
+	if (!meta?.avatar_version || version !== meta.avatar_version) {
 		return c.json(createApiError('NOT_FOUND', 'No avatar'), 404)
 	}
 

@@ -330,7 +330,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		const method = c.req.method
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
-		// Profile pictures load through <img>, which cannot send an API key. Agents only, image bytes only (routes/actor-avatar.ts).
+		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (

@@ -33,7 +33,7 @@ describe('Actor avatar routes', () => {
 				actorAvatarRoutes,
 				'/api/actors',
 			)
-			mockResults.selectQueue = [...ADMIN_CHECKS, [{ type: 'agent', metadata: null }]]
+			mockResults.selectQueue = [...ADMIN_CHECKS, [{ metadata: null }]]
 
 			const res = await app.request(upload(PNG))
 
@@ -51,7 +51,7 @@ describe('Actor avatar routes', () => {
 			)
 			mockResults.selectQueue = [
 				...ADMIN_CHECKS,
-				[{ type: 'agent', metadata: { avatar_version: 'old-version' } }],
+				[{ metadata: { avatar_version: 'old-version' } }],
 			]
 
 			const res = await app.request(upload(PNG))
@@ -60,12 +60,41 @@ describe('Actor avatar routes', () => {
 			expect(storageProvider.delete).toHaveBeenCalledWith(`avatars/${AGENT_ID}/old-version`)
 		})
 
-		it('returns 404 for a human, which never gets an uploaded picture', async () => {
+		it('lets a person upload their own picture without being an admin', async () => {
+			// The caller is the target: no membership or admin lookups, only the target row.
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+				AGENT_ID,
+				'human',
+			)
+			mockResults.selectQueue = [[{ metadata: null }]]
+
+			const res = await app.request(upload(PNG))
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).toHaveBeenCalledOnce()
+		})
+
+		it('lets a workspace admin upload a picture for a person', async () => {
 			const { app, mockResults, storageProvider } = createImportTestApp(
 				actorAvatarRoutes,
 				'/api/actors',
 			)
-			mockResults.selectQueue = [...ADMIN_CHECKS, [{ type: 'human', metadata: null }]]
+			mockResults.selectQueue = [...ADMIN_CHECKS, [{ metadata: null }]]
+
+			const res = await app.request(upload(PNG))
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).toHaveBeenCalledOnce()
+		})
+
+		it('returns 404 when the actor does not exist', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [...ADMIN_CHECKS, []]
 
 			const res = await app.request(upload(PNG))
 
@@ -73,7 +102,20 @@ describe('Actor avatar routes', () => {
 			expect(storageProvider.put).not.toHaveBeenCalled()
 		})
 
-		it('returns 403 when the caller is not a workspace admin', async () => {
+		it('returns 404 when the caller shares no workspace with the actor', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [[{ actorId: 'a' }], []]
+
+			const res = await app.request(upload(PNG))
+
+			expect(res.status).toBe(404)
+			expect(storageProvider.put).not.toHaveBeenCalled()
+		})
+
+		it("returns 403 when a non-admin uploads for another person's actor", async () => {
 			const { app, mockResults, storageProvider } = createImportTestApp(
 				actorAvatarRoutes,
 				'/api/actors',
@@ -91,7 +133,7 @@ describe('Actor avatar routes', () => {
 				actorAvatarRoutes,
 				'/api/actors',
 			)
-			mockResults.selectQueue = [...ADMIN_CHECKS, [{ type: 'agent', metadata: null }]]
+			mockResults.selectQueue = [...ADMIN_CHECKS, [{ metadata: null }]]
 
 			const res = await app.request(upload(new TextEncoder().encode('<svg onload=x>'), 'image/png'))
 
@@ -101,7 +143,7 @@ describe('Actor avatar routes', () => {
 
 		it('returns 413 when the image is over 2 MB', async () => {
 			const { app, mockResults } = createImportTestApp(actorAvatarRoutes, '/api/actors')
-			mockResults.selectQueue = [...ADMIN_CHECKS, [{ type: 'agent', metadata: null }]]
+			mockResults.selectQueue = [...ADMIN_CHECKS, [{ metadata: null }]]
 			const big = new Uint8Array(2 * 1024 * 1024 + 1)
 			big.set(PNG)
 
@@ -122,7 +164,7 @@ describe('Actor avatar routes', () => {
 			]
 			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from(PNG))
 
-			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar`))
+			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`))
 
 			expect(res.status).toBe(200)
 			expect(res.headers.get('content-type')).toBe('image/png')
@@ -142,27 +184,71 @@ describe('Actor avatar routes', () => {
 			mockResults.selectQueue = [[{ type: 'agent', metadata: { avatar_version: 'v1' } }]]
 
 			const res = await app.request(
-				jsonGet(`/api/actors/${AGENT_ID}/avatar`, { 'If-None-Match': '"v1"' }),
+				jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`, { 'If-None-Match': '"v1"' }),
 			)
 
 			expect(res.status).toBe(304)
 			expect(storageProvider.get).not.toHaveBeenCalled()
 		})
 
-		it('returns 404 when the actor is a human, even with a stored picture', async () => {
-			const { app, mockResults } = createImportTestApp(actorAvatarRoutes, '/api/actors')
-			mockResults.selectQueue = [[{ type: 'human', metadata: { avatar_version: 'v1' } }]]
+		it('serves a human picture too, with the current version', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [
+				[{ metadata: { avatar_version: 'v1', avatar_content_type: 'image/jpeg' } }],
+			]
+			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from(PNG))
+
+			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`))
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toBe('image/jpeg')
+		})
+
+		it('returns 404 without ?v=, so the URL cannot be guessed from the actor id', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [[{ metadata: { avatar_version: 'v1' } }]]
 
 			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar`))
+
+			expect(res.status).toBe(404)
+			expect(storageProvider.get).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 for a stale ?v= after the picture was replaced', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(
+				actorAvatarRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [[{ metadata: { avatar_version: 'v2' } }]]
+
+			const res = await app.request(
+				jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`, { 'If-None-Match': '"v1"' }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(storageProvider.get).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 for a missing actor', async () => {
+			const { app, mockResults } = createImportTestApp(actorAvatarRoutes, '/api/actors')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`))
 
 			expect(res.status).toBe(404)
 		})
 
 		it('returns 404 when the actor has no avatar', async () => {
 			const { app, mockResults } = createImportTestApp(actorAvatarRoutes, '/api/actors')
-			mockResults.selectQueue = [[{ type: 'agent', metadata: null }]]
+			mockResults.selectQueue = [[{ metadata: null }]]
 
-			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar`))
+			const res = await app.request(jsonGet(`/api/actors/${AGENT_ID}/avatar?v=v1`))
 
 			expect(res.status).toBe(404)
 		})
