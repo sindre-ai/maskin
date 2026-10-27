@@ -35,6 +35,14 @@ vi.mock('../../services/voice-show-in-chat', async (importOriginal) => ({
 	showInChat: (...args: unknown[]) => showInChat(...args),
 }))
 
+const buildHoldPreview = vi.fn()
+const postHoldPreview = vi.fn()
+vi.mock('../../services/voice-hold-preview', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/voice-hold-preview')>()),
+	buildHoldPreview: (...args: unknown[]) => buildHoldPreview(...args),
+	postHoldPreview: (...args: unknown[]) => postHoldPreview(...args),
+}))
+
 const { createVoiceChannel } = await import('../../services/voice-session-channel')
 type Channel = ReturnType<typeof createVoiceChannel>
 
@@ -52,6 +60,16 @@ const session = {
 	humanActorId: HUMAN,
 	conversationId: null,
 } as never
+
+const HOLD_CHAT = '9fd17e80-fb03-4587-a1c4-b0d3c57e0aa8'
+const heldPreview = (fingerprint: string, body = 'Hello Lars, can we meet on Tuesday?') => ({
+	summary: 'Send this email',
+	recipients: ['Lars Honoré <lars@example.dk>'],
+	subject: 'Meeting',
+	body,
+	note: null,
+	fingerprint,
+})
 
 const READ_ONLY = new Set(['search_objects', 'list_objects', 'get_objects', 'list_actors'])
 
@@ -102,6 +120,8 @@ beforeEach(() => {
 	captureException.mockReset()
 	writeLine.mockReset()
 	showInChat.mockReset()
+	buildHoldPreview.mockReset().mockResolvedValue(heldPreview('v1'))
+	postHoldPreview.mockReset().mockResolvedValue(HOLD_CHAT)
 	persistenceEnabled.mockReset().mockResolvedValue(true)
 })
 
@@ -568,6 +588,79 @@ describe('voice channel — a risky write waits for the person to say yes', () =
 		await toolCall('create_comment', WRITE_ARGS)
 		expect(invoke).toHaveBeenCalledTimes(1)
 		expect(results()[0]).toMatchObject({ ok: true, error_code: null })
+	})
+
+	it('gives the model the real recipient, subject and text of a held send and posts the same in the chat', async () => {
+		const { toolCall, outputOf, sent } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+
+		const held = outputOf(0).error as string
+		expect(held).toContain('To: Lars Honoré <lars@example.dk>')
+		expect(held).toContain('Subject: Meeting')
+		expect(held).toContain('Hello Lars, can we meet on Tuesday?')
+		expect(buildHoldPreview.mock.calls[0]?.[0]).toMatchObject({
+			workspaceId: WORKSPACE,
+			tool: 'gmail_send_email',
+			args: { object_id: ENTITY, workspace_id: WORKSPACE },
+		})
+		expect(postHoldPreview).toHaveBeenCalledTimes(1)
+		expect(postHoldPreview.mock.calls[0]?.[0].preview.body).toBe(
+			'Hello Lars, can we meet on Tuesday?',
+		)
+		expect(sent).toContainEqual({ type: 'conversation', conversation_id: HOLD_CHAT })
+	})
+
+	it('tells the model to read a short text in full', async () => {
+		const { toolCall, outputOf } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		expect(outputOf(0).error).toContain('the recipient, the subject and the whole text')
+	})
+
+	it('tells the model to read the edges of a long text and say the rest is in the chat', async () => {
+		const long = `Opening line. ${'Filler sentence here. '.repeat(60)}Slot one is Tuesday. Slot two is Wednesday.`
+		buildHoldPreview.mockResolvedValue(heldPreview('v1', long))
+		const { toolCall, outputOf } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		const held = outputOf(0).error as string
+		expect(held).toContain('Opening line.')
+		expect(held).toContain('Slot two is Wednesday.')
+		expect(held).toContain('full text is in the chat')
+	})
+
+	it('does not run on a yes for old text when the draft was edited after the hold', async () => {
+		const { invoke, toolCall, results, heldId, outputOf, say } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		await say('Yes, send it.', 'item_1')
+		// The same object id, other text behind it.
+		buildHoldPreview.mockResolvedValue(heldPreview('v2', 'New wording: Thursday at 9.'))
+		await toolCall('gmail_send_email', { object_id: ENTITY, confirmation_id: heldId(0) }, 'call_2')
+
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]?.error_code).toBe('voice_confirmation_required')
+		expect(heldId(1)).not.toBe(heldId(0))
+		expect(outputOf(1).error).toContain('New wording: Thursday at 9.')
+		expect(outputOf(1).error).toContain('earlier yes does not count')
+		expect(postHoldPreview).toHaveBeenCalledTimes(2)
+	})
+
+	it('still holds and says plainly that it cannot read the text when no preview can be made', async () => {
+		buildHoldPreview.mockRejectedValue(new Error('db down'))
+		const { invoke, toolCall, results, outputOf } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]?.error_code).toBe('voice_confirmation_required')
+		expect(outputOf(0).error).toContain('cannot read out the exact text')
+		expect(postHoldPreview).not.toHaveBeenCalled()
+	})
+
+	it('tells the model to read the whole text when a long text could not be put in the chat', async () => {
+		const long = `Opening line. ${'Filler sentence here. '.repeat(60)}Slot one is Tuesday. Slot two is Wednesday.`
+		buildHoldPreview.mockResolvedValue(heldPreview('v1', long))
+		postHoldPreview.mockRejectedValue(new Error('chat down'))
+		const { toolCall, results, outputOf } = writeSetup()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		expect(results()[0]?.error_code).toBe('voice_confirmation_required')
+		expect(outputOf(0).error).toContain('could not be put in the chat')
 	})
 
 	it('runs a read-only tool at once without a yes', async () => {

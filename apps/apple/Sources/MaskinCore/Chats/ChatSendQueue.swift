@@ -213,9 +213,13 @@ public final class ChatSendQueue {
 			let payload = try? JSONDecoder().decode(ChatSendPayload.self, from: entry.payload)
 		else { return }
 		failed.removeAll { $0.id == payload.clientID }
+		// A refused secret must not sit on disk in a failed row: keep the person's words, not the key.
+		let kept =
+			message == ChatsHTTPError.rawSecretMessage
+			? SecretScanner.withoutSecrets(payload.content, SecretScanner.scan(payload.content)) : payload.content
 		failed.append(
 			PendingChatSend(
-				id: payload.clientID, conversationID: payload.conversationID, content: payload.content,
+				id: payload.clientID, conversationID: payload.conversationID, content: kept,
 				metadata: payload.metadata, afterServerID: payload.afterServerID,
 				createdAt: payload.createdAt, state: .failed(message), thread: payload.thread))
 		saveFailed()

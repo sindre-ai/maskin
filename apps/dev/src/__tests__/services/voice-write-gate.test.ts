@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
 	VOICE_CONFIRM_ARG,
 	createWriteGate,
@@ -120,6 +120,91 @@ describe('isNo', () => {
 	)
 })
 
+describe('isYes in Danish', () => {
+	it.each([
+		'ja',
+		'Ja.',
+		'ja tak',
+		'jo',
+		'selvfølgelig',
+		'jep',
+		'perfekt',
+		'send den',
+		'ja, send den',
+		'send det afsted',
+		'send den bare',
+		'send den gerne',
+		'godkend',
+		'godkend alle',
+		'ja, godkend alle',
+		'godkendt',
+		'jeg godkender',
+		'det lyder godt',
+		'ja, det lyder godt, send den',
+		'det ser fint ud',
+		'det er i orden',
+		'det er fint',
+		'det passer',
+		'gør det',
+		'ja, gør det nu',
+		'kør på',
+		'sæt i gang',
+		'lad os gøre det',
+		'helt sikkert',
+		'gerne',
+		'ja gerne',
+		'fint, send den',
+		'ja og send den',
+		'ja, send den, og godkend alle',
+	])('takes "%s" for a yes', (line) => {
+		expect(isYes(line)).toBe(true)
+	})
+
+	it.each([
+		'nej',
+		'nej tak',
+		'ikke endnu',
+		'vent lidt',
+		'ja men vent',
+		'ja men kun til Casper',
+		'ja, send den ikke',
+		'ja, hvad står der?',
+		'hvad står der',
+		'ja, læs den højt',
+		'læs den højt',
+		'vis mig mailen',
+		'ja, vis mig den først',
+		'send den til Casper',
+		'ja send 500',
+		'godkend 2',
+		'ja 5',
+		'ja, kan du sende den',
+		'kan du læse den igen',
+		'fint',
+		'godt',
+		'super',
+		'ja, rediger den først',
+		'ja, ændre den',
+		'ja, send den senere',
+		'ja é',
+		'ja ü',
+		'ja 👍',
+		'gør det ikke',
+		'det er ikke fint',
+		'jeg ved det ikke',
+		'send',
+	])('does not take "%s" for a yes', (line) => {
+		// 'send' alone is an English approval phrase and stays a yes; it is listed in the
+		// accepted English tests. The line below keeps this table honest about that.
+		expect(isYes(line)).toBe(line === 'send')
+	})
+
+	it('still takes a Danish and English mix', () => {
+		expect(isYes('ja, send it')).toBe(true)
+		expect(isYes('yes, send den')).toBe(true)
+	})
+})
+
 describe('isRiskyTool', () => {
 	it.each([
 		'gmail_send_email',
@@ -229,5 +314,116 @@ describe('createWriteGate', () => {
 		gate.noteSpeechStarted('item_no')
 		gate.noteUserLine("no, don't send it", 'item_no')
 		expect(await gate.review(TOOL, ARGS, id)).toEqual({ kind: 'refuse', reason: 'declined' })
+	})
+})
+
+describe('createWriteGate — the yes is tied to the text that was asked about', () => {
+	const TOOL = 'gmail_send_email'
+	const ARGS = { object_id: 'obj-1' }
+	const preview = (fingerprint: string, body = 'Hello') => ({
+		summary: 'Send this email',
+		recipients: ['Lars <lars@example.com>'],
+		subject: 'Meeting',
+		body,
+		note: null,
+		fingerprint,
+	})
+
+	/** A target whose text can be changed between the hold and the repeat. */
+	function target(initial: string) {
+		let fingerprint = initial
+		const previewFor = vi.fn(async () => preview(fingerprint, `text ${fingerprint}`))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const edit = (next: string) => {
+			fingerprint = next
+		}
+		return { gate, previewFor, edit }
+	}
+	const say = (gate: ReturnType<typeof createWriteGate>, item: string) => {
+		gate.noteSpeechStarted(item)
+		gate.noteUserLine('yes', item)
+	}
+
+	it('returns the preview of the target with the hold', async () => {
+		const { gate } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		expect(hold).toMatchObject({
+			kind: 'hold',
+			changed: false,
+			preview: { subject: 'Meeting', body: 'text v1' },
+		})
+	})
+
+	it('runs when the target is unchanged since the hold', async () => {
+		const { gate } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toEqual({ kind: 'run' })
+	})
+
+	it('does not run on a yes for old text: the same arguments and id give a new hold with the new text', async () => {
+		const { gate, edit } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		edit('v2')
+		const again = await gate.review(TOOL, ARGS, hold.id)
+		expect(again).toMatchObject({
+			kind: 'hold',
+			changed: true,
+			preview: { body: 'text v2' },
+		})
+		if (again.kind !== 'hold') throw new Error('expected a hold')
+		expect(again.id).not.toBe(hold.id)
+		// The old id is dead, and the new hold still needs its own yes.
+		expect((await gate.review(TOOL, ARGS, hold.id)).kind).toBe('hold')
+		const latest = await gate.review(TOOL, ARGS, null)
+		if (latest.kind !== 'hold') throw new Error('expected a hold')
+		expect((await gate.review(TOOL, ARGS, latest.id)).kind).toBe('refuse')
+	})
+
+	it('runs after a fresh yes to the new hold', async () => {
+		const { gate, edit } = target('v1')
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		edit('v2')
+		const again = await gate.review(TOOL, ARGS, hold.id)
+		if (again.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes_2')
+		expect(await gate.review(TOOL, ARGS, again.id)).toEqual({ kind: 'run' })
+	})
+
+	it('works the fingerprint out from the target again each time and never takes it from the model', async () => {
+		const { gate, previewFor } = target('v1')
+		const hold = await gate.review(TOOL, { ...ARGS, fingerprint: 'v1' }, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		await gate.review(TOOL, { ...ARGS, fingerprint: 'v1' }, hold.id)
+		// Once for the hold, once more for the repeat.
+		expect(previewFor).toHaveBeenCalledTimes(2)
+	})
+
+	it('still holds, with no preview, when the lookup fails, and then runs on a yes', async () => {
+		const previewFor = vi.fn().mockRejectedValue(new Error('db down'))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const hold = await gate.review(TOOL, ARGS, null)
+		expect(hold).toMatchObject({ kind: 'hold', preview: null })
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toEqual({ kind: 'run' })
+	})
+
+	it('treats a lookup that failed at the hold but works at the repeat as changed text', async () => {
+		const previewFor = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('db down'))
+			.mockResolvedValue(preview('v1'))
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false, previewFor })
+		const hold = await gate.review(TOOL, ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		say(gate, 'item_yes')
+		expect(await gate.review(TOOL, ARGS, hold.id)).toMatchObject({ kind: 'hold', changed: true })
 	})
 })
