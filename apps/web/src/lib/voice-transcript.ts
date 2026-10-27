@@ -4,8 +4,6 @@
  * thread does not draw them: the Transcript view does, from this model.
  */
 
-import { parseVoiceReceipt } from '@/lib/voice-receipts'
-
 export interface VoiceTranscriptMessage {
 	id: number
 	content: string
@@ -23,9 +21,13 @@ export interface VoiceTranscriptEntry {
 	text: string
 }
 
-/** A saved spoken line, as opposed to a receipt, a summary or an ordinary message. */
+/**
+ * A saved spoken line: source 'voice' and no `kind` at all. Anything with a kind
+ * (receipt, receipt_summary, show) is something else the call put in the thread
+ * and draws as usual.
+ */
 export function isSpokenVoiceLine(m: Pick<VoiceTranscriptMessage, 'metadata'>): boolean {
-	return m.metadata?.source === 'voice' && parseVoiceReceipt(m.metadata) === null
+	return m.metadata?.source === 'voice' && m.metadata.kind == null
 }
 
 function ms(createdAt: string | null): number | null {

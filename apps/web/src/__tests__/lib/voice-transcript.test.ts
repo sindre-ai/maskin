@@ -26,12 +26,15 @@ describe('isSpokenVoiceLine', () => {
 		expect(isSpokenVoiceLine(msg(1, 0))).toBe(true)
 	})
 
-	it('is false for receipts, summaries and ordinary messages', () => {
+	it('is false for anything that carries a kind: receipts, summaries and show_in_chat', () => {
 		const m = (metadata: VoiceTranscriptMessage['metadata']) => ({ metadata })
-		expect(isSpokenVoiceLine(m({ source: 'voice', kind: 'receipt', text: 'x' } as never))).toBe(
-			false,
-		)
+		expect(isSpokenVoiceLine(m({ source: 'voice', kind: 'receipt' }))).toBe(false)
 		expect(isSpokenVoiceLine(m({ source: 'voice', kind: 'receipt_summary' }))).toBe(false)
+		expect(isSpokenVoiceLine(m({ source: 'voice', kind: 'show' }))).toBe(false)
+	})
+
+	it('is false for ordinary messages', () => {
+		const m = (metadata: VoiceTranscriptMessage['metadata']) => ({ metadata })
 		expect(isSpokenVoiceLine(m(null))).toBe(false)
 		expect(isSpokenVoiceLine(m({}))).toBe(false)
 	})
@@ -66,6 +69,17 @@ describe('buildVoiceTranscript', () => {
 			'vs-1',
 		)
 		expect(lines).toEqual([{ id: 2, t: 12, speaker: 'Developer', text: 'line 2' }])
+	})
+
+	it('leaves show_in_chat messages out of the transcript', () => {
+		const lines = buildVoiceTranscript(
+			[
+				msg(1, 0),
+				msg(2, 4, { metadata: { source: 'voice', voice_session_id: 'vs-1', kind: 'show' } }),
+			],
+			'vs-1',
+		)
+		expect(lines.map((l) => l.id)).toEqual([1])
 	})
 
 	it('keeps only the asked-for call, and ordinary messages out', () => {

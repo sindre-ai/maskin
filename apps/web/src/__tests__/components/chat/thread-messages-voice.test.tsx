@@ -139,6 +139,12 @@ describe('ThreadMessages — voice call boundaries', () => {
 				createdAt: '2026-09-30T10:05:18.000Z',
 			}),
 			buildMessage({
+				id: 5,
+				content: 'Here is the draft you asked for',
+				metadata: { ...voice(), kind: 'show' } as never,
+				createdAt: '2026-09-30T10:05:19.000Z',
+			}),
+			buildMessage({
 				id: 4,
 				content: 'Review with the Developer',
 				metadata: {
@@ -156,13 +162,15 @@ describe('ThreadMessages — voice call boundaries', () => {
 		])
 		expect(screen.queryByText('spoken by me')).toBeNull()
 		expect(screen.queryByText('spoken back')).toBeNull()
-		expect(screen.queryByTestId('voice-message-meta-tag')).toBeNull()
+		// A show_in_chat message carries a kind, so it is not a spoken line.
+		expect(screen.getByText('Here is the draft you asked for')).toBeInTheDocument()
 
 		await userEvent.click(screen.getByRole('button', { name: 'Read transcript' }))
 		const view = await screen.findByRole('dialog', { name: 'Transcript' })
 		expect(within(view).getByText('spoken by me')).toBeInTheDocument()
 		expect(within(view).getByText('spoken back')).toBeInTheDocument()
 		expect(within(view).getByText('0:18')).toBeInTheDocument()
+		expect(within(view).queryByText('Here is the draft you asked for')).toBeNull()
 	})
 
 	it('draws a separate head and tail for two different calls in one conversation', async () => {
