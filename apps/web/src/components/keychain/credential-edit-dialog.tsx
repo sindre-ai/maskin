@@ -10,7 +10,6 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateCredential } from '@/hooks/use-integrations'
 import { ApiError } from '@/lib/api'
 import {
@@ -71,13 +70,12 @@ function EditForm({
 	const [username, setUsername] = useState('')
 	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
-	const loginEmail = useFeatureFlag('keychain-login-email')
 
 	const trimmed = name.trim()
 	const renamed = trimmed !== savedName
 	const nameProblem = trimmed ? checkCredentialName(trimmed) : null
 	const hasSecret = isLogin
-		? username.trim().length > 0 || password.length > 0 || (loginEmail && email.trim().length > 0)
+		? username.trim().length > 0 || password.length > 0 || email.trim().length > 0
 		: secret.length > 0
 	const canSave = trimmed.length > 0 && !nameProblem && (renamed || hasSecret) && !update.isPending
 
@@ -90,7 +88,7 @@ function EditForm({
 			if (isLogin) {
 				if (username.trim()) body.username = username.trim()
 				if (password) body.password = password
-				if (loginEmail && email.trim()) body.email = email.trim()
+				if (email.trim()) body.email = email.trim()
 			} else {
 				body.rawSecret = secret
 			}
@@ -143,9 +141,7 @@ function EditForm({
 			{isLogin ? (
 				<>
 					<div className="space-y-1.5">
-						<Label htmlFor={`${id}-username`}>
-							{loginEmail ? 'New username' : 'New username or email'}
-						</Label>
+						<Label htmlFor={`${id}-username`}>New username</Label>
 						<Input
 							id={`${id}-username`}
 							value={username}
@@ -155,20 +151,18 @@ function EditForm({
 							placeholder="Leave empty to keep the current username"
 						/>
 					</div>
-					{loginEmail && (
-						<div className="space-y-1.5">
-							<Label htmlFor={`${id}-email`}>New email</Label>
-							<Input
-								id={`${id}-email`}
-								inputMode="email"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-								autoComplete="off"
-								spellCheck={false}
-								placeholder="Leave empty to keep the current email, if any"
-							/>
-						</div>
-					)}
+					<div className="space-y-1.5">
+						<Label htmlFor={`${id}-email`}>New email</Label>
+						<Input
+							id={`${id}-email`}
+							inputMode="email"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							autoComplete="off"
+							spellCheck={false}
+							placeholder="Leave empty to keep the current email, if any"
+						/>
+					</div>
 					<div className="space-y-1.5">
 						<Label htmlFor={`${id}-password`}>New password</Label>
 						<SecretInput
