@@ -50,7 +50,7 @@ test.describe('Sandboxed iframe mini-app viewer', () => {
 			const obj = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Mini-app viewer e2e',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			const file = await account.api.createFile(account.workspaceId, {

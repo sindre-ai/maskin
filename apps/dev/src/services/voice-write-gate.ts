@@ -365,14 +365,50 @@ interface PendingAction {
 	speechMark: number
 	/** What the call would do when it was held; null when no preview could be made. */
 	fingerprint: string | null
+	/** What the held call would do, in a few words; never the text of a draft. */
+	summary: string
+	/** Yeses already heard for earlier holds of this same send, whose text then changed. */
+	yesCarried: number
 	answer: 'yes' | 'no' | null
 	state: PendingState
 	timer: ReturnType<typeof setTimeout>
 	waiters: Array<() => void>
 }
 
+/** What the gate knows about a send that went through a yes. */
+export interface ConfirmedSend {
+	holdId: string
+	/** Yeses the person gave before it ran: 1, or more when the text changed after a yes. */
+	yesCount: number
+	/** The text read back before the yes is the text sent. Null when no preview could be made. */
+	readBackMatches: boolean | null
+}
+
+/** A hold that ended without the call running. */
+export interface HoldEnd {
+	id: string
+	tool: string
+	summary: string
+	state: 'declined' | 'expired' | 'superseded'
+	yesCount: number
+	/** The arguments of the held call, in a stable form. */
+	argsKey: string
+	/**
+	 * For superseded: the call that replaced it. The same tool with the same arguments means the same
+	 * send, asked again; the same tool with other arguments is a different send.
+	 */
+	replacedByTool?: string
+	replacedByArgsKey?: string
+}
+
+export interface PendingHoldInfo {
+	tool: string
+	summary: string
+	yesCount: number
+}
+
 export type WriteReview =
-	| { kind: 'run' }
+	| { kind: 'run'; confirmed?: ConfirmedSend }
 	| {
 			kind: 'hold'
 			id: string
@@ -390,6 +426,8 @@ export interface WriteGate {
 	noteUserLine(text: string, itemId?: string): void
 	/** Decides what a tool call may do. `args` is exactly what would be passed to the tool. */
 	review(tool: string, args: unknown, confirmationId: string | null): Promise<WriteReview>
+	/** The hold still waiting for the person's yes or no, if any. */
+	pendingHold(): PendingHoldInfo | null
 }
 
 export function createWriteGate(deps: {
@@ -397,8 +435,10 @@ export function createWriteGate(deps: {
 	isReadOnlyTool: (name: string) => boolean
 	/** What the call would do right now, from its target. Without it a hold has no preview. */
 	previewFor?: (tool: string, args: unknown) => Promise<HoldPreview>
+	/** Told once for every hold that ends without running: turned down, timed out or replaced. */
+	onHoldEnded?: (end: HoldEnd) => void
 }): WriteGate {
-	const { voiceSessionId, isReadOnlyTool, previewFor } = deps
+	const { voiceSessionId, isReadOnlyTool, previewFor, onHoldEnded } = deps
 	let pending: PendingAction | null = null
 	// Ids of holds the person turned down, so a model that repeats one is told no, not asked to ask again.
 	const declinedIds = new Set<string>()
@@ -409,11 +449,36 @@ export function createWriteGate(deps: {
 		logger.info(`Voice write ${event}`, { voice_session_id: voiceSessionId, tool_name: tool })
 	}
 
-	function close(action: PendingAction, state: PendingState) {
+	function close(
+		action: PendingAction,
+		state: PendingState,
+		replacedBy?: { tool: string; argsKey: string },
+	) {
+		const wasOpen = action.state === 'open'
 		action.state = state
 		clearTimeout(action.timer)
 		if (pending === action) pending = null
 		for (const wake of action.waiters.splice(0)) wake()
+		if (wasOpen && (state === 'declined' || state === 'expired' || state === 'superseded')) {
+			try {
+				onHoldEnded?.({
+					id: action.id,
+					tool: action.tool,
+					summary: action.summary,
+					state,
+					yesCount: action.yesCarried + (action.answer === 'yes' ? 1 : 0),
+					argsKey: action.argsKey,
+					...(replacedBy
+						? { replacedByTool: replacedBy.tool, replacedByArgsKey: replacedBy.argsKey }
+						: {}),
+				})
+			} catch (err) {
+				logger.warn('Voice hold-ended listener failed', {
+					voice_session_id: voiceSessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
 	}
 
 	/** The preview, or null when there is none or the lookup failed: a failure must not drop the call. */
@@ -431,10 +496,16 @@ export function createWriteGate(deps: {
 		}
 	}
 
-	function hold(tool: string, argsKey: string, fingerprint: string | null): PendingAction {
+	function hold(
+		tool: string,
+		argsKey: string,
+		fingerprint: string | null,
+		summary: string,
+		yesCarried: number,
+	): PendingAction {
 		if (pending) {
 			log('superseded', pending.tool)
-			close(pending, 'superseded')
+			close(pending, 'superseded', { tool, argsKey })
 		}
 		const action: PendingAction = {
 			id: randomUUID(),
@@ -442,6 +513,8 @@ export function createWriteGate(deps: {
 			argsKey,
 			speechMark: speechStarts,
 			fingerprint,
+			summary,
+			yesCarried,
 			answer: null,
 			state: 'open',
 			waiters: [],
@@ -462,11 +535,18 @@ export function createWriteGate(deps: {
 		args: unknown,
 		argsKey: string,
 		known?: HoldPreview | null,
+		yesCarried = 0,
 	): Promise<WriteReview> {
 		// Looked up before the hold is made, so nothing awaits between making it and returning it.
 		const preview = known !== undefined ? known : await currentPreview(tool, args)
 		const changed = known !== undefined
-		const action = hold(tool, argsKey, preview?.fingerprint ?? null)
+		const action = hold(
+			tool,
+			argsKey,
+			preview?.fingerprint ?? null,
+			preview?.summary ?? tool.replace(/_/g, ' '),
+			yesCarried,
+		)
 		return { kind: 'hold', id: action.id, risky: isRiskyTool(tool), preview, changed }
 	}
 
@@ -531,22 +611,40 @@ export function createWriteGate(deps: {
 
 			if (action.answer === null) await waitForAnswer(action)
 			if (action.state === 'declined') return { kind: 'refuse', reason: 'declined' }
+			const yesesHeard = action.yesCarried + (action.answer === 'yes' ? 1 : 0)
 			if (action.state !== 'open') {
 				// Expired or replaced while we waited: the yes, if any, no longer counts.
-				return holdWithPreview(tool, args, argsKey)
+				return holdWithPreview(tool, args, argsKey, undefined, yesesHeard)
 			}
 			if (action.answer !== 'yes') return { kind: 'refuse', reason: 'no_yes' }
 			// The yes was for the text the person was asked about. Work the fingerprint out again from the
 			// target now: the arguments (an object id) stay the same when the text behind them changes.
 			const latest = await currentPreview(tool, args)
-			if (action.state !== 'open') return holdWithPreview(tool, args, argsKey, latest)
+			if (action.state !== 'open') return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
 			if ((latest?.fingerprint ?? null) !== action.fingerprint) {
 				log('stale', tool)
-				return holdWithPreview(tool, args, argsKey, latest)
+				return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
 			}
 			log('confirmed', tool)
 			close(action, 'confirmed')
-			return { kind: 'run' }
+			return {
+				kind: 'run',
+				confirmed: {
+					holdId: action.id,
+					yesCount: yesesHeard,
+					readBackMatches: action.fingerprint === null ? null : true,
+				},
+			}
+		},
+
+		pendingHold() {
+			const action = pending
+			if (!action || action.state !== 'open') return null
+			return {
+				tool: action.tool,
+				summary: action.summary,
+				yesCount: action.yesCarried + (action.answer === 'yes' ? 1 : 0),
+			}
 		},
 	}
 }

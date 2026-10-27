@@ -152,6 +152,12 @@ describe('buildVoiceInstructions', () => {
 		)
 	})
 
+	it('tells the agent to call a change done only after its tool result says it ran, and that the chat shows a receipt', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_DRAFT_RULE)
+		expect(VOICE_DRAFT_RULE).toContain('only after its tool result says it ran')
+		expect(VOICE_DRAFT_RULE).toContain('the chat shows a receipt')
+	})
+
 	it('tells the agent to show drafts, lists and links in the chat instead of reading them out', () => {
 		expect(VOICE_CALL_CONDUCT).toContain('show_in_chat')
 		expect(VOICE_CALL_CONDUCT).toContain('short summary')

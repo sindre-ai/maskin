@@ -230,7 +230,7 @@ struct ObjectsStoreTests {
 		let task = await store.create(ObjectDraft(type: "task", title: "Elsewhere", status: "todo"))
 		#expect(task != nil)
 		#expect(!store.objects.contains { $0.title == "Elsewhere" })
-		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "signal"))
+		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "opportunity"))
 		#expect(store.objects.first?.id == bet?.id)
 	}
 
