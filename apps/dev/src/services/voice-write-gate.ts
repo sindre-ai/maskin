@@ -42,6 +42,17 @@ const LEAD_WORDS = new Set([
 	'great',
 	'fine',
 	'please',
+	// Danish
+	'jo',
+	'selvfølgelig',
+	'absolut',
+	'perfekt',
+	'enig',
+	'præcis',
+	'fint',
+	'godt',
+	'super',
+	'flot',
 ])
 /**
  * Lead words that are a yes on their own. "please", "fine", "great", "alright" and "exactly"
@@ -62,9 +73,14 @@ const AFFIRM_ALONE = new Set([
 	'definitely',
 	'agreed',
 	'perfect',
+	'jo',
+	'selvfølgelig',
+	'absolut',
+	'perfekt',
+	'enig',
 ])
 /** Words that may close a yes: "go ahead please", "send it now". */
-const TAIL_WORDS = new Set(['please', 'now', 'thanks'])
+const TAIL_WORDS = new Set(['please', 'now', 'thanks', 'tak', 'nu', 'bare', 'venligst'])
 /**
  * The approvals a yes may be made of. A line is a yes only if, after the lead and tail words,
  * every word belongs to one of these phrases (joined by "and" at most). It is a closed list on
@@ -102,6 +118,43 @@ const APPROVAL_PHRASES = [
 	'let us do it',
 	'of course',
 	'for sure',
+	// Danish
+	'send den',
+	'send det',
+	'send dem',
+	'send den afsted',
+	'send det afsted',
+	'send dem afsted',
+	'afsted',
+	'godkend',
+	'godkend den',
+	'godkend det',
+	'godkend alle',
+	'godkendt',
+	'jeg godkender',
+	'det er godkendt',
+	'bekræftet',
+	'jeg bekræfter',
+	'jeg er enig',
+	'det lyder godt',
+	'det lyder fint',
+	'det ser godt ud',
+	'det ser fint ud',
+	'det passer',
+	'det er rigtigt',
+	'det er korrekt',
+	'det er fint',
+	'det er i orden',
+	'i orden',
+	'gør det',
+	'kør',
+	'kør på',
+	'sæt i gang',
+	'lad os gøre det',
+	'helt sikkert',
+	'selvfølgelig',
+	'absolut',
+	'gerne',
 ].map((phrase) => phrase.split(' '))
 /** Any of these anywhere in the line makes it not a yes: it is a no, a condition or a change of mind. */
 const NO_WORDS = new Set([
@@ -134,6 +187,22 @@ const NO_WORDS = new Set([
 	'arent',
 	'wasnt',
 	'nej',
+	// Danish
+	'ikke',
+	'ingen',
+	'vent',
+	'men',
+	'kun',
+	'aldrig',
+	'annuller',
+	'senere',
+	'ændre',
+	'rediger',
+	'undlad',
+	'dog',
+	'faktisk',
+	'stedet',
+	'uden',
 ])
 const MAX_YES_WORDS = 8
 
@@ -141,7 +210,7 @@ function normalize(text: string): string {
 	return text
 		.toLowerCase()
 		.replace(/['’]/g, '')
-		.replace(/[^a-z\s]/g, ' ')
+		.replace(/[^a-zæøå\s]/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim()
 }
@@ -149,7 +218,8 @@ function normalize(text: string): string {
 /** True when `words` is one or more approval phrases, optionally joined by "and". */
 function isApprovalRun(words: string[]): boolean {
 	if (words.length === 0) return true
-	if (words[0] === 'and') return words.length > 1 && isApprovalRun(words.slice(1))
+	if (words[0] === 'and' || words[0] === 'og')
+		return words.length > 1 && isApprovalRun(words.slice(1))
 	return APPROVAL_PHRASES.some(
 		(phrase) =>
 			phrase.length <= words.length &&
@@ -160,15 +230,17 @@ function isApprovalRun(words: string[]): boolean {
 
 /**
  * A short, clear yes: lead words ("yes", "okay sure"), then approval phrases ("go ahead and
- * send it"), then tail words ("please", "now"), and nothing else. "I approve", "sounds good,
+ * send it"), then tail words ("please", "now"), and nothing else. The lists hold English and
+ * Danish ("ja, send den", "det lyder godt", "godkend alle"). "I approve", "sounds good,
  * send it" and "sure, do that" count; "sure, what does it say", "okay is that right" and
  * "please correct it" do not, and neither does anything with a no, "but", "wait" or question mark.
  */
 export function isYes(text: string): boolean {
-	// Only plain English letters and punctuation can be a yes. normalize() turns everything else
-	// into a space, so without this "send 500", "approve #3" or "yes 5" would read as a bare
-	// approval with its number thrown away; accented letters would be thrown away the same way.
-	if (/[^a-z\s.,!;:'’"-]/i.test(text)) return false
+	// Only English and Danish letters (a-z, æ, ø, å) and plain punctuation can be a yes.
+	// normalize() turns everything else into a space, so without this "send 500", "approve #3"
+	// or "yes 5" would read as a bare approval with its number thrown away; other accented
+	// letters would be thrown away the same way.
+	if (/[^a-zæøå\s.,!;:'’"-]/i.test(text)) return false
 	const normalized = normalize(text)
 	if (!normalized) return false
 	const words = normalized.split(' ')
