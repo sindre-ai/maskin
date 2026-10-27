@@ -15,10 +15,10 @@ import type { SessionManager } from '../services/session-manager'
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])
 
 function buildApp(row: Record<string, unknown> | undefined) {
-	// Resolves any select().from().where().limit() chain with the given row.
+	// Answers any select().from().where().limit() chain with the given row.
 	const chain: Record<string, unknown> = {}
-	for (const step of ['select', 'from', 'where', 'limit']) chain[step] = () => chain
-	chain.then = (resolve: (rows: unknown[]) => void) => resolve(row ? [row] : [])
+	for (const step of ['select', 'from', 'where']) chain[step] = () => chain
+	chain.limit = () => Promise.resolve(row ? [row] : [])
 	const deps: AppDeps = {
 		db: chain as unknown as Database,
 		notifyBridge: {} as unknown as PgNotifyBridge,
