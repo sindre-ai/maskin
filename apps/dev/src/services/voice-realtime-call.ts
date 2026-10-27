@@ -22,7 +22,33 @@ import type { VoiceSessionRow } from './voice-transcript'
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
+/** The voice used when MASKIN_VOICE_REALTIME_VOICE is unset or not one the vendor documents. */
 export const VOICE_REALTIME_VOICE = 'verse'
+/** The voices OpenAI documents for realtime sessions. A voice is fixed once the model has spoken in a call. */
+export const VOICE_REALTIME_VOICES = [
+	'alloy',
+	'ash',
+	'ballad',
+	'coral',
+	'echo',
+	'sage',
+	'shimmer',
+	'verse',
+	'marin',
+	'cedar',
+] as const
+
+/** MASKIN_VOICE_REALTIME_VOICE picks the agent's voice for new calls; anything not documented falls back to the default. */
+export function resolveRealtimeVoice(env: NodeJS.ProcessEnv = process.env): string {
+	const wanted = env.MASKIN_VOICE_REALTIME_VOICE?.trim().toLowerCase()
+	if (!wanted) return VOICE_REALTIME_VOICE
+	if ((VOICE_REALTIME_VOICES as readonly string[]).includes(wanted)) return wanted
+	logger.warn('MASKIN_VOICE_REALTIME_VOICE is not a documented voice; using the default', {
+		wanted,
+		default_voice: VOICE_REALTIME_VOICE,
+	})
+	return VOICE_REALTIME_VOICE
+}
 /** How long the server socket may stay connecting before the call runs without tools. */
 export const VOICE_CONTROL_CONNECT_TIMEOUT_MS = 5000
 /** Stored on voice_sessions.vendor_session_id while an offer is in flight, so only one offer is ever accepted. */
@@ -61,6 +87,38 @@ export interface CreateRealtimeCallInput {
 	voice: string
 	model: string
 	tools: VoiceRealtimeTool[]
+	/** Names the caller is likely to say (caller, agent, workspace); sent to the transcription as keywords. */
+	transcriptionNames?: string[]
+}
+
+/** The block the call falls back to when OpenAI rejects the richer transcription settings. */
+export const VOICE_LEGACY_TRANSCRIPTION = { model: 'gpt-transcribe' }
+
+const TRANSCRIPTION_KEYWORDS_MAX = 20
+const TRANSCRIPTION_KEYWORD_MAX_CHARS = 60
+
+/**
+ * The input-transcription block of the call's session. Danish and English go in as expected
+ * languages, a hint and not a lock, so a sentence that mixes them is not forced into one.
+ * Names go in as keywords. OpenAI rejects a session that holds a field it does not know, so
+ * this is the one place the block is built (createRealtimeCall retries on the legacy block).
+ */
+export function buildTranscriptionConfig(names: readonly string[] = []) {
+	const keywords = [
+		...new Set(
+			names
+				// OpenAI rejects a keyword with <, > or a line break.
+				.map((n) => n.replace(/[<>\r\n]+/g, ' ').trim())
+				.filter((n) => n.length > 0 && n.length <= TRANSCRIPTION_KEYWORD_MAX_CHARS),
+		),
+	].slice(0, TRANSCRIPTION_KEYWORDS_MAX)
+	return {
+		model: 'gpt-live-transcribe',
+		languages: ['da', 'en'],
+		prompt:
+			'A call between a Danish-speaking team member and their AI agent about their work. They speak Danish and English and often mix the two in one sentence. Write each word in the language it was spoken in.',
+		...(keywords.length > 0 ? { keywords } : {}),
+	}
 }
 
 export type CreateRealtimeCallOutcome =
@@ -86,6 +144,22 @@ export function isQuotaBody(body: string): boolean {
 async function defaultCreateRealtimeCall(
 	input: CreateRealtimeCallInput,
 ): Promise<CreateRealtimeCallOutcome> {
+	const outcome = await postRealtimeCall(input, buildTranscriptionConfig(input.transcriptionNames))
+	// A wrong transcription field would fail every call, and only a real call can prove the
+	// block right. So a 400 that names transcription is retried once on the old block.
+	if (outcome.kind === 'error' && outcome.status === 400 && /transcri/i.test(outcome.body)) {
+		logger.warn('Voice vendor rejected the transcription settings; retrying with the old block', {
+			vendor_body: outcome.body.slice(0, 500),
+		})
+		return postRealtimeCall(input, VOICE_LEGACY_TRANSCRIPTION)
+	}
+	return outcome
+}
+
+async function postRealtimeCall(
+	input: CreateRealtimeCallInput,
+	transcription: Record<string, unknown>,
+): Promise<CreateRealtimeCallOutcome> {
 	const session = {
 		type: 'realtime',
 		model: input.model,
@@ -97,7 +171,7 @@ async function defaultCreateRealtimeCall(
 				// gpt-transcribe, not whisper-1: whisper-1 invents phrases ("Thank you
 				// for watching") on near-silence, and each one was saved as a message
 				// the user never said.
-				transcription: { model: 'gpt-transcribe' },
+				transcription,
 				// Filters the mic audio before voice detection and the model see it, so
 				// room noise stops registering as speech. far_field suits laptop mics;
 				// near_field is for headsets.

@@ -8,6 +8,7 @@ import {
 	voiceSessions,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
 import { createVoiceToolkit } from '@maskin/mcp'
 import type { VoiceToolkit } from '@maskin/mcp'
@@ -33,11 +34,11 @@ import { buildVoiceInstructions } from '../services/voice-instructions'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
-	VOICE_REALTIME_VOICE,
 	attachVoiceCall,
 	closeVoiceCall,
 	createRealtimeCall,
 	realtimeCallsUrl,
+	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
 import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
@@ -509,6 +510,17 @@ app.openapi(postOfferRoute, async (c) => {
 		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
 	}
 
+	// The names the transcription is told to expect. Missing ones are skipped: the hint is
+	// never worth failing a call over.
+	const [workspace] = await db
+		.select({ name: workspaces.name })
+		.from(workspaces)
+		.where(eq(workspaces.id, session.workspaceId))
+		.limit(1)
+	const transcriptionNames = [caller?.name, agent.name, workspace?.name].filter(
+		(n): n is string => typeof n === 'string',
+	)
+
 	const instructions = buildVoiceInstructions({
 		systemPrompt: agent.systemPrompt,
 		workspaceId: session.workspaceId,
@@ -545,7 +557,8 @@ app.openapi(postOfferRoute, async (c) => {
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
 			instructions,
-			voice: VOICE_REALTIME_VOICE,
+			voice: resolveRealtimeVoice(),
+			transcriptionNames,
 			model: VOICE_REALTIME_MODEL,
 		})
 	} catch (err) {

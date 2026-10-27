@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CALL_CONDUCT,
+	VOICE_LANGUAGE_RULE,
 	VOICE_SKILLS_TOTAL_MAX_CHARS,
 	VOICE_WRITE_CONFIRMATION,
 	buildVoiceInstructions,
@@ -99,6 +100,15 @@ describe('buildVoiceInstructions', () => {
 	it('gives every agent the call conduct rules, with or without a system prompt', () => {
 		expect(buildVoiceInstructions(base)).toContain(VOICE_CALL_CONDUCT)
 		expect(buildVoiceInstructions({ ...base, systemPrompt: null })).toContain(VOICE_CALL_CONDUCT)
+	})
+
+	it('tells every agent to answer in the language the person speaks, in natural spoken Danish', () => {
+		for (const systemPrompt of ['You are the agent.', null]) {
+			expect(buildVoiceInstructions({ ...base, systemPrompt })).toContain(VOICE_LANGUAGE_RULE)
+		}
+		expect(VOICE_LANGUAGE_RULE).toContain('language the person is speaking')
+		expect(VOICE_LANGUAGE_RULE).toContain('natural spoken Danish')
+		expect(VOICE_LANGUAGE_RULE).toContain('pronounce Danish')
 	})
 
 	it('tells the agent to just do ordinary changes, and for a held one to call first and ask once', () => {
