@@ -101,6 +101,10 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 - If the caller says something is generic, wrong or not worth doing, move on or fix it. Look in the records you can read for the specifics before asking them to supply it.
 - Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
 
+/** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
+export const VOICE_LANGUAGE_RULE =
+	"Reply in the language the person is speaking, and follow them if they switch. People on this call speak Danish and English and often mix them. When you speak Danish, use natural spoken Danish, not a word-for-word translation of English, and pronounce Danish words and names as Danish. When you read out text that is written in Danish, read it as Danish."
+
 export interface VoiceInstructionsInput {
 	systemPrompt: string | null
 	workspaceId: string
@@ -121,6 +125,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\nThe current workspace id is ${input.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		`\n\n${VOICE_WRITE_CONFIRMATION}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
+		`\n\n${VOICE_LANGUAGE_RULE}`,
 		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(
 			(row) => `\n\n## Skill: ${row.name}\n\n${row.content}`,
 		),
