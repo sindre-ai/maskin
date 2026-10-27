@@ -85,6 +85,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import {
+	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
@@ -4858,14 +4859,30 @@ ${cont.continues_prompt}
 		// Same reason as the idle close: save the usage before the row goes final.
 		await this.accumulateSessionUsage(session.id, { allTurns: true })
 
+		// A helper that stopped on a Claude limit banner carries the reset time in
+		// its result text. Read it the way the two exit paths do, so the retry
+		// scheduler can rerun the helper once the allowance is back. Banners only:
+		// this is the helper's final error text, not a whole stdout tail, so the
+		// looser substring signals have nothing to add.
+		const limitReason = outcome.isError
+			? classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false })
+			: null
+		const scheduledRetryAt = pickRetryAt(limitReason)
+
 		const settled = await settleSession(
 			session.id,
 			outcome.isError
 				? {
 						kind: 'fail',
-						classification: 'unknown',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: limitReason,
+						}),
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
+						failureReason: limitReason ?? undefined,
+						retryAt: scheduledRetryAt ?? undefined,
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.

@@ -173,7 +173,7 @@ export async function showInChat(
 		workspaceId: session.workspaceId,
 		actorId: session.agentActorId,
 		content,
-		metadata: { source: 'voice', voice_session_id: session.id },
+		metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 		sessionId: null,
 	})
 	if (!message) throw new Error('show_in_chat message insert was suppressed')

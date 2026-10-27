@@ -52,7 +52,7 @@ describe('show_in_chat against real Postgres', () => {
 		expect(rows).toHaveLength(1)
 		expect(rows[0]).toMatchObject({
 			actorId: agent.id,
-			metadata: { source: 'voice', voice_session_id: session.id },
+			metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 		})
 		expect(rows[0]?.content).toContain(
 			`[Reply to Anna](https://app.test/${ws.id}/objects/${object.id})`,

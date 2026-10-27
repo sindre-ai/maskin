@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const captureToolCall = vi.fn()
 const captureTurnCompleted = vi.fn()
+const captureCardAction = vi.fn()
 vi.mock('../../lib/analytics/voice-events', () => ({
+	captureForYouCardActionByVoice: (...args: unknown[]) => captureCardAction(...args),
 	captureVoiceToolCall: (...args: unknown[]) => captureToolCall(...args),
 	captureVoiceTurnCompleted: (...args: unknown[]) => captureTurnCompleted(...args),
 }))
@@ -43,7 +45,18 @@ vi.mock('../../services/voice-hold-preview', async (importOriginal) => ({
 	postHoldPreview: (...args: unknown[]) => postHoldPreview(...args),
 }))
 
+const describeToolCall = vi.fn()
+const postReceiptLine = vi.fn()
+vi.mock('../../services/voice-receipt', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/voice-receipt')>()),
+	describeToolCall: (...args: unknown[]) => describeToolCall(...args),
+	postReceiptLine: (...args: unknown[]) => postReceiptLine(...args),
+}))
+
 const { createVoiceChannel } = await import('../../services/voice-session-channel')
+const { dropVoiceCallState, peekVoiceCallState, voiceCallState } = await import(
+	'../../services/voice-call-state'
+)
 type Channel = ReturnType<typeof createVoiceChannel>
 
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
@@ -61,6 +74,7 @@ const session = {
 	conversationId: null,
 } as never
 
+const RECEIPT_CHAT = 'a0e1f2a3-b4c5-4d6e-8f70-81920a3b4c5d'
 const HOLD_CHAT = '9fd17e80-fb03-4587-a1c4-b0d3c57e0aa8'
 const heldPreview = (fingerprint: string, body = 'Hello Lars, can we meet on Tuesday?') => ({
 	summary: 'Send this email',
@@ -114,6 +128,11 @@ const lastResult = (sent: Array<Record<string, unknown>>) =>
 beforeEach(() => {
 	captureToolCall.mockReset()
 	captureTurnCompleted.mockReset()
+	captureCardAction.mockReset()
+	dropVoiceCallState(SESSION_ID)
+	// No lines by default, so the older tests see no receipt traffic; the receipt tests set a draft.
+	describeToolCall.mockReset().mockResolvedValue([])
+	postReceiptLine.mockReset().mockResolvedValue(RECEIPT_CHAT)
 	endSession.mockReset().mockResolvedValue({})
 	recordTurn.mockReset()
 	recordToolCall.mockReset()
@@ -696,5 +715,234 @@ describe('voice channel — show_in_chat', () => {
 		const result = sent.find((m) => m.type === 'tool_result') as { ok: boolean; event: never }
 		expect(result.ok).toBe(false)
 		expect(JSON.stringify(result.event)).toContain('Show at most 5 things.')
+	})
+})
+
+describe('voice channel — receipts', () => {
+	const draft = {
+		event: 'created_task',
+		objectId: ENTITY,
+		objectType: 'task',
+		objectTitle: 'Reply to Anna',
+		template: 'Created task {title}',
+	}
+	const receiptCalls = () => postReceiptLine.mock.calls.map((c) => c[0] as Record<string, unknown>)
+	const sayItem = (channel: Channel, item: string, text: string) =>
+		Promise.all([
+			channel.onMessage(JSON.stringify({ type: 'user_speech_started', item_id: item })),
+			channel.onMessage(JSON.stringify({ type: 'transcript', role: 'user', text, item_id: item })),
+		])
+
+	it('writes a line for a write that ran, before the model hears the result', async () => {
+		describeToolCall.mockResolvedValue([draft])
+		const order: string[] = []
+		postReceiptLine.mockImplementation(async () => {
+			order.push('line')
+			return RECEIPT_CHAT
+		})
+		const invoke = vi.fn().mockResolvedValue(textResult('{"results":[{"id":"x"}]}'))
+		const { sent, toolCall } = setup(invoke)
+		const original = sent.push.bind(sent)
+		sent.push = (...items) => {
+			if ((items[0] as { type?: string }).type === 'tool_result') order.push('result')
+			return original(...items)
+		}
+		await toolCall('create_objects', {
+			nodes: [{ $id: 'n1', type: 'task', status: 'todo', title: 'Reply to Anna' }],
+		})
+
+		expect(order).toEqual(['line', 'result'])
+		expect(receiptCalls()[0]).toMatchObject({
+			tool: 'create_objects',
+			outcome: 'ran',
+			draft,
+			agentName: 'Chief of Staff',
+		})
+		// The call was not pinned to a chat yet, so the browser is told which one the line landed in.
+		expect(sent.filter((m) => m.type === 'conversation')).toEqual([
+			{ type: 'conversation', conversation_id: RECEIPT_CHAT },
+		])
+		expect(JSON.parse(lastResult(sent).event.item.output)).toEqual({ results: [{ id: 'x' }] })
+	})
+
+	it('writes a failed line with the reason when a tool returns an error', async () => {
+		describeToolCall.mockResolvedValue([draft])
+		const invoke = vi.fn().mockResolvedValue({
+			isError: true,
+			content: [{ type: 'text', text: 'status is not allowed' }],
+		})
+		const { toolCall } = setup(invoke)
+		await toolCall('update_objects', { updates: [{ id: ENTITY, status: 'nope' }] })
+		expect(receiptCalls()[0]).toMatchObject({ outcome: 'failed', reason: 'status is not allowed' })
+	})
+
+	it('writes a failed line when the tool throws, and still answers the model', async () => {
+		describeToolCall.mockResolvedValue([draft])
+		const invoke = vi.fn().mockRejectedValue(new Error('API 500: boom'))
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('update_objects', { updates: [{ id: ENTITY }] })
+		expect(receiptCalls()[0]).toMatchObject({ outcome: 'failed', reason: 'API 500: boom' })
+		expect(lastResult(sent)).toMatchObject({ ok: false })
+	})
+
+	it('writes a failed line for the one item that failed inside a call that ran', async () => {
+		describeToolCall.mockResolvedValue([
+			draft,
+			{ ...draft, outcome: 'failed', reason: 'status is not allowed' },
+		])
+		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('{"results":[]}')))
+		await toolCall('update_objects', { updates: [{ id: ENTITY }, { id: ENTITY }] })
+		expect(receiptCalls().map((c) => c.outcome)).toEqual(['ran', 'failed'])
+		expect(receiptCalls()[1]?.reason).toBe('status is not allowed')
+	})
+
+	it('leaves no line for a read, for show_in_chat or for a held write', async () => {
+		describeToolCall.mockResolvedValue([draft])
+		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1 })
+		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		await toolCall('search_objects', { q: 'x' })
+		await toolCall('show_in_chat', { object_ids: [ENTITY] }, 'call_2')
+		await toolCall('gmail_send_email', { object_id: ENTITY }, 'call_3')
+		expect(postReceiptLine).not.toHaveBeenCalled()
+	})
+
+	it('writes an opened-task line for get_objects, but only when it describes one', async () => {
+		describeToolCall.mockResolvedValue([
+			{ ...draft, event: 'opened_task', template: 'Opened task {title}' },
+		])
+		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('{}')))
+		await toolCall('get_objects', { ids: [ENTITY] })
+		expect(receiptCalls()[0]).toMatchObject({ outcome: 'ran', tool: 'get_objects' })
+		postReceiptLine.mockClear()
+		describeToolCall.mockResolvedValue([])
+		await toolCall('get_objects', { ids: [ENTITY] }, 'call_2')
+		expect(postReceiptLine).not.toHaveBeenCalled()
+	})
+
+	it('records a send that went through a yes with its yes count and read-back', async () => {
+		describeToolCall.mockResolvedValue([
+			{ ...draft, event: 'other', template: 'Ran gmail send email on {title}' },
+		])
+		const invoke = vi.fn().mockResolvedValue(textResult('sent'))
+		const { channel, sent, toolCall } = setup(invoke)
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		const hold = JSON.parse(lastResult(sent).event.item.output).error as string
+		const id = /confirmation_id "([^"]+)"/.exec(hold)?.[1]
+		expect(postReceiptLine).not.toHaveBeenCalled()
+		await sayItem(channel, 'item_yes', 'yes')
+		await toolCall('gmail_send_email', { object_id: ENTITY, confirmation_id: id }, 'call_2')
+		expect(receiptCalls()[0]).toMatchObject({
+			outcome: 'ran',
+			send: { yesCount: 1, readBackMatches: true },
+		})
+	})
+
+	it('records a hold the person turned down as not done', async () => {
+		const { channel, toolCall } = setup(vi.fn())
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		await sayItem(channel, 'item_no', 'no, wait')
+		await vi.waitFor(() => expect(postReceiptLine).toHaveBeenCalledTimes(1))
+		expect(receiptCalls()[0]).toMatchObject({
+			tool: 'gmail_send_email',
+			outcome: 'not_done',
+			reason: 'You said no.',
+		})
+		expect(receiptCalls()[0]?.draft).toMatchObject({ template: 'Send this email' })
+	})
+
+	it('does not record the same send asked again as not done', async () => {
+		const { toolCall } = setup(vi.fn())
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		await toolCall('gmail_send_email', { object_id: ENTITY }, 'call_2')
+		expect(postReceiptLine).not.toHaveBeenCalled()
+	})
+
+	it('records a hold replaced by another send with the same tool as not done', async () => {
+		const { toolCall } = setup(vi.fn())
+		await toolCall('gmail_send_email', { to: 'anna@example.com' })
+		await toolCall('gmail_send_email', { to: 'lars@example.com' }, 'call_2')
+		await vi.waitFor(() => expect(postReceiptLine).toHaveBeenCalledTimes(1))
+		expect(receiptCalls()[0]).toMatchObject({
+			tool: 'gmail_send_email',
+			outcome: 'not_done',
+			reason: 'It was replaced by a newer request.',
+		})
+	})
+
+	it('records a hold replaced by a different request as not done', async () => {
+		const { toolCall } = setup(vi.fn())
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		await toolCall('create_notification', { title: 'hi' }, 'call_2')
+		await vi.waitFor(() => expect(postReceiptLine).toHaveBeenCalledTimes(1))
+		expect(receiptCalls()[0]).toMatchObject({
+			outcome: 'not_done',
+			reason: 'It was replaced by a newer request.',
+		})
+	})
+
+	it('keeps the pending hold where the closing receipt can read it, with no draft text', async () => {
+		const { toolCall } = setup(vi.fn())
+		expect(peekVoiceCallState(SESSION_ID)?.pendingHold?.()).toBeNull()
+		await toolCall('gmail_send_email', { object_id: ENTITY })
+		expect(peekVoiceCallState(SESSION_ID)?.pendingHold?.()).toEqual({
+			tool: 'gmail_send_email',
+			summary: 'Send this email',
+			yesCount: 0,
+		})
+	})
+
+	it('still answers the model when the line cannot be written', async () => {
+		describeToolCall.mockResolvedValue([draft])
+		postReceiptLine.mockRejectedValue(new Error('db down'))
+		const { sent, toolCall } = setup(vi.fn().mockResolvedValue(textResult('done')))
+		await toolCall('create_objects', { nodes: [] })
+		expect(lastResult(sent)).toMatchObject({ ok: true })
+	})
+
+	it('marks a card cleared, sends the card action with source voice, and names the first card', async () => {
+		const state = voiceCallState(SESSION_ID)
+		state.startCards = [
+			{
+				objectId: '7dbf5c6e-df81-4365-8fa2-9e4b1f35c886',
+				notificationId: null,
+				source: 'curated',
+				rank: 1,
+			},
+			{ objectId: ENTITY, notificationId: null, source: 'decision', rank: 2 },
+		]
+		describeToolCall.mockResolvedValue([draft])
+		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		await toolCall('create_comment', { entity_id: ENTITY, content: 'ok' })
+		expect(receiptCalls()[0]).toMatchObject({ cardId: ENTITY })
+		expect(captureCardAction).toHaveBeenCalledWith(HUMAN, {
+			voice_session_id: SESSION_ID,
+			workspace_id: WORKSPACE,
+			card_id: ENTITY,
+			card_kind: 'decision',
+			action_id: 'create_comment',
+		})
+		expect(state.firstCardNamed).toBe(ENTITY)
+	})
+
+	it('does not count a read, a failure or a non-card object as a cleared card', async () => {
+		const state = voiceCallState(SESSION_ID)
+		state.startCards = [{ objectId: ENTITY, notificationId: null, source: 'curated', rank: 1 }]
+		describeToolCall.mockResolvedValue([draft])
+		const failing = vi
+			.fn()
+			.mockResolvedValue({ isError: true, content: [{ type: 'text', text: 'no' }] })
+		const { toolCall } = setup(failing)
+		await toolCall('update_objects', { updates: [{ id: ENTITY }] })
+		expect(receiptCalls()[0]?.cardId ?? null).toBeNull()
+		expect(captureCardAction).not.toHaveBeenCalled()
+	})
+
+	it('notes the first card shown with show_in_chat', async () => {
+		const state = voiceCallState(SESSION_ID)
+		state.startCards = [{ objectId: ENTITY, notificationId: null, source: 'curated', rank: 1 }]
+		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1 })
+		const { toolCall } = setup(vi.fn())
+		await toolCall('show_in_chat', { object_ids: [ENTITY] })
+		expect(state.firstCardNamed).toBe(ENTITY)
 	})
 })

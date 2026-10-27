@@ -4,7 +4,7 @@ import { useState } from 'react'
 const AVATAR_PALETTE = [
 	'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
 	'bg-[var(--st-active-bg)] text-[var(--st-active-text)]',
-	'bg-[var(--st-signal-bg)] text-[var(--st-signal-text)]',
+	'bg-[var(--st-opportunity-bg)] text-[var(--st-opportunity-text)]',
 	'bg-[var(--st-clustered-bg)] text-[var(--st-clustered-text)]',
 	'bg-[var(--st-in_review-bg)] text-[var(--st-in_review-text)]',
 	'bg-[var(--st-validated-bg)] text-[var(--st-validated-text)]',
@@ -22,7 +22,7 @@ const AVATAR_PALETTE = [
 const AVATAR_PALETTE_STRONG = [
 	'bg-[var(--st-in_progress-text)] text-[var(--st-in_progress-bg)]',
 	'bg-[var(--st-active-text)] text-[var(--st-active-bg)]',
-	'bg-[var(--st-signal-text)] text-[var(--st-signal-bg)]',
+	'bg-[var(--st-opportunity-text)] text-[var(--st-opportunity-bg)]',
 	'bg-[var(--st-clustered-text)] text-[var(--st-clustered-bg)]',
 	'bg-[var(--st-in_review-text)] text-[var(--st-in_review-bg)]',
 	'bg-[var(--st-validated-text)] text-[var(--st-validated-bg)]',

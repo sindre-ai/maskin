@@ -24,7 +24,7 @@ test.describe('Objects list retains view state across back-nav', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet Beta (signal)',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet&groupBy=status`)
@@ -90,7 +90,7 @@ test.describe('Objects list retains view state across back-nav', () => {
 				await account.api.createObject(account.workspaceId, {
 					type: 'bet',
 					title: `Scroll Anchor Row ${String(i).padStart(2, '0')}`,
-					status: 'signal',
+					status: 'opportunity',
 				})
 			}
 
