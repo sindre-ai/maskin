@@ -350,5 +350,44 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			// The nav shows no search button on Search: the page is the search.
 			await expect(navButton).toHaveCount(0)
 		})
+
+		test('the launcher finds commands by initials and Settings pages, and its Ask row fills a new chat without sending', async ({
+			page,
+			account,
+		}) => {
+			const chief = await account.api.createAgentActor('Chief of Staff')
+			await account.api.addWorkspaceMember(account.workspaceId, chief.id)
+
+			const panel = await openLauncher(page, account.workspaceId)
+			await expect(panel).toBeVisible({ timeout: 15_000 })
+			const field = panel.getByRole('combobox', { name: 'Search or run a command' })
+			await expect(field).toBeFocused()
+
+			// Two letters find a command by the first letters of its words.
+			await field.fill('nc')
+			await expect(panel.getByRole('option', { name: /New chat/ })).toBeVisible()
+
+			// A settings page name adds a Settings row to Go to.
+			await field.fill('keychain')
+			await expect(
+				panel
+					.getByRole('group', { name: 'Go to' })
+					.getByRole('option', { name: /Settings › Keychain/ }),
+			).toBeVisible()
+
+			// No match: the module's wording, then an Ask row that only fills the message box.
+			const nothing = `${TOKEN} zzqxnothing`
+			await field.fill(nothing)
+			await expect(panel.getByText(`Nothing matches “${nothing}”.`)).toBeVisible({
+				timeout: 20_000,
+			})
+			await panel.getByRole('option', { name: /Ask Chief of Staff/ }).click()
+			await expect(page).toHaveURL(/\/chats\/new/)
+			await expect(page.getByRole('textbox', { name: 'Message this conversation' })).toHaveValue(
+				nothing,
+			)
+			// Nothing was sent: the page is still the new-chat page, not a conversation.
+			await expect(page).toHaveURL(/\/chats\/new/)
+		})
 	})
 }

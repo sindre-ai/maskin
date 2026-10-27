@@ -73,6 +73,8 @@ COPY menus/xfce-applications.menu /etc/xdg/menus/xfce-applications.menu
 COPY dock/launchers/ /home/user/.config/plank/dock1/launchers/
 COPY dock/theme/ /home/user/.local/share/plank/themes/Maskin/
 # Plank reads its settings through GSettings; the keyfile backend needs no dconf.
+# The same file seeds the GTK file chooser's size: left alone it opens 1124x822, taller
+# than the 1280x720 screen, so its Open button is off-screen and an agent cannot click it.
 COPY dock/keyfile /home/user/.config/glib-2.0/settings/keyfile
 
 # Everything above was written as root; hand the user its home.

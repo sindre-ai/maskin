@@ -5,10 +5,15 @@ import { logger } from '../lib/logger'
  * The yes-before-a-write rule for a live voice call, enforced on the server.
  *
  * Telling the model to ask first is not a guard: it can skip the question or
- * take its own words for a yes. So a tool that is not read-only is held, and it
- * only runs when two things both happen: the model repeats the same call with
- * the id of the hold, and the person's next spoken line after the hold, heard
- * by our own socket to the Realtime call, is a short clear yes.
+ * take its own words for a yes. So a risky tool (see isRiskyTool: anything that
+ * sends outside the workspace, starts work, deletes, or touches access) is held,
+ * and it only runs when two things both happen: the model repeats the same call
+ * with the id of the hold, and the person's next spoken line after the hold,
+ * heard by our own socket to the Realtime call, is a clear yes.
+ *
+ * Ordinary changes inside the workspace (a comment, a status, a new task) run at
+ * once. They are recorded in the events log and can be changed back, and making
+ * the person confirm each one made a call too slow to use.
  */
 
 export const VOICE_CONFIRM_TTL_MS = 60_000
@@ -17,44 +22,174 @@ export const VOICE_CONFIRM_WAIT_MS = 3_000
 /** The argument the model adds to repeat a held call. Removed before the tool runs. */
 export const VOICE_CONFIRM_ARG = 'confirmation_id'
 
-const YES_TOKENS = [
+/** Words that may open a yes, alone or stacked: "yes", "okay sure". */
+const LEAD_WORDS = new Set([
 	'yes',
 	'yeah',
 	'yep',
 	'yup',
+	'ja',
+	'jep',
 	'sure',
 	'ok',
 	'okay',
-	'please',
-	'confirm',
-	'confirmed',
-	'correct',
+	'alright',
 	'absolutely',
 	'definitely',
 	'exactly',
-	'right',
-	'do it',
+	'agreed',
+	'perfect',
+	'great',
+	'fine',
+	'please',
+])
+/**
+ * Lead words that are a yes on their own. "please", "fine", "great", "alright" and "exactly"
+ * are not: they are as often a reaction or a polite opener as an approval, so they only count
+ * in front of an approval phrase ("great, send it").
+ */
+const AFFIRM_ALONE = new Set([
+	'yes',
+	'yeah',
+	'yep',
+	'yup',
+	'ja',
+	'jep',
+	'sure',
+	'ok',
+	'okay',
+	'absolutely',
+	'definitely',
+	'agreed',
+	'perfect',
+])
+/** Words that may close a yes: "go ahead please", "send it now". */
+const TAIL_WORDS = new Set(['please', 'now', 'thanks'])
+/**
+ * The approvals a yes may be made of. A line is a yes only if, after the lead and tail words,
+ * every word belongs to one of these phrases (joined by "and" at most). It is a closed list on
+ * purpose: a word-by-word whitelist let "is that right", "please correct it" and "okay confirm
+ * it" through, because their words are each fine on their own.
+ */
+const APPROVAL_PHRASES = [
 	'go ahead',
 	'go for it',
-	'that is right',
+	'do it',
+	'do that',
+	'send it',
+	'send that',
+	'send them',
+	'send',
+	'approve',
+	'approve it',
+	'approve that',
+	'approve all',
+	'approved',
+	'i approve',
+	'i agree',
+	'confirmed',
+	'sounds good',
+	'sounds great',
+	'looks good',
+	'all good',
+	'that works',
 	'thats right',
-	'that is correct',
+	'that is right',
 	'thats correct',
-]
-const YES_ONLY = new RegExp(`^(?:(?:${YES_TOKENS.join('|')})(?:\\s+|$))+$`)
-const MAX_YES_WORDS = 6
+	'that is correct',
+	'lets do it',
+	'lets do that',
+	'let us do it',
+	'of course',
+	'for sure',
+].map((phrase) => phrase.split(' '))
+/** Any of these anywhere in the line makes it not a yes: it is a no, a condition or a change of mind. */
+const NO_WORDS = new Set([
+	'no',
+	'nope',
+	'not',
+	'never',
+	'nothing',
+	'wait',
+	'hold',
+	'stop',
+	'cancel',
+	'but',
+	'however',
+	'actually',
+	'instead',
+	'except',
+	'only',
+	'skip',
+	'later',
+	'change',
+	'edit',
+	'rather',
+	'without',
+	'dont',
+	'cant',
+	'wont',
+	'shouldnt',
+	'isnt',
+	'arent',
+	'wasnt',
+	'nej',
+])
+const MAX_YES_WORDS = 8
 
-/** A short, clear yes. Anything else (a no, a question, a longer sentence) is not one. */
-export function isYes(text: string): boolean {
-	const normalized = text
+function normalize(text: string): string {
+	return text
 		.toLowerCase()
 		.replace(/['’]/g, '')
 		.replace(/[^a-z\s]/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim()
-	if (!normalized || text.includes('?')) return false
-	if (normalized.split(' ').length > MAX_YES_WORDS) return false
-	return YES_ONLY.test(normalized)
+}
+
+/** True when `words` is one or more approval phrases, optionally joined by "and". */
+function isApprovalRun(words: string[]): boolean {
+	if (words.length === 0) return true
+	if (words[0] === 'and') return words.length > 1 && isApprovalRun(words.slice(1))
+	return APPROVAL_PHRASES.some(
+		(phrase) =>
+			phrase.length <= words.length &&
+			phrase.every((word, i) => words[i] === word) &&
+			isApprovalRun(words.slice(phrase.length)),
+	)
+}
+
+/**
+ * A short, clear yes: lead words ("yes", "okay sure"), then approval phrases ("go ahead and
+ * send it"), then tail words ("please", "now"), and nothing else. "I approve", "sounds good,
+ * send it" and "sure, do that" count; "sure, what does it say", "okay is that right" and
+ * "please correct it" do not, and neither does anything with a no, "but", "wait" or question mark.
+ */
+export function isYes(text: string): boolean {
+	// Only plain English letters and punctuation can be a yes. normalize() turns everything else
+	// into a space, so without this "send 500", "approve #3" or "yes 5" would read as a bare
+	// approval with its number thrown away; accented letters would be thrown away the same way.
+	if (/[^a-z\s.,!;:'’"-]/i.test(text)) return false
+	const normalized = normalize(text)
+	if (!normalized) return false
+	const words = normalized.split(' ')
+	if (words.length > MAX_YES_WORDS) return false
+	if (words.some((word) => NO_WORDS.has(word))) return false
+	let start = 0
+	while (start < words.length && LEAD_WORDS.has(words[start] as string)) start += 1
+	let end = words.length
+	while (end > start && TAIL_WORDS.has(words[end - 1] as string)) end -= 1
+	// "thank you" is two words; the loop above removes "you" only if "thank" is not a tail word.
+	if (end > start && words[end - 1] === 'you' && words[end - 2] === 'thank') end -= 2
+	const core = words.slice(start, end)
+	// Lead words alone are a yes only if one of them is a plain affirmative ("yes", "okay sure").
+	if (core.length === 0) return words.slice(0, start).some((word) => AFFIRM_ALONE.has(word))
+	return isApprovalRun(core)
+}
+
+/** True when the line turns the ask down. A line that is neither this nor a yes leaves the ask open. */
+export function isNo(text: string): boolean {
+	const words = normalize(text).split(' ')
+	return words.some((word) => NO_WORDS.has(word))
 }
 
 const RISKY_TOOLS: ReadonlySet<string> = new Set([
@@ -253,6 +388,8 @@ export function createWriteGate(deps: {
 				for (const wake of action.waiters.splice(0)) wake()
 				return
 			}
+			// A question or an aside is not an answer: the ask stays open for the person's yes or no.
+			if (!isNo(text)) return
 			action.answer = 'no'
 			log('declined', action.tool)
 			declinedIds.add(action.id)
@@ -260,7 +397,7 @@ export function createWriteGate(deps: {
 		},
 
 		async review(tool, args, confirmationId) {
-			if (isReadOnlyTool(tool)) return { kind: 'run' }
+			if (isReadOnlyTool(tool) || !isRiskyTool(tool)) return { kind: 'run' }
 			if (confirmationId !== null && declinedIds.has(confirmationId)) {
 				return { kind: 'refuse', reason: 'declined' }
 			}

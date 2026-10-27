@@ -1,7 +1,10 @@
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
 import { SearchRowTitle } from '@/components/shared/search-row'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useLoops } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObjects } from '@/hooks/use-objects'
 import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
@@ -17,6 +20,16 @@ import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { trackCommandPaletteOpened } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import {
+	askRowTitle,
+	emptyStateText,
+	findChiefOfStaff,
+	searchRowSub,
+	shouldOfferAsk,
+} from '@/lib/palette/ask'
+import { TRIGGERS_PAGE, matchSettingsPages } from '@/lib/palette/go-to'
+import { initialsMatch, matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
+import { buildRecents } from '@/lib/palette/recents'
 import { getRecentObjectIds, pushRecentObject } from '@/lib/search-recents'
 import {
 	searchEntityType,
@@ -45,6 +58,7 @@ import {
 	Sparkles,
 	Store,
 	Table2,
+	Zap,
 } from 'lucide-react'
 import {
 	type KeyboardEvent as ReactKeyboardEvent,
@@ -107,16 +121,23 @@ const VIEWS: { title: string; path: (workspaceId: string) => string; icon: Lucid
 	{ title: 'Loops', path: (w) => `/${w}/loops`, icon: RefreshCw },
 	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
 	{ title: 'Objects', path: (w) => `/${w}/objects`, icon: Table2 },
+	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}`, icon: Zap },
 	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
 	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
 ]
 
-/** Every word must appear in one of the fields, in any order. */
-function matchesWords(query: string, ...fields: string[]): boolean {
-	const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-	if (words.length === 0) return true
-	const haystack = fields.join(' ').toLowerCase()
-	return words.every((word) => haystack.includes(word))
+/**
+ * Commands and Go to rows match on their title or its initials ("nc" finds New chat), or
+ * when the query is the start of the group name ("com" shows every command). Matching the
+ * group name or a row's description anywhere would put every command above the result for
+ * a short query.
+ */
+function matchesRow(query: string, title: string, groupName: string): boolean {
+	return (
+		matches(query, title) ||
+		initialsMatch(query, title) ||
+		(query.length >= 3 && groupName.startsWith(query.toLowerCase()))
+	)
 }
 
 /**
@@ -313,6 +334,7 @@ interface PanelProps {
 
 function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProps) {
 	const navigate = useNavigate()
+	const { workspace } = useWorkspace()
 	const panelRef = useRef<HTMLDivElement>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 	const listboxId = useId()
@@ -368,6 +390,13 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		isEmpty,
 	)
 	const { data: objects } = useObjects(workspaceId)
+	// Chats and loops fill the empty-field Recent list; agents give the Ask row its Chief of Staff.
+	const { data: chatPages } = useConversationsInfinite(workspaceId, undefined, {
+		enabled: isEmpty,
+	})
+	const { data: loops } = useLoops(workspaceId, { enabled: isEmpty })
+	const { data: actors } = useActors(workspaceId)
+	const chiefOfStaff = findChiefOfStaff(actors)
 
 	useTrackSettledSearchV2({
 		surface: 'command_palette',
@@ -440,7 +469,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const failed = isError && !data
 	const loading = !isEmpty && !data && !failed
 
-	const rows = (() => {
+	const { rows, nothingFound } = (() => {
 		const groups: { label: string; rows: PaletteRow[] }[] = []
 
 		if (isEmpty) {
@@ -452,39 +481,62 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				),
 			})
 			const byId = new Map((objects ?? []).map((o) => [o.id, o]))
-			const recent = getRecentObjectIds(workspaceId)
-				.map((id) => byId.get(id))
-				.filter((o): o is NonNullable<typeof o> => Boolean(o))
-				.slice(0, MAX_RECENT)
+			const items = buildRecents({
+				objectIds: getRecentObjectIds(workspaceId),
+				objects: objects ?? [],
+				chats: chatPages?.pages?.flatMap((page) => page.conversations) ?? [],
+				loops: loops ?? [],
+			})
 			groups.push({
 				label: 'Recent',
-				rows: recent.map((object, index) => ({
-					id: `recent-${object.id}`,
-					group: 'Recent',
-					kind: object.type.toUpperCase(),
-					title: object.title ?? 'Untitled',
-					icon: (
-						<TypeBadge
-							type={object.type}
-							variant="tile"
-							className="size-[22px] shrink-0 rounded-md"
-						/>
-					),
-					run: () => {
+				rows: items.map((item, index) => {
+					const track = () =>
 						trackSearchRowOpened({
 							surface: 'command_palette',
-							entityId: object.id,
-							entityType: searchEntityType('objects', object.type),
-							group: 'objects',
+							entityId: item.id,
+							entityType: searchEntityType(
+								item.kind === 'object' ? 'objects' : item.kind === 'chat' ? 'chats' : 'loops',
+								item.type ?? '',
+							),
+							group: item.kind === 'object' ? 'objects' : item.kind === 'chat' ? 'chats' : 'loops',
 							position: index + 1,
 							hasQuery: false,
-							listSize: recent.length,
+							listSize: items.length,
 							uiVersion: 'v2',
 						})
-						pushRecentObject(workspaceId, object.id)
-						navigateTo(`/${workspaceId}/objects/${object.id}`)
-					},
-				})),
+					const common = {
+						id: `recent-${item.kind}-${item.id}`,
+						group: 'Recent',
+						kind: (item.type ?? item.kind).toUpperCase(),
+						title: item.title,
+					}
+					if (item.kind === 'object') {
+						const object = byId.get(item.id)
+						return {
+							...common,
+							icon: (
+								<TypeBadge
+									type={object?.type ?? 'task'}
+									variant="tile"
+									className="size-[22px] shrink-0 rounded-md"
+								/>
+							),
+							run: () => {
+								track()
+								pushRecentObject(workspaceId, item.id)
+								navigateTo(`/${workspaceId}/objects/${item.id}`)
+							},
+						}
+					}
+					return {
+						...common,
+						icon: <GlyphTile icon={item.kind === 'chat' ? MessagesSquare : RefreshCw} />,
+						run: () => {
+							track()
+							navigateTo(`/${workspaceId}/${item.kind === 'chat' ? 'chats' : 'loops'}/${item.id}`)
+						},
+					}
+				}),
 			})
 		}
 
@@ -492,29 +544,42 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		if (!hasPills) {
 			groups.push({
 				label: 'Commands',
-				rows: commands
-					.filter((c) => matchesWords(query, c.title, c.sub ?? '', 'command'))
-					.map((c) => ({
-						id: c.id,
-						group: 'Commands',
-						kind: 'COMMAND',
-						title: c.title,
-						sub: c.sub,
-						icon: <GlyphTile icon={c.icon} />,
-						run: c.run,
-					})),
-			})
-			groups.push({
-				label: 'Go to',
-				rows: VIEWS.filter((view) => matchesWords(query, view.title, 'go to')).map((view) => ({
-					id: `go-${view.title}`,
-					group: 'Go to',
-					kind: 'GO TO',
-					title: view.title,
-					icon: <GlyphTile icon={view.icon} />,
-					run: () => navigateTo(view.path(workspaceId)),
+				rows: rankTitleMatchesFirst(
+					commands.filter((c) => matchesRow(query, c.title, 'command')),
+					query,
+				).map((c) => ({
+					id: c.id,
+					group: 'Commands',
+					kind: 'COMMAND',
+					title: c.title,
+					sub: c.sub,
+					icon: <GlyphTile icon={c.icon} />,
+					run: c.run,
 				})),
 			})
+			const views = rankTitleMatchesFirst(
+				VIEWS.filter((view) => matchesRow(query, view.title, 'go to')),
+				query,
+			).map((view) => ({
+				id: `go-${view.title}`,
+				group: 'Go to',
+				kind: 'GO TO',
+				title: view.title,
+				icon: <GlyphTile icon={view.icon} />,
+				run: () => navigateTo(view.path(workspaceId)),
+			}))
+			// Typing a settings page name ("keychain") adds a Settings › Keychain row.
+			const settingsPages = matchSettingsPages(query, { enterprise: workspace?.enterprise }).map(
+				(page) => ({
+					id: `go-${page.path}`,
+					group: 'Go to',
+					kind: 'GO TO',
+					title: page.title,
+					icon: <GlyphTile icon={Settings} />,
+					run: () => navigateTo(`/${workspaceId}/${page.path}`),
+				}),
+			)
+			groups.push({ label: 'Go to', rows: [...views, ...settingsPages] })
 		}
 
 		if (!isEmpty) {
@@ -543,19 +608,53 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					sub: isEmpty
 						? 'browse and filter the whole workspace'
 						: settled
-							? total === 0
-								? 'no matches · try fewer words or other types'
-								: `${total} ${total === 1 ? 'match' : 'matches'} · filterable results`
+							? searchRowSub(total)
 							: undefined,
 					icon: <GlyphTile icon={Search} />,
 					run: handOver,
 				},
 			],
 		})
+		// Nothing in Commands, Go to or Jump to: the Search row alone would leave the list
+		// looking empty, so the launcher says so and offers to ask.
+		const nothingFound = !isEmpty && groups.every((g) => g.label === 'Search' || !g.rows.length)
+		// The Ask row closes the list for a question or a request. A pill narrows the
+		// search to results, so it never shows while one is active.
+		if (
+			hasQuery &&
+			!hasPills &&
+			chiefOfStaff &&
+			shouldOfferAsk(query, !(nothingFound && settled))
+		) {
+			groups.push({
+				label: 'Ask',
+				rows: [
+					{
+						id: 'ask-chief-of-staff',
+						group: 'Ask',
+						kind: 'ASK',
+						title: askRowTitle(query),
+						sub: 'opens a new chat, nothing is sent',
+						icon: <GlyphTile icon={Sparkles} />,
+						run: () => {
+							onClose()
+							navigate({
+								to: '/$workspaceId/chats/new',
+								params: { workspaceId },
+								search: { agentId: chiefOfStaff.id, agentName: chiefOfStaff.name, text: query },
+							})
+						},
+					},
+				],
+			})
+		}
 		// Jump to stays while its answer is loading or failed, so the state has a place to show.
-		return groups.filter(
-			(group) => group.rows.length > 0 || (group.label === 'Jump to' && (loading || failed)),
-		)
+		return {
+			rows: groups.filter(
+				(group) => group.rows.length > 0 || (group.label === 'Jump to' && (loading || failed)),
+			),
+			nothingFound,
+		}
 	})()
 
 	const flat = rows.flatMap((group) => group.rows)
@@ -616,7 +715,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	}
 
 	const partial = (data?.partial.length ?? 0) > 0
-	const noMatches = !isEmpty && settled && flat.length === 1 && (data?.total ?? 0) === 0
+	const noMatches = nothingFound && settled
 
 	return (
 		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
@@ -729,9 +828,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					))}
 					{noMatches ? (
 						<p className="px-3 py-4 text-center text-[12.5px] text-muted-foreground">
-							{hasPills
-								? 'No results with these filters.'
-								: `Nothing matches “${query}”. Try fewer words, or ask an agent.`}
+							{hasPills ? 'No results with these filters.' : emptyStateText(query)}
 						</p>
 					) : null}
 					{partial ? (

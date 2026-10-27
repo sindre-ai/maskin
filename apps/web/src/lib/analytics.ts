@@ -593,7 +593,7 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
-export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'objects' | 'automations'
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
 
 // Which search UI produced the event. Events from the old page and launcher carry
 // 'legacy' (or nothing, when they predate the field), so the two stay comparable.

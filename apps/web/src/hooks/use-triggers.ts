@@ -8,10 +8,11 @@ import { queryKeys } from '../lib/query-keys'
 type CreateTriggerInput = z.input<typeof createTriggerSchema>
 type UpdateTriggerInput = z.input<typeof updateTriggerSchema>
 
-export function useTriggers(workspaceId: string) {
+export function useTriggers(workspaceId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.triggers.all(workspaceId),
 		queryFn: () => api.triggers.list(workspaceId),
+		enabled: options?.enabled,
 	})
 }
 

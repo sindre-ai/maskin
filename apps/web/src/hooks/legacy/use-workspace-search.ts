@@ -9,6 +9,7 @@ import { useSearchObjects } from '@/hooks/use-objects'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { ObjectResponse } from '@/lib/api'
 import { statusLabel } from '@/lib/constants'
+import { matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
 import { useMemo } from 'react'
 
 /**
@@ -23,7 +24,14 @@ import { useMemo } from 'react'
  * until `GET /conversations` grows a `q` parameter.
  */
 
-export const SEARCH_GROUPS = ['chats', 'loops', 'agents', 'objects', 'automations'] as const
+export const SEARCH_GROUPS = [
+	'chats',
+	'loops',
+	'agents',
+	'people',
+	'objects',
+	'automations',
+] as const
 
 export type SearchGroup = (typeof SEARCH_GROUPS)[number]
 
@@ -31,6 +39,7 @@ export const SEARCH_GROUP_LABEL: Record<SearchGroup, string> = {
 	chats: 'Chats',
 	loops: 'Loops',
 	agents: 'Agents',
+	people: 'People',
 	objects: 'Objects',
 	automations: 'Automations',
 }
@@ -47,10 +56,16 @@ export interface SearchRow {
 	snippet: string
 	to: string
 	params: Record<string, string>
+	/** Search params for the destination, e.g. which member dialog to open. */
+	search?: Record<string, string>
 	/** Only set for `objects`, so the page can keep firing the analytics +
 	 *  recents side effects the object rows already own. */
 	object?: ObjectResponse
 }
+
+// Matching and ranking live in lib/palette so the launcher and this hook share one
+// implementation; re-exported here for existing callers.
+export { matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
 
 export interface WorkspaceSearchResult {
 	rows: SearchRow[]
@@ -74,103 +89,58 @@ export interface WorkspaceSearchResult {
 	isSettled: boolean
 }
 
-export function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
-	if (!query) return true
-	const needle = query.toLowerCase()
-	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
-}
-
-/** True when any whitespace-separated term of the query appears in the title. */
-export function titleMatches(query: string, title: string): boolean {
-	const haystack = title.toLowerCase()
-	return query
-		.toLowerCase()
-		.split(/\s+/)
-		.some((term) => term.length > 0 && haystack.includes(term))
-}
-
-/** Share of the title (0..1) covered by the query terms found in it. */
-export function titleCoverage(query: string, title: string): number {
-	if (!title) return 0
-	const haystack = title.toLowerCase()
-	const matched = query
-		.toLowerCase()
-		.split(/\s+/)
-		.filter((term) => term.length > 0 && haystack.includes(term))
-		.reduce((sum, term) => sum + term.length, 0)
-	return Math.min(matched / title.length, 1)
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** True when `term` begins a word in `title` (so "b" matches "Anna Baker", not "Anna Eve"). */
-function startsAWord(term: string, title: string): boolean {
-	return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}`, 'u').test(title)
-}
-
 /**
- * How well a title matches, best first: the whole query typed at a word start
- * ("anna b" → "Anna Baker") beats every term starting a word, which beats a
- * term merely appearing somewhere, which beats a content-only match.
+ * `q` filters the local lists (chats, loops, agents, people, automations) on
+ * every call, so a surface can pass the live keystroke. `serverQ` is the query
+ * the `/objects/search` call runs with; a surface that debounces it passes the
+ * debounced text there and gets the previous object rows back until the new
+ * ones settle. Left out, it follows `q`. `enabled: false` fires no request
+ * at all, for a surface that is mounted but closed.
  */
-function titleTier(query: string, title: string): number {
-	const lowerTitle = title.toLowerCase()
-	const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-	if (terms.length === 0) return 0
-	if (startsAWord(terms.join(' '), lowerTitle)) return 3
-	if (terms.every((term) => startsAWord(term, lowerTitle))) return 2
-	return titleMatches(query, title) ? 1 : 0
-}
-
-/**
- * Best title matches first; within a tier the largest share of the title
- * matched first, content-only matches last. Array.sort is stable, so the group
- * order (and the server's rank order) is kept among equals.
- */
-export function rankTitleMatchesFirst(rows: SearchRow[], query: string): SearchRow[] {
-	const scored = rows.map((row) => {
-		const tier = titleTier(query, row.title)
-		const phraseLength = query.trim().replace(/\s+/g, ' ').length
-		const coverage =
-			tier === 3
-				? Math.min(phraseLength / (row.title.length || 1), 1)
-				: titleCoverage(query, row.title)
-		return { row, tier, coverage }
-	})
-	scored.sort((a, b) => b.tier - a.tier || b.coverage - a.coverage)
-	return scored.map(({ row }) => row)
-}
-
 export function useWorkspaceSearch(
 	workspaceId: string,
-	{ q, type, status }: { q: string; type?: string; status?: string },
+	{
+		q,
+		serverQ,
+		type,
+		status,
+		enabled: queriesEnabled = true,
+	}: { q: string; serverQ?: string; type?: string; status?: string; enabled?: boolean },
 ): WorkspaceSearchResult {
 	const query = q.trim()
-	const enabled = query.length > 0
+	const serverQuery = (serverQ ?? q).trim()
+	const enabled = queriesEnabled && query.length > 0
 
 	const {
 		data: objectResults,
 		isError: objectsFailed,
 		isPending: objectsPending,
-	} = useSearchObjects(workspaceId, {
-		q: query,
-		type,
-		status,
-	})
-	const { data: loops, isError: loopsFailed, isPending: loopsPending } = useLoops(workspaceId)
-	const { data: actors, isError: actorsFailed, isPending: actorsPending } = useActors(workspaceId)
+		isPlaceholderData: objectsStale,
+	} = useSearchObjects(
+		workspaceId,
+		{ q: serverQuery, type, status },
+		{ enabled: queriesEnabled, keepPrevious: serverQ !== undefined },
+	)
+	const {
+		data: loops,
+		isError: loopsFailed,
+		isPending: loopsPending,
+	} = useLoops(workspaceId, { enabled: queriesEnabled })
+	const {
+		data: actors,
+		isError: actorsFailed,
+		isPending: actorsPending,
+	} = useActors(workspaceId, { enabled: queriesEnabled })
 	const {
 		data: triggers,
 		isError: triggersFailed,
 		isPending: triggersPending,
-	} = useTriggers(workspaceId)
+	} = useTriggers(workspaceId, { enabled: queriesEnabled })
 	const {
 		data: conversations,
 		isError: chatsFailed,
 		isPending: chatsPending,
-	} = useConversationsInfinite(workspaceId)
+	} = useConversationsInfinite(workspaceId, undefined, { enabled: queriesEnabled })
 
 	// Secondary sources are consumed as `?? []` below, so a failure would drop a
 	// whole group to zero and hide its chip while the header still claimed a
@@ -179,6 +149,8 @@ export function useWorkspaceSearch(
 
 	const isSettled =
 		enabled &&
+		serverQuery === query &&
+		!objectsStale &&
 		!objectsPending &&
 		!loopsPending &&
 		!actorsPending &&
@@ -193,6 +165,7 @@ export function useWorkspaceSearch(
 			chats: 0,
 			loops: 0,
 			agents: 0,
+			people: 0,
 			objects: 0,
 			automations: 0,
 		}
@@ -240,8 +213,23 @@ export function useWorkspaceSearch(
 		}
 
 		for (const actor of actors ?? []) {
-			if (actor.type !== 'agent') continue
+			if (actor.type !== 'agent' && actor.type !== 'human') continue
 			if (!matches(query, actor.name, actor.description)) continue
+			// People have no page of their own: they open their dialog on the members list.
+			if (actor.type === 'human') {
+				rows.push({
+					id: actor.id,
+					group: 'people',
+					kind: 'PERSON',
+					title: actor.name,
+					sub: '',
+					snippet: actor.description ?? '',
+					to: '/$workspaceId/settings/members',
+					params: { workspaceId },
+					search: { member: actor.id },
+				})
+				continue
+			}
 			rows.push({
 				id: actor.id,
 				group: 'agents',

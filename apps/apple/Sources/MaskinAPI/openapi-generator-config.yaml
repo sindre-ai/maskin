@@ -77,6 +77,10 @@ filter:
     - /api/integrations/github/pending-selection/{id}
     - /api/integrations/github/select-installation
     - /api/integrations/{id}/complete
+    - /api/integrations/{id}/allow-from-chat
+    - /api/integrations/{id}/allow-access
+    - /api/sessions/{id}/continue
+    - /api/sessions/{id}/input
     - /api/marketplace/loops
     - /api/marketplace/loops/{id}
     - /api/marketplace/items/installed

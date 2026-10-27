@@ -10,10 +10,13 @@ import {
 } from '@/lib/analytics'
 import { useEffect, useRef } from 'react'
 
-/** How long a typed query rests before it is committed and searched. The search
- *  page and the palette both debounce on this, and a search only counts as
- *  settled after it — so the two surfaces cannot drift apart. */
+/** How long a typed query rests before it is committed and searched on the
+ *  search page, and a search only counts as settled after it. */
 export const SEARCH_DEBOUNCE_MS = 300
+
+/** The palette filters its local lists on every keystroke, so only the
+ *  `/objects/search` call waits; this is how long. */
+export const PALETTE_SERVER_DEBOUNCE_MS = 100
 
 /** Number of whitespace-separated words in the query. An integer only: the
  *  query text itself is never sent to analytics. */
@@ -207,6 +210,7 @@ const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEnti
 	chats: 'conversation',
 	loops: 'loop',
 	agents: 'agent',
+	people: 'actor',
 	automations: 'trigger',
 }
 

@@ -298,6 +298,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
     func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output
+    /// Let the agent that asked in a chat use this saved credential (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-from-chat/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -488,6 +498,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/sessions/{id}/resume`.
     /// - Remark: Generated from `#/paths//api/sessions/{id}/resume/post`.
     func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume.Output
+    /// Send a user input turn to an interactive session
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/input`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/input/post`.
+    func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Output
+    /// Start a follow-up session for a helper that has ended
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/continue`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/continue/post`.
+    func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Output
     /// Get session log history
     ///
     /// - Remark: HTTP `GET /api/sessions/{id}/logs`.
@@ -648,7 +668,7 @@ public protocol APIProtocol: Sendable {
     func post_sol_api_sol_voice_hyphen_sessions(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions.Output
     /// Connect a reserved voice session to the vendor
     ///
-    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.
     ///
     /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
     /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.
@@ -1383,6 +1403,36 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Let the agent that asked in a chat use this saved credential (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-from-chat/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -1891,6 +1941,36 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Send a user input turn to an interactive session
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/input`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/input/post`.
+    public func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(
+        path: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Path,
+        headers: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Headers,
+        body: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Output {
+        try await post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Start a follow-up session for a helper that has ended
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/continue`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/continue/post`.
+    public func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(
+        path: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Path,
+        headers: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Headers,
+        body: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Output {
+        try await post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// Get session log history
     ///
     /// - Remark: HTTP `GET /api/sessions/{id}/logs`.
@@ -2279,7 +2359,7 @@ extension APIProtocol {
     }
     /// Connect a reserved voice session to the vendor
     ///
-    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.
     ///
     /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
     /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.
