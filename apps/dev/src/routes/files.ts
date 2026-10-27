@@ -878,18 +878,33 @@ app.openapi(completeUploadRoute, (async (c) => {
 	const upload = await findOwnUpload(db, actorId, id)
 	if (!upload) return c.json(createApiError('NOT_FOUND', 'Upload not found'), 404)
 
-	const setStatus = (status: 'pending' | 'completed' | 'aborted') =>
-		db
-			.update(fileUploads)
-			.set({ status })
-			.where(eq(fileUploads.id, upload.id))
-			.catch((err) =>
-				logger.error('Failed to update file upload status', {
-					uploadId: upload.id,
-					status,
-					error: String(err),
-				}),
-			)
+	// Moves a claimed row on from `completing`. Conditional on that status so a
+	// request that outlived its claim cannot overwrite what the reaper settled.
+	// Resolves to whether the row was still ours, or null if the write itself failed.
+	const setStatus = async (status: 'pending' | 'completed' | 'aborted') => {
+		try {
+			const rows = await db
+				.update(fileUploads)
+				.set({ status })
+				.where(and(eq(fileUploads.id, upload.id), eq(fileUploads.status, 'completing')))
+				.returning({ id: fileUploads.id })
+			return rows.length > 0
+		} catch (err) {
+			logger.error('Failed to update file upload status', {
+				uploadId: upload.id,
+				status,
+				error: String(err),
+			})
+			return null
+		}
+	}
+
+	// Drops an upload whose stitched object can never become a file. The object goes
+	// first: the reaper only revisits rows still `completing`, so marking the row
+	// `aborted` before a failed delete would strand a billable orphan for good.
+	const discardStitched = async () => {
+		if (await deleteStoredObject(storage, upload)) await setStatus('aborted')
+	}
 
 	const respondWithFile = async (file: typeof files.$inferSelect) => {
 		try {
@@ -972,17 +987,36 @@ app.openapi(completeUploadRoute, (async (c) => {
 			)
 		}
 		if (failure === 'gone') {
-			logger.warn('Storage no longer has the upload', { uploadId: upload.id, error: String(err) })
-			await setStatus('aborted')
-			return c.json(createApiError('CONFLICT', 'This upload expired; start a new one'), 409)
+			// A complete whose response was lost still stitched the object, so the retry
+			// finds no multipart upload. If the object is there, carry on to the checks
+			// below instead of reporting a finished upload as expired.
+			const found = await storage.headObject(upload.storageKey).then(
+				(o) => o,
+				() => undefined,
+			)
+			if (found === undefined) {
+				logger.error('Could not check for a stitched object', { uploadId: upload.id })
+				await setStatus('pending')
+				return c.json(createApiError('INTERNAL_ERROR', 'Storage is unavailable, try again'), 503)
+			}
+			if (found === null) {
+				logger.warn('Storage no longer has the upload', {
+					uploadId: upload.id,
+					error: String(err),
+				})
+				await setStatus('aborted')
+				return c.json(createApiError('CONFLICT', 'This upload expired; start a new one'), 409)
+			}
+			logger.warn('Upload was already stitched; finishing it', { uploadId: upload.id })
+		} else {
+			// Storage is down or unreachable: nothing is wrong with the request.
+			logger.error('Storage failed while completing an upload', {
+				uploadId: upload.id,
+				error: String(err),
+			})
+			await setStatus('pending')
+			return c.json(createApiError('INTERNAL_ERROR', 'Storage is unavailable, try again'), 503)
 		}
-		// Storage is down or unreachable: nothing is wrong with the request.
-		logger.error('Storage failed while completing an upload', {
-			uploadId: upload.id,
-			error: String(err),
-		})
-		await setStatus('pending')
-		return c.json(createApiError('INTERNAL_ERROR', 'Storage is unavailable, try again'), 503)
 	}
 
 	// Trust the stored object, not the declaration: it is what readers will get.
@@ -991,13 +1025,11 @@ app.openapi(completeUploadRoute, (async (c) => {
 		stored = await storage.headObject(upload.storageKey)
 	} catch (err) {
 		logger.error('Failed to read uploaded object', { uploadId: upload.id, error: String(err) })
-		await setStatus('aborted')
-		await deleteStoredObject(storage, upload)
+		await discardStitched()
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to verify the upload'), 500)
 	}
 	if (!stored || stored.size !== upload.sizeBytes) {
-		await setStatus('aborted')
-		await deleteStoredObject(storage, upload)
+		await discardStitched()
 		return c.json(
 			createApiError('VALIDATION_ERROR', 'Uploaded size does not match the declared size'),
 			400,
@@ -1029,14 +1061,35 @@ app.openapi(completeUploadRoute, (async (c) => {
 			uploadId: upload.id,
 			error: String(err),
 		})
-		await setStatus('aborted')
-		await deleteStoredObject(storage, upload)
+		await discardStitched()
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create file'), 500)
 	}
 
 	// The file exists now; only then is the upload finished. If this write fails the
 	// row stays `completing` and a retried complete or the reaper settles it.
-	await setStatus('completed')
+	if ((await setStatus('completed')) === false) {
+		// The claim went stale mid-request and the reaper settled the row. Unless it
+		// found the file and completed it, it also deleted the object: undo the file.
+		const [current] = await db
+			.select({ status: fileUploads.status })
+			.from(fileUploads)
+			.where(eq(fileUploads.id, upload.id))
+			.limit(1)
+		if (current?.status !== 'completed') {
+			logger.error('Upload was settled while its complete was running', { uploadId: upload.id })
+			await db
+				.delete(files)
+				.where(eq(files.id, created.id))
+				.catch((err) =>
+					logger.error('Failed to remove a file whose upload was reaped', {
+						fileId: created?.id,
+						error: String(err),
+					}),
+				)
+			await deleteStoredObject(storage, upload)
+			return c.json(createApiError('CONFLICT', 'This upload expired; start a new one'), 409)
+		}
+	}
 
 	try {
 		await recordEvent(db, {
@@ -1121,7 +1174,7 @@ app.openapi(abortUploadRoute, (async (c) => {
 			await db
 				.update(fileUploads)
 				.set({ status: 'pending' })
-				.where(eq(fileUploads.id, upload.id))
+				.where(and(eq(fileUploads.id, upload.id), eq(fileUploads.status, 'aborted')))
 				.catch((revertErr) =>
 					logger.error('Failed to reopen an upload whose abort failed (parts left)', {
 						uploadId: upload.id,

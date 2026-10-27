@@ -97,10 +97,11 @@ export class FileUploadReaperJob {
 				next = 'completed'
 			} else {
 				await abortStoredUpload(this.storage, upload)
-				// Only a stitched object (a completing row) can exist under the key.
-				if (upload.status === 'completing' && !(await deleteStoredObject(this.storage, upload))) {
-					return false
-				}
+				// A stitched object can exist under the key for either kind of row: a
+				// `completing` one by definition, a `pending` one when a complete stitched
+				// it and its response was lost before the client retried. Deleting a key
+				// that is not there succeeds.
+				if (!(await deleteStoredObject(this.storage, upload))) return false
 				next = 'aborted'
 			}
 

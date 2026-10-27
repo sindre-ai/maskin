@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
+	ApiError: class ApiError extends Error {
+		constructor(
+			public status: number,
+			message: string,
+		) {
+			super(message)
+		}
+	},
 	api: {
 		files: { startUpload: vi.fn(), completeUpload: vi.fn(), abortUpload: vi.fn() },
 	},
@@ -10,7 +18,7 @@ vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: vi.fn(async () => 'YmFzZTY0'),
 }))
 
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { assertUploadable, toUploadInput, uploadLargeFile } from '@/lib/large-file-upload'
 
 const MiB = 1024 * 1024
@@ -188,6 +196,53 @@ describe('uploadLargeFile', () => {
 		expect(api.files.abortUpload).toHaveBeenCalledWith('ws-1', 'up-1')
 		expect(api.files.completeUpload).not.toHaveBeenCalled()
 		vi.useRealTimers()
+	})
+
+	// The server keeps the upload intact on a 503 and hands a retried complete the
+	// file it already made, so throwing the parts away would only force a re-upload.
+	it.each([
+		['storage is unavailable (503)', 503],
+		['the connection drops (no status)', 0],
+	])('retries complete without aborting when %s', async (_label, status) => {
+		vi.useFakeTimers()
+		vi.mocked(api.files.startUpload).mockResolvedValue(session(1))
+		vi.mocked(api.files.completeUpload)
+			.mockRejectedValueOnce(new ApiError(status, 'try again'))
+			.mockResolvedValueOnce({ id: 'f-1' } as never)
+
+		const promise = uploadLargeFile('ws-1', fileOfSize('big.mp4', 20 * MiB))
+		await vi.runAllTimersAsync()
+
+		await expect(promise).resolves.toEqual({ id: 'f-1' })
+		expect(api.files.completeUpload).toHaveBeenCalledTimes(2)
+		expect(api.files.abortUpload).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('leaves the upload for the server to settle when complete keeps failing', async () => {
+		vi.useFakeTimers()
+		vi.mocked(api.files.startUpload).mockResolvedValue(session(1))
+		vi.mocked(api.files.completeUpload).mockRejectedValue(new ApiError(503, 'down'))
+
+		const promise = uploadLargeFile('ws-1', fileOfSize('big.mp4', 20 * MiB))
+		const assertion = expect(promise).rejects.toThrow('down')
+		await vi.runAllTimersAsync()
+		await assertion
+
+		expect(api.files.abortUpload).not.toHaveBeenCalled()
+		vi.useRealTimers()
+	})
+
+	it('abandons the upload when the server refuses to complete it', async () => {
+		vi.mocked(api.files.startUpload).mockResolvedValue(session(1))
+		vi.mocked(api.files.completeUpload).mockRejectedValue(new ApiError(400, 'size mismatch'))
+
+		await expect(uploadLargeFile('ws-1', fileOfSize('big.mp4', 20 * MiB))).rejects.toThrow(
+			'size mismatch',
+		)
+
+		expect(api.files.completeUpload).toHaveBeenCalledTimes(1)
+		expect(api.files.abortUpload).toHaveBeenCalledWith('ws-1', 'up-1')
 	})
 
 	it('explains a missing ETag as a CORS problem', async () => {

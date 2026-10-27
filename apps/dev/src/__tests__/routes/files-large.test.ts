@@ -240,16 +240,39 @@ describe('Large file routes', () => {
 			expect(storageProvider.delete).not.toHaveBeenCalled()
 		})
 
-		it('closes the upload when storage no longer has it', async () => {
+		it('closes the upload when storage has neither the upload nor an object', async () => {
 			const { app, upload, storageProvider, calls } = setup()
+			vi.mocked(storageProvider.completeMultipartUpload).mockRejectedValue(
+				storageError('NoSuchUpload'),
+			)
+			vi.mocked(storageProvider.headObject).mockResolvedValue(null)
+
+			const res = await app.request(complete(upload.id))
+
+			expect(res.status).toBe(409)
+			expect(calls.updates.at(-1)).toMatchObject({ status: 'aborted' })
+		})
+
+		it('finishes an upload storage already stitched when the first response was lost', async () => {
+			const { app, upload, storageProvider } = setup()
 			vi.mocked(storageProvider.completeMultipartUpload).mockRejectedValue(
 				storageError('NoSuchUpload'),
 			)
 
 			const res = await app.request(complete(upload.id))
 
-			expect(res.status).toBe(409)
-			expect(calls.updates.at(-1)).toMatchObject({ status: 'aborted' })
+			expect(res.status).toBe(201)
+			expect(storageProvider.delete).not.toHaveBeenCalled()
+		})
+
+		it('leaves the row completing for the reaper when the orphaned object will not delete', async () => {
+			const { app, upload, storageProvider, calls } = setup()
+			vi.mocked(storageProvider.headObject).mockResolvedValue({ size: upload.sizeBytes - 1 })
+			vi.mocked(storageProvider.delete).mockRejectedValue(new Error('storage down'))
+
+			await app.request(complete(upload.id))
+
+			expect(calls.updates.map((u) => (u as { status?: string }).status)).not.toContain('aborted')
 		})
 
 		it('still deletes the object and refuses when the size check cannot read storage', async () => {

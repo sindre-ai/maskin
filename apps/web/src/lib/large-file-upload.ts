@@ -1,5 +1,5 @@
 import { MAX_LARGE_FILE_SIZE_BYTES, maxFileSizeBytesFor } from '@maskin/shared'
-import { type FileDetail, api } from './api'
+import { ApiError, type FileDetail, api } from './api'
 import { readFileAsBase64 } from './file-utils'
 
 /** What the uploader hands to `useUploadFile`: a file to send in parts, straight to storage. */
@@ -15,6 +15,7 @@ export interface UploadOptions {
 /** Parts in flight at once. Each is one XHR of up to part_size bytes read lazily from the File. */
 const PART_CONCURRENCY = 3
 const PART_ATTEMPTS = 3
+const COMPLETE_ATTEMPTS = 4
 
 /** The type the upload is stored under; the JSON route and the direct upload must agree on it. */
 function uploadMimeType(file: File): string {
@@ -174,19 +175,49 @@ export async function uploadLargeFile(
 	}
 
 	try {
-		await Promise.all(
-			Array.from({ length: Math.min(PART_CONCURRENCY, session.parts.length) }, () =>
-				worker().catch((err) => {
-					stop.abort()
-					throw err
-				}),
-			),
-		)
-		return await api.files.completeUpload(workspaceId, session.upload_id, etags)
-	} catch (err) {
-		await api.files.abortUpload(workspaceId, session.upload_id).catch(() => {})
-		throw err
+		try {
+			await Promise.all(
+				Array.from({ length: Math.min(PART_CONCURRENCY, session.parts.length) }, () =>
+					worker().catch((err) => {
+						stop.abort()
+						throw err
+					}),
+				),
+			)
+		} catch (err) {
+			await api.files.abortUpload(workspaceId, session.upload_id).catch(() => {})
+			throw err
+		}
+		return await completeWithRetry(workspaceId, session.upload_id, etags)
 	} finally {
 		opts?.signal?.removeEventListener('abort', onAbort)
+	}
+}
+
+/**
+ * Completing is safe to repeat: a retry after a lost response gets the file the
+ * first call made, and the server keeps the upload intact when storage is down.
+ * So a network or 5xx failure is retried, and the upload is only discarded when
+ * the server refuses it outright. Discarding on a lost response would abort a
+ * finished file; discarding on a storage blip would throw away every part. An
+ * upload left open after the retries run out is settled by the server's reaper.
+ */
+async function completeWithRetry(
+	workspaceId: string,
+	uploadId: string,
+	etags: { part_number: number; etag: string }[],
+): Promise<FileDetail> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await api.files.completeUpload(workspaceId, uploadId, etags)
+		} catch (err) {
+			const transient = err instanceof ApiError && (err.status === 0 || err.status >= 500)
+			if (!transient) {
+				await api.files.abortUpload(workspaceId, uploadId).catch(() => {})
+				throw err
+			}
+			if (attempt >= COMPLETE_ATTEMPTS) throw err
+			await new Promise((r) => setTimeout(r, 1000 * attempt))
+		}
 	}
 }

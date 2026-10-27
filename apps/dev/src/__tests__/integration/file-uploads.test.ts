@@ -135,6 +135,57 @@ describe('large file uploads', () => {
 		expect(storage.objects.size).toBe(0)
 	})
 
+	it('finishes an upload whose first complete stitched the object but lost its response', async () => {
+		const storage = createStorage()
+		const app = createApp(storage)
+		const started = await (await start(app, 100 * MiB)).json()
+		const [upload] = await db
+			.select()
+			.from(fileUploads)
+			.where(eq(fileUploads.id, started.upload_id))
+		// Storage stitched the object, so the multipart upload no longer exists and a
+		// retried complete gets NoSuchUpload from it.
+		storage.open.clear()
+		storage.objects.set(upload?.storageKey ?? '', 100 * MiB)
+
+		const res = await complete(app, started.upload_id, started.parts.length)
+
+		expect(res.status).toBe(201)
+		expect(await db.select().from(files).where(eq(files.id, started.file_id))).toHaveLength(1)
+		expect(storage.objects.size).toBe(1)
+	})
+
+	it('reports an upload as expired when storage has neither the upload nor an object', async () => {
+		const storage = createStorage()
+		const app = createApp(storage)
+		const started = await (await start(app, 100 * MiB)).json()
+		storage.open.clear()
+
+		const res = await complete(app, started.upload_id, started.parts.length)
+
+		expect(res.status).toBe(409)
+		const [row] = await db.select().from(fileUploads).where(eq(fileUploads.id, started.upload_id))
+		expect(row?.status).toBe('aborted')
+	})
+
+	it('keeps the row open for the reaper when the object of a failed upload will not delete', async () => {
+		const storage = createStorage()
+		const app = createApp(storage)
+		storage.setUploadedSize(100 * MiB - 1)
+		const started = await (await start(app, 100 * MiB)).json()
+		storage.delete = async () => {
+			throw new Error('storage down')
+		}
+
+		const res = await complete(app, started.upload_id, started.parts.length)
+
+		expect(res.status).toBe(400)
+		// `aborted` rows are never revisited, so a failed delete must not reach it.
+		const [row] = await db.select().from(fileUploads).where(eq(fileUploads.id, started.upload_id))
+		expect(row?.status).toBe('completing')
+		expect(storage.objects.size).toBe(1)
+	})
+
 	it('lets only one of two concurrent completes win the claim', async () => {
 		const storage = createStorage()
 		const app = createApp(storage)
@@ -239,6 +290,24 @@ describe('large file uploads', () => {
 
 			expect((await rowOf(started.upload_id))?.status).toBe('aborted')
 			expect(storage.open.size).toBe(0)
+		})
+
+		it('deletes the stitched object of an expired pending upload', async () => {
+			const storage = createStorage()
+			const started = await (await start(createApp(storage), 100 * MiB)).json()
+			const upload = await rowOf(started.upload_id)
+			// A complete stitched the object and was reset to pending, then the client left.
+			storage.open.clear()
+			storage.objects.set(upload?.storageKey ?? '', 100 * MiB)
+			await db
+				.update(fileUploads)
+				.set({ expiresAt: hoursAgo(1) })
+				.where(eq(fileUploads.id, started.upload_id))
+
+			await new FileUploadReaperJob(db, storage as never).tick()
+
+			expect((await rowOf(started.upload_id))?.status).toBe('aborted')
+			expect(storage.objects.size).toBe(0)
 		})
 
 		it('leaves an upload that is still open alone', async () => {
