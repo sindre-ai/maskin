@@ -29,7 +29,7 @@ export function VoiceTranscriptView({
 				side="right"
 				// Full screen below 700px (the sheet's own sm:max-w-sm would cap it at
 				// 384px from 640), a drawer from there up.
-				className="flex w-full flex-col gap-0 p-0 sm:max-w-none min-[700px]:max-w-md"
+				className="flex w-full flex-col gap-0 p-0 sm:max-w-none min-[43.75rem]:max-w-md"
 				aria-label="Transcript"
 				onCloseAutoFocus={(e) => {
 					if (!returnFocusTo?.current) return

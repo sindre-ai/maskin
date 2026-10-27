@@ -6,7 +6,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { useVoiceCallView } from '@/lib/voice-call-view'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
@@ -60,7 +60,7 @@ function ChatsLayout() {
 	// The list sits beside the thread; with the call panel open as well, the
 	// thread would be squeezed below 360px under about 1280px, so the list steps
 	// aside for the length of the call.
-	const onCall = useVoiceCallView() !== null
+	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1279px)')
 	const listAside = onCall && narrowForCall
 	const navigate = useNavigate()

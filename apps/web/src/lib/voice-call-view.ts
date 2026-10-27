@@ -59,6 +59,19 @@ export function useVoiceCallView(): VoiceCallView | null {
 	)
 }
 
+/**
+ * Whether a call is live. For layout code that only needs on or off: it
+ * re-renders when a call starts or ends, not on every caption or mute, which
+ * would re-render everything under it each time.
+ */
+export function useVoiceCallLive(): boolean {
+	return useSyncExternalStore(
+		subscribe,
+		() => view !== null,
+		() => false,
+	)
+}
+
 /** The element above a thread's composer, where the dock and the bar sit. */
 export function setVoiceCallComposerSlot(el: HTMLElement | null): void {
 	composerSlot = el

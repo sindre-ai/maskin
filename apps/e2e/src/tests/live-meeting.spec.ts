@@ -24,7 +24,7 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 	expect(scrollWidth, `${label}: page overflows horizontally`).toBeLessThanOrEqual(innerWidth + 1)
 }
 
-type Seed = { content: string; metadata: Record<string, unknown> }
+type Seed = { content: string; metadata: Record<string, unknown>; human?: boolean }
 
 /**
  * The messages route strips `source` and `voice_session_id` from what a client
@@ -52,7 +52,9 @@ async function threadWithCall(
 	const post = new TestAPI(agent.api_key)
 	const planned = seeds(task.id)
 	for (const seed of planned) {
-		await post.postConversationMessage(conversation.id, account.workspaceId, {
+		// The person's own spoken lines are the human's messages; the agent's are its own.
+		const poster = seed.human ? account.api : post
+		await poster.postConversationMessage(conversation.id, account.workspaceId, {
 			content: seed.content,
 		})
 	}
@@ -75,7 +77,7 @@ async function threadWithCall(
 const voice = { source: 'voice', voice_session_id: VOICE_SESSION_ID }
 
 const withReceipts = (taskId: string): Seed[] => [
-	{ content: 'Could you check the cancel flow?', metadata: voice },
+	{ content: 'Could you check the cancel flow?', metadata: voice, human: true },
 	{
 		content: 'Opened the task',
 		metadata: {
@@ -115,7 +117,7 @@ const withReceipts = (taskId: string): Seed[] => [
 ]
 
 const withoutReceipts = (): Seed[] => [
-	{ content: 'Could you check the cancel flow?', metadata: voice },
+	{ content: 'Could you check the cancel flow?', metadata: voice, human: true },
 	{ content: 'Yes, the cancel flow looks fine to me.', metadata: voice },
 ]
 

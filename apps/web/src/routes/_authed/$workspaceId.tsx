@@ -30,7 +30,7 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
-import { useVoiceCallView } from '@/lib/voice-call-view'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
@@ -74,7 +74,7 @@ function WorkspaceLayout() {
 	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
 	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
 	// is left alone, so it is back as they had it when the call ends.
-	const onCall = useVoiceCallView() !== null
+	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1099px)')
 	const railForCall = onCall && narrowForCall
 
