@@ -47,7 +47,7 @@ describe('Objects facets and group filtering', () => {
 		const body = await res.json()
 
 		expect(body.total).toBe(12)
-		expect(body.by_status).toEqual({ active: 7, signal: 5 })
+		expect(body.by_status).toEqual({ active: 7, opportunity: 5 })
 		// Type counts ignore the type filter, so the other tabs keep their numbers.
 		expect(body.by_type).toEqual({ bet: 12, task: 3 })
 		expect(
@@ -56,7 +56,7 @@ describe('Objects facets and group filtering', () => {
 			),
 		).toEqual({
 			active: 7,
-			signal: 5,
+			opportunity: 5,
 		})
 	})
 
@@ -70,7 +70,7 @@ describe('Objects facets and group filtering', () => {
 		const body = await res.json()
 
 		expect(body.total).toBe(4)
-		expect(body.by_status).toEqual({ active: 4, signal: 2 })
+		expect(body.by_status).toEqual({ active: 4, opportunity: 2 })
 	})
 
 	it('returns one group’s complete rows through group_by and group_value', async () => {
