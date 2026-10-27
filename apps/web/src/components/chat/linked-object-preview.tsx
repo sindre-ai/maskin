@@ -27,6 +27,8 @@ interface PreviewProps {
 	 *  or a status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
+	/** A draft edited since an earlier message showed it: the header says Updated. */
+	updated?: boolean
 }
 
 /** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
@@ -35,6 +37,7 @@ export function LinkedObjectCard({
 	objectId,
 	conversationId,
 	agentId,
+	updated = false,
 	defaultExpanded = false,
 	className,
 }: PreviewProps) {
@@ -117,6 +120,14 @@ export function LinkedObjectCard({
 						<span className="inline-block max-w-full truncate rounded-md bg-secondary px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
 							{preview?.label ?? typeLabel(object.type)}
 						</span>
+						{updated ? (
+							<span
+								data-linked-card-updated=""
+								className="ml-1.5 inline-block rounded-md bg-brand-subtle px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-subtle-foreground"
+							>
+								Updated
+							</span>
+						) : null}
 					</span>
 					{canAct && statuses.length > 0 ? (
 						// On a narrow card the status menu takes a row of its own instead of being cut off.
@@ -283,6 +294,7 @@ export function LinkedCardOrLink({
 	label,
 	inList = false,
 	after = false,
+	updated = false,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -295,6 +307,8 @@ export function LinkedCardOrLink({
 	inList?: boolean
 	/** The card goes under the sentence that links it: only a draft is drawn. */
 	after?: boolean
+	/** A draft edited since an earlier message showed it. */
+	updated?: boolean
 }) {
 	return target.kind === 'object' ? (
 		<ObjectCardOrLink
@@ -306,6 +320,7 @@ export function LinkedCardOrLink({
 			label={label}
 			inList={inList}
 			after={after}
+			updated={updated}
 		/>
 	) : (
 		<FileCardOrLink
@@ -339,6 +354,7 @@ export function renderLinkedCard(
 		label?: string
 		inList?: boolean
 		after?: boolean
+		updated?: boolean
 	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
@@ -370,6 +386,7 @@ function ObjectCardOrLink({
 	label,
 	inList,
 	after,
+	updated,
 }: {
 	workspaceId: string
 	objectId: string
@@ -379,6 +396,7 @@ function ObjectCardOrLink({
 	label?: string
 	inList: boolean
 	after: boolean
+	updated: boolean
 }) {
 	const { data: object } = useObject(objectId)
 	// A draft keeps today's card, and its lead-in only in a list.
@@ -390,6 +408,7 @@ function ObjectCardOrLink({
 				objectId={objectId}
 				conversationId={conversationId}
 				agentId={agentId}
+				updated={updated}
 			/>,
 		)
 	}

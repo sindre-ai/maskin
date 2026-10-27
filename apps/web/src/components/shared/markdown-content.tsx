@@ -378,8 +378,10 @@ export interface LinkedCardsOptions {
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
-	/** Ids whose card an earlier message in the chat already shows: their links stay links. */
+	/** Ids whose card another message in the chat holds: their links here are chips. */
 	skipIds?: ReadonlySet<string>
+	/** Ids of drafts edited since an earlier message showed them: their card carries an Updated tag. */
+	updatedIds?: ReadonlySet<string>
 	/**
 	 * Draws the card for a link, or `fallback` when it deserves none. Passed in rather than
 	 * imported because the cards render markdown themselves. Keep its identity stable.
@@ -395,6 +397,8 @@ export interface LinkedCardsOptions {
 			inList?: boolean
 			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
 			after?: boolean
+			/** A draft edited since an earlier message showed it: the card says so. */
+			updated?: boolean
 		},
 	) => ReactNode
 	/**
@@ -481,6 +485,10 @@ function TextareaMarkdownContent({
 	const cardsRenderer = linkedCardsOption?.renderCard
 	const chipRenderer = linkedCardsOption?.renderChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
+	// By value, like the rest: a fresh set with the same ids must not remount the cards.
+	const cardsUpdatedKey = linkedCardsOption?.updatedIds
+		? [...linkedCardsOption.updatedIds].sort().join(',')
+		: ''
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
 			cardsWorkspaceId && cardsRenderer
@@ -488,11 +496,19 @@ function TextareaMarkdownContent({
 						workspaceId: cardsWorkspaceId,
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
+						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer, chipRenderer],
+		[
+			cardsWorkspaceId,
+			cardsConversationId,
+			cardsAgentId,
+			cardsRenderer,
+			chipRenderer,
+			cardsUpdatedKey,
+		],
 	)
 	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
 	// any other link to an object as a chip; the original element is what shows until the card or
@@ -506,6 +522,7 @@ function TextareaMarkdownContent({
 				...linkedCards,
 				label: card.label ?? undefined,
 				inList: card.inList,
+				updated: linkedCards.updatedIds?.has(card.target.id),
 			})
 		}
 		return ({ wrap }: ComponentOverridesContext) =>
@@ -549,6 +566,7 @@ function TextareaMarkdownContent({
 									{linkedCards.renderCard({ kind: 'object', id }, null, {
 										...linkedCards,
 										after: true,
+										updated: linkedCards.updatedIds?.has(id),
 									})}
 								</Fragment>
 							))}
