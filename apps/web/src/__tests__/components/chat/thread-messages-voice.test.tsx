@@ -149,7 +149,8 @@ describe('ThreadMessages — voice call boundaries', () => {
 					created: [],
 					next: [],
 					not_done: [],
-				},
+					// The receipt fields are not on MessageMetadata's typed shape.
+				} as never,
 				createdAt: '2026-09-30T10:05:20.000Z',
 			}),
 		])
