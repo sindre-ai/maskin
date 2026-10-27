@@ -4,6 +4,13 @@ import { z } from 'zod'
 import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytics/voice-events'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
+import {
+	type HoldPreview,
+	buildHoldPreview,
+	formatHoldPreviewForModel,
+	postHoldPreview,
+	readAloudInstruction,
+} from './voice-hold-preview'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
 import {
@@ -136,7 +143,11 @@ function cap(text: string): string {
 		: text
 }
 
-function heldMessage(tool: string, review: Exclude<WriteReview, { kind: 'run' }>): string {
+function heldMessage(
+	tool: string,
+	review: Exclude<WriteReview, { kind: 'run' }>,
+	inChat: boolean,
+): string {
 	if (review.kind === 'refuse') {
 		return review.reason === 'declined'
 			? `The person said no, so ${tool} was not run. Do not call it again unless they ask for it.`
@@ -145,7 +156,13 @@ function heldMessage(tool: string, review: Exclude<WriteReview, { kind: 'run' }>
 	const target = review.risky
 		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
 		: ''
-	return `Not done yet. ${tool} reaches outside the workspace or cannot easily be undone, so the person has to say yes first. Tell them in one plain sentence what you are about to do, ask for a yes, and wait for their answer.${target} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.`
+	const changed = review.changed
+		? ' The text changed after the person was asked, so their earlier yes does not count for it. Tell them it changed.'
+		: ''
+	const preview = review.preview
+		? `\n\n${formatHoldPreviewForModel(review.preview)}\n\n${readAloudInstruction(review.preview, inChat)}`
+		: '\n\nNo preview could be made for this call. Say in one plain sentence what you are about to do and that you cannot read out the exact text, then ask once for a yes.'
+	return `Not done yet. ${tool} reaches outside the workspace or cannot easily be undone, so the person has to say yes first. What it will do is below: tell them as the instruction below says, ask for a yes, and wait for their answer.${target}${changed} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.${preview}`
 }
 
 export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
@@ -154,6 +171,8 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const writeGate = createWriteGate({
 		voiceSessionId: session.id,
 		isReadOnlyTool: deps.isReadOnlyTool,
+		previewFor: (tool, args) =>
+			buildHoldPreview({ db, workspaceId: session.workspaceId, tool, args }),
 	})
 	let knownConversationId = session.conversationId
 	// Transcript lines are written one at a time, in arrival order: lines must
@@ -170,6 +189,25 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				voice_session_id: voiceSessionId,
 				error: err instanceof Error ? err.message : String(err),
 			})
+		}
+	}
+
+	// The held text goes into the call's chat as well as being read out. A failure here is logged,
+	// never thrown: the hold still works, and the model is then told to read the text out in full.
+	async function showHoldInChat(preview: HoldPreview): Promise<boolean> {
+		try {
+			const conversationId = await postHoldPreview({ db, session, agentName, preview })
+			if (conversationId !== knownConversationId) {
+				knownConversationId = conversationId
+				send({ type: 'conversation', conversation_id: conversationId })
+			}
+			return true
+		} catch (err) {
+			logger.warn('Voice hold preview could not be posted to the chat', {
+				voice_session_id: session.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return false
 		}
 	}
 
@@ -219,8 +257,10 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				if (review.kind !== 'run') {
 					errorCode =
 						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					const inChat =
+						review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
 					output = JSON.stringify({
-						error: heldMessage(msg.name, review),
+						error: heldMessage(msg.name, review, inChat),
 						error_code: errorCode,
 					})
 				} else {

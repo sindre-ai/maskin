@@ -1,6 +1,6 @@
 /**
- * The tool surface of a Live (voice) call: every tool the MCP server registers,
- * exactly as chat gets them, plus the tools of any extra MCP servers the caller
+ * The tool surface of a Live (voice) call: every tool the MCP server registers that the
+ * model may call (app-only tools are left out), as chat gets them, plus the tools of any extra MCP servers the caller
  * hands in (the ones attached to the agent).
  *
  * Nothing is redefined here. `createMcpServer` is the single source of truth
@@ -56,6 +56,17 @@ export interface VoiceToolkit {
 export const VOICE_EXTERNAL_MCP_CONNECT_TIMEOUT_MS = 5000
 /** The Realtime API limits a function name to this many characters. */
 const MAX_TOOL_NAME_LENGTH = 64
+
+/**
+ * True for a tool the server registers for an MCP App's own buttons only (`visibility: ['app']`),
+ * such as approve_object_draft. The model cannot complete it (the server refuses any caller that
+ * is not a person), so offering it on a call would ask the person for a yes to something that
+ * then fails.
+ */
+function isAppOnlyTool(tool: { _meta?: Record<string, unknown> }): boolean {
+	const ui = tool._meta?.ui as { visibility?: unknown } | undefined
+	return Array.isArray(ui?.visibility) && !ui.visibility.includes('model')
+}
 
 async function listAllTools(client: Client) {
 	const out = []
@@ -136,6 +147,7 @@ async function buildToolkit(
 	const tools: VoiceRealtimeTool[] = []
 	const taken = new Set<string>()
 	for (const tool of await listAllTools(client)) {
+		if (isAppOnlyTool(tool)) continue
 		taken.add(tool.name)
 		tools.push({
 			type: 'function',
@@ -179,6 +191,7 @@ async function buildToolkit(
 				clearTimeout(timer)
 				externalClients.push(listed.client)
 				for (const tool of listed.tools) {
+					if (isAppOnlyTool(tool)) continue
 					const name = realtimeName(serverName, tool.name, taken)
 					external.set(name, { client: listed.client, tool: tool.name })
 					if (tool.annotations?.readOnlyHint === true) readOnlyTools.add(name)

@@ -91,7 +91,16 @@ export function formatVoiceCallerRules(args: { callerName: string | null; caller
  * hold is thrown away and the person is asked a second time.
  */
 export const VOICE_WRITE_CONFIRMATION =
-	'Reading, searching and ordinary changes inside the workspace (updating a task or status, adding a comment, creating a task, marking something read) run at once: just do them, then say in a few words what you did. Anything that sends outside the workspace, starts work, deletes, or changes access or credentials is held by the system until the person says yes out loud. Make that call straight away, without asking first: a yes spoken before the call is held does not count. When the call comes back as not done yet, say in one plain sentence who or what it will affect, ask for a yes once, wait for their answer, then repeat the same call with the confirmation_id you were given. Never ask twice for the same thing.'
+	'Reading, searching and ordinary changes inside the workspace (updating a task or status, adding a comment, creating a task, marking something read) run at once: just do them, then say in a few words what you did. Anything that sends outside the workspace, starts work, deletes, or changes access or credentials is held by the system until the person says yes out loud. Make that call straight away, without asking first: a yes spoken before the call is held does not count. When the call comes back as not done yet, it carries the real recipient, subject and text of what will happen, and says how much of it to read aloud: follow that, ask for a yes once, wait for their answer, then repeat the same call with the confirmation_id you were given. If the text changed after you asked, the earlier yes does not count and you ask again about the new text. Never ask twice for the same thing.'
+
+/**
+ * Rules for drafts and for what the agent claims on a call. The server guards the send itself
+ * (the yes is tied to the text, a draft can only be approved by a person's tap); these lines keep
+ * the agent from promising what the server will not do. Its own constant, apart from the others,
+ * so edits to them do not collide with it.
+ */
+export const VOICE_DRAFT_RULE =
+	"Drafts and cards: when the person changes the wording of a draft, first save the new wording with update_objects on the draft's task, read back what was saved from the result, and only then ask for approval. Never ask for approval of wording you have not saved. A draft is approved by tapping it in the chat, and a decision card is answered by tapping it: a spoken yes does not approve a draft or answer a card, so say it is in the chat for them to tap. Say a background job is running or done only from a tool result you received in this same turn. Otherwise say it was started and check before you report."
 
 export const VOICE_CALL_CONDUCT = `How to run this call:
 - Lead with the point. For a list, say how many there are, then start on the first one with your recommendation. One short hello at most, and no "let me think about...", no narrating what you are about to do. If a tool call will take a moment, make it and speak when you have the result.
@@ -132,6 +141,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\n${formatVoiceCallerRules({ callerName: input.caller.name, callerId: input.caller.id })}`,
 		`\n\nThe current workspace id is ${input.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		`\n\n${VOICE_WRITE_CONFIRMATION}`,
+		`\n\n${VOICE_DRAFT_RULE}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
 		`\n\n${VOICE_LANGUAGE_RULE}`,
 		`\n\n${VOICE_FOR_YOU_RULE}`,
