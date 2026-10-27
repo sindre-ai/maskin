@@ -967,7 +967,8 @@ struct ThreadTranscript: View {
 		let _ = call?.lines.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
-			calls: LiveCallLog.shared.records(for: store.conversationID))
+			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
+			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
 			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
@@ -1085,6 +1086,10 @@ struct ThreadTranscript: View {
 			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
+		case .receipt(let event):
+			LiveReceiptRow(event: event)
+		case .callSummary(let summary, let transcript):
+			LiveCallSummaryCard(summary: summary, transcript: transcript)
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
