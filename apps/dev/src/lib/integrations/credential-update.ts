@@ -92,7 +92,16 @@ export async function updateCredential(
 	// saved parts passed the rules when they were saved, the new ones are checked here.
 	let login: LoginFields | undefined
 	if (input.login) {
-		const saved = decodeLogin(await decryptStoredCredential(kms, { workspaceId, ...row }))
+		const saved =
+			row.credentials === null
+				? undefined
+				: decodeLogin(
+						await decryptStoredCredential(kms, {
+							workspaceId,
+							credentials: row.credentials,
+							dekCiphertext: row.dekCiphertext,
+						}),
+					)
 		const username = input.login.username ?? saved?.username
 		const password = input.login.password ?? saved?.password
 		const email = input.login.email ?? saved?.email
