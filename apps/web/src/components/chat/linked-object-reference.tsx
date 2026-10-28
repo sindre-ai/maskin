@@ -422,7 +422,7 @@ export function ObjectReferenceChip({
 
 	// A draft keeps its plain link: its approval card sits under the text.
 	if (object === null) {
-		return <UnavailableChip kind="object" reason="deleted" />
+		return <UnavailableChip kind="object" />
 	}
 	// While the object loads the original link stays and still previews (the card shows its
 	// skeleton); a draft has no preview.
@@ -680,7 +680,7 @@ export function ObjectReferenceCard({
 		)
 	}
 	if (object === null) {
-		return <UnavailableCard shell={shell} marker={marker} kind="object" reason="deleted" />
+		return <UnavailableCard shell={shell} marker={marker} kind="object" />
 	}
 
 	const title = object.title?.trim() || 'Untitled'
@@ -883,7 +883,7 @@ export function LoopReferenceChip({
 		path: `/${workspaceId}/loops/${loopId}`,
 	}
 
-	if (loop === null) return <UnavailableChip kind="loop" reason="deleted" />
+	if (loop === null) return <UnavailableChip kind="loop" />
 	if (loop === undefined) {
 		return (
 			<ChipPreview card={card} sheet={sheet} enabled>
@@ -939,7 +939,7 @@ export function LoopReferenceCard({
 
 	if (loop === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (loop === null) {
-		return <UnavailableCard shell={shell} marker={marker} kind="loop" reason="deleted" />
+		return <UnavailableCard shell={shell} marker={marker} kind="loop" />
 	}
 
 	const pill = LOOP_PILL_STYLES[loop.pill]
@@ -1032,7 +1032,7 @@ export function TriggerReferenceChip({
 		path: `/${workspaceId}/triggers/${triggerId}`,
 	}
 
-	if (trigger === null) return <UnavailableChip kind="trigger" reason="deleted" />
+	if (trigger === null) return <UnavailableChip kind="trigger" />
 	if (trigger === undefined) {
 		return (
 			<ChipPreview card={card} sheet={sheet} enabled>
@@ -1088,7 +1088,7 @@ export function TriggerReferenceCard({
 
 	if (trigger === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (trigger === null) {
-		return <UnavailableCard shell={shell} marker={marker} kind="trigger" reason="deleted" />
+		return <UnavailableCard shell={shell} marker={marker} kind="trigger" />
 	}
 
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap

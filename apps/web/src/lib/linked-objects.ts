@@ -604,16 +604,11 @@ export function pickFacts(
 	return facts
 }
 
-/** Why a linked thing cannot be drawn: it is gone, or it is there and you may not see it. */
-export type UnavailableReason = 'deleted' | 'private'
-
-/** The words of the two unavailable states, for a card and for a chip. `kind` is the noun ("object"). */
-export function unavailableCopy(
-	kind: string,
-	reason: UnavailableReason,
-): { card: string; chip: string } {
-	const chip = `${reason === 'deleted' ? 'Deleted' : 'Private'} ${kind}`
-	return reason === 'deleted'
-		? { card: `This ${kind} was deleted`, chip }
-		: { card: `Private ${kind}. You don't have access.`, chip }
+/**
+ * The words for something that cannot be drawn, on a card and on a chip. `kind` is the noun
+ * ("object"). The lookup cannot tell a deleted thing from one you may not see, so it is always
+ * "deleted".
+ */
+export function unavailableCopy(kind: string): { card: string; chip: string } {
+	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
 }

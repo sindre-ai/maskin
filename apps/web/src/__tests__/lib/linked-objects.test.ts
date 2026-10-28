@@ -315,17 +315,10 @@ describe('pickFacts', () => {
 })
 
 describe('unavailableCopy', () => {
-	it('words the deleted state', () => {
-		expect(unavailableCopy('bet', 'deleted')).toEqual({
+	it('words the deleted card and chip', () => {
+		expect(unavailableCopy('bet')).toEqual({
 			card: 'This bet was deleted',
 			chip: 'Deleted bet',
-		})
-	})
-
-	it('words the private state', () => {
-		expect(unavailableCopy('loop', 'private')).toEqual({
-			card: "Private loop. You don't have access.",
-			chip: 'Private loop',
 		})
 	})
 })

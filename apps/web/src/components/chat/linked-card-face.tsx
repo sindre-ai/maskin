@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn'
 import { defaultTypeColor, typeColors, typeIcons } from '@/lib/constants'
-import { type CardFact, type UnavailableReason, unavailableCopy } from '@/lib/linked-objects'
-import { Building2, Lock, type LucideIcon, Tag, Trash2, User } from 'lucide-react'
+import { type CardFact, unavailableCopy } from '@/lib/linked-objects'
+import { Building2, type LucideIcon, Tag, Trash2, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 // The built-in types with an icon of their own; a custom type gets the neutral tag.
@@ -96,24 +96,19 @@ export function LinkedCardFace({
 	)
 }
 
-const UNAVAILABLE_ICON: Record<UnavailableReason, LucideIcon> = { deleted: Trash2, private: Lock }
-
 /**
- * The card of something that cannot be drawn: gone (trash icon) or private (lock icon), in the
- * dashed, italic, muted look. `kind` is the noun ("object", "loop", "trigger").
+ * The card of something that cannot be drawn (deleted, trash icon), in the dashed, italic, muted
+ * look. `kind` is the noun ("object", "loop", "trigger").
  */
 export function UnavailableCard({
 	shell,
 	marker,
 	kind,
-	reason,
 }: {
 	shell: string
 	marker: string | undefined
 	kind: string
-	reason: UnavailableReason
 }) {
-	const Icon = UNAVAILABLE_ICON[reason]
 	return (
 		<span
 			data-linked-card={marker}
@@ -122,19 +117,18 @@ export function UnavailableCard({
 				'flex-row items-center gap-2 border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
 			)}
 		>
-			<Icon size={14} aria-hidden className="shrink-0" />
-			{unavailableCopy(kind, reason).card}
+			<Trash2 size={14} aria-hidden className="shrink-0" />
+			{unavailableCopy(kind).card}
 		</span>
 	)
 }
 
 /** The chip of something that cannot be drawn, at the size of the sentence. */
-export function UnavailableChip({ kind, reason }: { kind: string; reason: UnavailableReason }) {
-	const Icon = UNAVAILABLE_ICON[reason]
+export function UnavailableChip({ kind }: { kind: string }) {
 	return (
 		<span className="rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground">
-			<Icon size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />
-			{unavailableCopy(kind, reason).chip}
+			<Trash2 size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />
+			{unavailableCopy(kind).chip}
 		</span>
 	)
 }
