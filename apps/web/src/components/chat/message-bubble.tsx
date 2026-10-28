@@ -536,7 +536,10 @@ function OwnLinkChip({
 	segment,
 }: {
 	workspaceId: string
-	segment: { kind: 'loop' | 'trigger'; id: string } | { kind: 'object' | 'file'; id: string }
+	segment:
+		| { kind: 'loop'; id: string }
+		| { kind: 'trigger'; id: string }
+		| { kind: 'object' | 'file'; id: string }
 }) {
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
