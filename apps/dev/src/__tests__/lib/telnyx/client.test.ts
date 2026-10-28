@@ -114,7 +114,6 @@ describe('TelnyxClient.createCall', () => {
 		to: '+4520123456',
 		from: '+4570000000',
 		assistantId: 'assistant-1',
-		prospectGreeting: 'Hej Anna',
 		connectionId: 'app-1',
 		webhookUrl: 'https://maskin.test/api/integrations/telnyx/webhook',
 		clientState: {
@@ -133,26 +132,15 @@ describe('TelnyxClient.createCall', () => {
 		return { url, init, body: JSON.parse(String(init.body)) as Record<string, unknown> }
 	}
 
-	it('attaches the assistant as an object with the greeting as a dynamic variable', async () => {
+	it('attaches the assistant as an object with its id and no dynamic variables', async () => {
 		const { url, body } = await sentBody()
 		expect(url).toBe('https://telnyx.test/v2/calls')
-		expect(body.assistant).toEqual({
-			id: 'assistant-1',
-			dynamic_variables: { prospect_greeting: 'Hej Anna' },
-		})
+		expect(body.assistant).toEqual({ id: 'assistant-1' })
 	})
 
 	it('never sends a top-level assistant_id, which the Dial API does not list', async () => {
 		const { body } = await sentBody()
 		expect(body).not.toHaveProperty('assistant_id')
-	})
-
-	it('never sends a dynamic variable name that starts with telnyx_', async () => {
-		const { body } = await sentBody()
-		const names = Object.keys(
-			(body.assistant as { dynamic_variables: Record<string, string> }).dynamic_variables,
-		)
-		expect(names.filter((n) => n.startsWith('telnyx_'))).toEqual([])
 	})
 
 	it('keeps the idempotency key and premium answering machine detection', async () => {
