@@ -138,14 +138,11 @@ function CheckList({ items }: { items: string[] }) {
 export function VoiceSummaryCard({
 	summary,
 	workspaceId,
-	title,
 	canReadTranscript,
 	onReadTranscript,
 }: {
 	summary: VoiceReceiptSummary
 	workspaceId: string
-	/** The agent-written body of the summary message, when it has one. */
-	title?: string
 	canReadTranscript: boolean
 	/** Opens the full Transcript view. */
 	onReadTranscript: (trigger: HTMLButtonElement) => void
@@ -166,7 +163,6 @@ export function VoiceSummaryCard({
 					{formatCallClock(summary.durationSeconds)}
 				</span>
 			</header>
-			{title ? <p className="text-base font-bold tracking-tight text-foreground">{title}</p> : null}
 			{summary.decided.length > 0 ? (
 				<SummarySection label={`Decided · ${summary.decided.length}`}>
 					<CheckList items={summary.decided} />

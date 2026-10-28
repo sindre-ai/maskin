@@ -35,7 +35,7 @@ type Seed = { content: string; metadata: Record<string, unknown>; human?: boolea
 async function threadWithCall(
 	page: Page,
 	account: { api: TestAPI; workspaceId: string },
-	seeds: (taskId: string) => Seed[],
+	seeds: (taskId: string, workspaceId: string) => Seed[],
 ) {
 	const agent = await account.api.createAgentActor(`Live Meeting QA ${Date.now()}`)
 	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
@@ -50,7 +50,7 @@ async function threadWithCall(
 		initial_message: 'Opening the thread',
 	})
 	const post = new TestAPI(agent.api_key)
-	const planned = seeds(task.id)
+	const planned = seeds(task.id, account.workspaceId)
 	for (const seed of planned) {
 		// The person's own spoken lines are the human's messages; the agent's are its own.
 		const poster = seed.human ? account.api : post
@@ -76,45 +76,77 @@ async function threadWithCall(
 
 const voice = { source: 'voice', voice_session_id: VOICE_SESSION_ID }
 
-const withReceipts = (taskId: string): Seed[] => [
-	{ content: 'Could you check the cancel flow?', metadata: voice, human: true },
-	{
-		content: 'Opened the task',
-		metadata: {
-			...voice,
-			kind: 'receipt',
-			event: 'opened_task',
-			object_id: taskId,
-			text: 'A cancel after a create is accepted as a new delivery',
-			t: 12,
-			outcome: 'ran',
+const TASK_TITLE = 'Backfill cancelled bookings'
+
+/**
+ * The messages a call writes, in the shape the server writes them (postReceiptLine and
+ * postClosingReceipt in apps/dev/src/services/voice-receipt.ts): a per-write line whose body is
+ * markdown with a link and whose metadata carries the plain text, and a closing message whose
+ * body is a markdown receipt with no title and whose metadata carries the lists.
+ */
+const withReceipts = (taskId: string, workspaceId: string): Seed[] => {
+	const href = `http://localhost:5173/${workspaceId}/objects/${taskId}`
+	const link = `[${TASK_TITLE}](${href})`
+	return [
+		{ content: 'Could you check the cancel flow?', metadata: voice, human: true },
+		{
+			content: `Opened task ${link}`,
+			metadata: {
+				...voice,
+				kind: 'receipt',
+				event: 'opened_task',
+				object_id: taskId,
+				text: `Opened task "${TASK_TITLE}"`,
+				t: 12,
+				outcome: 'ran',
+				tool: 'get_objects',
+				object_type: 'task',
+				object_title: TASK_TITLE,
+			},
 		},
-	},
-	{
-		content: 'Moved to review',
-		metadata: {
-			...voice,
-			kind: 'receipt',
-			event: 'moved_to_review',
-			object_id: taskId,
-			text: 'Aggregate review + open bet PR + manual test',
-			t: 16,
-			outcome: 'ran',
+		{
+			content: `Moved task ${link} to review`,
+			metadata: {
+				...voice,
+				kind: 'receipt',
+				event: 'moved_to_review',
+				object_id: taskId,
+				text: `Moved task "${TASK_TITLE}" to review`,
+				t: 16,
+				outcome: 'ran',
+				tool: 'update_objects',
+				object_type: 'task',
+				object_title: TASK_TITLE,
+			},
 		},
-	},
-	{
-		content: 'Webhook dedup review with the Developer',
-		metadata: {
-			...voice,
-			kind: 'receipt_summary',
-			duration_seconds: 3604,
-			decided: ['Backfill cancelled bookings'],
-			created: [{ type: 'task', title: 'Backfill cancelled bookings', object_id: taskId }],
-			next: ['Code Reviewer picks up the PR today'],
-			not_done: [],
+		{
+			content: [
+				'**Call receipt** (60 min 4 s)',
+				'Done:',
+				`- Opened task ${link}`,
+				`- Moved task ${link} to review`,
+				'Top card at start: unknown. First card named: unknown. Cards cleared: 0. No sends. Call ended by hangup.',
+			].join('\n'),
+			metadata: {
+				...voice,
+				kind: 'receipt_summary',
+				duration_seconds: 3604,
+				decided: [`Answered "${TASK_TITLE}"`],
+				created: [{ type: 'task', title: TASK_TITLE, object_id: taskId }],
+				next: [`Review: ${TASK_TITLE}`],
+				not_done: [],
+				numbers: {
+					rank_1_card_at_start: 'unknown',
+					first_card_named: 'unknown',
+					first_card_is_rank_1: null,
+					cards_cleared: 0,
+					sends: [],
+					end_reason: 'user_hangup',
+				},
+			},
 		},
-	},
-]
+	]
+}
 
 const withoutReceipts = (): Seed[] => [
 	{ content: 'Could you check the cancel flow?', metadata: voice, human: true },
@@ -140,9 +172,7 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 				// Event rows: call-relative time, kind label, text.
 				await expect(thread.getByText('0:12', { exact: true })).toBeVisible({ timeout: 10_000 })
 				await expect(thread.getByText('Opened task', { exact: true })).toBeVisible()
-				await expect(
-					thread.getByText('A cancel after a create is accepted as a new delivery'),
-				).toBeVisible()
+				await expect(thread.getByText(`Opened task "${TASK_TITLE}"`)).toBeVisible()
 				await expect(thread.getByText('Moved to review', { exact: true })).toBeVisible()
 
 				// Summary card.
@@ -152,6 +182,9 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 				await expect(card.getByText('Decided · 1')).toBeVisible()
 				await expect(card.getByText('Created · 1')).toBeVisible()
 				await expect(card.getByText('Next', { exact: true })).toBeVisible()
+				// The closing message's markdown body is not the card's heading.
+				await expect(card.getByText('Call receipt')).toHaveCount(0)
+				await expect(card.getByText('**')).toHaveCount(0)
 				await assertNoHorizontalOverflow(page, `${vp.label} ${scheme}`)
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
@@ -181,7 +214,7 @@ test.describe('Live meeting — what the call leaves in the thread', () => {
 			await expect(view).toHaveCount(0)
 
 			// Clicking a row opens the object.
-			await thread.getByText('Aggregate review + open bet PR + manual test').click()
+			await thread.getByText(`Moved task "${TASK_TITLE}" to review`).click()
 			await expect(page).toHaveURL(new RegExp(`/objects/${task.id}`))
 		})
 	}

@@ -217,7 +217,9 @@ describe('ThreadMessages — voice call boundaries', () => {
 			}),
 			buildMessage({
 				id: 4,
-				content: 'Review with the Developer',
+				// The server's closing message body (voice-receipt.ts): markdown, no title.
+				content:
+					'**Call receipt** (0 min 18 s)\nDone:\n- Created task [Ship it](http://localhost/ws-1/objects/obj-1)\nTop card at start: unknown. First card named: unknown. Cards cleared: 0. No sends. Call ended by hangup.',
 				metadata: {
 					...voice(),
 					kind: 'receipt_summary',
@@ -233,6 +235,10 @@ describe('ThreadMessages — voice call boundaries', () => {
 		])
 		expect(screen.queryByText('spoken by me')).toBeNull()
 		expect(screen.queryByText('spoken back')).toBeNull()
+		// The summary message's markdown body is not the card's heading.
+		expect(screen.getByRole('article', { name: 'Live meeting summary' })).toBeInTheDocument()
+		expect(screen.queryByText(/Call receipt/)).toBeNull()
+		expect(screen.queryByText(/\*\*/)).toBeNull()
 		// A show_in_chat message carries a kind, so it is not a spoken line.
 		expect(screen.getByText('Here is the draft you asked for')).toBeInTheDocument()
 

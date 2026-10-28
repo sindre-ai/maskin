@@ -518,7 +518,6 @@ export function ThreadMessages({
 									<VoiceSummaryCard
 										summary={voiceReceipt}
 										workspaceId={workspaceId}
-										title={message.content || undefined}
 										canReadTranscript={hasSpokenLines(voiceReceipt.voiceSessionId)}
 										onReadTranscript={(trigger) => {
 											transcriptTriggerRef.current = trigger
