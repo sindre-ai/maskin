@@ -133,6 +133,12 @@ public final class ForYouStore {
 	public let decisions: DecisionService
 	/// Editing and approving drafts from the feed; nil where the runtime did not build one.
 	public var reviews: DraftReviewStore?
+	/// The v8 screen (date line and summary, grouped approvals, editable drafts, Drafts to review)
+	/// is on for this person. Off is the screen as it was. This is the one place the flag is read:
+	/// the accessors below fall back to the old behaviour, and the header checks it once.
+	public var v8Enabled = false
+	/// Reads the flag; set by the runtime. Nil leaves it off.
+	@ObservationIgnored public var flagReader: (@Sendable () async -> Bool)?
 	/// Cards approved from a group this sitting. They stay in it as "Approved" rows.
 	public private(set) var groupApprovedIds: Set<String> = []
 	/// Cards the reader deferred with Later (device-local).
@@ -272,6 +278,12 @@ public final class ForYouStore {
 	/// Initial load (or workspace change). Shows the loading state only when there is nothing yet.
 	public func load() async {
 		guard let ws = workspaceId() else { return }
+		if let flagReader {
+			Task { [weak self] in
+				let on = await flagReader()
+				self?.v8Enabled = on
+			}
+		}
 		if loadedWorkspace != ws {
 			cards = []
 			shownIds = []
@@ -593,7 +605,8 @@ public final class ForYouStore {
 
 	/// The "Needs you" list with related approvals folded into groups.
 	public var needsItems: [FeedItem] {
-		ApprovalGrouping.items(
+		guard v8Enabled else { return entries.filter { $0.bucket == .needs }.map(FeedItem.card) }
+		return ApprovalGrouping.items(
 			entries: entries, approvedIds: groupApprovedIds,
 			agentName: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
 	}
@@ -637,7 +650,7 @@ public final class ForYouStore {
 	/// Drafts waiting for the reader on open cards, ready to edit and approve. One that has been
 	/// approved is a receipt (`reviews.receiptDrafts`), not a draft.
 	public var reviewDrafts: [ReviewDraft] {
-		guard let reviews else { return [] }
+		guard v8Enabled, let reviews else { return [] }
 		var seen: Set<String> = []
 		var drafts: [ReviewDraft] = []
 		for entry in entries where entry.bucket == .needs && entry.record == nil {
@@ -652,7 +665,7 @@ public final class ForYouStore {
 
 	/// Whether this draft is shown in the strip, so its card does not show it a second time.
 	public func isInStrip(_ draft: DecisionDraft) -> Bool {
-		reviews != nil && ReviewDraft.isReviewable(draft)
+		v8Enabled && reviews != nil && ReviewDraft.isReviewable(draft)
 	}
 
 	/// A draft was approved and the agent told. When it was the last message on its card the card

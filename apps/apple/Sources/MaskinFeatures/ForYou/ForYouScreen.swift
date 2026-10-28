@@ -154,11 +154,13 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
-					ForYouHeaderView(
-						dateLine: store.dateLine(at: fixedNow), spokenDate: store.spokenDate(at: fixedNow),
-						summary: store.blockedSummary
-					)
-					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+					if store.v8Enabled {
+						ForYouHeaderView(
+							dateLine: store.dateLine(at: fixedNow), spokenDate: store.spokenDate(at: fixedNow),
+							summary: store.blockedSummary
+						)
+						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+					}
 					if let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
 						.listRowSeparator(.hidden)

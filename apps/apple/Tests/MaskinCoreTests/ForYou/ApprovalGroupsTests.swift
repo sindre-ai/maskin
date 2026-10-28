@@ -166,6 +166,7 @@ struct ApprovalGroupStoreTests {
 		let store = ForYouStore(
 			source: source, decisions: decisions, workspaceId: { "ws-1" },
 			defaults: UserDefaults(suiteName: "groups-\(UUID().uuidString)")!, eventDebounce: .milliseconds(10))
+		store.v8Enabled = true
 		return (store, source, backend)
 	}
 
@@ -220,6 +221,16 @@ struct ApprovalGroupStoreTests {
 		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
 		store.options.intent = .questions
 		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
+	}
+
+	@Test func withTheFlagOffTheFeedIsPlainCards() async {
+		let (store, source, _) = make()
+		store.v8Enabled = false
+		source.feed = .success(["a", "b", "c"].enumerated().map { approval($1, rank: $0) })
+		await store.load()
+		#expect(store.needsItems.count == 3)
+		for item in store.needsItems { if case .group = item { Issue.record("a group needs the flag") } }
+		#expect(store.reviewDrafts.isEmpty)
 	}
 
 	@Test func theSentenceSaysNothingIsBlockedOnAnEmptyFeed() async {
