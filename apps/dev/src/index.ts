@@ -62,6 +62,7 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { VoiceToolCallLogCleaner } from './services/voice-tool-call-log-cleaner'
 import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -255,6 +256,10 @@ logger.info('Blocked tool calls cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
+voiceToolCallLogCleaner.start()
+logger.info('Voice tool call log cleaner started')
 
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,

@@ -1234,6 +1234,48 @@ export const voiceSessions = pgTable('voice_sessions', {
 export type VoiceSession = typeof voiceSessions.$inferSelect
 export type NewVoiceSession = typeof voiceSessions.$inferInsert
 
+// ── Voice tool call log ─────────────────────────────────────────────────────
+//
+// One row per tool call the voice model made during a call: what it asked for
+// (redacted, size-capped), whether it worked, and the first part of what the
+// model was told back. An internal diagnostic log, not an entity: rows are never
+// edited, so there is no events row, and they are swept after 30 days
+// (services/voice-tool-call-log-cleaner.ts). Written best-effort; a missing row
+// never means the call failed.
+export const voiceToolCalls = pgTable(
+	'voice_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		voiceSessionId: uuid('voice_session_id')
+			.notNull()
+			.references(() => voiceSessions.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The id the realtime model gave the call; ties a row to the transcript.
+		callId: text('call_id'),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		toolName: text('tool_name').notNull(),
+		// Redacted and capped; see lib/voice-tool-call-redaction.ts.
+		argsSummary: jsonb('args_summary').$type<unknown>(),
+		success: boolean('success').notNull(),
+		errorCode: text('error_code'),
+		errorMessage: text('error_message'),
+		// Length of the tool's output before voice's cap, and whether the cap cut it.
+		outputChars: integer('output_chars').notNull(),
+		outputTruncated: boolean('output_truncated').notNull().default(false),
+		latencyMs: integer('latency_ms').notNull(),
+		outputPreview: text('output_preview'),
+	},
+	(t) => [
+		index('voice_tool_calls_session_started_idx').on(t.voiceSessionId, t.startedAt),
+		index('voice_tool_calls_started_at_idx').on(t.startedAt),
+	],
+)
+
+export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
+export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(
