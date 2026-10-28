@@ -298,6 +298,46 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/integrations/linkedin-unipile/connect`.
     /// - Remark: Generated from `#/paths//api/integrations/linkedin-unipile/connect/post`.
     func post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(_ input: Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Input) async throws -> Operations.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect.Output
+    /// Remove a saved API key or login at any time and destroy its secret (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/remove`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/remove/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Output
+    /// Audit log for one stored credential, newest first
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/audit-log`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/audit-log/get`.
+    func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Output
+    /// List which agents may use an integration, and how
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/get`.
+    func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output
+    /// Replace every explicit agent grant on an integration (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/put`.
+    func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output
+    /// Give an agent access to an integration, or change it (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/put`.
+    func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output
+    /// Remove an agent grant (humans only). The agent falls back to the default
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/delete`.
+    func delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(_ input: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output
+    /// Let the agent that asked in a chat use this saved credential (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-from-chat/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(_ input: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -488,6 +528,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/sessions/{id}/resume`.
     /// - Remark: Generated from `#/paths//api/sessions/{id}/resume/post`.
     func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume.Output
+    /// Send a user input turn to an interactive session
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/input`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/input/post`.
+    func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Output
+    /// Start a follow-up session for a helper that has ended
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/continue`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/continue/post`.
+    func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(_ input: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Output
     /// Get session log history
     ///
     /// - Remark: HTTP `GET /api/sessions/{id}/logs`.
@@ -648,7 +698,7 @@ public protocol APIProtocol: Sendable {
     func post_sol_api_sol_voice_hyphen_sessions(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions.Output
     /// Connect a reserved voice session to the vendor
     ///
-    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.
     ///
     /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
     /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.
@@ -1383,6 +1433,120 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Remove a saved API key or login at any time and destroy its secret (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/remove`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/remove/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input.Headers
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_remove.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Audit log for one stored credential, newest first
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/audit-log`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/audit-log/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(
+        path: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Path,
+        query: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Query = .init(),
+        headers: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Output {
+        try await get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input(
+            path: path,
+            query: query,
+            headers: headers
+        ))
+    }
+    /// List which agents may use an integration, and how
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(
+        path: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Path,
+        headers: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output {
+        try await get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Replace every explicit agent grant on an integration (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(
+        path: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Path,
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Headers,
+        body: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Output {
+        try await put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants(Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Give an agent access to an integration, or change it (humans only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+        path: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Path,
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Headers,
+        body: Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output {
+        try await put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(Operations.put_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Remove an agent grant (humans only). The agent falls back to the default
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{id}/grants/{actorId}`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/grants/{actorId}/delete`.
+    public func delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(
+        path: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Output {
+        try await delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_(Operations.delete_sol_api_sol_integrations_sol__lcub_id_rcub__sol_grants_sol__lcub_actorId_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Let the agent that asked in a chat use this saved credential (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-from-chat`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-from-chat/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_from_hyphen_chat.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Let the agent that asked in a chat use a connected integration (humans only)
+    ///
+    /// - Remark: HTTP `POST /api/integrations/{id}/allow-access`.
+    /// - Remark: Generated from `#/paths//api/integrations/{id}/allow-access/post`.
+    public func post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(
+        path: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Path,
+        headers: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Headers,
+        body: Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Output {
+        try await post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access(Operations.post_sol_api_sol_integrations_sol__lcub_id_rcub__sol_allow_hyphen_access.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// List integrations for workspace
     ///
     /// - Remark: HTTP `GET /api/integrations`.
@@ -1891,6 +2055,36 @@ extension APIProtocol {
             headers: headers
         ))
     }
+    /// Send a user input turn to an interactive session
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/input`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/input/post`.
+    public func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(
+        path: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Path,
+        headers: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Headers,
+        body: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Output {
+        try await post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input(Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_input.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Start a follow-up session for a helper that has ended
+    ///
+    /// - Remark: HTTP `POST /api/sessions/{id}/continue`.
+    /// - Remark: Generated from `#/paths//api/sessions/{id}/continue/post`.
+    public func post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(
+        path: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Path,
+        headers: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Headers,
+        body: Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Output {
+        try await post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue(Operations.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_continue.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
     /// Get session log history
     ///
     /// - Remark: HTTP `GET /api/sessions/{id}/logs`.
@@ -1992,8 +2186,14 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `GET /api/for-you`.
     /// - Remark: Generated from `#/paths//api/for-you/get`.
-    public func get_sol_api_sol_for_hyphen_you(headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
-        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(headers: headers))
+    public func get_sol_api_sol_for_hyphen_you(
+        query: Operations.get_sol_api_sol_for_hyphen_you.Input.Query = .init(),
+        headers: Operations.get_sol_api_sol_for_hyphen_you.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_for_hyphen_you.Output {
+        try await get_sol_api_sol_for_hyphen_you(Operations.get_sol_api_sol_for_hyphen_you.Input(
+            query: query,
+            headers: headers
+        ))
     }
     /// Get the current actor’s push notification preferences
     ///
@@ -2279,7 +2479,7 @@ extension APIProtocol {
     }
     /// Connect a reserved voice session to the vendor
     ///
-    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that only read run at once; every other tool is held until the person says yes out loud. The browser never receives a vendor credential.
+    /// Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.
     ///
     /// - Remark: HTTP `POST /api/voice-sessions/{id}/offer`.
     /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/offer/post`.

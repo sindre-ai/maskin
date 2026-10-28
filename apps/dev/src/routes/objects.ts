@@ -83,6 +83,12 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import {
+	TITLE_COVERAGE_SCALE,
+	TITLE_HIT_WEIGHT,
+	TITLE_PHRASE_PREFIX_BONUS,
+	tokenIlikePattern,
+} from '../lib/search-rank'
 import { serialize, serializeArray } from '../lib/serialize'
 import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
@@ -409,27 +415,6 @@ export function tokenizeSearchQuery(q: string): string[] {
 		tokens.push(token)
 	}
 	return tokens
-}
-
-// Per-token rank weight for a title hit; a content hit is worth 1. A title
-// match therefore outranks any content-only match for realistic queries
-// (fewer than 1000 tokens), while more matched tokens still rank higher.
-const TITLE_HIT_WEIGHT = 1000
-
-// A title hit also earns up to this many points for the share of the title the
-// token covers, so "hans" ranks "Hans" (100%) above "Hans Solutions" (~29%).
-// Kept below TITLE_HIT_WEIGHT so coverage never outranks an extra matched token.
-const TITLE_COVERAGE_SCALE = 100
-
-// A title that contains the whole typed phrase starting at a word boundary
-// ("anna b" → "Anna Baker") earns this on top of the token hits. Needed
-// because the tokenizer drops terms under 3 chars, so "b" would otherwise not
-// influence the order at all. Between one and two token hits, so it beats the
-// coverage bonus but never an extra matched token.
-const TITLE_PHRASE_PREFIX_BONUS = 500
-
-function tokenIlikePattern(token: string): string {
-	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
 }
 
 function phraseWordPrefixPatterns(q: string): [string, string] | null {

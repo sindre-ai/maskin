@@ -52,6 +52,9 @@ const KEPT: Record<string, string> = {
 	agent_skills: 'belongs to an agent actor',
 	agent_grants: 'grants to an agent actor; created_by is attribution',
 	agent_chat_grants: 'grants to an agent actor; created_by is attribution',
+	extensions:
+		'created_by on a workspace-owned custom integration; kept, attributed to the deleted user',
+	blocked_tool_calls: 'audit row of a refused tool call by an agent actor, in a kept workspace',
 	// Known gaps, not fixed here (follow-up): these can still carry the person's identity.
 	integrations:
 		'FOLLOW-UP: actor_id = who connected it; may hold a personal credential. Workspace-owned, so not erased here',

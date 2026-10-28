@@ -10,7 +10,7 @@ import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
-import { Bot, Check, Clipboard, Pin } from 'lucide-react'
+import { Bot, Check, Clipboard, ExternalLink, Pin } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
@@ -33,6 +33,10 @@ export function isMarkdown(mimeType: string): boolean {
 
 export function isHtml(mimeType: string): boolean {
 	return mimeType === 'text/html' || mimeType === 'application/xhtml+xml'
+}
+
+export function isPdf(mimeType: string): boolean {
+	return mimeType === 'application/pdf'
 }
 
 export function isInlineImage(mimeType: string): boolean {
@@ -112,6 +116,54 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 				sandbox="allow-scripts"
 				className="w-full h-full block"
 			/>
+		</div>
+	)
+}
+
+// Renders a PDF with the browser's own viewer. Browsers don't send our Bearer
+// token on a plain URL, so the bytes come from the base64 content via a Blob URL
+// rather than the API. The frame is deliberately unsandboxed (Chrome's PDF viewer
+// won't load inside a sandboxed iframe), which is only safe because the Blob is
+// built here with the exact type application/pdf and never carries HTML. The type
+// is asserted again before the Blob is created so this path can't be reused for
+// text/html or svg.
+export function PdfPreview({
+	file,
+	className = 'h-[70vh] min-h-[20vh] rounded-md border border-border',
+}: { file: FileDetail; className?: string }) {
+	const [url, setUrl] = useState<string | null>(null)
+	useEffect(() => {
+		if (!isPdf(file.mimeType)) return
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		const blob = new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: 'application/pdf' })
+		const objectUrl = URL.createObjectURL(blob)
+		setUrl(objectUrl)
+		return () => {
+			URL.revokeObjectURL(objectUrl)
+			setUrl(null)
+		}
+	}, [file.content, file.encoding, file.mimeType])
+	return (
+		<div className="flex h-full w-full flex-col gap-3">
+			<div className="flex justify-end">
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={!url}
+					onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}
+				>
+					<ExternalLink size={14} />
+					Open in new tab
+				</Button>
+			</div>
+			{url && (
+				<iframe
+					title={`Preview of ${file.name}`}
+					src={url}
+					className={`w-full bg-card ${className}`}
+				/>
+			)}
 		</div>
 	)
 }
@@ -277,6 +329,8 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		// cannot execute in our origin because we never set innerHTML.
 		return <SourceView text={fileText(file)} />
 	}
+
+	if (isPdf(file.mimeType)) return <PdfPreview file={file} />
 
 	return (
 		<EmptyState

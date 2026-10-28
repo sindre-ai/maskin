@@ -58,6 +58,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ]
 

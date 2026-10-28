@@ -1,5 +1,7 @@
 import {
 	CONVERSATION_TITLE_MAX_LENGTH,
+	FOR_YOU_TOOL_DEFAULT_LIMIT,
+	FOR_YOU_TOOL_MAX_LIMIT,
 	HUMAN_MESSAGE_STYLE_SHORT,
 	MAX_CONVERSATION_PARTICIPANTS,
 	MESSAGE_MAX_LENGTH,
@@ -1449,7 +1451,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1466,7 +1468,7 @@ export const tools = {
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state.',
+			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -1952,8 +1954,39 @@ export const tools = {
 				),
 		}),
 	},
+	list_for_you: {
+		description:
+			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, items }: total counts the whole list, and offset pages through it (offset 50 starts at the 51st card). Each item { rank, source (curated or decision), headline, rationale, notification_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			actor_id: z
+				.string()
+				.uuid()
+				.describe(
+					'The person whose list to read. Agents may read any member; a person only their own.',
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(FOR_YOU_TOOL_MAX_LIMIT)
+				.default(FOR_YOU_TOOL_DEFAULT_LIMIT)
+				.describe(
+					`How many cards to return. Defaults to ${FOR_YOU_TOOL_DEFAULT_LIMIT}; total always counts the whole list.`,
+				),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.default(0)
+				.describe(
+					'How many cards to skip from the top of the list. Pass 50 with limit 50 to read the next page when total is above 50.',
+				),
+		}),
+	},
 	list_notifications: {
-		description: 'List notifications in the workspace, optionally filtered by status or type.',
+		description:
+			'List the raw notifications in the workspace, optionally filtered by status or type, in creation order and for every person, with nothing filtered out. This does NOT answer "what needs this person": use list_for_you for that.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z

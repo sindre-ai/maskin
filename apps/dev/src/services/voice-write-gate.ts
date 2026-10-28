@@ -1,14 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import { logger } from '../lib/logger'
+import type { HoldPreview } from './voice-hold-preview'
 
 /**
  * The yes-before-a-write rule for a live voice call, enforced on the server.
  *
  * Telling the model to ask first is not a guard: it can skip the question or
- * take its own words for a yes. So a tool that is not read-only is held, and it
- * only runs when two things both happen: the model repeats the same call with
- * the id of the hold, and the person's next spoken line after the hold, heard
- * by our own socket to the Realtime call, is a short clear yes.
+ * take its own words for a yes. So a risky tool (see isRiskyTool: anything that
+ * sends outside the workspace, starts work, deletes, or touches access) is held,
+ * and it only runs when two things both happen: the model repeats the same call
+ * with the id of the hold, and the person's next spoken line after the hold,
+ * heard by our own socket to the Realtime call, is a clear yes.
+ *
+ * The yes is tied to the text the person was asked about. A hold carries a preview of what the
+ * call will do (voice-hold-preview.ts) and a fingerprint of it. When the model repeats the call,
+ * the fingerprint is worked out again from the target. If the text changed since the question,
+ * the yes does not count: the repeat becomes a new hold with the new text.
+ *
+ * Ordinary changes inside the workspace (a comment, a status, a new task) run at
+ * once. They are recorded in the events log and can be changed back, and making
+ * the person confirm each one made a call too slow to use.
  */
 
 export const VOICE_CONFIRM_TTL_MS = 60_000
@@ -17,44 +28,246 @@ export const VOICE_CONFIRM_WAIT_MS = 3_000
 /** The argument the model adds to repeat a held call. Removed before the tool runs. */
 export const VOICE_CONFIRM_ARG = 'confirmation_id'
 
-const YES_TOKENS = [
+/** Words that may open a yes, alone or stacked: "yes", "okay sure". */
+const LEAD_WORDS = new Set([
 	'yes',
 	'yeah',
 	'yep',
 	'yup',
+	'ja',
+	'jep',
 	'sure',
 	'ok',
 	'okay',
-	'please',
-	'confirm',
-	'confirmed',
-	'correct',
+	'alright',
 	'absolutely',
 	'definitely',
 	'exactly',
-	'right',
-	'do it',
+	'agreed',
+	'perfect',
+	'great',
+	'fine',
+	'please',
+	// Danish
+	'jo',
+	'selvfølgelig',
+	'absolut',
+	'perfekt',
+	'enig',
+	'præcis',
+	'fint',
+	'godt',
+	'super',
+	'flot',
+])
+/**
+ * Lead words that are a yes on their own. "please", "fine", "great", "alright" and "exactly"
+ * are not: they are as often a reaction or a polite opener as an approval, so they only count
+ * in front of an approval phrase ("great, send it").
+ */
+const AFFIRM_ALONE = new Set([
+	'yes',
+	'yeah',
+	'yep',
+	'yup',
+	'ja',
+	'jep',
+	'sure',
+	'ok',
+	'okay',
+	'absolutely',
+	'definitely',
+	'agreed',
+	'perfect',
+	'jo',
+	'selvfølgelig',
+	'absolut',
+	'perfekt',
+	'enig',
+])
+/** Words that may close a yes: "go ahead please", "send it now". */
+const TAIL_WORDS = new Set(['please', 'now', 'thanks', 'tak', 'nu', 'bare', 'venligst'])
+/**
+ * The approvals a yes may be made of. A line is a yes only if, after the lead and tail words,
+ * every word belongs to one of these phrases (joined by "and" at most). It is a closed list on
+ * purpose: a word-by-word whitelist let "is that right", "please correct it" and "okay confirm
+ * it" through, because their words are each fine on their own.
+ */
+const APPROVAL_PHRASES = [
 	'go ahead',
 	'go for it',
-	'that is right',
+	'do it',
+	'do that',
+	'send it',
+	'send that',
+	'send them',
+	'send',
+	'approve',
+	'approve it',
+	'approve that',
+	'approve all',
+	'approved',
+	'i approve',
+	'i agree',
+	'confirmed',
+	'sounds good',
+	'sounds great',
+	'looks good',
+	'all good',
+	'that works',
 	'thats right',
-	'that is correct',
+	'that is right',
 	'thats correct',
-]
-const YES_ONLY = new RegExp(`^(?:(?:${YES_TOKENS.join('|')})(?:\\s+|$))+$`)
-const MAX_YES_WORDS = 6
+	'that is correct',
+	'lets do it',
+	'lets do that',
+	'let us do it',
+	'of course',
+	'for sure',
+	// Danish
+	'send den',
+	'send det',
+	'send dem',
+	'send den afsted',
+	'send det afsted',
+	'send dem afsted',
+	'afsted',
+	'godkend',
+	'godkend den',
+	'godkend det',
+	'godkend alle',
+	'godkendt',
+	'jeg godkender',
+	'det er godkendt',
+	'bekræftet',
+	'jeg bekræfter',
+	'jeg er enig',
+	'det lyder godt',
+	'det lyder fint',
+	'det ser godt ud',
+	'det ser fint ud',
+	'det passer',
+	'det er rigtigt',
+	'det er korrekt',
+	'det er fint',
+	'det er i orden',
+	'i orden',
+	'gør det',
+	'kør',
+	'kør på',
+	'sæt i gang',
+	'lad os gøre det',
+	'helt sikkert',
+	'selvfølgelig',
+	'absolut',
+	'gerne',
+].map((phrase) => phrase.split(' '))
+/** Any of these anywhere in the line makes it not a yes: it is a no, a condition or a change of mind. */
+const NO_WORDS = new Set([
+	'no',
+	'nope',
+	'not',
+	'never',
+	'nothing',
+	'wait',
+	'hold',
+	'stop',
+	'cancel',
+	'but',
+	'however',
+	'actually',
+	'instead',
+	'except',
+	'only',
+	'skip',
+	'later',
+	'change',
+	'edit',
+	'rather',
+	'without',
+	'dont',
+	'cant',
+	'wont',
+	'shouldnt',
+	'isnt',
+	'arent',
+	'wasnt',
+	'nej',
+	// Danish
+	'ikke',
+	'ingen',
+	'vent',
+	'men',
+	'kun',
+	'aldrig',
+	'annuller',
+	'senere',
+	'ændre',
+	'rediger',
+	'undlad',
+	'dog',
+	'faktisk',
+	'stedet',
+	'uden',
+])
+const MAX_YES_WORDS = 8
 
-/** A short, clear yes. Anything else (a no, a question, a longer sentence) is not one. */
-export function isYes(text: string): boolean {
-	const normalized = text
+function normalize(text: string): string {
+	return text
 		.toLowerCase()
 		.replace(/['’]/g, '')
-		.replace(/[^a-z\s]/g, ' ')
+		.replace(/[^a-zæøå\s]/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim()
-	if (!normalized || text.includes('?')) return false
-	if (normalized.split(' ').length > MAX_YES_WORDS) return false
-	return YES_ONLY.test(normalized)
+}
+
+/** True when `words` is one or more approval phrases, optionally joined by "and". */
+function isApprovalRun(words: string[]): boolean {
+	if (words.length === 0) return true
+	if (words[0] === 'and' || words[0] === 'og')
+		return words.length > 1 && isApprovalRun(words.slice(1))
+	return APPROVAL_PHRASES.some(
+		(phrase) =>
+			phrase.length <= words.length &&
+			phrase.every((word, i) => words[i] === word) &&
+			isApprovalRun(words.slice(phrase.length)),
+	)
+}
+
+/**
+ * A short, clear yes: lead words ("yes", "okay sure"), then approval phrases ("go ahead and
+ * send it"), then tail words ("please", "now"), and nothing else. The lists hold English and
+ * Danish ("ja, send den", "det lyder godt", "godkend alle"). "I approve", "sounds good,
+ * send it" and "sure, do that" count; "sure, what does it say", "okay is that right" and
+ * "please correct it" do not, and neither does anything with a no, "but", "wait" or question mark.
+ */
+export function isYes(text: string): boolean {
+	// Only English and Danish letters (a-z, æ, ø, å) and plain punctuation can be a yes.
+	// normalize() turns everything else into a space, so without this "send 500", "approve #3"
+	// or "yes 5" would read as a bare approval with its number thrown away; other accented
+	// letters would be thrown away the same way.
+	if (/[^a-zæøå\s.,!;:'’"-]/i.test(text)) return false
+	const normalized = normalize(text)
+	if (!normalized) return false
+	const words = normalized.split(' ')
+	if (words.length > MAX_YES_WORDS) return false
+	if (words.some((word) => NO_WORDS.has(word))) return false
+	let start = 0
+	while (start < words.length && LEAD_WORDS.has(words[start] as string)) start += 1
+	let end = words.length
+	while (end > start && TAIL_WORDS.has(words[end - 1] as string)) end -= 1
+	// "thank you" is two words; the loop above removes "you" only if "thank" is not a tail word.
+	if (end > start && words[end - 1] === 'you' && words[end - 2] === 'thank') end -= 2
+	const core = words.slice(start, end)
+	// Lead words alone are a yes only if one of them is a plain affirmative ("yes", "okay sure").
+	if (core.length === 0) return words.slice(0, start).some((word) => AFFIRM_ALONE.has(word))
+	return isApprovalRun(core)
+}
+
+/** True when the line turns the ask down. A line that is neither this nor a yes leaves the ask open. */
+export function isNo(text: string): boolean {
+	const words = normalize(text).split(' ')
+	return words.some((word) => NO_WORDS.has(word))
 }
 
 const RISKY_TOOLS: ReadonlySet<string> = new Set([
@@ -150,15 +363,60 @@ interface PendingAction {
 	argsKey: string
 	/** How many times the person had started speaking when the hold was made. */
 	speechMark: number
+	/** What the call would do when it was held; null when no preview could be made. */
+	fingerprint: string | null
+	/** What the held call would do, in a few words; never the text of a draft. */
+	summary: string
+	/** Yeses already heard for earlier holds of this same send, whose text then changed. */
+	yesCarried: number
 	answer: 'yes' | 'no' | null
 	state: PendingState
 	timer: ReturnType<typeof setTimeout>
 	waiters: Array<() => void>
 }
 
+/** What the gate knows about a send that went through a yes. */
+export interface ConfirmedSend {
+	holdId: string
+	/** Yeses the person gave before it ran: 1, or more when the text changed after a yes. */
+	yesCount: number
+	/** The text read back before the yes is the text sent. Null when no preview could be made. */
+	readBackMatches: boolean | null
+}
+
+/** A hold that ended without the call running. */
+export interface HoldEnd {
+	id: string
+	tool: string
+	summary: string
+	state: 'declined' | 'expired' | 'superseded'
+	yesCount: number
+	/** The arguments of the held call, in a stable form. */
+	argsKey: string
+	/**
+	 * For superseded: the call that replaced it. The same tool with the same arguments means the same
+	 * send, asked again; the same tool with other arguments is a different send.
+	 */
+	replacedByTool?: string
+	replacedByArgsKey?: string
+}
+
+export interface PendingHoldInfo {
+	tool: string
+	summary: string
+	yesCount: number
+}
+
 export type WriteReview =
-	| { kind: 'run' }
-	| { kind: 'hold'; id: string; risky: boolean }
+	| { kind: 'run'; confirmed?: ConfirmedSend }
+	| {
+			kind: 'hold'
+			id: string
+			risky: boolean
+			preview: HoldPreview | null
+			/** True when the person had been asked about other text, so their yes was thrown away. */
+			changed: boolean
+	  }
 	| { kind: 'refuse'; reason: 'declined' | 'no_yes' }
 
 export interface WriteGate {
@@ -168,13 +426,19 @@ export interface WriteGate {
 	noteUserLine(text: string, itemId?: string): void
 	/** Decides what a tool call may do. `args` is exactly what would be passed to the tool. */
 	review(tool: string, args: unknown, confirmationId: string | null): Promise<WriteReview>
+	/** The hold still waiting for the person's yes or no, if any. */
+	pendingHold(): PendingHoldInfo | null
 }
 
 export function createWriteGate(deps: {
 	voiceSessionId: string
 	isReadOnlyTool: (name: string) => boolean
+	/** What the call would do right now, from its target. Without it a hold has no preview. */
+	previewFor?: (tool: string, args: unknown) => Promise<HoldPreview>
+	/** Told once for every hold that ends without running: turned down, timed out or replaced. */
+	onHoldEnded?: (end: HoldEnd) => void
 }): WriteGate {
-	const { voiceSessionId, isReadOnlyTool } = deps
+	const { voiceSessionId, isReadOnlyTool, previewFor, onHoldEnded } = deps
 	let pending: PendingAction | null = null
 	// Ids of holds the person turned down, so a model that repeats one is told no, not asked to ask again.
 	const declinedIds = new Set<string>()
@@ -185,23 +449,72 @@ export function createWriteGate(deps: {
 		logger.info(`Voice write ${event}`, { voice_session_id: voiceSessionId, tool_name: tool })
 	}
 
-	function close(action: PendingAction, state: PendingState) {
+	function close(
+		action: PendingAction,
+		state: PendingState,
+		replacedBy?: { tool: string; argsKey: string },
+	) {
+		const wasOpen = action.state === 'open'
 		action.state = state
 		clearTimeout(action.timer)
 		if (pending === action) pending = null
 		for (const wake of action.waiters.splice(0)) wake()
+		if (wasOpen && (state === 'declined' || state === 'expired' || state === 'superseded')) {
+			try {
+				onHoldEnded?.({
+					id: action.id,
+					tool: action.tool,
+					summary: action.summary,
+					state,
+					yesCount: action.yesCarried + (action.answer === 'yes' ? 1 : 0),
+					argsKey: action.argsKey,
+					...(replacedBy
+						? { replacedByTool: replacedBy.tool, replacedByArgsKey: replacedBy.argsKey }
+						: {}),
+				})
+			} catch (err) {
+				logger.warn('Voice hold-ended listener failed', {
+					voice_session_id: voiceSessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
 	}
 
-	function hold(tool: string, argsKey: string): PendingAction {
+	/** The preview, or null when there is none or the lookup failed: a failure must not drop the call. */
+	async function currentPreview(tool: string, args: unknown): Promise<HoldPreview | null> {
+		if (!previewFor) return null
+		try {
+			return await previewFor(tool, args)
+		} catch (err) {
+			logger.warn('Voice hold preview failed', {
+				voice_session_id: voiceSessionId,
+				tool_name: tool,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return null
+		}
+	}
+
+	function hold(
+		tool: string,
+		argsKey: string,
+		fingerprint: string | null,
+		summary: string,
+		yesCarried: number,
+	): PendingAction {
 		if (pending) {
 			log('superseded', pending.tool)
-			close(pending, 'superseded')
+			close(pending, 'superseded', { tool, argsKey })
 		}
 		const action: PendingAction = {
 			id: randomUUID(),
 			tool,
 			argsKey,
 			speechMark: speechStarts,
+			fingerprint,
+			summary,
+			yesCarried,
 			answer: null,
 			state: 'open',
 			waiters: [],
@@ -215,6 +528,26 @@ export function createWriteGate(deps: {
 		pending = action
 		log('held', tool)
 		return action
+	}
+
+	async function holdWithPreview(
+		tool: string,
+		args: unknown,
+		argsKey: string,
+		known?: HoldPreview | null,
+		yesCarried = 0,
+	): Promise<WriteReview> {
+		// Looked up before the hold is made, so nothing awaits between making it and returning it.
+		const preview = known !== undefined ? known : await currentPreview(tool, args)
+		const changed = known !== undefined
+		const action = hold(
+			tool,
+			argsKey,
+			preview?.fingerprint ?? null,
+			preview?.summary ?? tool.replace(/_/g, ' '),
+			yesCarried,
+		)
+		return { kind: 'hold', id: action.id, risky: isRiskyTool(tool), preview, changed }
 	}
 
 	/** Resolves when the person has answered the hold, it was closed, or the wait ran out. */
@@ -253,6 +586,8 @@ export function createWriteGate(deps: {
 				for (const wake of action.waiters.splice(0)) wake()
 				return
 			}
+			// A question or an aside is not an answer: the ask stays open for the person's yes or no.
+			if (!isNo(text)) return
 			action.answer = 'no'
 			log('declined', action.tool)
 			declinedIds.add(action.id)
@@ -260,7 +595,7 @@ export function createWriteGate(deps: {
 		},
 
 		async review(tool, args, confirmationId) {
-			if (isReadOnlyTool(tool)) return { kind: 'run' }
+			if (isReadOnlyTool(tool) || !isRiskyTool(tool)) return { kind: 'run' }
 			if (confirmationId !== null && declinedIds.has(confirmationId)) {
 				return { kind: 'refuse', reason: 'declined' }
 			}
@@ -272,18 +607,44 @@ export function createWriteGate(deps: {
 				action.id === confirmationId &&
 				action.tool === tool &&
 				action.argsKey === argsKey
-			if (!repeats) return { kind: 'hold', id: hold(tool, argsKey).id, risky: isRiskyTool(tool) }
+			if (!repeats) return holdWithPreview(tool, args, argsKey)
 
 			if (action.answer === null) await waitForAnswer(action)
 			if (action.state === 'declined') return { kind: 'refuse', reason: 'declined' }
+			const yesesHeard = action.yesCarried + (action.answer === 'yes' ? 1 : 0)
 			if (action.state !== 'open') {
 				// Expired or replaced while we waited: the yes, if any, no longer counts.
-				return { kind: 'hold', id: hold(tool, argsKey).id, risky: isRiskyTool(tool) }
+				return holdWithPreview(tool, args, argsKey, undefined, yesesHeard)
 			}
 			if (action.answer !== 'yes') return { kind: 'refuse', reason: 'no_yes' }
+			// The yes was for the text the person was asked about. Work the fingerprint out again from the
+			// target now: the arguments (an object id) stay the same when the text behind them changes.
+			const latest = await currentPreview(tool, args)
+			if (action.state !== 'open') return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
+			if ((latest?.fingerprint ?? null) !== action.fingerprint) {
+				log('stale', tool)
+				return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
+			}
 			log('confirmed', tool)
 			close(action, 'confirmed')
-			return { kind: 'run' }
+			return {
+				kind: 'run',
+				confirmed: {
+					holdId: action.id,
+					yesCount: yesesHeard,
+					readBackMatches: action.fingerprint === null ? null : true,
+				},
+			}
+		},
+
+		pendingHold() {
+			const action = pending
+			if (!action || action.state !== 'open') return null
+			return {
+				tool: action.tool,
+				summary: action.summary,
+				yesCount: action.yesCarried + (action.answer === 'yes' ? 1 : 0),
+			}
 		},
 	}
 }

@@ -54,7 +54,7 @@ final class LiveCallCenter {
 				let session = LiveMeetingSession(
 					kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
 					realtime: Self.realtimeCall(
-						with: lead, conversationID: request.startedFromConversationID, environment: environment))
+						with: lead, conversationID: id, environment: environment))
 				current = session
 				session.begin()
 				startTicker()

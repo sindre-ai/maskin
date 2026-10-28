@@ -145,6 +145,8 @@ struct ProfileSheet: View {
 		case .integrations:
 			IntegrationsView(
 				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+		case .keychain:
+			KeychainView(store: services.keychainStore())
 		case .triggers:
 			if let workspaceID = environment.workspaceId {
 				TriggersPage(environment: environment, workspaceID: workspaceID)
@@ -329,6 +331,7 @@ extension ProfileMenuItem {
 		case .triggers: "bolt"
 		case .members: "person.2"
 		case .integrations: "puzzlepiece.extension"
+		case .keychain: "lock"
 		case .billing: "creditcard"
 		case .keys: "key"
 		case .autonomy: "slider.horizontal.3"

@@ -176,6 +176,20 @@ struct MessageRow: View {
 	/// Tap on an emoji chip under the bubble (add or take back).
 	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
+	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
+	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
+	/// An intro's send step tapped: send its words, noting which step it was.
+	/// Nil where the screen cannot send a step (a thread), so the buttons are not drawn at all rather
+	/// than drawn and dead.
+	var onSendStep: ((_ prompt: String, _ introMessageID: Int, _ index: Int) -> Void)?
+	/// An intro's fill step tapped: put its prompt in the message box.
+	var onFillStep: ((String) -> Void)?
+	/// The steps are on offer only until a person has written after the intro.
+	var introStepsOpen = true
+	/// How a person already answered an agent's card in this message (read from the chat).
+	var cardOutcome: ChatCardAnswer.Outcome?
+	/// The agents in this chat, who may use a credential saved from a Keychain card.
+	var chatAgents: [ChatParticipant] = []
 	var onSelectVersion: (Int) -> Void = { _ in }
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
@@ -219,7 +233,7 @@ struct MessageRow: View {
 		}
 	}
 
-	private var shownText: String { messageOverride.text(original: message.content) }
+	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
 	private var bodyText: String { quote?.body ?? shownText }
 
@@ -386,6 +400,37 @@ struct MessageRow: View {
 			if !message.questions.isEmpty {
 				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
 			}
+			if let access = KeychainAccessRequest(message: message) {
+				KeychainAccessCard(
+					request: access, agentID: message.actorID, conversationID: message.conversationID,
+					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+			}
+			if let intro = AgentIntroView(message: message) {
+				if introStepsOpen, let steps = intro.steps, let introID = message.serverID, let onSendStep, let onFillStep {
+					IntroStepsView(
+						steps: steps, onSend: { step, index in onSendStep(step.prompt, introID, index) },
+						onFill: onFillStep)
+				}
+				if let tools = intro.tools { IntroToolsView(providers: tools) }
+			}
+			if let connect = IntegrationConnectRequest(message: message) {
+				IntegrationConnectCard(request: connect)
+			}
+			if let access = IntegrationAccessRequest(message: message) {
+				IntegrationAccessCard(
+					request: access, agentID: message.actorID, messageID: message.serverID, answered: cardOutcome,
+					onReply: onKeychainReply)
+			}
+			if let computer = ComputerRequest(message: message) {
+				ComputerRequestCard(
+					request: computer, agentName: message.actorName, conversationID: message.conversationID,
+					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+			}
+			if let credential = KeychainCredentialRequest(message: message) {
+				KeychainRequestCard(
+					request: credential, messageCreatedAt: message.createdAt,
+					agents: agentsAsking(message), onReply: onKeychainReply)
+			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
 		}
@@ -395,6 +440,12 @@ struct MessageRow: View {
 			guard let linked, !targets.isEmpty else { return }
 			await linked.resolveWithRetries(Array(targets.prefix(12)))
 		}
+	}
+
+	/// The chat's agents, with the one that asked always among them.
+	private func agentsAsking(_ message: ChatMessage) -> [ChatParticipant] {
+		if chatAgents.contains(where: { $0.id == message.actorID }) { return chatAgents }
+		return [ChatParticipant(id: message.actorID, name: message.actorName, kind: .agent)] + chatAgents
 	}
 
 	/// Versions pager and local feedback under an agent bubble.

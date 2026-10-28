@@ -92,6 +92,14 @@ struct SettingsServices {
 			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
 	}
 
+	func keychainStore() -> KeychainStore {
+		let workspaceID = workspaceId ?? ""
+		let source = APIKeychainSource(
+			client: environment.client, workspaceID: workspaceID, baseURL: environment.baseURL,
+			clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
+		return KeychainStore(api: source, currentActorID: actorId, canManageWorkspace: role.canManage)
+	}
+
 	func apiKeyStore() -> APIKeyStore {
 		// Always this actor's own id: the app never rotates anyone else's key. The new key is
 		// adopted synchronously, before any other await, so this device isn't signed out.
