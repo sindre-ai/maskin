@@ -36,7 +36,7 @@ const TITLE_CALL_TIMEOUT_MS = 15_000
  * Well under CONVERSATION_TITLE_MAX_LENGTH (200) — that's the storage limit,
  * this is what actually fits a sidebar row without truncating.
  */
-const TITLE_MAX_CHARS = 48
+const TITLE_MAX_CHARS = 32
 
 type TitleAutoState = 'none' | 'initial' | 'refined' | 'manual'
 

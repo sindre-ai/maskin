@@ -33,7 +33,7 @@ describe('deriveConversationTitle', () => {
 			'Draft the note to Acme about the retry window before Thursday and include the usage numbers we pulled'
 		const title = deriveConversationTitle(long, 'Relay')
 		expect(title.endsWith('…')).toBe(true)
-		expect(title.length).toBeLessThanOrEqual(49)
+		expect(title.length).toBeLessThanOrEqual(33)
 		expect(title).not.toMatch(/\s…$/)
 		// Cut on a word boundary — the last kept word is whole.
 		expect(long.startsWith(title.slice(0, -1))).toBe(true)
@@ -67,7 +67,7 @@ describe('deriveConversationTitle', () => {
 	it('cuts mid-word when a word boundary would leave a stub', () => {
 		const long = `Reindex ${'x'.repeat(120)}`
 		const title = deriveConversationTitle(long, 'Relay')
-		expect(title).toBe(`${long.slice(0, 48)}…`)
+		expect(title).toBe(`${long.slice(0, 32)}…`)
 	})
 
 	it('falls back to the whole message when it opens with punctuation', () => {
