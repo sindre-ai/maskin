@@ -122,6 +122,13 @@ const AGENT_NODE_ID = 'n_agent'
 const TOOL_TIMEOUT_MS = 5000
 
 /**
+ * The description of the live Default hangup tool. This is the only thing that ends a call: the
+ * end_call_polite webhook only records the reason and replies.
+ */
+export const HANGUP_TOOL_DESCRIPTION =
+	'To be used whenever the conversation has ended and it would be appropriate to hangup the call.'
+
+/**
  * Voice, speech-to-text, interruption and post-call settings, as read from the live assistant on
  * 2026-10-28 (null and empty values left out). Sent whole, never in part: an update with a
  * half-filled settings object may reset the rest.
@@ -179,22 +186,28 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 		transcription: TRANSCRIPTION,
 		interruption_settings: INTERRUPTION_SETTINGS,
 		post_conversation_settings: { enabled: false },
-		tools: TOOL_DECLARATIONS.map((tool) => ({
-			type: 'webhook',
-			webhook: {
-				name: tool.name,
-				description: tool.description,
-				url: `${input.toolsBaseUrl}/${tool.name}`,
-				method: 'POST',
-				headers: [{ name: 'Authorization', value: `Bearer ${input.toolWebhookSecret}` }],
+		tools: [
+			// Inline, because tool_ids below replaces the shared tools on update: the shared Default
+			// hangup of the live assistant is detached there, so this is the only hangup afterwards.
+			{ type: 'hangup', hangup: { description: HANGUP_TOOL_DESCRIPTION } },
+			...TOOL_DECLARATIONS.map((tool) => ({
+				type: 'webhook',
+				// A sibling of type. Inside the webhook object Telnyx stores it but does not apply it.
 				timeout_ms: TOOL_TIMEOUT_MS,
-				async: false,
-				body_parameters: tool.parameters,
-				// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
-				// variable names that start with telnyx_; call_control_id is the system variable.
-				preset_body_fields: { call_control_id: '{{call_control_id}}' },
-			},
-		})),
+				webhook: {
+					name: tool.name,
+					description: tool.description,
+					url: `${input.toolsBaseUrl}/${tool.name}`,
+					method: 'POST',
+					headers: [{ name: 'Authorization', value: `Bearer ${input.toolWebhookSecret}` }],
+					async: false,
+					body_parameters: tool.parameters,
+					// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
+					// variable names that start with telnyx_; call_control_id is the system variable.
+					preset_body_fields: { call_control_id: '{{call_control_id}}' },
+				},
+			})),
+		],
 		tool_ids: [...(input.toolIds ?? [])],
 		conversation_flow: {
 			start_node_id: DISCLOSURE_NODE_ID,
