@@ -181,6 +181,6 @@ describe('card lines', () => {
 			approximate: false,
 		})
 		expect(card.rationale).toContain('Month forecast: Estimate unknown')
-		expect(card.rationale).not.toContain('$0.00 of')
+		expect(card.rationale).not.toContain('Month forecast: $0.00')
 	})
 })
