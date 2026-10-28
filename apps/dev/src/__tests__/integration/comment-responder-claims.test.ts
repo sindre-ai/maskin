@@ -230,4 +230,50 @@ describe('CommentDispatcher fallback vs thread-reply claim (integration)', () =>
 		// fallback did. Never both, never neither.
 		expect((threadWon ? 1 : 0) + dispatchCount()).toBe(1)
 	})
+
+	it('gives the claim back when the session fails to start, so a retry answers exactly once', async () => {
+		const { human, ws, object } = await seed()
+		const eventId = await insertCommentEvent(ws.id, human, object.id)
+		const claimRows = () =>
+			db
+				.select()
+				.from(commentResponderClaims)
+				.where(eq(commentResponderClaims.sourceCommentEventId, eventId))
+
+		// Both launch methods fail until the flag flips, whichever one startSession uses.
+		let sessionStartFails = true
+		const launch = () =>
+			sessionStartFails
+				? Promise.reject(new Error('session failed to start'))
+				: Promise.resolve({ id: 'session-stub' })
+		sessionManager.enqueueSession.mockImplementation(launch)
+		sessionManager.createSession.mockImplementation(launch)
+
+		// First attempt: the claim is won, the session fails to start, the claim is released.
+		emit(ws.id, human, object.id, eventId)
+		await vi.waitFor(() => expect(dispatchCount()).toBeGreaterThanOrEqual(1), {
+			timeout: 5_000,
+			interval: 25,
+		})
+		await vi.waitFor(async () => expect(await claimRows()).toHaveLength(0), {
+			timeout: 5_000,
+			interval: 25,
+		})
+		const attemptsAfterFailure = dispatchCount()
+
+		// Retry: the claim is free again, so this attempt starts the session and holds the claim.
+		sessionStartFails = false
+		emit(ws.id, human, object.id, eventId)
+		await vi.waitFor(() => expect(dispatchCount()).toBe(attemptsAfterFailure + 1), {
+			timeout: 5_000,
+			interval: 25,
+		})
+		expect(await claimRows()).toHaveLength(1)
+
+		// A further retry of the now-answered comment must not start a second session.
+		emit(ws.id, human, object.id, eventId)
+		await new Promise((r) => setTimeout(r, 500))
+		expect(dispatchCount()).toBe(attemptsAfterFailure + 1)
+		expect(await claimRows()).toHaveLength(1)
+	})
 })
