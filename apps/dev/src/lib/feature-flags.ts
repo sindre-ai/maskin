@@ -48,7 +48,6 @@ export const FLAGS = {
 	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
 	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
-
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
