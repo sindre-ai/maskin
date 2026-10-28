@@ -262,6 +262,22 @@ describe('MarketplacePage', () => {
 		expect(chipNav.contains(input)).toBe(true)
 	})
 
+	it('Ctrl+F focuses the catalog filter instead of opening the browser find', async () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: { loops: [], counts: COUNTS },
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
+		expect(input).not.toHaveFocus()
+
+		await user.keyboard('{Control>}f{/Control}')
+
+		expect(input).toHaveFocus()
+	})
+
 	it('narrows the visible loops when the user types into the filter', async () => {
 		mockUseMarketplaceLoops.mockReturnValue({
 			data: {

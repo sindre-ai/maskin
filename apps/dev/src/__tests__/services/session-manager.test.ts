@@ -124,6 +124,10 @@ vi.mock('../../lib/credit-classifier', () => ({
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.
 	classifySessionExit: (tail: string, exitCode: number) =>
 		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
+	// The 401 close-out report is not under test here; its rule is covered in
+	// lib/credit-classifier.test.ts.
+	endsInClaudeAuthDeath: () => false,
+	isClaudeAuthDeathText: () => false,
 }))
 
 import { execFile } from 'node:child_process'
@@ -1932,6 +1936,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildExtensionMcpServers: no extensions in this workspace
+				[],
 				// buildKeychainEnv: no bring-your-own keys in this workspace
 				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
@@ -3238,8 +3244,9 @@ describe('SessionManager', () => {
 
 	describe('markRemoteSessionComplete()', () => {
 		// Mock-DB choreography for these tests. Select order inside the method:
-		// 1) the stdout read, 2) (only when usage parses) the route/model lookup,
-		// 3) the open-row check, then settleSession's own SELECT, the re-read after
+		// 1) the stdout read, 2) the resume-marker and result-row reads of
+		// sumSegmentResultUsage, 3) (only when usage parses) the route/model lookup,
+		// 4) the open-row check, then settleSession's own SELECT, the re-read after
 		// settling and hasOtherActiveSessions. Tests queue the first and leave the
 		// rest to the static `mockResults.select` default, a still-running row.
 		// Updates: (only when usage parses) the usage columns, then the CAS inside
@@ -3247,9 +3254,9 @@ describe('SessionManager', () => {
 		const settleFlips = (session: { id: string }) => [{ id: session.id }]
 
 		it('no-ops without writing an event when the session is already terminal', async () => {
-			// 1st select: the stdout read (empty). 2nd: the open-row check finds a
-			// terminal status. 3rd: the lookup that enriches the dropped-signal log.
-			mockResults.selectQueue = [[], [{ status: 'completed' }], [{ status: 'completed' }]]
+			// 1st select: the stdout read (empty). 2nd and 3rd: the usage sum (empty). 4th: the
+			// open-row check finds a terminal status. 5th: the lookup that enriches the dropped-signal log.
+			mockResults.selectQueue = [[], [], [], [{ status: 'completed' }], [{ status: 'completed' }]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete('some-session-id', 1)
@@ -3322,10 +3329,12 @@ describe('SessionManager', () => {
 			// update() call.
 			mockResults.select = [session]
 			mockResults.selectQueue = [[]]
-			// 1st call (the stdout read) is fine; the open-row check throws on the
-			// 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
+			// The first 3 calls (the stdout read and the usage sum's two reads) are fine;
+			// the open-row check throws on the 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
 			// goes through.
 			mockResults.selectErrorQueue = [
+				undefined,
+				undefined,
 				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3343,6 +3352,8 @@ describe('SessionManager', () => {
 		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
+				undefined,
+				undefined,
 				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3419,7 +3430,7 @@ describe('SessionManager', () => {
 					},
 				}),
 			}
-			mockResults.selectQueue = [[resultLogRow]]
+			mockResults.selectQueue = [[resultLogRow], [], [resultLogRow]]
 			mockResults.select = [session]
 			// 1st update: the usage columns. 2nd: the CAS inside settleSession.
 			mockResults.updateQueue = [[], settleFlips(session)]

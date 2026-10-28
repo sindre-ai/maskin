@@ -20,6 +20,9 @@ const useFiles = vi.fn()
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: (...args: unknown[]) => useFiles(...args),
 }))
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [{ id: 'actor-1', name: 'Developer', type: 'agent' }] }),
+}))
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
 }))
@@ -445,28 +448,71 @@ describe('LinkedCardOrLink', () => {
 		useFiles.mockReturnValue({ data: undefined })
 	})
 
-	it('keeps the link while the object loads, is missing, or failed to load', () => {
-		for (const result of [{ data: undefined }, { data: undefined, isError: true }]) {
+	it('shows a skeleton while the object loads, and Deleted object when it is missing or elsewhere', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: true })
+		const loading = renderObject()
+		expect(loading.container.querySelector('[aria-busy="true"]')).not.toBeNull()
+		loading.unmount()
+		for (const result of [
+			{ data: undefined, isLoading: false },
+			{ data: objectRow({ workspaceId: 'other' }), isLoading: false },
+		]) {
 			useObject.mockReturnValue(result)
 			const { unmount } = renderObject()
-			expect(screen.getByText('the original link')).toBeInTheDocument()
+			expect(screen.getByText('Deleted object')).toBeInTheDocument()
+			expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 			unmount()
 		}
 	})
 
-	it('keeps the link for an object in another workspace', () => {
-		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other', preview: DRAFT_PREVIEW }) })
+	it('draws any other object as a reference card: type, status, priority, title, text and owner', () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				title: 'Ship the card',
+				status: 'in_review',
+				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
+				metadata: { priority: 'P2' },
+				driver: 'actor-1',
+				updatedAt: new Date().toISOString(),
+				active_session_state: 'running',
+			}),
+			isLoading: false,
+		})
 		renderObject()
+		const card = screen.getByRole('link')
+		expect(card).toHaveTextContent('Ship the card')
+		expect(card).toHaveTextContent('Plan Do the thing with a link.')
+		expect(card).toHaveTextContent('P2')
+		expect(card).toHaveTextContent('Developer')
+		expect(card).toHaveTextContent('Working now')
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('says Unassigned, and leaves out the text row and Working now, when there is nothing to show', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ content: null, driver: null, active_session_state: null }),
+			isLoading: false,
+		})
+		renderObject()
+		const card = screen.getByRole('link')
+		expect(card).toHaveTextContent('Unassigned')
+		expect(card).not.toHaveTextContent('Working now')
+	})
+
+	it('keeps the link of a list item unless the object is a draft', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				inList
+			/>,
+		)
 		expect(screen.getByText('the original link')).toBeInTheDocument()
 	})
 
-	it('keeps the link for an object that is not a draft', () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		renderObject()
-		expect(screen.getByText('the original link')).toBeInTheDocument()
-	})
-
-	it('replaces the link by the card for a draft', () => {
+	it('replaces the link by the approval card for a draft, in a paragraph or a list', () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
 		renderObject()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()

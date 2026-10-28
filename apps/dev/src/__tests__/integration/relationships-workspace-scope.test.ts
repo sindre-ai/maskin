@@ -63,12 +63,12 @@ describe('Relationship and graph routes are scoped to the header workspace', () 
 		})
 		aTarget = await insertObject(db, wsA, actorA, {
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 			title: 'Workspace A target',
 		})
 		bObject = await insertObject(db, wsB, actorB, {
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 			title: FOREIGN_TITLE,
 			content: FOREIGN_CONTENT,
 		})

@@ -40,7 +40,7 @@ test.describe('Object title — long titles fill available row width', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: LONG_TITLE,
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -68,7 +68,7 @@ test.describe('Object title — long titles fill available row width', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: LONG_TITLE,
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -102,7 +102,7 @@ test.describe('Object title — long titles fill available row width', () => {
 		const parent = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Parent bet with a related row',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const related = await account.api.createObject(account.workspaceId, {
 			type: 'task',

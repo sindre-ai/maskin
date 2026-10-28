@@ -35,7 +35,7 @@ for (const vp of [...SHIP_GATE_VIEWPORTS, SHORT_VIEWPORT]) {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'E2E mention dropdown bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)

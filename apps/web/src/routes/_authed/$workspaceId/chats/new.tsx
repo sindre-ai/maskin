@@ -45,6 +45,8 @@ interface NewChatSearch {
 	objectType?: string
 	notificationId?: string
 	notificationTitle?: string
+	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
+	text?: string
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -59,6 +61,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationId: typeof search.notificationId === 'string' ? search.notificationId : undefined,
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
+		text: typeof search.text === 'string' ? search.text : undefined,
 	}),
 })
 
@@ -86,8 +89,13 @@ function NewChatRoute() {
 	const [activeIndex, setActiveIndex] = useState(0)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
-	const [draft, setDraft] = useState('')
+	const [draft, setDraft] = useState(search.text ?? '')
 	const [toFocused, setToFocused] = useState(false)
+	// The page stays mounted when the launcher opens /chats/new?text=... from
+	// here, so a new text has to replace the box; the initial value covers mount.
+	useEffect(() => {
+		if (search.text !== undefined) setDraft(search.text)
+	}, [search.text])
 	const inputRef = useRef<HTMLInputElement>(null)
 
 	// Objects handed over by "Ask an agent". Resolved so the chips read as

@@ -62,6 +62,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_session_activity',
 	'get_chat_activity',
 	'list_notifications',
+	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ])
@@ -177,6 +178,7 @@ const ROWS: Record<string, Row> = {
 	// Notifications
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
+	list_for_you: row('List For You'),
 	update_notification: row('Update notification', { idempotent: true }),
 	// Session activity, drafts, mail and access
 	get_session_activity: row('Get session activity'),

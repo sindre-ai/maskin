@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import {
 	events,
 	actors,
@@ -10,9 +9,8 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, asc, desc, eq, gt, inArray, ne } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { runCapabilityDigest } from '../../services/capability-digest'
 import { CapabilityScanner } from '../../services/capability-scanner'
 import { buildIntegration, insertActor, insertConversation, insertWorkspace } from '../factories'
@@ -33,11 +31,6 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 const BUILTIN = 'maskin:builtin'
 const DAY_MS = 24 * 60 * 60 * 1000
 
-function restoreEnv(name: string, value: string | undefined) {
-	if (value === undefined) delete process.env[name]
-	else process.env[name] = value
-}
-
 describe('capability digest (integration)', () => {
 	let workspaceId: string
 	let cosId: string
@@ -49,19 +42,11 @@ describe('capability digest (integration)', () => {
 	let slackId: string
 	let answers: Map<string, ProbeResult>
 	let probe: ProbeFn
-	const previous: Record<string, string | undefined> = {}
 
 	const slackKey = () => `integration:slack:${slackId}`
 
 	function tools(map: Record<string, string>): ProbeResult {
 		return { tools: map, specHash: null }
-	}
-
-	function setFlags(testers: string[]) {
-		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:capability-scan`
-		process.env.FF_TESTER_ACTOR_IDS = testers.join(',')
-		process.env.FF_TESTER_FEATURES = 'agent-proactive-1-1'
-		_resetFeatureFlagConfig()
 	}
 
 	function scanner() {
@@ -200,9 +185,6 @@ describe('capability digest (integration)', () => {
 	}
 
 	beforeEach(async () => {
-		for (const name of ['FF_WORKSPACE_FEATURES', 'FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES']) {
-			previous[name] = process.env[name]
-		}
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
 
@@ -240,12 +222,6 @@ describe('capability digest (integration)', () => {
 			if (!answer) throw new Error(`no stub for ${source.key}`)
 			return answer
 		})
-		setFlags([ownerId, adminId, memberId])
-	})
-
-	afterEach(() => {
-		for (const [name, value] of Object.entries(previous)) restoreEnv(name, value)
-		_resetFeatureFlagConfig()
 	})
 
 	describe('end to end', () => {
@@ -399,19 +375,6 @@ describe('capability digest (integration)', () => {
 			const skipped = await skippedFor(ownerId)
 			expect(skipped[0]?.data).toMatchObject({ reason: 'inactive_chat' })
 		})
-
-		it('sends nothing to a person whose flag is off, and records nothing for them', async () => {
-			setFlags([randomUUID()])
-			const chatId = await chatFor(ownerId)
-			await scanner().tick()
-			answers.set(
-				BUILTIN,
-				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
-			)
-			await scanner().tick()
-			expect(await notesIn(chatId)).toHaveLength(0)
-			expect(await eventsFor('capability_note_skipped')).toHaveLength(0)
-		})
 	})
 
 	describe('reply stop', () => {
@@ -515,15 +478,13 @@ describe('capability digest (integration)', () => {
 	describe('shared integrations and governance', () => {
 		/** A held tool finding written by a real scan, with delivery held back until the test says so. */
 		async function pendingToolFinding() {
-			setFlags([])
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			answers.set(
 				BUILTIN,
 				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
 			)
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			expect(await eventsFor('capability_changed')).toHaveLength(1)
-			setFlags([ownerId, adminId, memberId])
 		}
 
 		it('re-resolves holders at send time: an agent whose access was removed is not named', async () => {
@@ -546,12 +507,10 @@ describe('capability digest (integration)', () => {
 
 		it('drops an item whose only holders lost access, sends nothing, and does not use the weekly cap', async () => {
 			const chatId = await chatFor(ownerId)
-			setFlags([])
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_react: 'h-react' }))
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			expect(await eventsFor('capability_changed')).toHaveLength(1)
-			setFlags([ownerId, adminId, memberId])
 
 			// Slack is no longer exposed to any agent session since the scan.
 			await db
@@ -679,7 +638,6 @@ describe('capability digest (integration)', () => {
 				.update(integrations)
 				.set({ config: { expose_to_agent_sessions: false } })
 				.where(eq(integrations.id, slackId))
-			setFlags([ownerId])
 			await scanner().tick()
 			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_react: 'h-react' }))
 			await scanner().tick()

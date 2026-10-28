@@ -6,12 +6,14 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
 	ObjectFacetsResponse,
 	SafeMetadata,
+	SearchResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	SuggestedStep,
@@ -96,10 +98,12 @@ type RequestOptions = {
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
 	 *  requires it back to prove the same browser started the flow. */
 	credentials?: RequestCredentials
+	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
+	signal?: AbortSignal
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -129,6 +133,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
+			...(signal ? { signal } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -282,7 +287,152 @@ function uploadFileWithProgress(
 }
 
 // Objects
+// ── Custom extensions ─────────────────────────────────────────────────────
+
+export type ExtensionStatus = 'active' | 'disabled' | 'draft'
+
+export interface ExtensionResponse {
+	id: string
+	workspaceId: string
+	slug: string
+	name: string
+	status: ExtensionStatus
+	mcpConfig: unknown | null
+	webhookConfig: ExtensionWebhookConfig | null
+	webhookToken: string | null
+	webhookUrl: string | null
+	/** True when a signing secret is stored. The secret itself is never returned. */
+	hasSigningSecret: boolean
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: boolean
+	toolGrants: ExtensionToolGrants
+	mcpLastError: string | null
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+	/** Most recent committed delivery in the last 14 days. */
+	lastDeliveryAt: string | null
+	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
+}
+
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+
+export type LiteralOrPath = { literal: string } | { path: string }
+
+/** The stdio server V1 runs: npx mcp-remote <url>, key passed as an Authorization header. */
+export interface ExtensionMcpConfig {
+	envKey: string
+	server:
+		| { type: 'stdio'; command: string; args: string[]; envFromCredential?: string }
+		| { type: 'http'; url: string }
+	autoInject: boolean
+	credentialProvider: string
+	tools: ExtensionTool[]
+}
+
+export type ExtensionMcpProbeResult =
+	| { ok: true; tools: ExtensionTool[] }
+	| {
+			ok: false
+			reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'
+			message: string
+	  }
+
+export interface ExtensionWebhookConfig {
+	signatureScheme: ExtensionSignatureScheme
+	signatureHeader: string
+	signaturePrefix?: string
+	timestampHeader?: string
+	timestampBodyTemplate?: string
+	maxAgeSeconds?: number
+	secretSource?: 'env' | 'credential'
+	eventMap: {
+		externalIdPath: string
+		entityType: LiteralOrPath
+		action: LiteralOrPath
+		dataPath?: string
+	}
+	rateLimit?: { perMinute: number }
+}
+
+export interface VendorRecipe {
+	slug: string
+	displayName: string
+	mcpConfig?: ExtensionMcpConfig
+	webhookConfig?: Partial<ExtensionWebhookConfig>
+	docsUrl: string
+}
+
+export interface CreateExtensionInput {
+	slug: string
+	name: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface UpdateExtensionInput {
+	name?: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface ExtensionDeliveries {
+	windowDays: number
+	committed: number
+	deliveries: { id: string; externalId: string; receivedAt: string; processedAt: string }[]
+}
+
+export type ExtensionSampleResult =
+	| {
+			ok: true
+			event: { externalId: string; entityType: string; action: string; data: unknown }
+	  }
+	| { ok: false; field: string; message: string }
+
 export const api = {
+	// The unified search endpoint: all five sources, true counts, AND matching.
+	search: {
+		query: (
+			workspaceId: string,
+			params: Record<string, string>,
+			opts?: { signal?: AbortSignal },
+		) => {
+			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
+			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
+		},
+	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -1208,6 +1358,65 @@ export const api = {
 			),
 	},
 
+	extensions: {
+		list: (workspaceId: string) => request<ExtensionResponse[]>('/extensions', { workspaceId }),
+		get: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateExtensionInput) =>
+			request<ExtensionResponse>('/extensions', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateExtensionInput) =>
+			request<ExtensionResponse>(`/extensions/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		recipes: (workspaceId: string) =>
+			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		probeMcp: (workspaceId: string, data: { server_url: string; api_key?: string }) =>
+			request<ExtensionMcpProbeResult>('/extensions/mcp/probe', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		generateSecret: (workspaceId: string) =>
+			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
+		regenerateToken: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}/regenerate-token`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		deliveries: (workspaceId: string, id: string) =>
+			request<ExtensionDeliveries>(`/extensions/${id}/deliveries`, { workspaceId }),
+		sample: (
+			workspaceId: string,
+			id: string,
+			data: { payload: string; webhook_config?: ExtensionWebhookConfig },
+		) =>
+			request<ExtensionSampleResult>(`/extensions/${id}/sample`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -1359,6 +1568,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -1386,6 +1609,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -2285,6 +2527,10 @@ export interface FileDetail extends FileListItem {
 	annotations: FileAnnotation[]
 	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
 	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
@@ -2612,6 +2858,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2686,6 +2965,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {

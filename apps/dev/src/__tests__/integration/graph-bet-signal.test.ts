@@ -14,7 +14,7 @@ function createApp() {
 	)
 }
 
-describe('Graph — bet creation always lands at `signal`', () => {
+describe('Graph — bet creation always lands at `opportunity`', () => {
 	let workspaceId: string
 
 	beforeEach(async () => {
@@ -31,7 +31,16 @@ describe('Graph — bet creation always lands at `signal`', () => {
 				},
 				statuses: {
 					insight: ['new', 'processing', 'clustered', 'discarded'],
-					bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
+					bet: [
+						'opportunity',
+						'define',
+						'active',
+						'live',
+						'succeeded',
+						'failed',
+						'paused',
+						'archived',
+					],
 					task: ['todo', 'in_progress', 'done', 'blocked'],
 					loop: ['running', 'waiting', 'paused', 'archived'],
 				},
@@ -42,7 +51,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 		workspaceId = ws.id
 	})
 
-	it('creates a bet at `signal` when no status is supplied', async () => {
+	it('creates a bet at `opportunity` when no status is supplied', async () => {
 		const app = createApp()
 		const res = await app.request(
 			jsonRequest(
@@ -59,13 +68,13 @@ describe('Graph — bet creation always lands at `signal`', () => {
 		expect(res.status).toBe(201)
 		const body = await res.json()
 		expect(body.nodes[0].type).toBe('bet')
-		expect(body.nodes[0].status).toBe('signal')
+		expect(body.nodes[0].status).toBe('opportunity')
 
 		const [row] = await db.select().from(objects).where(eq(objects.id, body.nodes[0].id))
-		expect(row.status).toBe('signal')
+		expect(row.status).toBe('opportunity')
 	})
 
-	it("overrides a caller-supplied 'define' status to `signal` on a bet", async () => {
+	it("overrides a caller-supplied 'define' status to `opportunity` on a bet", async () => {
 		const app = createApp()
 		const res = await app.request(
 			jsonRequest(
@@ -81,13 +90,13 @@ describe('Graph — bet creation always lands at `signal`', () => {
 
 		expect(res.status).toBe(201)
 		const body = await res.json()
-		expect(body.nodes[0].status).toBe('signal')
+		expect(body.nodes[0].status).toBe('opportunity')
 
 		const [row] = await db.select().from(objects).where(eq(objects.id, body.nodes[0].id))
-		expect(row.status).toBe('signal')
+		expect(row.status).toBe('opportunity')
 	})
 
-	it("overrides a caller-supplied 'active' status to `signal` on a bet", async () => {
+	it("overrides a caller-supplied 'active' status to `opportunity` on a bet", async () => {
 		const app = createApp()
 		const res = await app.request(
 			jsonRequest(
@@ -103,7 +112,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 
 		expect(res.status).toBe(201)
 		const body = await res.json()
-		expect(body.nodes[0].status).toBe('signal')
+		expect(body.nodes[0].status).toBe('opportunity')
 	})
 
 	it('does not override status on non-bet types', async () => {
@@ -166,7 +175,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 
 	it('advancement path signal → define is unaffected by the creation override', async () => {
 		const app = createApp()
-		// Create the bet via the graph route — should land in `signal` even though
+		// Create the bet via the graph route — should land in `opportunity` even though
 		// the caller tried to jump straight to `define`.
 		const createRes = await app.request(
 			jsonRequest(
@@ -181,7 +190,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 		)
 		expect(createRes.status).toBe(201)
 		const created = await createRes.json()
-		expect(created.nodes[0].status).toBe('signal')
+		expect(created.nodes[0].status).toBe('opportunity')
 		const betId = created.nodes[0].id
 
 		// signal → define via PATCH.

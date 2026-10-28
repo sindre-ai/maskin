@@ -9,7 +9,6 @@ import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { FLAGS, isFlagEnabledForWorkspace } from '../../../feature-flags'
 import { logger } from '../../../logger'
 import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
 import {
@@ -50,6 +49,7 @@ import {
 	sendLinkedInMessage,
 	withdrawLinkedInInvitation,
 } from './operations'
+import { POST_ID_DESCRIPTION } from './post-id'
 import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
 import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
 import { sendApprovedLinkedInObject } from './send-object'
@@ -296,7 +296,7 @@ export function registerLinkedInMcpInstance(
 			{
 				description: scopedDescription('Read comments on a LinkedIn post', cfg),
 				inputSchema: {
-					post_id: z.string().min(1).describe('Post id.'),
+					post_id: z.string().min(1).describe(POST_ID_DESCRIPTION),
 					limit: z.number().int().min(1).max(100).optional(),
 					cursor: z.string().optional(),
 				},
@@ -422,7 +422,7 @@ export function registerLinkedInMcpInstance(
 					'Fetch engagement metrics (reactions + comments) for a LinkedIn post',
 					cfg,
 				),
-				inputSchema: { post_id: z.string().min(1) },
+				inputSchema: { post_id: z.string().min(1).describe(POST_ID_DESCRIPTION) },
 			},
 			async (args) => {
 				try {
@@ -645,14 +645,7 @@ export function registerLinkedInMcpInstance(
 		)
 	}
 
-	// The flag is read when the server is built, which is once per request, so with it off the
-	// tool is absent from tools/list and cannot be called.
-	if (
-		allowed.has('withdraw_invitation') &&
-		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
-			actorId: ctx.actorId,
-		})
-	) {
+	if (allowed.has('withdraw_invitation')) {
 		server.registerTool(
 			toolName(cfg, 'withdraw_invitation'),
 			{
@@ -858,14 +851,7 @@ export function registerLinkedInMcpInstance(
 		)
 	}
 
-	// A write tool the outreach flag gates is not registered while the flag is off. The server
-	// is built per request, so switching the flag needs no other code.
-	if (
-		allowed.has('react_to_post') &&
-		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
-			actorId: ctx.actorId,
-		})
-	) {
+	if (allowed.has('react_to_post')) {
 		server.registerTool(
 			toolName(cfg, 'react_to_post'),
 			{
@@ -902,13 +888,7 @@ export function registerLinkedInMcpInstance(
 		)
 	}
 
-	// Flag-gated like the other outreach writes: absent from tools/list while the flag is off.
-	if (
-		allowed.has('send_inmail') &&
-		isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
-			actorId: ctx.actorId,
-		})
-	) {
+	if (allowed.has('send_inmail')) {
 		server.registerTool(
 			toolName(cfg, 'send_inmail'),
 			{

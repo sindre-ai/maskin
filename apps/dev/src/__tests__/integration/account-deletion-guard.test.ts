@@ -40,6 +40,8 @@ const KEPT: Record<string, string> = {
 	conversation_pending_turns: 'agent turn queue of a kept conversation (agent actor, not a person)',
 	files: 'content authored by the person is kept',
 	file_comments: 'content authored by the person is kept',
+	file_uploads:
+		'transient ledger of an in-flight upload; the reaper aborts the stored upload and settles the row when it expires, so erasing it here would strand the stored parts',
 	workspace_skills: 'created_by on workspace content',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
@@ -52,6 +54,11 @@ const KEPT: Record<string, string> = {
 	agent_skills: 'belongs to an agent actor',
 	agent_grants: 'grants to an agent actor; created_by is attribution',
 	agent_chat_grants: 'grants to an agent actor; created_by is attribution',
+	extensions:
+		'created_by on a workspace-owned custom integration; kept, attributed to the deleted user',
+	blocked_tool_calls: 'audit row of a refused tool call by an agent actor, in a kept workspace',
+	comment_responder_claims:
+		'dedupe ledger of which agent answers a kept comment (agent actor, not a person); cascades with the comment event',
 	// Known gaps, not fixed here (follow-up): these can still carry the person's identity.
 	integrations:
 		'FOLLOW-UP: actor_id = who connected it; may hold a personal credential. Workspace-owned, so not erased here',

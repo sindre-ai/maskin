@@ -103,6 +103,22 @@ describe('buildApnsPayload', () => {
 		})
 		expect(deepLinkFor({ ...msg, objectId: null })).toBe('maskin://ws-1/notifications')
 	})
+	it('opens the thread inside the chat when the push is about a thread reply', () => {
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 42 })).toBe(
+			'maskin://ws-1/chats/c-1?thread=42',
+		)
+	})
+	it('ignores a thread id that is not a positive integer, and one with no chat', () => {
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 0 })).toBe(
+			'maskin://ws-1/chats/c-1',
+		)
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 1.5 })).toBe(
+			'maskin://ws-1/chats/c-1',
+		)
+		expect(deepLinkFor({ ...msg, objectId: null, threadRootId: 42 })).toBe(
+			'maskin://ws-1/notifications',
+		)
+	})
 })
 
 describe('buildApnsPayload rich fields', () => {

@@ -11,7 +11,7 @@ describe('Workspace settings', () => {
 			loop: 'Loop',
 		})
 		expect(settings.statuses.insight).toContain('new')
-		expect(settings.statuses.bet).toContain('signal')
+		expect(settings.statuses.bet).toContain('opportunity')
 		expect(settings.statuses.task).toContain('todo')
 		expect(settings.statuses.loop).toContain('draft')
 		expect(settings.relationship_types).toContain('informs')

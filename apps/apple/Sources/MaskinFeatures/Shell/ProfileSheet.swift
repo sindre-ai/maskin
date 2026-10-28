@@ -145,6 +145,8 @@ struct ProfileSheet: View {
 		case .integrations:
 			IntegrationsView(
 				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+		case .keychain:
+			KeychainView(store: services.keychainStore())
 		case .triggers:
 			if let workspaceID = environment.workspaceId {
 				TriggersPage(environment: environment, workspaceID: workspaceID)
@@ -176,7 +178,8 @@ struct ProfileSheet: View {
 		if let session = environment.auth.session {
 			NavigationLink(value: Route.yourProfile) {
 				HStack(spacing: MaskinSpace.s8) {
-					ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12)
+					ActorAvatar(
+						name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12, seed: session.actorId)
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 						Text(session.name).maskinText(.headline).foregroundStyle(MaskinColor.ink)
 						Text(profileSubtitle(email: session.email)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
@@ -329,6 +332,7 @@ extension ProfileMenuItem {
 		case .triggers: "bolt"
 		case .members: "person.2"
 		case .integrations: "puzzlepiece.extension"
+		case .keychain: "lock"
 		case .billing: "creditcard"
 		case .keys: "key"
 		case .autonomy: "slider.horizontal.3"

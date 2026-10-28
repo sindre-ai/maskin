@@ -15,7 +15,7 @@
 export type LifecyclePhase = 'SHAPING' | 'BUILT' | 'SHIPPED' | 'WRAPPED_UP'
 
 const PHASE_BY_STATUS: Record<string, LifecyclePhase> = {
-	signal: 'SHAPING',
+	opportunity: 'SHAPING',
 	define: 'SHAPING',
 	shaped: 'SHAPING',
 	active: 'BUILT',

@@ -3,8 +3,8 @@
  *
  * One typed constant keyed by Unipile event type. It lives here and not in the
  * ProviderConfig `events.mapping` field because that shape only holds
- * entityType and action, and Unipile events also need a dedupe key, a
- * classifier and a flag.
+ * entityType and action, and Unipile events also need a dedupe key and a
+ * classifier.
  *
  * Adding a row: one object below, one fixture in `__fixtures__/`, one entry in
  * `config.ts` events.definitions, and an allowlist entry on the Unipile
@@ -15,7 +15,6 @@
 
 import type { Database } from '@maskin/db'
 import type { integrations } from '@maskin/db/schema'
-import { FLAGS, type FlagId } from '../../../feature-flags'
 import { decideDirection, readOwnLinkedinIds } from './direction'
 import type { UnipileEnvelope } from './envelope'
 import { findContactsBySlug, resolveSender } from './sender-resolution'
@@ -55,7 +54,6 @@ export interface EventMapRow {
 	/** Content dedupe key, or null to skip the content claim. */
 	deliveryKey: (envelope: UnipileEnvelope) => string | null
 	classify: (ctx: ClassifyContext) => Promise<ClassifyResult>
-	flag: FlagId
 }
 
 const PROVIDER = 'linkedin-unipile'
@@ -107,7 +105,6 @@ function accountRow(): EventMapRow {
 				log: { account_status: accountStatus },
 			}
 		},
-		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
 	}
 }
 
@@ -213,7 +210,6 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 				log: { ...log, resolution: 'unresolved', unresolved_reason: resolution.reason },
 			}
 		},
-		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
 	},
 	'relation.new': {
 		entityType: 'linkedin.connection',
@@ -278,7 +274,6 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 				log: { resolution: contact ? 'matched_not_pending' : 'no_match' },
 			}
 		},
-		flag: FLAGS.LINKEDIN_UNIPILE_EVENTS,
 	},
 }
 

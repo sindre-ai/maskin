@@ -22,7 +22,7 @@ const MAX_LINES_SCANNED = 200
 const MAX_LOG_ROWS_FETCHED = 50
 const MAX_LIVE_RESULT_ROWS_FETCHED = 2000
 
-// Local to `sumRunningSessionUsage` below, which sums raw `result` envelopes
+// Local to `parseAssistantUsageFromLogChunks` below, which reads raw `usage` blocks
 // itself rather than going through `parseResultLine`.
 const finiteOrNull = (v: unknown): number | null => {
 	const n = typeof v === 'number' ? v : Number(v)

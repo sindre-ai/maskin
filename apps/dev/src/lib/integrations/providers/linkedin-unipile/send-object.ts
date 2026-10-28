@@ -1,10 +1,8 @@
 import { objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { FLAGS, isFlagEnabledForWorkspace } from '../../../feature-flags'
 import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
-import { LinkedInActionRefusal } from './action-log'
 import { loadApprovedAttachment } from './attachment'
 import { LinkedInIntegrationError } from './errors'
 import { assertInmailSendable, readCreditsAfter, startInmailChat } from './inmail-send'
@@ -65,19 +63,6 @@ export async function sendApprovedLinkedInObject(
 	credits_after?: number | null
 	object: { id: string } & SendClosure
 }> {
-	if (
-		input.inmail &&
-		!isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
-			actorId: ctx.actorId,
-		})
-	) {
-		throw new LinkedInActionRefusal(
-			'refused_flag',
-			'INVALID_INPUT',
-			'InMail sending is not switched on here. Nothing was sent.',
-		)
-	}
-
 	const [object] = await ctx.db
 		.select()
 		.from(objects)
@@ -150,17 +135,6 @@ export async function sendApprovedLinkedInObject(
 	})
 
 	const fileId = optionalString(filed.attachment_file_id)
-	if (
-		fileId &&
-		!isFlagEnabledForWorkspace(ctx.workspaceId, FLAGS.LINKEDIN_OUTREACH_ACTIONS, {
-			actorId: ctx.actorId,
-		})
-	) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'Sending a file with a LinkedIn message is not switched on here. Nothing was sent.',
-		)
-	}
 	const attachments = fileId
 		? [
 				await loadApprovedAttachment(

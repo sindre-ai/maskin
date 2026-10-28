@@ -1,6 +1,10 @@
 import {
+	CHIP_MAX_LENGTH,
+	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
+	plainSnippet,
+	shortName,
 	showsObjectCard,
 	splitOwnLinks,
 	targetOfHref,
@@ -84,6 +88,16 @@ describe('targetOfHref', () => {
 		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
 	})
 
+	it('reads a loop or trigger id from an address', () => {
+		expect(targetOfHref(`https://x.io/ws/loops/${id.toUpperCase()}`)).toEqual({ kind: 'loop', id })
+		expect(targetOfHref(`/ws/triggers/${id}?tab=x`)).toEqual({ kind: 'trigger', id })
+	})
+
+	it('ignores a loop or trigger address with more id characters after the id', () => {
+		expect(targetOfHref(`/ws/loops/${id}x`)).toBeNull()
+		expect(targetOfHref('/ws/loops')).toBeNull()
+	})
+
 	it('ignores any other address', () => {
 		expect(targetOfHref('https://x.io/ws/agents')).toBeNull()
 		expect(targetOfHref(undefined)).toBeNull()
@@ -134,6 +148,19 @@ describe('splitOwnLinks', () => {
 		expect(splitOwnLinks(`${link} ${link}`, WS).filter((s) => s.kind === 'object')).toHaveLength(2)
 	})
 
+	it('finds a bare address of a loop and of a trigger', () => {
+		expect(splitOwnLinks(`${url('loops', A)} wakes ${url('triggers', B)}`, WS)).toEqual([
+			{ kind: 'loop', id: A },
+			{ kind: 'text', text: ' wakes ' },
+			{ kind: 'trigger', id: B },
+		])
+	})
+
+	it('leaves a loop address of another workspace as words', () => {
+		const other = `https://maskin.io/${A}/loops/${B}`
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	})
+
 	it('leaves links to another workspace, another site or a non-object page as words', () => {
 		const other = `https://maskin.io/${A}/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
@@ -141,5 +168,66 @@ describe('splitOwnLinks', () => {
 		for (const text of [other, elsewhere, page, 'no links here']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
+	})
+})
+
+describe('plainSnippet', () => {
+	it('turns markdown into plain words on one line', () => {
+		expect(
+			plainSnippet(
+				'## Plan\n\n- Do **the thing**\n- See [the doc](https://x.test)\n\n```\ncode\n```',
+			),
+		).toBe('Plan Do the thing See the doc')
+	})
+
+	it('is empty for no text', () => {
+		expect(plainSnippet(null)).toBe('')
+		expect(plainSnippet('  \n ')).toBe('')
+	})
+
+	it('cuts a long text', () => {
+		const out = plainSnippet('word '.repeat(200))
+		expect(out.length).toBeLessThanOrEqual(281)
+		expect(out.endsWith('…')).toBe(true)
+	})
+})
+
+describe('shortName', () => {
+	it('keeps a title whole when it has no long dash', () => {
+		expect(shortName('Audit open bet PRs for work merged into a bet branch')).toBe(
+			'Audit open bet PRs for work merged into a bet branch',
+		)
+	})
+
+	it('keeps the text before the first space, long dash and space', () => {
+		expect(shortName('David Harboe \u2014 Norlix (CTO & Co-founder)')).toBe('David Harboe')
+		expect(shortName('A \u2014 B \u2014 C')).toBe('A')
+	})
+
+	it('keeps a title whole when the long dash has no space around it', () => {
+		expect(shortName('Norlix\u2014CTO')).toBe('Norlix\u2014CTO')
+		expect(shortName('Norlix \u2014CTO')).toBe('Norlix \u2014CTO')
+	})
+
+	it('is empty for an empty title', () => {
+		expect(shortName('')).toBe('')
+	})
+})
+
+describe('cutLabel', () => {
+	it('leaves a name of 90 characters or fewer alone', () => {
+		const name = 'a'.repeat(CHIP_MAX_LENGTH)
+		expect(cutLabel(name)).toBe(name)
+		expect(cutLabel('')).toBe('')
+	})
+
+	it('cuts at the last space before character 90 when that space is past character 60', () => {
+		const name = `${'word '.repeat(17)}${'x'.repeat(40)}`
+		expect(cutLabel(name)).toBe(`${'word '.repeat(16)}word…`)
+	})
+
+	it('cuts at character 90 when there is no space past character 60', () => {
+		const name = `short words ${'x'.repeat(120)}`
+		expect(cutLabel(name)).toBe(`${name.slice(0, CHIP_MAX_LENGTH)}…`)
 	})
 })

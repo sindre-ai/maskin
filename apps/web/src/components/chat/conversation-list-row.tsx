@@ -8,12 +8,19 @@ import { Link } from '@tanstack/react-router'
 interface ConversationListRowProps {
 	workspaceId: string
 	conversation: ConversationListItemResponse
+	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
+	 *  separate reads, so a chat can look read while a thread inside it is not. */
+	threadUnread?: number
 }
 
 /** How many participant plates the row draws before collapsing to a `+N`. */
 const MAX_ROW_AVATARS = 2
 
-export function ConversationListRow({ workspaceId, conversation }: ConversationListRowProps) {
+export function ConversationListRow({
+	workspaceId,
+	conversation,
+	threadUnread = 0,
+}: ConversationListRowProps) {
 	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
 	// thread should read as "the agent's row", but once several people are in
 	// it, leaving yourself out misrepresents who is in the room. A thread with
@@ -124,6 +131,11 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 						'No messages yet'
 					)}
 				</span>
+				{threadUnread > 0 ? (
+					<span className="mt-0.5 block text-[11px] font-medium text-brand">
+						{threadUnread} unread {threadUnread === 1 ? 'reply' : 'replies'} in threads
+					</span>
+				) : null}
 			</div>
 		</Link>
 	)

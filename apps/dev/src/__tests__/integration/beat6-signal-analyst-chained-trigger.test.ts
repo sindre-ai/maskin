@@ -38,7 +38,7 @@ import { db, getTestActorId } from './global-setup'
 //   5. When a deep-research knowledge object validates, the chained Beat 6
 //      trigger fires — a Chief of Staff session is created whose actionPrompt
 //      is the Signal Analyst hand-off (dispatches Signal Analyst which stages
-//      exactly one candidate bet in status = signal with informs edges).
+//      exactly one candidate bet in status = opportunity with informs edges).
 
 function createMemoryStorage(): StorageProvider {
 	const store = new Map<string, Buffer>()
@@ -147,11 +147,11 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 		expect(prompt).toContain('All three onboarding deep-research briefs are now in')
 		expect(prompt).toContain('validated')
 		// Exactly-once idempotency via informs-edge check on any existing
-		// signal-stage bet.
+		// opportunity-stage bet.
 		expect(prompt).toContain('exactly-once')
 		expect(prompt).toContain('informs')
-		// Expected output: ONE candidate bet in status = signal.
-		expect(prompt).toContain('status = signal')
+		// Expected output: ONE candidate bet in status = opportunity.
+		expect(prompt).toContain('status = opportunity')
 	})
 
 	it('the extended Beat 2 trigger points at the chained Beat 6 trigger and forbids concurrent dispatch', async () => {
