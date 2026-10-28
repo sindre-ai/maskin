@@ -75,7 +75,7 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file' | 'loop' | 'trigger'
+	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
 	id: string
 }
 
@@ -88,13 +88,14 @@ export interface HrefTarget extends LinkedTarget {
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers)/(${UUID_SRC})/?$`, 'i')
+const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
 const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' }>['kind']> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
 	triggers: 'trigger',
+	agents: 'agent',
 }
 
 function isAppHost(host: string): boolean {
@@ -102,13 +103,13 @@ function isAppHost(host: string): boolean {
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object, file, loop or trigger in this workspace. */
+/** One run of a message you wrote: words, or a link to an object, file, loop, trigger or agent in this workspace. */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
-	| { kind: 'object' | 'file' | 'loop' | 'trigger'; id: string }
+	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
 
 /**
- * Your own message as an ordered run of words and links to this workspace's objects, files, loops and triggers,
+ * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
  * so each link can be drawn inline as a chip with the thing's name instead of a long address.
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
@@ -165,10 +166,11 @@ const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
 	['file', hrefOf('files')],
 	['loop', hrefOf('loops')],
 	['trigger', hrefOf('triggers')],
+	['agent', hrefOf('agents')],
 ]
 
 /**
- * The object, file, loop or trigger a link's address points at, if it points at one, with the
+ * The object, file, loop, trigger or agent a link's address points at, if it points at one, with the
  * workspace the address names (null when it names none). Later kinds are added to the list above.
  */
 export function targetOfHref(href: unknown): HrefTarget | null {
@@ -310,7 +312,7 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
-/** Objects, loops and triggers: what the app looks up for a link, as against a file. */
+/** Objects, loops, triggers and agents: what the app looks up for a link, as against a file. */
 const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
 
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */

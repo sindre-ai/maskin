@@ -7,9 +7,6 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 // `<MarkdownEditor variant='document'>`. "Mod" is Ctrl on Linux CI and Cmd on a Mac,
 // so every chord uses Playwright's ControlOrMeta.
 
-// The command palette's placeholder (see command-palette.tsx).
-const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
-
 interface Account {
 	workspaceId: string
 	api: TestAPI
@@ -155,7 +152,9 @@ test.describe('rich markdown editor — floating toolbar & shortcuts', () => {
 
 		await page.keyboard.press('ControlOrMeta+k')
 
-		await expect(page.getByPlaceholder(PALETTE_PLACEHOLDER)).toBeVisible({ timeout: 5000 })
+		await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible({
+			timeout: 5000,
+		})
 		await expect(page.getByRole('textbox', { name: 'Link URL' })).toHaveCount(0)
 	})
 
@@ -169,7 +168,7 @@ test.describe('rich markdown editor — floating toolbar & shortcuts', () => {
 		await page.keyboard.press('ControlOrMeta+Shift+K')
 
 		await expect(page.getByRole('textbox', { name: 'Link URL' })).toBeVisible({ timeout: 5000 })
-		await expect(page.getByPlaceholder(PALETTE_PLACEHOLDER)).toHaveCount(0)
+		await expect(page.getByRole('dialog', { name: 'Command palette' })).toHaveCount(0)
 	})
 
 	test('Alt+F10 moves focus into the toolbar and Escape returns it to the editor', async ({

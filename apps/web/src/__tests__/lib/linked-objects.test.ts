@@ -104,10 +104,18 @@ describe('targetOfHref', () => {
 		})
 	})
 
+	it('reads an agent id from an address, in any case and with a query', () => {
+		expect(targetOfHref(`https://x.io/ws/agents/${id.toUpperCase()}?tab=x`)).toEqual({
+			kind: 'agent',
+			id,
+			workspaceId: 'ws',
+		})
+	})
+
 	it('returns the workspace the address names, for this workspace and for another', () => {
 		const here = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 		const other = '11111111-2222-4333-8444-555555555555'
-		for (const kind of ['objects', 'files', 'loops', 'triggers']) {
+		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents']) {
 			const inHere = targetOfHref(`https://maskin.io/${here}/${kind}/${id}`)
 			const inOther = targetOfHref(`https://maskin.io/${other.toUpperCase()}/${kind}/${id}#x`)
 			expect(inHere?.workspaceId).toBe(here)
@@ -122,6 +130,10 @@ describe('targetOfHref', () => {
 	it('ignores a loop or trigger address with more id characters after the id', () => {
 		expect(targetOfHref(`/ws/loops/${id}x`)).toBeNull()
 		expect(targetOfHref('/ws/loops')).toBeNull()
+	})
+
+	it('ignores an agents address without an id, or with more id characters after it', () => {
+		expect(targetOfHref(`/ws/agents/${id}x`)).toBeNull()
 	})
 
 	it('ignores any other address', () => {
@@ -182,6 +194,19 @@ describe('splitOwnLinks', () => {
 		])
 	})
 
+	it('finds a bare address of an agent', () => {
+		expect(splitOwnLinks(`ask ${url('agents', A)} to look`, WS)).toEqual([
+			{ kind: 'text', text: 'ask ' },
+			{ kind: 'agent', id: A },
+			{ kind: 'text', text: ' to look' },
+		])
+	})
+
+	it('leaves an agent address of another workspace as words', () => {
+		const other = `https://maskin.io/${A}/agents/${B}`
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	})
+
 	it('leaves a loop address of another workspace as words', () => {
 		const other = `https://maskin.io/${A}/loops/${B}`
 		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
@@ -190,7 +215,7 @@ describe('splitOwnLinks', () => {
 	it('leaves links to another workspace, another site or a non-object page as words', () => {
 		const other = `https://maskin.io/${A}/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
-		const page = url('agents', A)
+		const page = url('chats', A)
 		for (const text of [other, elsewhere, page, 'no links here']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}

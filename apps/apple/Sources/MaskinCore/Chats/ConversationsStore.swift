@@ -355,14 +355,16 @@ public final class ConversationsStore {
 	/// Creates the conversation and puts it at the top of the list. Throws so the sheet can show
 	/// the failure and keep the user's input.
 	@discardableResult
-	public func create(title: String, participantIDs: [String], firstMessage: String?) async throws
-		-> ConversationSummary
-	{
+	public func create(
+		title: String, participantIDs: [String], firstMessage: String?,
+		firstMessageMetadata: ChatSendMetadata? = nil
+	) async throws -> ConversationSummary {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let hasMessage = !(message?.isEmpty ?? true)
 		let created = try await api.create(
-			title: trimmed, participantIDs: participantIDs,
-			initialMessage: (message?.isEmpty ?? true) ? nil : message, idempotencyKey: IdempotencyKey.make())
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
 		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
 			conversations.insert(created, at: 0)
 		}

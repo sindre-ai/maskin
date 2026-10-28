@@ -170,19 +170,32 @@ const RETRY_AT_MAX_MS = QUEUE_RETENTION_MS
 const PLAN_CAP_FALLBACK_SUPPRESSION_MS = 60 * 60_000
 
 /**
- * Pause for "this workspace has no LLM credentials". Unlike a plan cap this has
- * no natural expiry — nothing resets it but a human connecting a credential —
- * so we re-check hourly rather than never, and clear the entry outright on an
- * entitlement-improving workspace event (see `SUPPRESSION_CLEARING_ACTIONS`).
- *
- * Caveat, deliberately stated rather than implied: importing a Claude
- * subscription via Settings → Keys does NOT currently clear the pause, because
- * `routes/claude-oauth.ts` writes `workspaces.settings` without inserting any
- * `events` row at all — so there is no event to match. That is a pre-existing
- * gap against the "log an event on every mutation" rule, not something this
- * pause introduced; until it is fixed, that recovery waits out the hour below.
+ * Pause for "this workspace has a credential, but it was rejected". It may come
+ * back by itself (a refresh, a recovered subscription), so we re-check hourly,
+ * and clear the entry outright on an entitlement-improving workspace event (see
+ * `SUPPRESSION_CLEARING_ACTIONS`).
  */
 const NO_CREDENTIALS_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Pause for "this workspace has nothing configured at all". Unlike a plan cap
+ * this has no natural expiry — nothing resets it but a human connecting a
+ * credential, and every way of doing that logs a workspace event that clears
+ * the pause (settings PATCH, and the Claude login import in
+ * `routes/claude-oauth.ts`). The cap is only a backstop for a change that
+ * slips past those events, so a stuck workspace retries about once a day
+ * instead of once an hour. The pause is persisted, so it survives a restart.
+ */
+const NOTHING_CONFIGURED_SUPPRESSION_MS = 24 * 60 * 60_000
+
+/** The pause for a non-transient credentials failure; see the two constants above for the lengths. */
+function credentialsSuppression(now: Date, nothingConfigured: boolean): WorkspaceSuppression {
+	const ms = nothingConfigured ? NOTHING_CONFIGURED_SUPPRESSION_MS : NO_CREDENTIALS_SUPPRESSION_MS
+	return {
+		until: new Date(now.getTime() + ms),
+		reason: 'no LLM credentials connected for this workspace',
+	}
+}
 
 /**
  * Workspace-event actions that mean "this workspace's entitlement may have
@@ -560,10 +573,7 @@ export class TriggerRunner {
 		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
 			await this.suppressWorkspace(
 				workspaceId,
-				{
-					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
-					reason: 'no LLM credentials connected for this workspace',
-				},
+				credentialsSuppression(now, err.noCredentialsConfigured),
 				triggerName,
 			)
 			return
@@ -598,12 +608,14 @@ export class TriggerRunner {
 	 * only when `!err.transient`, and routes transient credential errors back
 	 * through its retry path instead.
 	 */
-	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+	handleDispatchPermanentFailure(
+		workspaceId: string,
+		reasonCode?: string,
+		noCredentialsConfigured = false,
+	): void {
 		if (reasonCode !== 'not_logged_in') return
-		this.suppressWorkspace(workspaceId, {
-			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
-			reason: 'no LLM credentials connected for this workspace',
-		}).catch((err) =>
+		const suppression = credentialsSuppression(new Date(), noCredentialsConfigured)
+		this.suppressWorkspace(workspaceId, suppression).catch((err) =>
 			logger.error('handleDispatchPermanentFailure: suppressWorkspace failed', {
 				workspaceId,
 				error: String(err),

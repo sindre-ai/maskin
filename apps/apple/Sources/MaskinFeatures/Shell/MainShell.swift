@@ -66,9 +66,10 @@ public struct MainShell: View {
 				runtime.requestedConversationId = id
 			}
 		}
-		// While a call runs, every screen but its own thread carries a pill to get back to it.
+		// While a call runs, every screen where its own panel is not on show carries a pill to get
+		// back to it. The pill follows the panel itself, not a marker for which thread is open.
 		.safeAreaInset(edge: .bottom, spacing: 0) {
-			if let call = liveCalls.current, liveCalls.visibleConversationID != call.chat.conversationID {
+			if let call = liveCalls.current, liveCalls.showsPill {
 				LiveCallPill(
 					session: call, onOpen: { liveCalls.openConversation(call.chat.conversationID) },
 					onEnd: { liveCalls.end() }

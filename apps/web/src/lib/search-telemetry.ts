@@ -1,4 +1,3 @@
-import type { SearchGroup, SearchRow } from '@/hooks/legacy/use-workspace-search'
 import {
 	type SearchEntry,
 	type SearchSortKey,
@@ -9,14 +8,6 @@ import {
 	trackSearchResultOpened,
 } from '@/lib/analytics'
 import { useEffect, useRef } from 'react'
-
-/** How long a typed query rests before it is committed and searched on the
- *  search page, and a search only counts as settled after it. */
-export const SEARCH_DEBOUNCE_MS = 300
-
-/** The palette filters its local lists on every keystroke, so only the
- *  `/objects/search` call waits; this is how long. */
-export const PALETTE_SERVER_DEBOUNCE_MS = 100
 
 /** Number of whitespace-separated words in the query. An integer only: the
  *  query text itself is never sent to analytics. */
@@ -38,72 +29,6 @@ function newSearchId(): string {
 	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 		? crypto.randomUUID()
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-export interface SettledSearchInput {
-	surface: SearchSurface
-	/** False while the surface has nothing to report (palette closed, no query).
-	 *  Clears the dedupe memory and the last search. */
-	active: boolean
-	query: string
-	type?: string
-	status?: string
-	isSettled: boolean
-	isError: boolean
-	isPartial: boolean
-	total: number
-}
-
-/**
- * Fires `search_performed` once per settled search: a non-empty trimmed query
- * whose results have all arrived and whose object search did not fail. A change
- * of surface, trimmed query, type or status filter is a new search; a group chip
- * change is not (it changes none of these inputs).
- */
-export function useTrackSettledSearch(input: SettledSearchInput): void {
-	const { surface, active, query, type, status, isSettled, isError, isPartial, total } = input
-	const trimmed = query.trim()
-	const firedKey = useRef<string | null>(null)
-	// Kept next to the dedupe key so a StrictMode effect replay (cleanup, then the
-	// same effects again) can restore the search the cleanup below just dropped.
-	const firedSearch = useRef<SettledSearch | null>(null)
-
-	// A surface that unmounts takes its last search with it.
-	useEffect(
-		() => () => {
-			delete lastSearch[surface]
-		},
-		[surface],
-	)
-
-	useEffect(() => {
-		if (!active || !trimmed) {
-			firedKey.current = null
-			firedSearch.current = null
-			delete lastSearch[surface]
-			return
-		}
-		if (!isSettled || isError) return
-		const key = `${trimmed}\u0000${type ?? ''}\u0000${status ?? ''}`
-		if (firedKey.current === key) {
-			if (firedSearch.current) lastSearch[surface] = firedSearch.current
-			return
-		}
-		firedKey.current = key
-		const searchId = newSearchId()
-		firedSearch.current = { id: searchId, resultCount: total }
-		lastSearch[surface] = firedSearch.current
-		trackSearchPerformed({
-			surface,
-			search_id: searchId,
-			result_count: total,
-			is_partial: isPartial,
-			query_length: trimmed.length,
-			words_count: countWords(trimmed),
-			type_filter: type ?? null,
-			status_filter: status ?? null,
-		})
-	}, [surface, active, trimmed, type, status, isSettled, isError, isPartial, total])
 }
 
 export interface SettledSearchV2Input {
@@ -206,6 +131,8 @@ export function useTrackSettledSearchV2(input: SettledSearchV2Input): void {
 	])
 }
 
+export type SearchGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
+
 const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEntityType> = {
 	chats: 'conversation',
 	loops: 'loop',
@@ -218,11 +145,6 @@ const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEnti
 export function searchEntityType(group: SearchGroup, objectType: string): TaxonomyEntityType {
 	if (group === 'objects') return objectType as TaxonomyEntityType
 	return ENTITY_TYPE_BY_GROUP[group]
-}
-
-export function searchRowEntityType(row: SearchRow): TaxonomyEntityType {
-	if (row.group === 'objects') return (row.object?.type ?? 'object') as TaxonomyEntityType
-	return ENTITY_TYPE_BY_GROUP[row.group]
 }
 
 /**

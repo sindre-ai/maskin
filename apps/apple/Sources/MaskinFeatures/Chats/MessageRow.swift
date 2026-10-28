@@ -431,6 +431,12 @@ struct MessageRow: View {
 					request: credential, messageCreatedAt: message.createdAt,
 					agents: agentsAsking(message), onReply: onKeychainReply)
 			}
+			if let server = McpServerRequest(message: message) {
+				McpServerRequestCard(
+					request: server, agentID: message.actorID, messageCreatedAt: message.createdAt,
+					messageID: message.serverID,
+					answered: cardOutcome, onReply: onKeychainReply)
+			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
 		}

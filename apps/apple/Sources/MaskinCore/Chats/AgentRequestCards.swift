@@ -171,6 +171,6 @@ extension ChatMessage {
 	/// answer back is only worth doing for these).
 	public var asksForAnswer: Bool {
 		metadata?["keychain_access_request"] != nil || metadata?["integration_access_request"] != nil
-			|| metadata?["computer_request"] != nil
+			|| metadata?["computer_request"] != nil || metadata?["mcp_server_request"] != nil
 	}
 }

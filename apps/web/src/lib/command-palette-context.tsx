@@ -8,30 +8,18 @@ import { type ReactNode, createContext, useCallback, useContext, useMemo, useSta
 export interface CommandPaletteContextValue {
 	open: boolean
 	setOpen: (value: boolean | ((prev: boolean) => boolean)) => void
-	/**
-	 * True when the Search v2 launcher is the one mounted. The workspace layout reads
-	 * the `search-v2` flag once and passes it here, so the header can follow it
-	 * without a flag read of its own.
-	 */
-	searchV2: boolean
 }
 
 const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(null)
 
-export function CommandPaletteProvider({
-	children,
-	searchV2 = false,
-}: {
-	children: ReactNode
-	searchV2?: boolean
-}) {
+export function CommandPaletteProvider({ children }: { children: ReactNode }) {
 	const [open, setOpenState] = useState(false)
 
 	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
 		setOpenState((prev) => (typeof value === 'function' ? value(prev) : value))
 	}, [])
 
-	const value = useMemo(() => ({ open, setOpen, searchV2 }), [open, setOpen, searchV2])
+	const value = useMemo(() => ({ open, setOpen }), [open, setOpen])
 	return <CommandPaletteContext.Provider value={value}>{children}</CommandPaletteContext.Provider>
 }
 

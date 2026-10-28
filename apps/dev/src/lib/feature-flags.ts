@@ -27,15 +27,27 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates the redesigned search page (bet
-	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
-	 * Frontend only, read once in the search route component, which swaps the
-	 * legacy page for the v2 page. Off means the page behaves as before. The
-	 * search endpoint, the shared types and the analytics events are not flagged:
-	 * they are additive and safe for everyone. Stays off until the 14-day
-	 * baseline has run. Retire once search v2 is on for everyone.
+	 * Gates the weekly capability note that Chief of Staff sends in a person's
+	 * 1-1 (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace at the
+	 * top of runCapabilityDigest. Off means no note is sent in that workspace and
+	 * findings stay pending, so they merge into the first note once it is on.
+	 * The scan itself is not flagged (it only writes events); its off-switch is
+	 * the env var FEATURE_CAPABILITY_SCAN=0. Retire once the notes are on for
+	 * everyone.
 	 */
-	SEARCH_V2: 'search-v2',
+	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
+	/**
+	 * Gates iOS dictation through the backend transcription route (task
+	 * [iOS dictation: send speech to the backend transcription route](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0a322ceb-338c-4b2d-b796-fcb228d0a7a4)).
+	 * Read by the iPhone app once per launch from GET /api/feature-flags, for the
+	 * signed-in actor. Off means the app dictates with Apple's on-device recogniser
+	 * as before and no audio leaves the phone. On means each phrase is sent to
+	 * POST /transcriptions, and Apple's recogniser takes over if a request fails.
+	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
+	 */
+	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

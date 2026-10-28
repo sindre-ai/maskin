@@ -1,5 +1,6 @@
 import { HandoffCard } from '@/components/chat/handoff-card'
 import { HelperQuestionCard } from '@/components/chat/helper-question-card'
+import { PREVIEW_BOUNDS_ATTR } from '@/components/chat/linked-object-reference'
 import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,13 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
+import { parseVoiceReceipt } from '@/lib/voice-receipts'
+import {
+	buildVoiceTranscript,
+	isFoldedSpokenLine,
+	isSpokenVoiceLine,
+	sessionsWithReceipts,
+} from '@/lib/voice-transcript'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
@@ -42,6 +50,8 @@ import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
+import { VoiceEventRow, VoiceSummaryCard } from './voice-receipts'
+import { VoiceTranscriptView } from './voice-transcript-view'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -129,6 +139,27 @@ export function ThreadMessages({
 	// Head/tail dividers for each run of voice-call messages. Derived from the
 	// messages themselves (metadata.source === 'voice').
 	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(timeline), [timeline])
+	// Calls with receipts fold their spoken lines away; a call without any keeps
+	// its lines in the thread, the only record the person has of it.
+	const callsWithReceipts = useMemo(() => sessionsWithReceipts(messages), [messages])
+	// The Read transcript button that opened the view, so focus can return to it.
+	const transcriptTriggerRef = useRef<HTMLElement | null>(null)
+	// The call whose Transcript view is open. The spoken lines are saved as
+	// messages but never drawn in the thread; this view is where they are read.
+	const [transcriptCall, setTranscriptCall] = useState<{
+		voiceSessionId: string
+		durationSeconds: number
+	} | null>(null)
+	const transcriptLines = useMemo(
+		() => (transcriptCall ? buildVoiceTranscript(messages, transcriptCall.voiceSessionId) : []),
+		[messages, transcriptCall],
+	)
+	const hasSpokenLines = (voiceSessionId: string | null) =>
+		voiceSessionId !== null &&
+		messages.some(
+			(m) =>
+				m.metadata?.voice_session_id === voiceSessionId && isSpokenVoiceLine(m) && m.content.trim(),
+		)
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -355,6 +386,8 @@ export function ThreadMessages({
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
+			// The scroller clips a chip's hover preview, so the preview places itself inside it.
+			{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
 			className={cn(
 				// `min-w-0` caps min-content on the cross axis, so a wide descendant
 				// (markdown table, long unbroken URL) can't push the flex column past
@@ -431,6 +464,22 @@ export function ThreadMessages({
 						isLast && !fallbackIsInThread ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
+					// Once a call has receipts, its spoken lines are saved but not drawn
+					// here: the rows and the summary card stand in, and the card's
+					// Transcript view shows the lines. Only the call's start and end
+					// dividers, which ride on its first and last message, stay.
+					if (isFoldedSpokenLine(message, callsWithReceipts)) {
+						const boundaries = voiceBoundaries.get(message.id)
+						if (!boundaries) return null
+						return (
+							<Fragment key={message.id}>
+								{boundaries.start ? (
+									<VoiceCallBoundary variant="start" {...boundaries.start} />
+								) : null}
+								{boundaries.end ? <VoiceCallBoundary variant="end" /> : null}
+							</Fragment>
+						)
+					}
 					const helperQuestion = message.metadata?.question?.reply_to_session
 						? message.metadata.question
 						: null
@@ -453,6 +502,7 @@ export function ThreadMessages({
 					}
 					// An agent intro written with steps and tools: the buttons and rows replace
 					// the plain list and tools sentence at the end of its body.
+					const voiceReceipt = parseVoiceReceipt(message.metadata)
 					const intro = message.actorType === 'agent' ? parseIntroView(message.metadata) : null
 					const bubbleMessage = intro
 						? { ...message, content: dropPlainTail(message.content, intro.plainTail) }
@@ -483,32 +533,50 @@ export function ThreadMessages({
 							    a stray line belonging to nothing. Live turns stay
 							    standalone below their trigger, where they carry their
 							    own avatar. */}
-								<MessageBubble
-									workspaceId={workspaceId}
-									message={bubbleMessage}
-									questionAnswered={answeredQuestionIds.has(message.id)}
-									spawnInfo={spawnByMessageId.get(message.id)}
-									onRetried={handleRetried}
-									onReplyInThread={
-										onOpenReplies
-											? () => onOpenReplies(message.threadRootId ?? message.id)
-											: undefined
-									}
-									shownLinkedObjectIds={linkedPlacements.get(message.id)?.skipIds}
-									updatedLinkedObjectIds={linkedPlacements.get(message.id)?.updatedIds}
-									// Keyed by index as well as session: one session can put two
-									// turns under the same message (a result segment plus the
-									// live turn that follows it), so `sessionId` alone is not
-									// unique and React would reconcile the two as one row.
-									activity={turnsAbove.map((turn, turnIndex) => (
-										<MessageActivity
-											key={`${turn.sessionId}-above-${turnIndex}`}
-											workspaceId={workspaceId}
-											turn={turn}
-											layout="inline"
-										/>
-									))}
-								/>
+								{voiceReceipt?.kind === 'receipt' ? (
+									<VoiceEventRow receipt={voiceReceipt} workspaceId={workspaceId} />
+								) : voiceReceipt?.kind === 'receipt_summary' ? (
+									<VoiceSummaryCard
+										summary={voiceReceipt}
+										workspaceId={workspaceId}
+										canReadTranscript={hasSpokenLines(voiceReceipt.voiceSessionId)}
+										onReadTranscript={(trigger) => {
+											transcriptTriggerRef.current = trigger
+											if (!voiceReceipt.voiceSessionId) return
+											setTranscriptCall({
+												voiceSessionId: voiceReceipt.voiceSessionId,
+												durationSeconds: voiceReceipt.durationSeconds,
+											})
+										}}
+									/>
+								) : (
+									<MessageBubble
+										workspaceId={workspaceId}
+										message={bubbleMessage}
+										questionAnswered={answeredQuestionIds.has(message.id)}
+										spawnInfo={spawnByMessageId.get(message.id)}
+										onRetried={handleRetried}
+										onReplyInThread={
+											onOpenReplies
+												? () => onOpenReplies(message.threadRootId ?? message.id)
+												: undefined
+										}
+										shownLinkedObjectIds={linkedPlacements.get(message.id)?.skipIds}
+										updatedLinkedObjectIds={linkedPlacements.get(message.id)?.updatedIds}
+										// Keyed by index as well as session: one session can put two
+										// turns under the same message (a result segment plus the
+										// live turn that follows it), so `sessionId` alone is not
+										// unique and React would reconcile the two as one row.
+										activity={turnsAbove.map((turn, turnIndex) => (
+											<MessageActivity
+												key={`${turn.sessionId}-above-${turnIndex}`}
+												workspaceId={workspaceId}
+												turn={turn}
+												layout="inline"
+											/>
+										))}
+									/>
+								)}
 								{message.thread && onOpenReplies ? (
 									<MessageThreadPill
 										summary={message.thread}
@@ -561,6 +629,15 @@ export function ThreadMessages({
 				{renderHandoffCards(handoffsByNextMessage.get('end'))}
 			</div>
 			<div ref={bottomAnchorRef} />
+			<VoiceTranscriptView
+				open={transcriptCall !== null}
+				onOpenChange={(open) => {
+					if (!open) setTranscriptCall(null)
+				}}
+				lines={transcriptLines}
+				durationSeconds={transcriptCall?.durationSeconds}
+				returnFocusTo={transcriptTriggerRef}
+			/>
 		</div>
 	)
 }

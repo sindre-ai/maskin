@@ -8137,7 +8137,12 @@ describe('X-Maskin-Session-Id source', () => {
 		} as Response)
 		const handler = handlers.get('create_actor')
 		if (!handler) throw new Error('create_actor handler not registered')
-		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		await handler({
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: 'ws-default-123',
+			description: 'Helper',
+		})
 		const call = vi
 			.mocked(fetch)
 			.mock.calls.find(

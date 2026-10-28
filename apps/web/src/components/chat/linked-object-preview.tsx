@@ -1,4 +1,6 @@
 import {
+	AgentReferenceCard,
+	AgentReferenceChip,
 	LoopReferenceCard,
 	LoopReferenceChip,
 	ObjectReferenceCard,
@@ -13,6 +15,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
+import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
@@ -98,13 +101,23 @@ export function LinkedObjectCard({
 	// Nothing is posted in the chat: the person did not write a message.
 	const chat =
 		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
-	const properties = describeObjectProperties(object.metadata)
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
 	// instead of the next phase: the person's yes to this exact text, after which the agent is
 	// told to send it. Which objects qualify, and how they are sent, is the integration's own
 	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
+	// Open, the preview block shows who it goes to and what kind of message it is; the line under
+	// the title then leaves those out. Contracted, that block is hidden and the line keeps them.
+	const properties = describeObjectProperties(
+		object.metadata,
+		expanded && preview
+			? {
+					recipients: preview.recipients.flatMap((r) => [r.name, r.address]),
+					label: preview.label,
+				}
+			: undefined,
+	)
 	const delivery = preview?.delivery?.state
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
@@ -374,6 +387,18 @@ export function LinkedCardOrLink({
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
 }) {
+	if (target.kind === 'agent') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return (
+			<AgentCardOrLink
+				workspaceId={workspaceId}
+				agentId={target.id}
+				fallback={fallback}
+				label={label}
+			/>
+		)
+	}
 	if (target.kind === 'loop' || target.kind === 'trigger') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
@@ -406,6 +431,23 @@ export function LinkedCardOrLink({
 			label={inList ? label : undefined}
 		/>
 	)
+}
+
+/** An agent's card on its own line; an address that points at a person keeps the original link. */
+function AgentCardOrLink({
+	workspaceId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	agentId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	if (actors?.find((a) => a.id === agentId)?.type === 'human') return <>{fallback}</>
+	return withLabel(label, <AgentReferenceCard workspaceId={workspaceId} agentId={agentId} />)
 }
 
 function withLabel(label: string | undefined, card: ReactNode): ReactNode {
@@ -465,6 +507,14 @@ export function renderLinkedChip(
 				<TriggerReferenceChip
 					workspaceId={context.workspaceId}
 					triggerId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'agent':
+			return (
+				<AgentReferenceChip
+					workspaceId={context.workspaceId}
+					agentId={target.id}
 					fallback={fallback}
 				/>
 			)
