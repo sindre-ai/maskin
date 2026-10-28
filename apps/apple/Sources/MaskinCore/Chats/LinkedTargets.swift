@@ -348,7 +348,7 @@ public enum LinkedMessageLayout {
 				pending.append(text)
 			case .item(let target, let label, let source):
 				if placed.count < limit, !skipping.contains(target.key), isCard(target), placed.insert(target.key).inserted {
-					// Only the link becomes the card; what led into it stayed words.
+					// Only the link becomes the card; what led into it stays words.
 					if let label { pending.append(label) }
 					flush()
 					parts.append(.card(target))
