@@ -374,6 +374,7 @@ pnpm db:seed
 | `S3_ACCESS_KEY` | No | `admin` | S3 access key |
 | `S3_SECRET_KEY` | No | `admin` | S3 secret key |
 | `S3_REGION` | No | `us-east-1` | S3 region |
+| `S3_PUBLIC_ENDPOINT` | No | `S3_ENDPOINT` | Address browsers use to reach storage for presigned uploads/downloads of large files. Set it when `S3_ENDPOINT` is an internal host. The bucket needs CORS: see `docs/runbooks/large-file-uploads.md` |
 
 ## License
 
