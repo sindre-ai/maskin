@@ -483,6 +483,11 @@ describe('LinkedObjectCard', () => {
 	describe('a draft longer than the clamp', () => {
 		const CLAMP = 304
 		let heights: { scroll: number }
+		// The clock the card reads, moved by hand so a test can wait out the guard without waiting.
+		let now: number
+		const advance = (ms: number) => {
+			now += ms
+		}
 		const longDraft = (hash = 'hash-1') =>
 			objectRow({
 				title: 'Follow up with Torben',
@@ -509,6 +514,8 @@ describe('LinkedObjectCard', () => {
 				() => heights.scroll,
 			)
 			vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(CLAMP)
+			now = 1_000_000
+			vi.spyOn(Date, 'now').mockImplementation(() => now)
 		})
 		afterEach(() => vi.restoreAllMocks())
 
@@ -527,9 +534,23 @@ describe('LinkedObjectCard', () => {
 			expect(screen.queryByRole('button', { name: 'Read full draft to approve' })).toBeNull()
 
 			expect(approveButton()).toBeEnabled()
+			advance(600)
 			await userEvent.click(approveButton())
 			expect(approveMutate).toHaveBeenCalledTimes(1)
 			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		})
+
+		it('ignores a second tap right after the full text opens, and approves once the moment has passed', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(readButton())
+			advance(100)
+			await userEvent.click(approveButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+			advance(500)
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
 		})
 
 		it('reads Approve draft after Show all is used, and approves on that tap', async () => {

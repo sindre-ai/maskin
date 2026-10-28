@@ -29,6 +29,9 @@ import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 
+/** A tap this soon after "Read full draft to approve" opened the text is the same double tap, not a yes. */
+const REVEAL_SETTLE_MS = 500
+
 interface PreviewProps {
 	workspaceId: string
 	objectId: string
@@ -69,6 +72,7 @@ export function LinkedObjectCard({
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
+	const revealedAt = useRef(0)
 	const [overflowing, setOverflowing] = useState(false)
 	const draftHash = object?.preview?.content_hash
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
@@ -141,13 +145,16 @@ export function LinkedObjectCard({
 
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
 	// so it does not have to guess what was approved. On a clamped draft the first tap only opens
-	// the full text.
+	// the full text, and a tap right after it is ignored: on a draft just over the clamp the button
+	// moves down less than its own height, so the second tap of a double tap lands on it again.
 	const approveDraft = () => {
 		if (!preview) return
 		if (gated) {
+			revealedAt.current = Date.now()
 			setRevealedHash(draftHash ?? null)
 			return
 		}
+		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
 		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
@@ -292,7 +299,11 @@ export function LinkedObjectCard({
 								size="sm"
 								className="h-auto px-0 py-1 text-xs"
 								aria-expanded={!gated}
-								onClick={() => setRevealedHash(gated ? (draftHash ?? null) : null)}
+								onClick={() => {
+									// A different button, so a tap on Approve after it is its own choice.
+									revealedAt.current = 0
+									setRevealedHash(gated ? (draftHash ?? null) : null)
+								}}
 							>
 								{gated ? 'Show all' : 'Show less'}
 							</Button>
