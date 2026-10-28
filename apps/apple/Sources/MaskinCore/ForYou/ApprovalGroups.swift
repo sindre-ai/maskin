@@ -108,9 +108,19 @@ public enum ApprovalGrouping {
 			// Formed at three open; it keeps its shape while any card is approved, so it does not
 			// fall apart under the reader's thumb as the open count drops.
 			guard openEntries.count >= minimumOpen || !approvedEntries.isEmpty else { continue }
-			let members = (openEntries.map { Member(entry: $0, isApproved: false) }
-				+ approvedEntries.map { Member(entry: $0, isApproved: true) })
-				.sorted { ($0.entry.card.rank ?? .max, $0.id) < ($1.entry.card.rank ?? .max, $1.id) }
+			var members: [ApprovalGroup.Member] = []
+			for entry in openEntries {
+				members.append(ApprovalGroup.Member(entry: entry, isApproved: false))
+			}
+			for entry in approvedEntries {
+				members.append(ApprovalGroup.Member(entry: entry, isApproved: true))
+			}
+			members.sort { lhs, rhs in
+				let lhsRank: Int = lhs.entry.card.rank ?? Int.max
+				let rhsRank: Int = rhs.entry.card.rank ?? Int.max
+				if lhsRank != rhsRank { return lhsRank < rhsRank }
+				return lhs.id < rhs.id
+			}
 			let first = members[0].entry.card
 			groups[key] = ApprovalGroup(
 				id: "\(key.actorId)|\(key.objectType)|\(key.option)", agentName: agentName(first),
