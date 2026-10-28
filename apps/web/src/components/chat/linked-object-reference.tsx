@@ -202,9 +202,7 @@ export function ObjectReferenceChip({
 				)}
 			>
 				<TypeBadge type={object.type} variant="dot" />
-				<span className="min-w-0 max-w-[16rem] truncate font-semibold text-foreground">
-					{title}
-				</span>
+				<span className="min-w-0 truncate font-semibold text-foreground">{title}</span>
 				<StatusBadge
 					status={object.status}
 					variant="word"

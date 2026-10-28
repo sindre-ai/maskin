@@ -112,6 +112,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'credential_chain_snapshots',
 	'extensions',
 	'file_comments',
+	'file_uploads',
 	'files',
 	'google_meet_space_idempotency',
 	'live_activity_cards',
