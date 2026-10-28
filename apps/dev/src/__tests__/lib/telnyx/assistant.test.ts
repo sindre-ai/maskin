@@ -3,6 +3,7 @@ import {
 	ASSISTANT_FIRST_NAME,
 	DISCLOSURE_PATTERNS,
 	DISCLOSURE_TEMPLATES,
+	HANGUP_TOOL_DESCRIPTION,
 	SYSTEM_PROMPT,
 	assistantContentHash,
 	buildAssistantPayload,
@@ -16,24 +17,32 @@ import {
 } from '../../../lib/integrations/providers/telnyx/tool-schemas'
 import live from './fixtures/rune-live-assistant.json'
 
+interface WebhookTool {
+	type: 'webhook'
+	timeout_ms: number
+	webhook: {
+		name: string
+		description: string
+		url: string
+		method: string
+		headers: Array<{ name: string; value: string }>
+		timeout_ms?: number
+		async: boolean
+		body_parameters: { properties: Record<string, unknown>; required: string[] }
+		preset_body_fields: Record<string, string>
+	}
+}
+
+interface HangupTool {
+	type: 'hangup'
+	hangup: { description: string }
+}
+
 interface BuiltPayload {
 	model: string
 	name: string
 	instructions: string
-	tools: Array<{
-		type: string
-		webhook: {
-			name: string
-			description: string
-			url: string
-			method: string
-			headers: Array<{ name: string; value: string }>
-			timeout_ms: number
-			async: boolean
-			body_parameters: { properties: Record<string, unknown>; required: string[] }
-			preset_body_fields: Record<string, string>
-		}
-	}>
+	tools: Array<WebhookTool | HangupTool>
 	conversation_flow: {
 		start_node_id: string
 		nodes: Array<{
@@ -48,6 +57,14 @@ interface BuiltPayload {
 	}
 }
 
+function webhookTools(payload: { tools: BuiltPayload['tools'] }): WebhookTool[] {
+	return payload.tools.filter((t): t is WebhookTool => t.type === 'webhook')
+}
+
+// The Default hangup tool of the live assistant, read on 2026-10-28.
+const LIVE_HANGUP_DESCRIPTION =
+	'To be used whenever the conversation has ended and it would be appropriate to hangup the call.'
+
 const input = {
 	locale: 'da',
 	toolWebhookSecret: 'test-secret',
@@ -61,8 +78,8 @@ describe('buildAssistantPayload', () => {
 		expect(payload.model).toBe('anthropic/claude-haiku-4-5')
 	})
 
-	it('declares exactly the five tools and no SMS tool', () => {
-		const names = payload.tools.map((t) => t.webhook.name)
+	it('declares exactly the five webhook tools and no SMS tool', () => {
+		const names = webhookTools(payload).map((t) => t.webhook.name)
 		expect(names).toEqual([...DECLARED_TOOL_NAMES])
 		expect(names).toHaveLength(5)
 		expect(names).not.toContain('send_followup_sms')
@@ -86,8 +103,8 @@ describe('buildAssistantPayload', () => {
 
 	it('carries the request_followup_email consent condition in its description', () => {
 		const desc =
-			payload.tools.find((t) => t.webhook.name === 'request_followup_email')?.webhook.description ??
-			''
+			webhookTools(payload).find((t) => t.webhook.name === 'request_followup_email')?.webhook
+				.description ?? ''
 		expect(desc).toContain('raised email themselves')
 		expect(desc).toContain('opt out any time')
 		expect(desc).toContain('said yes')
@@ -101,6 +118,41 @@ describe('buildAssistantPayload', () => {
 		expect(SYSTEM_PROMPT).toContain('framelde dig')
 		expect(SYSTEM_PROMPT).not.toContain('send_followup_sms')
 		expect(TOOL_DECLARATIONS).toHaveLength(5)
+	})
+})
+
+describe('hangup tool', () => {
+	const payload = buildAssistantPayload(input) as BuiltPayload
+
+	it('is sent once, inline, with the description of the live Default hangup tool', () => {
+		const hangups = payload.tools.filter((t): t is HangupTool => t.type === 'hangup')
+		expect(hangups).toHaveLength(1)
+		expect(hangups[0].hangup.description).toBe(LIVE_HANGUP_DESCRIPTION)
+		expect(HANGUP_TOOL_DESCRIPTION).toBe(LIVE_HANGUP_DESCRIPTION)
+	})
+
+	it('is the only tool that ends a call: the other tools are the five webhooks', () => {
+		expect(payload.tools).toHaveLength(6)
+		expect(payload.tools.map((t) => t.type).sort()).toEqual([
+			'hangup',
+			'webhook',
+			'webhook',
+			'webhook',
+			'webhook',
+			'webhook',
+		])
+	})
+
+	it('is not sent as a shared tool id, so the update cannot attach a second one', () => {
+		const withKnowledge = buildAssistantPayload({ ...input, toolIds: ['tool-kb'] })
+		expect(withKnowledge.tool_ids).toEqual(['tool-kb'])
+		expect(buildAssistantPayload(input).tool_ids).toEqual([])
+	})
+
+	it('changes the version when it is dropped', () => {
+		const a = buildAssistantPayload(input)
+		const without = { ...a, tools: webhookTools(a as unknown as BuiltPayload) }
+		expect(assistantContentHash(without)).not.toBe(assistantContentHash(a))
 	})
 })
 
@@ -125,9 +177,10 @@ describe('buildAssistantPayload against the live assistant snapshot', () => {
 	})
 
 	it('declares the live tools with description, parameters, header, timeout and preset', () => {
-		expect(payload.tools).toHaveLength(live.tools.length)
+		const tools = webhookTools(payload)
+		expect(tools).toHaveLength(live.tools.length)
 		live.tools.forEach((expected, i) => {
-			const tool = payload.tools[i].webhook
+			const tool = tools[i].webhook
 			expect(tool.name).toBe(expected.name)
 			expect(tool.description).toBe(expected.description)
 			expect(tool.method).toBe('POST')
@@ -135,10 +188,17 @@ describe('buildAssistantPayload against the live assistant snapshot', () => {
 			expect(Object.keys(tool.body_parameters.properties)).toEqual(expected.properties)
 			expect(tool.body_parameters.required).toEqual(expected.required)
 			expect(tool.headers).toEqual([{ name: 'Authorization', value: 'Bearer test-secret' }])
-			expect(tool.timeout_ms).toBe(live.toolTimeoutMs)
+			expect(tools[i].timeout_ms).toBe(live.toolTimeoutMs)
 			expect(tool.async).toBe(false)
 			expect(tool.preset_body_fields).toEqual(live.presetBodyFields)
 		})
+	})
+
+	it('puts the timeout on the tool, as a sibling of type, never inside the webhook', () => {
+		for (const tool of webhookTools(payload)) {
+			expect(tool.timeout_ms).toBe(5000)
+			expect(tool.webhook).not.toHaveProperty('timeout_ms')
+		}
 	})
 
 	it('carries the live voice, speech-to-text, interruption and post-call settings whole', () => {
@@ -172,13 +232,12 @@ describe('buildAssistantPayload against the live assistant snapshot', () => {
 })
 
 describe('call id dynamic variable', () => {
-	const payload = buildAssistantPayload(input) as {
-		tools: Array<{ webhook: { name: string; preset_body_fields: Record<string, string> } }>
-	}
+	const payload = buildAssistantPayload(input) as BuiltPayload
 
 	it('every tool presets call_control_id from the system variable of the same name', () => {
-		expect(payload.tools).toHaveLength(5)
-		for (const tool of payload.tools) {
+		const tools = webhookTools(payload)
+		expect(tools).toHaveLength(5)
+		for (const tool of tools) {
 			expect(tool.webhook.preset_body_fields.call_control_id, tool.webhook.name).toBe(
 				'{{call_control_id}}',
 			)
@@ -211,10 +270,9 @@ describe('assistantContentHash', () => {
 		expect(assistantContentHash(rotated)).toBe(assistantContentHash(a))
 		const noHeader = {
 			...a,
-			tools: (a.tools as Array<{ webhook: Record<string, unknown> }>).map((t) => ({
-				...t,
-				webhook: { ...t.webhook, headers: [] },
-			})),
+			tools: (a.tools as BuiltPayload['tools']).map((t) =>
+				t.type === 'webhook' ? { ...t, webhook: { ...t.webhook, headers: [] } } : t,
+			),
 		}
 		expect(assistantContentHash(noHeader)).not.toBe(assistantContentHash(a))
 	})
