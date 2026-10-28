@@ -870,12 +870,20 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly storedKeyUnreadable: boolean
 
-	constructor(detail: string, transient = false, options?: { storedKeyUnreadable?: boolean }) {
+	/** Name of the workspace that has no working credentials, so the message can say which one. */
+	readonly workspaceName: string | null
+
+	constructor(
+		detail: string,
+		transient = false,
+		options?: { storedKeyUnreadable?: boolean; workspaceName?: string | null },
+	) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
 		this.detail = detail
 		this.transient = transient
 		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
+		this.workspaceName = options?.workspaceName?.trim() || null
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -903,7 +911,9 @@ export class LlmCredentialsUnavailableError extends Error {
 				? LlmCredentialsUnavailableError.unreadableKeyHumanMessage
 				: this.transient
 					? LlmCredentialsUnavailableError.transientHumanMessage
-					: LlmCredentialsUnavailableError.humanMessage,
+					: this.workspaceName
+						? `This session could not start because no working LLM credentials are connected for the workspace "${this.workspaceName}". Connect a Claude subscription in that workspace's Settings → Keys, then start a new session.`
+						: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
 			verbatim_output: this.detail,
