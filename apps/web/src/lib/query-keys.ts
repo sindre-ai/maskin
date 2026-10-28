@@ -24,6 +24,7 @@ export const queryKeys = {
 			['objects', workspaceId, 'facets', filters] as const,
 		groupPage: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'groupPage', filters] as const,
+		groupPagePrefix: (workspaceId: string) => ['objects', workspaceId, 'groupPage'] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
