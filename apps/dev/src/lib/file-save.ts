@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { files } from '@maskin/db/schema'
-import type { FileAnnotation } from '@maskin/shared'
+import {
+	type FileAnnotation,
+	type FileEdit,
+	isTextMimeType,
+	maxFileSizeBytesFor,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { logger } from './logger'
@@ -23,6 +28,66 @@ export class FileVersionConflictError extends Error {
 		super('File changed since it was loaded')
 		this.name = 'FileVersionConflictError'
 	}
+}
+
+/**
+ * A partial edit could not be applied. Nothing was written. `reason` says why so
+ * the route can tell the caller what to change.
+ */
+export class FileEditError extends Error {
+	constructor(
+		readonly reason: 'not_text' | 'not_utf8' | 'no_match' | 'multiple_matches' | 'too_large',
+		message: string,
+		/** Zero-based index of the failing edit, when one edit is to blame. */
+		readonly editIndex?: number,
+		/** How many times `old` occurs, for multiple_matches. */
+		readonly matches?: number,
+	) {
+		super(message)
+		this.name = 'FileEditError'
+	}
+}
+
+/** Occurrences of `needle` in `haystack`, not overlapping. */
+function countOccurrences(haystack: string, needle: string): number {
+	let count = 0
+	let from = 0
+	for (;;) {
+		const at = haystack.indexOf(needle, from)
+		if (at === -1) return count
+		count++
+		from = at + needle.length
+	}
+}
+
+/**
+ * Applies edits in order, each to the result of the one before. `old` must occur
+ * exactly once unless the edit sets replace_all. Replacement text is literal (no
+ * `$` patterns).
+ */
+export function applyFileEdits(text: string, edits: FileEdit[]): string {
+	let out = text
+	edits.forEach((edit, i) => {
+		const n = countOccurrences(out, edit.old)
+		if (n === 0) {
+			throw new FileEditError(
+				'no_match',
+				`Edit ${i + 1}: the text to replace was not found. Read the file again and copy it exactly, including whitespace.`,
+				i,
+				0,
+			)
+		}
+		if (n > 1 && !edit.replace_all) {
+			throw new FileEditError(
+				'multiple_matches',
+				`Edit ${i + 1}: the text to replace occurs ${n} times. Add surrounding text to make it unique, or set replace_all to true.`,
+				i,
+				n,
+			)
+		}
+		out = out.split(edit.old).join(edit.new)
+	})
+	return out
 }
 
 /** The row lock or a storage call took too long. The save was rolled back; retrying is safe. */
@@ -79,6 +144,11 @@ export interface SaveFileInput {
 	ifMatch?: string
 	/** New bytes, or null for a metadata-only update. */
 	newBytes: Buffer | null
+	/**
+	 * Partial edits applied to the stored text while the row lock is held.
+	 * Mutually exclusive with newBytes. Text MIME types only.
+	 */
+	edits?: FileEdit[]
 	name?: string
 	description?: string | null
 	kind?: string | null
@@ -145,7 +215,9 @@ export async function saveFile(
 			// The old bytes are needed to restore after a failed commit, and to hash
 			// a row that predates the content_hash column.
 			const needOldBytes =
-				input.newBytes !== null || (input.ifMatch !== undefined && !locked.contentHash)
+				input.newBytes !== null ||
+				input.edits !== undefined ||
+				(input.ifMatch !== undefined && !locked.contentHash)
 			let oldBytes: Buffer | null = null
 			let storedHash = locked.contentHash || null
 			if (needOldBytes) {
@@ -157,10 +229,15 @@ export async function saveFile(
 				throw new FileVersionConflictError(storedHash as string)
 			}
 
+			let newBytesToWrite = input.newBytes
+			if (input.edits && oldBytes) {
+				newBytesToWrite = editedBytes(oldBytes, input.edits, input.mimeType ?? locked.mimeType)
+			}
+
 			let contentHash = storedHash
 			let sizeBytes = locked.sizeBytes
-			if (input.newBytes && oldBytes && storedHash) {
-				const newBytes = input.newBytes
+			if (newBytesToWrite && oldBytes && storedHash) {
+				const newBytes = newBytesToWrite
 				await withStorageTimeout(uploadTimeoutMs, (signal) =>
 					storage.put(locked.storageKey, newBytes, { signal }),
 				)
@@ -187,7 +264,7 @@ export async function saveFile(
 
 			return {
 				row,
-				contentChanged: input.newBytes !== null && contentHash !== storedHash,
+				contentChanged: newBytesToWrite !== null && contentHash !== storedHash,
 			}
 		})
 	} catch (err) {
@@ -197,6 +274,28 @@ export async function saveFile(
 		if (isLockTimeout(err)) throw new FileSaveTimeoutError('lock')
 		throw err
 	}
+}
+
+function editedBytes(oldBytes: Buffer, edits: FileEdit[], mimeType: string): Buffer {
+	if (!isTextMimeType(mimeType)) {
+		throw new FileEditError(
+			'not_text',
+			`edits only work on text files; this file is ${mimeType}. Send the whole file as content instead.`,
+		)
+	}
+	const text = oldBytes.toString('utf8')
+	if (!Buffer.from(text, 'utf8').equals(oldBytes)) {
+		throw new FileEditError(
+			'not_utf8',
+			'The stored file is not valid UTF-8, so it cannot be edited.',
+		)
+	}
+	const edited = Buffer.from(applyFileEdits(text, edits), 'utf8')
+	const max = maxFileSizeBytesFor(mimeType)
+	if (edited.byteLength > max) {
+		throw new FileEditError('too_large', `The edited file would exceed ${max} bytes.`)
+	}
+	return edited
 }
 
 async function restoreOldBytes(

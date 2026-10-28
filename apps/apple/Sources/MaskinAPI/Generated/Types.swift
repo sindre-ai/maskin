@@ -2383,10 +2383,12 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/files/{id}/get`.
     public func get_sol_api_sol_files_sol__lcub_id_rcub_(
         path: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Path,
+        query: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query = .init(),
         headers: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Headers = .init()
     ) async throws -> Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output {
         try await get_sol_api_sol_files_sol__lcub_id_rcub_(Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input(
             path: path,
+            query: query,
             headers: headers
         ))
     }
