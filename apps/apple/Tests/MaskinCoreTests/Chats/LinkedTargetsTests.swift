@@ -144,15 +144,59 @@ struct LinkedTargetsTests {
 		#expect(parts == [.card(LinkedTarget(kind: .object, uuid: one)), .markdown("[B](\(object(one)))")])
 	}
 
-	@Test("in-sentence cards go under the message, never twice, at most three of each kind")
+	@Test("in-sentence cards go under the message, never twice, three cards in all")
 	func appended() {
 		let ids = (1...5).map { "0000000\($0)-2222-3333-4444-555555555555" }
 		let sentence = ids.map { "see [x](\(object($0)))" }.joined(separator: ", ")
 		let text = "[Placed](\(object(one)))\n\n\(sentence) and \(object(one)) and \(fileURL(file))"
-		let parts = LinkedMessageLayout.parts(segments: LinkedMessageSplitter.split(text), isCard: { _ in true })
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, limit: LinkedMessageLayout.maxCardsPerMessage)
 		let under = LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true })
-		#expect(under.map(\.uuid) == [ids[0], ids[1], ids[2], file])
+		// One card is placed, so two more fit, whatever their kind.
+		#expect(under.map(\.uuid) == [ids[0], ids[1]])
 		#expect(!under.contains { $0.uuid == one })
+	}
+
+	@Test("the three cards are shared by every kind, in the order the message links them")
+	func capAcrossKinds() {
+		let ids = (1...4).map { "0000000\($0)-2222-3333-4444-555555555555" }
+		let text = "see \(fileURL(file)) and \(object(ids[0])) and \(object(ids[1])) and \(object(ids[2]))"
+		let under = LinkedMessageLayout.appended(message: text, parts: [], isCard: { _ in true })
+		#expect(under.map(\.uuid) == [file, ids[0], ids[1]])
+	}
+
+	@Test("stand-alone links past the cap stay links in the text")
+	func capInPlace() {
+		let ids = (1...4).map { "0000000\($0)-2222-3333-4444-555555555555" }
+		let text = ids.map { "[x](\(object($0)))" }.joined(separator: "\n\n")
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, limit: LinkedMessageLayout.maxCardsPerMessage)
+		#expect(
+			parts == [
+				.card(LinkedTarget(kind: .object, uuid: ids[0])), .card(LinkedTarget(kind: .object, uuid: ids[1])),
+				.card(LinkedTarget(kind: .object, uuid: ids[2])), .markdown("[x](\(object(ids[3])))"),
+			])
+		#expect(LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true }).isEmpty)
+	}
+
+	@Test("a target that is a card in an earlier message stays a link here")
+	func skippedTargets() {
+		let text = "[A](\(object(one)))\n\nsee [b](\(object(two)))"
+		let skipping: Set<String> = [LinkedTarget(kind: .object, uuid: one).key]
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, skipping: skipping)
+		#expect(parts == [.markdown(text)])
+		let under = LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true }, skipping: skipping)
+		#expect(under.map(\.uuid) == [two])
+	}
+
+	@Test("at most ten objects are looked up in a message, the rest stay plain")
+	func lookupCap() {
+		let objects = (1...12).map { LinkedTarget(kind: .object, uuid: String(format: "%08d-2222-3333-4444-555555555555", $0)) }
+		let files = (1...2).map { LinkedTarget(kind: .file, uuid: String(format: "%08d-3333-3333-4444-555555555555", $0)) }
+		let looked = LinkedMessageLayout.lookupTargets(objects + files)
+		#expect(looked.filter { $0.kind == .object } == Array(objects.prefix(10)))
+		#expect(looked.filter { $0.kind == .file } == files)
 	}
 
 	@Test("only targets that are cards are appended")
@@ -182,6 +226,19 @@ struct LinkedTargetsTests {
 		#expect(entries[0].messageID == "m3")
 		#expect(entries[0].actorID == "agent-2")
 		#expect(entries[2].messageID == "m1")
+	}
+
+	@Test("a target belongs to the first message that links it")
+	func firstMentions() {
+		let owners = LinkedConversationItems.firstMentions(in: [
+			message(1, "nothing here"),
+			message(2, "[a](\(object(one))) and [f](\(fileURL(file)))"),
+			message(3, "[again](\(object(one))) and [b](\(object(two)))"),
+			message(4, "system line \(object(two))", kind: "system"),
+		])
+		#expect(owners[LinkedTarget(kind: .object, uuid: one).key] == "m2")
+		#expect(owners[LinkedTarget(kind: .object, uuid: two).key] == "m3")
+		#expect(owners[LinkedTarget(kind: .file, uuid: file).key] == "m2")
 	}
 
 	@Test("the drawer stops at its limit")
