@@ -84,7 +84,14 @@ async function setup() {
 			createdBy: actorId,
 		})
 		.returning()
-	return { actorId, ws, integration, store: fakeStorage() }
+	// The per-call gate loads the identity's own integration row and checks the Unipile account
+	// id against the stored credentials, so the identity must name both.
+	const identity = {
+		...IDENTITY,
+		integrationId: integration.id,
+		unipileAccountId: 'mock-account-id',
+	} as LinkedInMcpInstanceConfig
+	return { actorId, ws, integration, identity, store: fakeStorage() }
 }
 
 async function fileIn(
@@ -111,12 +118,12 @@ async function fileIn(
 
 describe('linkedin publish_post with workspace file ids', () => {
 	it('uploads one image from its file id and returns the post url and the posting identity', async () => {
-		const { actorId, ws, store } = await setup()
+		const { actorId, ws, identity, store } = await setup()
 		const publishPost = stubbedClient()
 		const image = await fileIn(ws.id, actorId, store, 'sun.png', PNG)
 
 		const result = await publishLinkedInPost(
-			{ db, actorId, workspaceId: ws.id, storage: store.storage, identity: IDENTITY },
+			{ db, actorId, workspaceId: ws.id, storage: store.storage, identity },
 			{ text: 'Sun is out', attachment_file_ids: [image.id] },
 		)
 
