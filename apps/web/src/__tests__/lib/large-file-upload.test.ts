@@ -174,8 +174,11 @@ describe('uploadLargeFile', () => {
 	it('reports progress that ends at 1', async () => {
 		vi.mocked(api.files.startUpload).mockResolvedValue(session(2))
 		const seen: number[] = []
+		// Progress counts the bytes of each slice, so the file needs real content: fileOfSize only
+		// fakes the size, and slice() reads the one real byte.
+		const file = new File([new Uint8Array(20 * MiB)], 'big.mp4', { type: 'video/mp4' })
 
-		await uploadLargeFile('ws-1', fileOfSize('big.mp4', 20 * MiB), {
+		await uploadLargeFile('ws-1', file, {
 			onProgress: (p) => seen.push(p),
 		})
 
