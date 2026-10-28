@@ -4,6 +4,8 @@ import { MESSAGE_MAX_LENGTH, buildWebAppHref, resolveWebAppBaseUrl } from '@mask
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { insertConversationMessage } from './conversation-messages'
+import type { StartCard } from './voice-call-state'
+import { resolveObjectId } from './voice-id-resolution'
 import { type VoiceSessionRow, ensureVoiceConversation } from './voice-transcript'
 
 /**
@@ -35,7 +37,8 @@ export const voiceShowInChatTool = {
 			object_ids: {
 				type: 'array',
 				items: { type: 'string' },
-				description: 'Ids of objects in this workspace to show.',
+				description:
+					'Full ids (object_id) of objects in this workspace to show, copied exactly as the list tool returned them. Never shorten or retype an id.',
 			},
 			links: {
 				type: 'array',
@@ -55,7 +58,8 @@ export const voiceShowInChatTool = {
 }
 
 const argsSchema = z.object({
-	object_ids: z.array(z.string().uuid()).default([]),
+	// Checked one by one in showInChat, so one garbled id is repaired or named, not a blanket refusal.
+	object_ids: z.array(z.string()).default([]),
 	links: z
 		.array(
 			z.object({
@@ -67,7 +71,19 @@ const argsSchema = z.object({
 	caption: z.string().max(1000).optional(),
 })
 
-export class VoiceShowInChatError extends Error {}
+export class VoiceShowInChatError extends Error {
+	constructor(
+		message: string,
+		/** Ids the call could not resolve, and a plain sentence the agent can say out loud. */
+		readonly detail: { unresolvedIds?: string[]; say?: string } = {},
+	) {
+		super(message)
+	}
+}
+
+/** What the agent does when it cannot open something: say so, ask, never swap in another item. */
+export const CANNOT_OPEN_SAY =
+	'Say plainly that you cannot open that one, for example "I can\'t open that card, want to move on?". Do not open or talk through a different card in its place unless the person says so.'
 
 const oneLine = (text: string, max: number) => text.replace(/\s+/g, ' ').trim().slice(0, max)
 // A label sits inside [..]; keep a stray bracket from ending it early.
@@ -106,11 +122,13 @@ export interface ShowInChatInput {
 	agentName: string
 	args: unknown
 	webAppBaseUrl?: string
+	/** The ranked cards the call started with; lets a short id from a receipt resolve to its card. */
+	startCards?: StartCard[] | null
 }
 
 export async function showInChat(
 	input: ShowInChatInput,
-): Promise<{ conversationId: string; messageId: number }> {
+): Promise<{ conversationId: string; messageId: number; objectIds: string[] }> {
 	const { db, session } = input
 	const parsed = argsSchema.safeParse(input.args)
 	if (!parsed.success) {
@@ -118,7 +136,21 @@ export async function showInChat(
 			'show_in_chat takes object_ids (uuids), links ({ url, label }) and an optional caption.',
 		)
 	}
-	const objectIds = [...new Set(parsed.data.object_ids.map((id) => id.toLowerCase()))]
+	// A model copies long ids badly: repair what is unambiguous, name what is not.
+	const resolvedIds: string[] = []
+	const unresolved: string[] = []
+	for (const raw of parsed.data.object_ids) {
+		const res = await resolveObjectId(db, session.workspaceId, raw, input.startCards ?? null)
+		if (res.ok) resolvedIds.push(res.id)
+		else unresolved.push(raw.slice(0, 80))
+	}
+	if (unresolved.length > 0) {
+		throw new VoiceShowInChatError(
+			`These ids are not valid object ids, so nothing was shown: ${unresolved.join(', ')}. Use the full object_id exactly as the list tool returned it.`,
+			{ unresolvedIds: unresolved, say: CANNOT_OPEN_SAY },
+		)
+	}
+	const objectIds = [...new Set(resolvedIds)]
 	const links = parsed.data.links
 	const total = objectIds.length + links.length
 	if (total === 0) throw new VoiceShowInChatError('Give at least one object id or link to show.')
@@ -141,6 +173,7 @@ export async function showInChat(
 	if (missing.length > 0) {
 		throw new VoiceShowInChatError(
 			`These are not objects in this workspace, so nothing was shown: ${missing.join(', ')}.`,
+			{ unresolvedIds: missing, say: CANNOT_OPEN_SAY },
 		)
 	}
 
@@ -173,9 +206,9 @@ export async function showInChat(
 		workspaceId: session.workspaceId,
 		actorId: session.agentActorId,
 		content,
-		metadata: { source: 'voice', voice_session_id: session.id },
+		metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 		sessionId: null,
 	})
 	if (!message) throw new Error('show_in_chat message insert was suppressed')
-	return { conversationId, messageId: message.id }
+	return { conversationId, messageId: message.id, objectIds }
 }

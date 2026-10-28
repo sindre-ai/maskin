@@ -3,13 +3,11 @@ import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
-import { CommandPalette } from '@/components/legacy/command-palette'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
@@ -49,10 +47,6 @@ function WorkspaceLayout() {
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
-
-	// The one read of the search-v2 flag in the shell (the search route reads it for the
-	// page): flag on mounts the new launcher and tells the header to show one search button.
-	const searchV2 = useFeatureFlag('search-v2')
 
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
@@ -120,7 +114,7 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<NewConversationProvider>
-				<CommandPaletteProvider searchV2={searchV2}>
+				<CommandPaletteProvider>
 					<PendingPromptBootstrap />
 					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 					<PendingCommentsProvider workspaceId={workspaceId}>
@@ -146,7 +140,7 @@ function WorkspaceLayout() {
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
-						{searchV2 ? <CommandPaletteV2 /> : <CommandPalette />}
+						<CommandPaletteV2 />
 						<VoiceCallHost />
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>
@@ -182,7 +176,7 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 								type: 'bet',
 								title: d.title ?? undefined,
 								content: d.content ?? undefined,
-								status: 'signal',
+								status: 'opportunity',
 							}),
 						),
 				),

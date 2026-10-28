@@ -25,6 +25,7 @@ import {
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import accountRoutes from './routes/account'
+import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -329,6 +330,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		const method = c.req.method
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
+		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
+		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (
 			method === 'POST' &&
@@ -431,6 +434,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
+	app.route('/api/actors', actorAvatarRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)

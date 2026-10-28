@@ -95,14 +95,14 @@ describe('showInChat', () => {
 			caption: 'Here is\nthe draft',
 		})
 
-		expect(result).toEqual({ conversationId: 'conv-1', messageId: 42 })
+		expect(result).toEqual({ conversationId: 'conv-1', messageId: 42, objectIds: [OBJECT_A] })
 		expect(insertMessage).toHaveBeenCalledTimes(1)
 		const args = insertMessage.mock.calls[0]?.[1]
 		expect(args).toMatchObject({
 			conversationId: 'conv-1',
 			workspaceId: WORKSPACE,
 			actorId: session.agentActorId,
-			metadata: { source: 'voice', voice_session_id: session.id },
+			metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 			sessionId: null,
 		})
 		expect(args.content).toBe(
@@ -146,6 +146,41 @@ describe('showInChat', () => {
 		const { db } = dbReturning([])
 		await expect(run(db, {})).rejects.toBeInstanceOf(VoiceShowInChatError)
 		await expect(run(db, { object_ids: ['nope'] })).rejects.toBeInstanceOf(VoiceShowInChatError)
+	})
+
+	it('opens the card when the model sends the id without dashes, quoted, or in upper case', async () => {
+		for (const sent of [OBJECT_A.replace(/-/g, ''), `"${OBJECT_A}"`, OBJECT_A.toUpperCase()]) {
+			insertMessage.mockClear()
+			const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
+			const result = await run(db, { object_ids: [sent] })
+			expect(result.objectIds).toEqual([OBJECT_A])
+			expect(insertMessage.mock.calls[0]?.[1].content).toContain(`/objects/${OBJECT_A})`)
+		}
+	})
+
+	it('opens the card from the eight-character id of a start card', async () => {
+		const { db } = dbReturning([{ id: OBJECT_A, title: 'Reply to Anna' }])
+		const startCards = [
+			{ objectId: OBJECT_A, notificationId: null, source: 'curated' as const, rank: 1 },
+		]
+		const result = await showInChat({
+			db,
+			session,
+			agentName: 'Chief',
+			args: { object_ids: [OBJECT_A.slice(0, 8)] },
+			webAppBaseUrl: BASE,
+			startCards,
+		})
+		expect(result.objectIds).toEqual([OBJECT_A])
+	})
+
+	it('names an unusable id, posts nothing, and tells the agent to say so rather than open another card', async () => {
+		const { db } = dbReturning([{ id: OBJECT_B, title: 'A lower card' }])
+		const err = await run(db, { object_ids: ['the top one', OBJECT_B] }).catch((e) => e)
+		expect(err).toBeInstanceOf(VoiceShowInChatError)
+		expect(err.detail.unresolvedIds).toEqual(['the top one'])
+		expect(err.detail.say).toMatch(/want to move on/)
+		expect(insertMessage).not.toHaveBeenCalled()
 	})
 
 	it('keeps brackets and parentheses from breaking the markdown link', async () => {

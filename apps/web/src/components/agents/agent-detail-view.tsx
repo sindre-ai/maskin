@@ -14,7 +14,6 @@ import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
@@ -31,8 +30,6 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const pause = useAgentPause(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
 	const navigate = useNavigate()
-	// One boundary for the bring-your-own surface on this page.
-	const byoExtensionsUi = useFeatureFlag('byo-extensions-ui')
 	// The one read of the desktop flag for the whole feature: the computer lives
 	// on this page only, so this is its boundary.
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -144,7 +141,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentAccessSection agent={agent} />
-				{byoExtensionsUi && <AgentExtensionsSection agent={agent} />}
+				<AgentExtensionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

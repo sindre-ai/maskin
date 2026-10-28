@@ -74,12 +74,14 @@ export interface AgentSessionStats {
 	total: number
 	active: number
 	totalCostUsd: number
-	/** Cost of sessions completed in the last 30 days (same `completed_at` basis as /sessions/usage). */
+	/** Cost of sessions settled (or, while still open, last active) in the last 30 days — same basis as /sessions/usage. */
 	last30dCostUsd: number
 }
 
 interface StatsSessionLike extends SessionLike {
 	completedAt: string | null
+	/** Stands in for `completedAt` while the session is open: its usage is saved turn by turn. */
+	updatedAt?: string | null
 	totalCostUsd?: string | number | null
 }
 
@@ -94,8 +96,9 @@ export function summarizeAgentSessions(
 		const cost = Number(s.totalCostUsd ?? 0)
 		if (!Number.isFinite(cost) || cost <= 0) continue
 		stats.totalCostUsd += cost
-		const completed = s.completedAt ? new Date(s.completedAt).getTime() : Number.NaN
-		if (Number.isFinite(completed) && completed >= now - COST_WINDOW_MS) {
+		const settledAt = s.completedAt ?? s.updatedAt
+		const settled = settledAt ? new Date(settledAt).getTime() : Number.NaN
+		if (Number.isFinite(settled) && settled >= now - COST_WINDOW_MS) {
 			stats.last30dCostUsd += cost
 		}
 	}

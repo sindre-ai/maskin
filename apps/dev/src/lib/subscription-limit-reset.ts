@@ -11,13 +11,14 @@
  * Source precedence (§17.2): 1 authoritative pre-flight → 2 header on the failed
  * request → 4 remote callback → 3 CLI banner tail. See parseSubscriptionLimitReset.
  *
- * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+24h]. Outside → null. This is
+ * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+8d]. Outside → null. This is
  * defence in depth against a bad clock or a hostile input pushing a session's
  * retry either infinitely soon (thrash) or infinitely far (never).
  */
 
 const MIN_RETRY_MS = 60_000
-const MAX_RETRY_MS = 24 * 60 * 60 * 1000
+// Weekly limits reset up to 7 days out; one day of slack on top.
+const MAX_RETRY_MS = 8 * 24 * 60 * 60 * 1000
 
 export type SubscriptionLimitResetSource =
 	| 'anthropic-ratelimit-unified-reset'
@@ -42,7 +43,7 @@ export interface SubscriptionLimitResetInput {
 
 /**
  * Try the four signals in precedence order (§17.2) and return the first that
- * clamps into [now+60s, now+24h]. Every source that fails to parse or clamps
+ * clamps into [now+60s, now+8d]. Every source that fails to parse or clamps
  * out is skipped; the walk continues.
  */
 export function parseSubscriptionLimitReset(
@@ -207,7 +208,7 @@ function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// banner, or a bare "Resets <time>" line. Match either.
 	// The zone is a short code ("UTC") or an IANA name ("Europe/Copenhagen").
 	const bannerMatch =
-		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[.\n])/i.exec(
+		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[."\n])/i.exec(
 			tail,
 		)
 	if (!bannerMatch) return null
@@ -281,7 +282,7 @@ function anchorFragment(fragment: string, nowMs: number): number | null {
 	}
 
 	// "Jan 3 10am" style — month/day + time
-	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
+	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2}),?(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
 		fragment,
 	)
 	if (monthMatch) {

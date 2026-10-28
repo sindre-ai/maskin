@@ -128,6 +128,11 @@ struct ChatThreadView: View {
 
 	/// The live state if any; otherwise the person's name under a topic title.
 	private var navStatus: ThreadNavStatus? {
+		if let call, let startedAt = call.startedAt {
+			return .quiet(
+				LiveMeetingChrome.subline(
+					origin: call.origin, threadTitle: topic ?? store.title, leadName: call.lead.name, startedAt: startedAt))
+		}
 		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
 		guard topic != nil, let name = counterpart?.name else { return nil }
 		return .quiet(name)
@@ -204,6 +209,7 @@ struct ChatThreadView: View {
 				} message: {
 					Text(store.notice ?? "")
 				}
+				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
 					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
 						ThreadScreen(store: store, root: root)
@@ -252,6 +258,7 @@ struct ChatThreadView: View {
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
 			if !linkedEntries.isEmpty {
 				Button { showingLinked = true } label: {
 					HStack(spacing: MaskinSpace.s1) {
@@ -339,6 +346,19 @@ struct ChatThreadView: View {
 				.buttonStyle(.maskinPressed)
 			}
 		}
+	}
+
+	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
+	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
+	/// request, and an unreachable root leaves the chat open on its own.
+	private func openRequestedThread() async {
+		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
+			return
+		}
+		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
+		if !held() { await store.loadThread(request.rootId) }
+		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
 	// MARK: Linked
@@ -698,6 +718,8 @@ struct ChatThreadView: View {
 			onInvite: onInvite,
 			onOpenObject: { runtime?.openObject($0.id) },
 			onEnd: { liveCalls?.end() })
+		.onAppear { liveCalls?.panelAppeared(for: call.chat.conversationID) }
+		.onDisappear { liveCalls?.panelDisappeared(for: call.chat.conversationID) }
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -957,9 +979,12 @@ struct ThreadTranscript: View {
 		// A voice call keeps its lines in the call log, which is not observable: reading the running
 		// call's lines here is what redraws the card as each one is transcribed.
 		let _ = call?.lines.count
+		// The same for answers tapped in the dock: their DECIDED rows come from that log too.
+		let _ = call?.decisions.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
-			calls: LiveCallLog.shared.records(for: store.conversationID))
+			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
+			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
 			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
@@ -1073,8 +1098,14 @@ struct ThreadTranscript: View {
 			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .callDivider(let divider):
+			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
+		case .receipt(let event):
+			LiveReceiptRow(event: event)
+		case .callSummary(let summary, let transcript):
+			LiveCallSummaryCard(summary: summary, transcript: transcript)
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):

@@ -185,7 +185,7 @@ extension ChatsContainer {
 	fileprivate func startLive(with agent: ChatParticipant) async {
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: [agent.name]), participantIDs: [agent.id],
+				title: ThreadLayout.newChatTitle(for: [agent.name], startsLiveCall: true), participantIDs: [agent.id],
 				firstMessage: nil)
 			selection = created.id
 			liveMeeting.present(.conversation(id: created.id, lead: agent))

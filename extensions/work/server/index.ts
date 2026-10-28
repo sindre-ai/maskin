@@ -31,7 +31,7 @@ const workExtension: ModuleDefinition = {
 			type: 'bet',
 			label: 'Bet',
 			icon: 'target',
-			defaultStatuses: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+			defaultStatuses: ['opportunity', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 		},
 		{
 			type: 'task',
@@ -56,7 +56,7 @@ const workExtension: ModuleDefinition = {
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
-			bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+			bet: ['opportunity', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 			loop: LOOP_STATUSES,
 		},

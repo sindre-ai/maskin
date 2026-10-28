@@ -34,7 +34,7 @@ import { trackChatMentionInserted, trackChatObjectReferenceCreated } from '@/lib
 import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { readFileAsBase64 } from '@/lib/file-utils'
+import { toUploadInput } from '@/lib/large-file-upload'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
@@ -854,23 +854,14 @@ export function Composer({
 			const controller = new AbortController()
 			abortControllersRef.current.set(tempId, controller)
 			try {
-				const content = await readFileAsBase64(file)
-				const created = await uploadFile(
-					{
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
+				const created = await uploadFile(await toUploadInput(file), {
+					signal: controller.signal,
+					onProgress: (progress) => {
+						setPendingUploads((prev) =>
+							prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
+						)
 					},
-					{
-						signal: controller.signal,
-						onProgress: (progress) => {
-							setPendingUploads((prev) =>
-								prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
-							)
-						},
-					},
-				)
+				})
 				// Cancel-vs-resolve race: if the user removed the chip between the
 				// XHR completing on the wire and this microtask firing, the chip is
 				// already gone and the abort fired — don't dispatch add_file so the

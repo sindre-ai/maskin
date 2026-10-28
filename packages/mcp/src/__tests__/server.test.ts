@@ -2490,6 +2490,40 @@ describe('tool handlers', () => {
 			)
 		})
 
+		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'queued' })
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.id).toBe('session-1')
+			expect(parsed.handoff).toContain('session session-1 is queued')
+			expect(parsed.handoff).toContain('quote this session id')
+		})
+
+		it('without wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Not started')
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
+		it('with wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				wait: true,
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
 		it('forwards spawned_by_message_id to the create route', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			const fetchSpy = vi.mocked(fetch)
@@ -3557,7 +3591,7 @@ describe('tool handlers', () => {
 	describe('get_workspace_schema handler (workspace lookup)', () => {
 		const workspaces = [
 			{ id: 'ws-a', name: 'Alpha', settings: { statuses: { bet: ['active'] } } },
-			{ id: 'ws-b', name: 'Beta', settings: { statuses: { bet: ['signal'] } } },
+			{ id: 'ws-b', name: 'Beta', settings: { statuses: { bet: ['opportunity'] } } },
 		]
 
 		type SchemaResult = {
@@ -5839,7 +5873,7 @@ describe('tool handlers', () => {
 										llm_keys: { openai: 'sk-secret' },
 										claude_oauth: { primary: { encryptedAccessToken: 'nope' } },
 										custom_llm: { model: 'gpt', api_key: 'sk-also-secret', enabled: false },
-										statuses: { bet: ['signal', 'active'] },
+										statuses: { bet: ['opportunity', 'active'] },
 										display_names: { bet: 'Bet' },
 										// A schema container whose own keys must survive verbatim,
 										// including one that reads like a secret word.
@@ -5861,7 +5895,7 @@ describe('tool handlers', () => {
 			expect(settings.llm_keys).toBeUndefined()
 			expect(settings.claude_oauth).toBeUndefined()
 			expect(settings.custom_llm).toEqual({ model: 'gpt', enabled: false })
-			expect(settings.statuses).toEqual({ bet: ['signal', 'active'] })
+			expect(settings.statuses).toEqual({ bet: ['opportunity', 'active'] })
 			expect(settings.display_names).toEqual({ bet: 'Bet' })
 			expect(settings.field_definitions).toEqual({ monkey: [{ name: 'key', type: 'text' }] })
 			// The text channel must not leak what structuredContent redacted.
@@ -5885,7 +5919,7 @@ describe('tool handlers', () => {
 					createdBy: 'actor-1',
 					settings: {
 						llm_keys: { openai: 'sk-secret' },
-						statuses: { bet: ['signal', 'active'] },
+						statuses: { bet: ['opportunity', 'active'] },
 					},
 				},
 				{
@@ -5895,7 +5929,7 @@ describe('tool handlers', () => {
 					createdAt: '2026-02-01T00:00:00.000Z',
 					updatedAt: '2026-03-01T00:00:00.000Z',
 					onboardingEnabled: false,
-					settings: { statuses: { bet: ['signal'] } },
+					settings: { statuses: { bet: ['opportunity'] } },
 				},
 			]
 
@@ -5997,7 +6031,7 @@ describe('tool handlers', () => {
 					memberCount: number
 				}
 				expect(row.memberCount).toBe(3)
-				expect(row.settings.statuses).toEqual({ bet: ['signal', 'active'] })
+				expect(row.settings.statuses).toEqual({ bet: ['opportunity', 'active'] })
 				expect(row.settings.llm_keys).toBeUndefined()
 				expect(JSON.parse(result.content[0].text).workspaces).toEqual(
 					result.structuredContent.workspaces,
@@ -7151,7 +7185,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('create_objects')
 			const result = (await handler({
 				workspace_id: 'ws-default-123',
-				nodes: [{ $id: 'b1', type: 'bet', status: 'signal' }],
+				nodes: [{ $id: 'b1', type: 'bet', status: 'opportunity' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -8035,6 +8069,64 @@ describe('X-Maskin-Session-Id source', () => {
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 
+	// Threads: the handlers bypass the SDK's zod layer, so the schema assertion is
+	// what proves a real client's `thread_root_id` is not stripped before it gets here.
+	it('post_conversation_message accepts thread_root_id and also_in_channel in its schema', () => {
+		const parsed = tools.post_conversation_message.inputSchema.parse({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		expect(parsed.thread_root_id).toBe(42)
+		expect(parsed.also_in_channel).toBe(true)
+	})
+
+	it('post_conversation_message sends thread_root_id and also_in_channel to the API', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.thread_root_id).toBe(42)
+		expect(sent.also_in_channel).toBe(true)
+	})
+
+	it('list_conversation_messages passes thread_root_id as a query param', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([]),
+		} as Response)
+		const handler = handlers.get('list_conversation_messages')
+		if (!handler) throw new Error('list_conversation_messages handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			thread_root_id: 42,
+			limit: 50,
+		})
+		const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]))
+		expect(url.searchParams.get('thread_root_id')).toBe('42')
+		expect(
+			tools.list_conversation_messages.inputSchema.parse({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				thread_root_id: 42,
+			}).thread_root_id,
+		).toBe(42)
+	})
+
 	// POST /api/actors reads this header to find the person behind the creating
 	// session, so the new agent can introduce itself to them.
 	async function createActorHeaders(): Promise<Record<string, string>> {
@@ -8045,7 +8137,12 @@ describe('X-Maskin-Session-Id source', () => {
 		} as Response)
 		const handler = handlers.get('create_actor')
 		if (!handler) throw new Error('create_actor handler not registered')
-		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		await handler({
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: 'ws-default-123',
+			description: 'Helper',
+		})
 		const call = vi
 			.mocked(fetch)
 			.mock.calls.find(
