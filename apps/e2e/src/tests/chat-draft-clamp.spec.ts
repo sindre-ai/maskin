@@ -84,7 +84,6 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			await thread.getByText('Long note to Merethe').click()
 
 			const approve = thread.getByRole('button', { name: 'Approve draft' })
 			await expect(approve).toBeDisabled()
@@ -133,7 +132,6 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			await thread.getByText('Short note to Merethe').click()
 
 			await expect(thread.getByRole('button', { name: 'Approve draft' })).toBeEnabled()
 			await expect(thread.getByRole('button', { name: 'Show all' })).toHaveCount(0)
@@ -161,9 +159,6 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			for (const title of titles) {
-				await thread.getByText(title, { exact: true }).click()
-			}
 
 			await expect(thread.locator('[data-linked-card]')).toHaveCount(3)
 			await expect(thread.getByRole('button', { name: 'Approve draft' })).toHaveCount(3)
@@ -188,7 +183,6 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			await thread.getByText('Sent note to Merethe').click()
 
 			await expect(thread.getByText('Sent', { exact: true })).toBeVisible()
 			await expect(thread.getByRole('button', { name: 'Approve draft' })).toHaveCount(0)

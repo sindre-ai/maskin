@@ -407,10 +407,13 @@ export function ObjectReferenceChip({
 	workspaceId,
 	objectId,
 	fallback,
+	cardFollows = true,
 }: {
 	workspaceId: string
 	objectId: string
 	fallback: ReactNode
+	/** A draft's approval card is drawn under its sentence. Without one the draft is a chip too. */
+	cardFollows?: boolean
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
@@ -421,13 +424,14 @@ export function ObjectReferenceChip({
 		path: `/${workspaceId}/objects/${objectId}`,
 	}
 
-	// A draft keeps its plain link: its approval card sits under the text.
+	// A draft keeps its plain link while its approval card sits under the text. A draft with no
+	// card (linked again, or past the card cap) is a chip, so the link that needs a yes is seen.
 	if (object === null) {
 		return <UnavailableChip kind="object" />
 	}
 	// While the object loads the original link stays and still previews (the card shows its
-	// skeleton); a draft has no preview.
-	if (object === undefined || showsObjectCard(object, workspaceId)) {
+	// skeleton); a draft whose card follows has no preview.
+	if (object === undefined || (cardFollows && showsObjectCard(object, workspaceId))) {
 		return (
 			<ChipPreview
 				card={(actions) => (

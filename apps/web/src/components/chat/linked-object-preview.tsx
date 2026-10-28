@@ -11,6 +11,7 @@ import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -54,9 +55,12 @@ export function LinkedObjectCard({
 	const update = useUpdateObject(workspaceId)
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
-	// Contracted shows the header and title; the text and the next-phase button
-	// appear once the top of the card is clicked.
-	const [expanded, setExpanded] = useState(defaultExpanded)
+	// A draft is always a full card (its text and Approve are what the person came for), so it
+	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
+	// own choice and wins once made.
+	const [toggled, setToggled] = useState<boolean | null>(null)
+	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
 	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
@@ -140,7 +144,7 @@ export function LinkedObjectCard({
 			    Open stop the click so they keep doing their own job; the status menu's
 			    dropdown is portalled but still bubbles through React, so it is covered too. */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the chevron button inside is the keyboard path; its click bubbles here */}
-			<div className="cursor-pointer" onClick={() => setExpanded((open) => !open)}>
+			<div className="cursor-pointer" onClick={() => setToggled(!expanded)}>
 				<div
 					className={cn(
 						'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2',
@@ -162,19 +166,24 @@ export function LinkedObjectCard({
 						) : null}
 					</span>
 					{canAct && statuses.length > 0 ? (
-						// On a narrow card the status menu takes a row of its own instead of being cut off.
-						<span
-							className="order-last w-full @sm:order-none @sm:w-auto"
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => e.stopPropagation()}
-						>
-							<StatusSelect
-								current={object.status}
-								options={statuses}
-								onChange={moveTo}
-								variant="chip"
-							/>
-						</span>
+						expanded ? (
+							// On a narrow card the status menu takes a row of its own instead of being cut off.
+							<span
+								className="order-last w-full @sm:order-none @sm:w-auto"
+								onClick={(e) => e.stopPropagation()}
+								onKeyDown={(e) => e.stopPropagation()}
+							>
+								<StatusSelect
+									current={object.status}
+									options={statuses}
+									onChange={moveTo}
+									variant="chip"
+								/>
+							</span>
+						) : (
+							// Contracted, the status is a plain chip: the control lives in the full card.
+							<StatusBadge status={object.status} className="shrink-0" />
+						)
 					) : null}
 					{linkedPanel ? (
 						<button
@@ -438,7 +447,7 @@ export function renderLinkedCard(
 export function renderLinkedChip(
 	target: LinkedTarget,
 	fallback: ReactNode,
-	context: { workspaceId: string },
+	context: { workspaceId: string; cardFollows?: boolean },
 ): ReactNode {
 	switch (target.kind) {
 		case 'object':
@@ -447,6 +456,7 @@ export function renderLinkedChip(
 					workspaceId={context.workspaceId}
 					objectId={target.id}
 					fallback={fallback}
+					cardFollows={context.cardFollows}
 				/>
 			)
 		case 'loop':

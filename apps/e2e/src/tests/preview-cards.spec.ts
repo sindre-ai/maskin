@@ -73,7 +73,6 @@ test.describe('Chat — drafts a message links to', () => {
 			await expect(thread.getByText('LinkedIn message', { exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
-			await thread.getByText('DM to Merethe Aas').click()
 			await expect(thread.getByText('Merethe Aas', { exact: true }).first()).toBeVisible()
 			await expect(thread.getByText(/Hvad arbejder I med/)).toBeVisible()
 
@@ -150,7 +149,6 @@ test.describe('Chat — drafts a message links to', () => {
 			await expect(thread.getByText('LinkedIn post', { exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
-			await thread.getByText('Post: the handoff problem').click()
 			await expect(thread.getByText('Most agent demos fail on the handoff.')).toBeVisible()
 			// Exact: the card's property line under the title also reads "Scheduled date: …".
 			await expect(thread.getByText('Scheduled', { exact: true })).toBeVisible()

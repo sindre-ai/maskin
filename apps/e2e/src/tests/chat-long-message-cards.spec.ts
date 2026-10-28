@@ -190,9 +190,10 @@ test.describe('Chat — a long agent message with many links stays readable', ()
 			const inDrawer = list.locator('[data-linked-card]', { hasText: 'North pier signup flow' })
 			await expect(inDrawer).toHaveCount(1)
 			// Same type, status, title and text (the "Updated" time may read differently).
+			// The type eyebrow is drawn in capitals ("BET"), so compare without case.
 			for (const part of ['Bet', 'active', 'North pier signup flow']) {
-				expect(threadText).toContain(part)
-				await expect(inDrawer).toContainText(part)
+				expect(threadText.toLowerCase()).toContain(part.toLowerCase())
+				await expect(inDrawer).toContainText(new RegExp(part, 'i'))
 			}
 			await expect(inDrawer).toContainText('New people reach their first chat in under two minutes')
 			expect(await innerScrollers(page, '[data-linked-id] [data-linked-card]')).toEqual([])

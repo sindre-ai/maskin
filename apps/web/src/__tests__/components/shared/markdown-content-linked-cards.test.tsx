@@ -34,8 +34,12 @@ const renderCard = (
 	}
 	return context.after ? null : <>{fallback}</>
 }
-const renderChip = (target: { kind: string; id: string }, fallback: ReactNode) =>
-	qualifying.has(target.id) ? (
+const renderChip = (
+	target: { kind: string; id: string },
+	fallback: ReactNode,
+	context: { cardFollows?: boolean },
+) =>
+	qualifying.has(target.id) && context.cardFollows !== false ? (
 		fallback
 	) : (
 		<span data-testid="chip" data-id={target.id}>
@@ -156,6 +160,28 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'the email' })).toBeInTheDocument()
 		expect(screen.getByTestId('card')).toBeInTheDocument()
+	})
+
+	it('draws a draft linked in a sentence as a chip when no card follows it', () => {
+		const D = '9d3c9f10-1111-4222-8333-444455556666'
+		const E = '1e2d3c4b-5555-4666-8777-888899990000'
+		qualifying = new Set([A, B, D, E])
+		renderMessage([A, B, D, E].map((id) => `See [n](${objectUrl(id)}) here.`).join('\n\n'))
+		// Three drafts get their card under the sentence; the fourth has none and is a chip.
+		expect(screen.getAllByTestId('card')).toHaveLength(3)
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', E)
+	})
+
+	it('draws a draft an earlier message holds, and a draft linked twice, as a chip', () => {
+		renderMessage(`See [it](${objectUrl(A)}) now.`, true, new Set([A]))
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', A)
+	})
+
+	it('keeps the first link to a draft plain and makes the repeat a chip', () => {
+		renderMessage(`See [it](${objectUrl(B)}) now.\n\nAgain [it](${objectUrl(B)}) later.`)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+		expect(screen.getAllByTestId('chip')).toHaveLength(1)
 	})
 
 	it('keeps the order of a sentence, a link on its own line, and a sentence', () => {

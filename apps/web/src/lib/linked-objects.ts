@@ -497,12 +497,30 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 		element.properties = { ...element.properties, objects: ids.join(',') }
 	}
 
-	// Every link to an object that is not replaced by a card is a chip where it stands.
+	// The drafts a card is still drawn for under their sentence. The card follows the first link to
+	// each; a later link to the same id, or a link past the card cap, has no card.
+	const followed = new Set(
+		trailing.flatMap((element) =>
+			String(element.properties?.objects ?? '')
+				.split(',')
+				.filter(Boolean),
+		),
+	)
+	const seen = new Set<string>()
+
+	// Every link to an object that is not replaced by a card is a chip where it stands. A draft
+	// keeps its plain link only when its card follows; otherwise it is a chip like any object.
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
 			if (target && isLookedUp(target) && fetchable.has(key(target))) {
-				node.data = { ...node.data, linkedChip: true }
+				const first = !seen.has(key(target))
+				seen.add(key(target))
+				node.data = {
+					...node.data,
+					linkedChip: true,
+					cardFollows: target.kind === 'object' && first && followed.has(target.id),
+				}
 			}
 		}
 		for (const child of node.children ?? []) markChips(child)

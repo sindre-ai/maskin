@@ -112,9 +112,12 @@ const DRAFT_PREVIEW = {
 	delivery: { state: 'draft', at: null },
 }
 
-// The card starts contracted; click its top to read the text.
+// An ordinary object starts contracted; click its top to read the text. A draft starts open,
+// so there is nothing to click.
 async function expand() {
-	await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+	if (screen.queryByRole('button', { name: 'Expand preview' })) {
+		await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+	}
 }
 
 describe('LinkedObjectCard', () => {
@@ -240,6 +243,7 @@ describe('LinkedObjectCard', () => {
 	it('lists the workspace statuses for the type and moves the object to the chosen one', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		const menu = screen.getByLabelText('Status')
 		expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
 			'backlog',
@@ -290,14 +294,42 @@ describe('LinkedObjectCard', () => {
 	it('does not toggle when the status menu or Open is used', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
 		await userEvent.click(screen.getByRole('link', { name: /Open/ }))
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+	})
+
+	it('shows the status as a plain chip, with no menu, while contracted', async () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
+		expect(screen.getByText('in review')).toBeInTheDocument()
+		await expand()
+		expect(screen.getByLabelText('Status')).toBeInTheDocument()
+	})
+
+	it('opens a draft by default, with its text, a live status menu and Approve draft', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+		expect(screen.getByLabelText('Status')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+	})
+
+	it('lets the person fold a draft, and then it shows a plain status chip', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await userEvent.click(screen.getByRole('button', { name: 'Contract preview' }))
 		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve draft/ })).not.toBeInTheDocument()
 	})
 
 	it('does nothing when the chosen status is the current one', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		await userEvent.selectOptions(screen.getByLabelText('Status'), 'in_review')
 		expect(updateMutate).not.toHaveBeenCalled()
 	})
@@ -328,7 +360,11 @@ describe('LinkedObjectCard', () => {
 				preview: preview(previewOverrides),
 				...row,
 			})
-		const expandDraft = () => userEvent.click(screen.getByText('Follow up with Torben'))
+		const expandDraft = async () => {
+			if (screen.queryByRole('button', { name: 'Expand preview' })) {
+				await userEvent.click(screen.getByText('Follow up with Torben'))
+			}
+		}
 
 		it('says what kind of message it is, not that it is a task', () => {
 			useObject.mockReturnValue({ data: draft() })
@@ -430,7 +466,12 @@ describe('LinkedObjectCard', () => {
 					content_hash: hash,
 				},
 			})
-		const expandDraft = () => userEvent.click(screen.getByText('Follow up with Torben'))
+		// A draft starts open; only click when it has been folded.
+		const expandDraft = async () => {
+			if (screen.queryByRole('button', { name: 'Expand preview' })) {
+				await userEvent.click(screen.getByText('Follow up with Torben'))
+			}
+		}
 		const approveButton = () => screen.getByRole('button', { name: 'Approve draft' })
 
 		// jsdom has no layout: say how tall the text is against the clamp.

@@ -182,7 +182,11 @@ export interface LinkedCardsOptions {
 	renderChip?: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string },
+		context: {
+			workspaceId: string
+			/** A draft's card is drawn under the sentence, so its link stays plain; false: it is a chip. */
+			cardFollows?: boolean
+		},
 	) => ReactNode
 }
 
@@ -321,7 +325,10 @@ function RenderedMarkdownContent({
 					)
 					const target = node?.data?.linkedChip ? targetOfHref(href) : null
 					return target && linkedCards.renderChip
-						? linkedCards.renderChip(target, link, linkedCards)
+						? linkedCards.renderChip(target, link, {
+								...linkedCards,
+								cardFollows: node?.data?.cardFollows !== false,
+							})
 						: link
 				},
 				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {

@@ -67,7 +67,6 @@ test.describe('Chat — Items tab in the Overview drawer', () => {
 
 			const list = page.getByRole('list', { name: 'Linked items' })
 			await expect(list.getByText('DM to Merethe Aas')).toBeVisible({ timeout: 10_000 })
-			await list.getByText('DM to Merethe Aas').click()
 			await expect(list.getByRole('button', { name: 'Approve' })).toBeVisible()
 			await expect(list.getByText('Storm Forsikring account notes', { exact: true })).toBeVisible()
 			await expect(list.getByText('rollout-plan.md')).toBeVisible()
