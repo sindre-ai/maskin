@@ -18,7 +18,7 @@ export type DisclosureLocale = 'en' | 'da'
  */
 export const DISCLOSURE_TEMPLATES: Record<DisclosureLocale, string> = {
 	en: `Hello, my name is ${ASSISTANT_FIRST_NAME}, and I am an AI agent working for the company Maskin. I would like to hear whether you are interested in hearing more about how you can hire AI agents to do the operational work at your company.`,
-	da: `Hej, jeg hedder ${ASSISTANT_FIRST_NAME}, og jeg er en AI-agent, der arbejder for virksomheden Maskin. Jeg vil høre om I er interesseret i at høre mere om, hvordan I kan hyre AI-agenter til at lave det operationelle arbejde hos jer.`,
+	da: `Hej, jeg hedder ${ASSISTANT_FIRST_NAME}, og jeg er en AI Agent, der arbejder for virksomheden Maskin. Jeg vil høre om I er interesseret i at høre mere om, hvordan I kan hyre AI Agenter til at udføre det operationelle arbejde hos jer, så I får mere tid til at fokusere på forretningen.`,
 }
 
 /** The greeting for a contact with no first name. Danish like the opener, see DISCLOSURE_LOCALE. */
@@ -122,6 +122,48 @@ const AGENT_NODE_ID = 'n_agent'
 const TOOL_TIMEOUT_MS = 5000
 
 /**
+ * Voice, speech-to-text, interruption and post-call settings, as read from the live assistant on
+ * 2026-10-28 (null and empty values left out). Sent whole, never in part: an update with a
+ * half-filled settings object may reset the rest.
+ */
+const VOICE_SETTINGS = {
+	voice: 'Telnyx.Ultra.926e0766-f380-4d77-aeb0-9aa4ebb16b38',
+	voice_speed: 1,
+	background_audio: { type: 'predefined_media', value: 'silence', volume: 0.5 },
+	similarity_boost: 0.5,
+	style: 0,
+	use_speaker_boost: true,
+	language_boost: 'Danish',
+	expressive_mode: false,
+}
+
+const TRANSCRIPTION = {
+	model: 'deepgram/nova-3',
+	language: 'da-DK',
+	settings: {
+		smart_format: true,
+		numerals: true,
+		eot_threshold: 0.8,
+		eot_timeout_ms: 5000,
+		eager_eot_threshold: 0.8,
+	},
+}
+
+const INTERRUPTION_SETTINGS = {
+	enable: true,
+	disable_greeting_interruption: false,
+	start_speaking_plan: {
+		wait_seconds: 0.1,
+		transcription_endpointing_plan: {
+			on_punctuation_seconds: 0.1,
+			on_no_punctuation_seconds: 0.1,
+			on_number_seconds: 0.1,
+		},
+	},
+	interrupt_prediction_threshold: 0.55,
+}
+
+/**
  * The create/update body for the Telnyx assistant. The first node of the conversation flow is a
  * Speak node: a deterministic step with no model turn, so the disclosure is heard verbatim. The
  * top-level greeting field is not used for it because it is only a template.
@@ -131,6 +173,12 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 		name: ASSISTANT_NAME,
 		model: ASSISTANT_MODEL,
 		instructions: SYSTEM_PROMPT,
+		// Empty on purpose: the opener is the first node of the flow, not the greeting field.
+		greeting: '',
+		voice_settings: VOICE_SETTINGS,
+		transcription: TRANSCRIPTION,
+		interruption_settings: INTERRUPTION_SETTINGS,
+		post_conversation_settings: { enabled: false },
 		tools: TOOL_DECLARATIONS.map((tool) => ({
 			type: 'webhook',
 			webhook: {

@@ -141,6 +141,21 @@ describe('buildAssistantPayload against the live assistant snapshot', () => {
 		})
 	})
 
+	it('carries the live voice, speech-to-text, interruption and post-call settings whole', () => {
+		const settings = payload as unknown as Record<string, unknown>
+		expect(settings.voice_settings).toEqual(live.voiceSettings)
+		expect(settings.transcription).toEqual(live.transcription)
+		expect(settings.interruption_settings).toEqual(live.interruptionSettings)
+		expect(settings.post_conversation_settings).toEqual(live.postConversationSettings)
+		expect(settings.greeting).toBe(live.greeting)
+	})
+
+	it('keeps the held settings in the hash, so changing the voice changes the version', () => {
+		const a = buildAssistantPayload(input)
+		const changed = { ...a, voice_settings: { ...(a.voice_settings as object), voice_speed: 1.1 } }
+		expect(assistantContentHash(changed)).not.toBe(assistantContentHash(a))
+	})
+
 	it('uses no telnyx_ variable anywhere, because Telnyx rejects those names', () => {
 		expect(JSON.stringify(payload)).not.toMatch(/\{\{\s*telnyx_/)
 	})
