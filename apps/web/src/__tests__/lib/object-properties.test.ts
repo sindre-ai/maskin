@@ -47,13 +47,12 @@ describe('describeObjectProperties', () => {
 		expect(describeObjectProperties(metadata, { recipients: [], label: 'Message' })).toContain(
 			'LinkedIn message',
 		)
-		// Without a preview nothing is dropped.
+		// Without a preview nothing is dropped (the line shows four properties at most, so the email falls off the end).
 		expect(describeObjectProperties(metadata)).toEqual([
 			'LinkedIn message',
 			'P1',
 			'Recipient: liz benison',
 			'Account: Sebastian',
-			'Email: LIZ@example.com',
 		])
 	})
 
