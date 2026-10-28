@@ -30,6 +30,7 @@ import {
 } from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { isTimelineMessage } from '@/lib/message-threads'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
 	buildVoiceTranscript,
@@ -37,7 +38,6 @@ import {
 	isSpokenVoiceLine,
 	sessionsWithReceipts,
 } from '@/lib/voice-transcript'
-import { isTimelineMessage } from '@/lib/message-threads'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
