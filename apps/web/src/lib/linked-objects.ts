@@ -75,7 +75,7 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
+	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent' | 'chat'
 	id: string
 }
 
@@ -88,7 +88,10 @@ export interface HrefTarget extends LinkedTarget {
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
+const APP_PATH = new RegExp(
+	`^/([^/]+)/(objects|files|loops|triggers|agents|chats)/(${UUID_SRC})/?$`,
+	'i',
+)
 
 const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
 	objects: 'object',
@@ -96,6 +99,7 @@ const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>[
 	loops: 'loop',
 	triggers: 'trigger',
 	agents: 'agent',
+	chats: 'chat',
 }
 
 function isAppHost(host: string): boolean {
@@ -140,7 +144,7 @@ export function githubTargetOf(href: unknown): GithubTarget | null {
  */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
-	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent' | 'chat'; id: string }
 	| { kind: 'github'; href: string; target: GithubTarget }
 
 /**
@@ -209,10 +213,11 @@ const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
 	['loop', hrefOf('loops')],
 	['trigger', hrefOf('triggers')],
 	['agent', hrefOf('agents')],
+	['chat', hrefOf('chats')],
 ]
 
 /**
- * The object, file, loop, trigger or agent a link's address points at, if it points at one, with the
+ * The object, file, loop, trigger, agent or chat a link's address points at, if it points at one, with the
  * workspace the address names (null when it names none). Later kinds are added to the list above.
  */
 export function targetOfHref(href: unknown): HrefTarget | null {
@@ -354,7 +359,7 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
-/** Objects, loops, triggers and agents: what the app looks up for a link, as against a file. */
+/** Objects, loops, triggers, agents and chats: what the app looks up for a link, as against a file. */
 const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
 
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */
@@ -684,9 +689,11 @@ export function pickFacts(
 /**
  * The words for something that cannot be drawn, on a card and on a chip. `kind` is the noun
  * ("object"). The lookup cannot tell a deleted thing from one you may not see, so it is always
- * "deleted".
+ * "deleted", except for a chat, which reads "Chat not available".
  */
 export function unavailableCopy(kind: string): { card: string; chip: string } {
+	// A chat you are not in reads the same as a deleted one, and says nothing about whether it exists.
+	if (kind === 'chat') return { card: 'Chat not available', chip: 'Chat not available' }
 	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
 }
 
@@ -698,4 +705,28 @@ export function githubChipText(target: GithubTarget): string {
 /** The accessible name of a GitHub chip: it says it leaves the app. */
 export function githubChipName(target: GithubTarget): string {
 	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
+}
+
+/** The most names the People row of a chat card lists before it counts the rest. */
+export const MAX_CHAT_PEOPLE = 3
+
+/** The People row of a chat card: the first names, then "+n" for the rest. Null when nobody is in the chat. */
+export function peopleLine(names: readonly string[]): string | null {
+	const shown = names.slice(0, MAX_CHAT_PEOPLE).join(', ')
+	if (!shown) return null
+	const rest = names.length - MAX_CHAT_PEOPLE
+	return rest > 0 ? `${shown} +${rest}` : shown
+}
+
+/**
+ * The summary of a chat card: the last message as plain words, led by who wrote it ("Ada: words").
+ * Null when the chat has no message to show, so the card leaves the line out.
+ */
+export function chatSummary(
+	author: string | null | undefined,
+	lastMessage: string | null | undefined,
+): string | null {
+	const words = plainSnippet(lastMessage)
+	if (!words) return null
+	return author ? `${author}: ${words}` : words
 }
