@@ -18,6 +18,8 @@ public struct MainShell: View {
 	@Bindable private var runtime: AppRuntime
 	@State private var badges = ShellBadges()
 	@State private var liveCalls = LiveCallCenter()
+	@State private var pictures = ActorPicturesStore()
+	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
@@ -50,6 +52,12 @@ public struct MainShell: View {
 			}
 		)
 		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
+		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
+		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
+		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
+		.onChange(of: scenePhase) { _, phase in
+			if phase == .active { Task { await pictures.load(environment: environment) } }
+		}
 		.onAppear {
 			// A call keeps running wherever you are; this returns you to its thread.
 			liveCalls.openConversation = { [runtime] id in
@@ -152,7 +160,9 @@ private struct AdaptiveTabs: View {
 		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
 		// The profile lives at the foot of the sidebar too (4-iPad.md).
 		.tabViewSidebarFooter {
-			SidebarProfileRow(name: environment.auth.session?.name) { runtime.showProfile = true }
+			SidebarProfileRow(
+				name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
+			) { runtime.showProfile = true }
 		}
 		.sheet(isPresented: $showWorkspaces) {
 			WorkspaceSwitcher(environment: environment)
@@ -188,13 +198,14 @@ private struct SidebarWorkspaceHeader: View {
 /// The signed-in person at the foot of the iPad sidebar; opens the profile.
 private struct SidebarProfileRow: View {
 	let name: String?
+	let actorID: String?
 	let open: () -> Void
 
 	var body: some View {
 		if let name {
 			Button(action: open) {
 				HStack(spacing: MaskinSpace.s5) {
-					ShellNavAvatar(name: name)
+					ShellNavAvatar(name: name, actorID: actorID)
 					Text(name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Spacer(minLength: 0)
 				}
