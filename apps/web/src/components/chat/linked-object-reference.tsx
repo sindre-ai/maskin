@@ -265,7 +265,7 @@ function ChipSheet({
 				}}
 			>
 				<SheetTitle className="sr-only">Object preview</SheetTitle>
-				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border" />
+				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border-strong" />
 				{card}
 				<div className="mt-1 flex items-center gap-2">
 					{cloneElement(
