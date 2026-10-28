@@ -44,6 +44,16 @@ export const FLAGS = {
 	 * baseline has run. Retire once search v2 is on for everyone.
 	 */
 	SEARCH_V2: 'search-v2',
+	/**
+	 * Gates iOS dictation through the backend transcription route (task
+	 * [iOS dictation: send speech to the backend transcription route](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0a322ceb-338c-4b2d-b796-fcb228d0a7a4)).
+	 * Read by the iPhone app once per launch from GET /api/feature-flags, for the
+	 * signed-in actor. Off means the app dictates with Apple's on-device recogniser
+	 * as before and no audio leaves the phone. On means each phrase is sent to
+	 * POST /transcriptions, and Apple's recogniser takes over if a request fails.
+	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
+	 */
+	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
