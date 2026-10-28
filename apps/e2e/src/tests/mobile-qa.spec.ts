@@ -284,7 +284,7 @@ async function seedObjects(account: {
 	const bet = await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Mobile QA Bet',
-		status: 'signal',
+		status: 'opportunity',
 	})
 	const insight = await account.api.createObject(account.workspaceId, {
 		type: 'insight',

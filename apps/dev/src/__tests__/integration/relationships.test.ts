@@ -22,7 +22,7 @@ describe('Relationships Integration', () => {
 		})
 		const obj2 = await insertObject(db, workspaceId, getTestActorId(), {
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		obj1Id = obj1.id
 		obj2Id = obj2.id

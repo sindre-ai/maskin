@@ -97,6 +97,9 @@ struct ThreadLayoutTests {
 			case .unreadDivider: kinds.append("new")
 			case .handoff: kinds.append("handoff")
 			case .liveCall: kinds.append("call")
+			case .callDivider: kinds.append("call-divider")
+			case .receipt: kinds.append("receipt")
+			case .callSummary: kinds.append("summary")
 case .message(let m, let author): kinds.append("\(m.serverID!)\(author ? "+" : "-")")
 			}
 		}

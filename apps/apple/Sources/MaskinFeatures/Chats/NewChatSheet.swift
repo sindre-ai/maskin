@@ -127,7 +127,7 @@ struct NewChatSheet: View {
 		defer { isCreating = false }
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: people.map(\.name)),
+				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
 				participantIDs: people.map(\.id), firstMessage: message,
 				firstMessageMetadata: taken?.metadata)
 			MaskinHaptics.play(.success)

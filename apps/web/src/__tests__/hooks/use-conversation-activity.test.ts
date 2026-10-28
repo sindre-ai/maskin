@@ -227,6 +227,25 @@ describe('useConversationActivity', () => {
 		})
 	})
 
+	it('shows one live turn per session when untagged steps sit before the tagged turn', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: toolUse('update_objects') }),
+			buildLog({ id: 2, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 3, content: toolUse('search_repositories') }),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toHaveLength(1)
+		expect(result.current.fallback).toEqual([])
+	})
+
 	it('does not add a fallback entry once the session goes idle with no in-progress turn', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
 		vi.mocked(api.sessions.logs).mockResolvedValue([

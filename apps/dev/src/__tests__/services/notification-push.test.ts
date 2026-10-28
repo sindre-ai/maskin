@@ -358,6 +358,49 @@ describe('NotificationPushFanout', () => {
 				expect(sender.sendToActor).toHaveBeenCalledTimes(1)
 			})
 
+			describe('thread replies', () => {
+				const threadReply = notif({
+					metadata: {
+						push_category: 'conversation',
+						push_delay_seconds: 30,
+						conversation_id: '11111111-1111-4111-8111-111111111111',
+						message_id: 5,
+						thread_root_id: 2,
+					},
+				})
+
+				it('skips the push once the thread was read up to the reply', async () => {
+					vi.useFakeTimers()
+					const { fanout, sender } = setup([], true, [
+						[threadReply],
+						[], // preferences
+						[threadReply], // re-read after the wait
+						[{ lastRead: 5 }], // the thread's cursor, not the chat's
+					])
+					await fanout.handleEvent(event)
+					await vi.advanceTimersByTimeAsync(31_000)
+					expect(sender.sendToActor).not.toHaveBeenCalled()
+				})
+
+				it('still sends when only the chat was read: reading the chat is not reading the thread', async () => {
+					vi.useFakeTimers()
+					const { fanout, sender } = setup([], true, [
+						[threadReply],
+						[], // preferences
+						[threadReply], // re-read after the wait
+						[], // no thread cursor row: the thread was never opened
+						[], // preferences
+						[{ value: 1 }], // badge
+					])
+					await fanout.handleEvent(event)
+					await vi.advanceTimersByTimeAsync(31_000)
+					expect(sender.sendToActor).toHaveBeenCalledWith(
+						'human',
+						expect.objectContaining({ threadRootId: 2 }),
+					)
+				})
+			})
+
 			it('still sends a push-only row (stored seen) after the wait', async () => {
 				vi.useFakeTimers()
 				const pushOnly = {

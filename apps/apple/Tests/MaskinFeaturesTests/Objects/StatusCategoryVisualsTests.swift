@@ -8,7 +8,7 @@ import Testing
 @Suite("Status category visuals")
 struct StatusCategoryVisualsTests {
 	static let keys = [
-		"backlog", "todo", "new", "signal", "define", "proposed", "paused", "parked", "holding",
+		"backlog", "todo", "new", "opportunity", "define", "proposed", "paused", "parked", "holding",
 		"in_review", "waiting_for_input", "in_progress", "active", "live", "processing", "clustered",
 		"done", "completed", "validated", "succeeded", "scored", "discarded", "archived", "failed",
 		"my_custom_status",

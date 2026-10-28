@@ -206,7 +206,7 @@ public enum MaskinStatusPalette {
 		"processing": MaskinColorPair(bg: Color(light: RGBA(0xFEF3C7), dark: RGBA(0x422006)), fg: Color(light: RGBA(0xB45309), dark: RGBA(0xFBBF24))),
 		"in_progress": MaskinColorPair(bg: Color(light: RGBA(0xDBEAFE), dark: RGBA(0x172554)), fg: Color(light: RGBA(0x1D4ED8), dark: RGBA(0x93C5FD))),
 		"active": MaskinColorPair(bg: Color(light: RGBA(0xDCFCE7), dark: RGBA(0x052E16)), fg: Color(light: RGBA(0x15803D), dark: RGBA(0x86EFAC))),
-		"signal": MaskinColorPair(bg: Color(light: RGBA(0xEDE9FE), dark: RGBA(0x2E1065)), fg: Color(light: RGBA(0x6D28D9), dark: RGBA(0xC4B5FD))),
+		"opportunity": MaskinColorPair(bg: Color(light: RGBA(0xEDE9FE), dark: RGBA(0x2E1065)), fg: Color(light: RGBA(0x6D28D9), dark: RGBA(0xC4B5FD))),
 		"proposed": MaskinColorPair(bg: Color(light: RGBA(0xE0E7FF), dark: RGBA(0x1E1B4B)), fg: Color(light: RGBA(0x4338CA), dark: RGBA(0xA5B4FC))),
 		"clustered": MaskinColorPair(bg: Color(light: RGBA(0xCCFBF1), dark: RGBA(0x042F2E)), fg: Color(light: RGBA(0x0F766E), dark: RGBA(0x5EEAD4))),
 		"done": MaskinColorPair(bg: Color(light: RGBA(0xDCFCE7), dark: RGBA(0x022C22)), fg: Color(light: RGBA(0x15803D), dark: RGBA(0x6EE7B7))),

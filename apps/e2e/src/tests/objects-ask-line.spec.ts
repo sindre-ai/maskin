@@ -24,7 +24,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			const object = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Ask Line Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createNotification(account.workspaceId, {
 				type: 'needs_input',
@@ -59,7 +59,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			const object = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Ask Scheme Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createNotification(account.workspaceId, {
 				type: 'needs_input',
@@ -89,7 +89,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 		const object = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Not My Ask Bet',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		await account.api.createNotification(account.workspaceId, {
 			type: 'needs_input',

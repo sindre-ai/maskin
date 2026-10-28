@@ -224,7 +224,7 @@ struct SchemaStoreTests {
 		#expect(await store.addStatus("paused", to: "bet"))
 		#expect(!(await store.addStatus("PAUSED", to: "bet")))
 		#expect(await store.moveStatuses(of: "bet", from: IndexSet(integer: 3), to: 0))
-		#expect(store.statuses(of: "bet") == ["paused", "signal", "active", "done"])
+		#expect(store.statuses(of: "bet") == ["paused", "opportunity", "active", "done"])
 		#expect(await store.removeStatus("done", from: "bet"))
 		fake.schemaValue.statuses["task"] = ["only"]
 		await store.load()

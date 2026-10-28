@@ -45,6 +45,16 @@ export function formatSize(bytes: number): string {
 // Download action and the iframe-blocked fallback tile so both paths build the
 // blob the same way.
 export function downloadFile(file: FileDetail): void {
+	// Large files carry no bytes, only a storage URL that already names the file.
+	if (file.downloadUrl) {
+		const link = document.createElement('a')
+		link.href = file.downloadUrl
+		link.download = file.name
+		document.body.appendChild(link)
+		link.click()
+		document.body.removeChild(link)
+		return
+	}
 	const blob =
 		file.encoding === 'utf8'
 			? new Blob([file.content], { type: file.mimeType })

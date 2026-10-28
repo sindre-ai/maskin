@@ -116,14 +116,17 @@ export interface PreflightOptions {
 	fetchImpl?: typeof fetch
 	writeProbeRepo?: string
 	/** Waits between attempts when GitHub answers 5xx or the request throws. One
-	 *  entry per retry, so the default makes 3 attempts. Tests pass `[0, 0]`. */
+	 *  entry per retry, so the default makes 5 attempts. Tests pass `[0, 0]`. */
 	retryDelaysMs?: number[]
 }
 
 const BODY_SNIPPET_MAX = 200
 
-/** 3 attempts, 0.5s then 1.5s apart: at most 2s of added launch delay. */
-const DEFAULT_RETRY_DELAYS_MS = [500, 1500]
+/** 5 attempts, 0.5s, 1.5s, 4s, then 8s apart: at most 14s of added launch delay,
+ *  paid only while GitHub is failing. Identities are probed in parallel, so the
+ *  delay does not add up per identity. A 2s window was too short: a GitHub 5xx
+ *  burst on 27 Oct outlasted all three attempts and raised a Slack alert. */
+export const DEFAULT_RETRY_DELAYS_MS = [500, 1500, 4000, 8000]
 
 /** `upstream-error` is GitHub (or the network) failing, not the identity. The
  *  verdict is still reported (log + Slack) but the identity stays in the session. */
