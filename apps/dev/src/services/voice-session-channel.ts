@@ -22,6 +22,7 @@ import {
 	postHoldPreview,
 	readAloudInstruction,
 } from './voice-hold-preview'
+import { repairToolIdArgs } from './voice-id-resolution'
 import {
 	type ReceiptDraft,
 	type ReceiptOutcome,
@@ -376,28 +377,38 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			// Same call a chat agent makes. The call's workspace is applied last, so a
 			// workspace_id the model passes can never point a tool at another workspace.
 			const { [VOICE_CONFIRM_ARG]: confirmation, ...toolArgs } = rawArgs as Record<string, unknown>
-			const args = { ...toolArgs, workspace_id: session.workspaceId }
+			const startCards = callState.startCards
+			// A garbled or shortened id is repaired when exactly one object fits; otherwise untouched.
+			const repaired =
+				msg.name === VOICE_SHOW_IN_CHAT_TOOL
+					? toolArgs
+					: await repairToolIdArgs(db, session.workspaceId, toolArgs, startCards).catch(
+							() => toolArgs,
+						)
+			const args = { ...repaired, workspace_id: session.workspaceId }
 			receiptArgs = args
 			if (msg.name === VOICE_SHOW_IN_CHAT_TOOL) {
 				// Handled here, not by the MCP server: it only ever writes into this call's own chat.
 				try {
-					const shown = await showInChat({ db, session, agentName, args: toolArgs })
+					const shown = await showInChat({ db, session, agentName, args: toolArgs, startCards })
 					if (shown.conversationId !== knownConversationId) {
 						knownConversationId = shown.conversationId
 						send({ type: 'conversation', conversation_id: shown.conversationId })
 					}
 					ok = true
 					output = JSON.stringify({ shown: true })
-					if (Array.isArray(toolArgs.object_ids)) {
-						noteCardNamed(
-							callState,
-							toolArgs.object_ids.filter((id): id is string => typeof id === 'string'),
-						)
-					}
+					// The resolved ids, not what the model typed, so a repaired id still counts as the card.
+					noteCardNamed(callState, shown.objectIds)
 				} catch (err) {
 					if (!(err instanceof VoiceShowInChatError)) throw err
 					errorCode = 'voice_tool_failed'
-					output = JSON.stringify({ error: err.message, error_code: errorCode })
+					output = JSON.stringify({
+						error: err.message,
+						error_code: errorCode,
+						shown: false,
+						...(err.detail.unresolvedIds ? { unresolved_ids: err.detail.unresolvedIds } : {}),
+						...(err.detail.say ? { say: err.detail.say } : {}),
+					})
 				}
 			} else {
 				const review = await writeGate.review(
