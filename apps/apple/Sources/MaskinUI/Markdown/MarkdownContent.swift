@@ -557,8 +557,12 @@ enum MarkdownInline {
 				attr[run.range].font = base.weight(.semibold)
 				attr[run.range].underlineStyle = nil
 				let visible = String(attr[run.range].characters).trimmingCharacters(in: .whitespaces)
+				// A link that leaves the app ends in a small arrow (a text glyph: a symbol cannot sit in a link).
+				let arrow = info.leavesApp ? "\u{00A0}\u{2197}\u{FE0E}" : ""
 				if visible == link.absoluteString || visible.hasPrefix("http") || visible.hasPrefix("maskin:") {
-					renames.append((run.range, info.title ?? info.kindLabel))
+					renames.append((run.range, (info.title ?? info.kindLabel) + arrow))
+				} else if !arrow.isEmpty {
+					renames.append((run.range, String(attr[run.range].characters) + arrow))
 				}
 			} else if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
 				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
