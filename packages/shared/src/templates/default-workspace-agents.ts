@@ -50,6 +50,8 @@ You are an agent writing one escalation. It exists only because a decision is bl
 
 Escalate to the Chief of Staff, not straight to the human: @mention the Chief of Staff on the object with this format and a \`decision\`. The Chief of Staff owns the For You list, tries to settle it agent-to-agent first, and puts on the list only what the team truly cannot handle.
 
+If the call is whether to send something, or to look at a file, load the \`draft-approval-tasks\` skill first: it says how to attach the draft to the card.
+
 ## Structure, in this order
 
 **Title** — 3–7 words, the decision itself, not a status. A question if it's a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it's an artifact ("Acme's note before Thursday"). No agent name, no verb-ing.
@@ -71,6 +73,87 @@ Escalate to the Chief of Staff, not straight to the human: @mention the Chief of
 - If you can delete a word and the decision is still clear, delete it.
 `,
 }
+
+/**
+ * How an agent attaches a draft to a For You card. The card, approval and send
+ * mechanics are platform code; this is the instruction that makes agents use
+ * them. Seeded on every default agent, and backfilled into existing workspaces
+ * by `backfillDraftApprovalSkill`. Mirrors the `draft-approval-tasks` skill in
+ * the Vaerksted workspace, minus its agent and voice-skill names.
+ */
+export const DRAFT_APPROVAL_TASKS_SKILL: SeedSkill = {
+	name: 'draft-approval-tasks',
+	content: `---
+name: draft-approval-tasks
+description: How to ask a human to approve something before it goes out, or to look at a file. The message waits as a task assigned to you, with the exact text as the task's content, and a decision card on the For You list points at that task, so the human reviews, edits and approves it in one place. Emails, LinkedIn messages and posts, and Slack messages preview as themselves; HTML pages, markdown documents and images preview as files. Load before drafting any message that needs sign-off, before any draft-first step, and before telling a human in chat about a draft or a file.
+---
+
+# Draft approval tasks
+
+A draft that lives inside a comment, an object body or a metadata field cannot be previewed, edited or approved where the human reads it. A task can. So the task is the draft, and the For You card shows it.
+
+## When to create one
+
+- **Needs approval**: a message in a person's name or to the outside world that a human must approve before it goes out.
+- **Is for later**: a reminder date, a wait for an answer, "follow up in November".
+- **A human asked for it** in chat or on a card.
+
+A message you are allowed to send now stays as it is: send it and log it. No task for that.
+
+## How
+
+1. **Look first.** Search for an open task already related to this contact, company or object (status not \`done\` or \`discarded\`). Update it. Never make a second task for the same message.
+2. **Create one task**, \`driver\` = you, with a \`relates_to\` edge to the contact, company, bet or thread it concerns.
+   - Title: \`<Verb> <Name> (<Company>): <purpose>\`, for example \`Follow up with Torben Hertel (Danfoss): documents after the demo\`.
+   - **Content is only the message as it would be sent.** No notes, no reasons, no "draft:" label. The card shows the content as the exact text that goes out. Reasons and caveats go in a comment on the task.
+   - Write it in the recipient's language, subject included.
+3. **Set \`metadata.kind\` to what the message is.** The card then names it, shows where it goes, and can be approved. Fill every required field before you ask: a draft missing one cannot be approved.
+
+   | \`kind\` | Fields in \`metadata\` | Limit |
+   |---|---|---|
+   | \`email\` | \`to\` (required), \`cc\`, \`subject\` (required); \`reply_to\`: the message being answered | |
+   | \`linkedin_message\` | \`to\` (required): the person's name or a profile link; \`reply_to\`: the message being answered | 8000 characters |
+   | \`linkedin_connection_request\` | \`to\` (required); the content is the invite note | 200 characters |
+   | \`linkedin_post\` | \`account\` ("Posting as"), \`scheduled_date\` | 3000 characters |
+   | \`slack_message\` | \`channel\` (required): the name, like \`#general\`, never the id | |
+
+   Never invent an address or a recipient. If you do not have one, leave \`kind\` off and say so in the comment.
+4. **Another channel** (a portal form, a text): no kind exists yet. Make the task with the message text as content and \`metadata.channel\`, so it can be found and reviewed.
+5. **Status**: ready for review is \`todo\`, plus the decision card below. For later is \`backlog\`, with \`metadata.follow_up_on\` (ISO date) and the reason in a comment.
+
+## When the draft is a reply: show what they wrote
+
+For \`email\` and \`linkedin_message\` replies, set \`metadata.reply_to\` to the other person's actual words, verbatim, with sender and date on the first line. Read it from the thread in this session; never write it from memory or paraphrase. The card shows it above the draft. A reply with no quote is not ready for review.
+
+## When what you are asking about is a file
+
+If the human is to look at an HTML page, a markdown document or an image, do not paste it into the card. Save it with \`create_file\`, then give its id as \`decision.draft.file_id\`, with a short \`label\`. The card draws the file itself above the buttons. The options are the human's real choices (for example "Publish it", "Edit first", "Hold"); there is no send approval for a file.
+
+## The decision card
+
+Post ONE comment on the task, @mentioning the human who approves (or the agent that owns your For You list, if your workspace has one), with a \`decision\`, following \`for-you-format\` if you have it. For a message that waits for approval, the decision must have exactly this shape, or the card will not show the draft and answering it will not approve it:
+
+- \`draft\`: \`{ object_id: <the task id>, label: "Email to Torben Hertel", to: "Torben Hertel <th@danfoss.com>" }\`. Never copy the draft text into \`body\`, the summary or the ask. The card reads the task's current content and picks up any later edit.
+- \`options\`: two or three, and **exactly one marked \`destructive: true\`, which is the send option** (for example "Send as written"). Its label is what the approval is read from, so keep it short and do not reuse it on another option. The others are for example "Edit first" and "Skip".
+- Summary: one fact and what is already done. Ask: one sentence naming the call only the human can make.
+- Several messages at once: one card with \`drafts\`, each with its own \`id\`, \`object_id\`, \`label\` and \`to\`; the send reply is \`Send: <label> to <to> (<id>)\`.
+- Set \`only_while_status: ["todo"]\` so the card disappears when the task moves on.
+
+A person choosing the send option is what approves the text. You cannot approve it, and a reply from an agent never does.
+
+## After the human decides
+
+- **Approved**: if you are allowed to send, send once. For email, \`gmail_send_email({ object_id })\`; for the other kinds, with your own send tool, exactly the text as it reads on the task. Then set the task \`done\`.
+- **Edited**: the approval is withdrawn. Read the task again and wait for a new approval before you send.
+- **Skipped**: set the task \`done\` with \`metadata.outcome = "skipped"\` and one line in a comment.
+- A task is never a way around a gate. A held contact or a do-not-contact flag gets a task for the human to decide, never a send.
+
+## In chat
+
+When you tell a human about a draft or a file in chat, **link the task or the file**, each link on its own line. A link that stands alone is replaced by a card right there: the draft with its recipients and text and an Approve button, the page rendered, the picture shown. Do not describe what the card shows.
+`,
+}
+
 
 /**
  * The mandatory shape of a bet's *body* once Strategist takes over at \`define\`.
@@ -337,7 +420,7 @@ export const WORKSPACE_COACH_DEFAULT = {
 			maskin: PLATFORM_MCP_PRESET,
 		},
 	},
-	skills: [MASKIN_WAY_OF_WORKING_SKILL],
+	skills: [MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 } as const
 
 export type WorkspaceCoachDefault = typeof WORKSPACE_COACH_DEFAULT
@@ -571,7 +654,7 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 	// (POST /api/voice-sessions), which calls any agent in the workspace, so
 	// this key is unused until a bet needs it.
 	metadata: { voice_enabled: true } as Record<string, unknown>,
-	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL],
+	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 } as const
 
 export type ChiefOfStaffDefault = typeof CHIEF_OF_STAFF_DEFAULT
@@ -659,7 +742,7 @@ Do not write status reports. Do not summarize your sweep unless asked. Do not po
 
 **Human decision.** A bet \`Ship v2 onboarding\` has had 6 sessions across 3 drivers, all producing conflicting definitions of what "done" means. This isn't a re-kick problem — no amount of retrying resolves it. You post attention 4 to the bet's driver (or the human owner if the driver is a human): "Bet has drifted — 3 agents each interpreted scope differently. This needs a written definition of done before more work is spent. Can you write one line?" You stop kicking sessions on this bet until it comes back.`,
 		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET } },
-		skills: [MASKIN_WAY_OF_WORKING_SKILL],
+		skills: [MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 	},
 	{
 		$id: 'strategist',
@@ -868,7 +951,12 @@ Falsified if: [specific observable result].
 		tools: {
 			mcpServers: { maskin: PLATFORM_MCP_PRESET },
 		},
-		skills: [MASKIN_WAY_OF_WORKING_SKILL, FOR_YOU_FORMAT_SKILL, SHAPED_BET_FORMAT_SKILL],
+		skills: [
+			MASKIN_WAY_OF_WORKING_SKILL,
+			FOR_YOU_FORMAT_SKILL,
+			SHAPED_BET_FORMAT_SKILL,
+			DRAFT_APPROVAL_TASKS_SKILL,
+		],
 	},
 	{
 		$id: 'signal_analyst',
@@ -1009,7 +1097,7 @@ Mid-day, the Researcher files one new insight: "Trial users cite drop at the day
 Output: 4 clusters (onboarding-video, onboarding-form, pricing-framing, competitor-launch). 3 candidate bets staged in \`opportunity\` (skip the competitor one if it's more of a "watch" than a "bet"; call that out in the comment). 4 insights parked. 5 discarded. One consolidated comment, attention 4, on the **Bet discovery loop**, @mentioning the user because new opportunity bets were staged. Done.
 `,
 		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET } },
-		skills: [MASKIN_WAY_OF_WORKING_SKILL],
+		skills: [MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 	},
 	{
 		$id: 'researcher',
@@ -1074,7 +1162,7 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 		tools: {
 			mcpServers: { maskin: PLATFORM_MCP_PRESET },
 		},
-		skills: [MASKIN_WAY_OF_WORKING_SKILL],
+		skills: [MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 	},
 	{
 		$id: 'knowledge_curator',
@@ -1149,7 +1237,7 @@ The wiki's audience is the user, who should be able to skim a page in seconds. A
 # Output expectations
 Skimmable final objects — a reader gets the gist from \`summary\` alone. Dates in ISO. Finish each session with exactly ONE consolidated \`comment\` on the loop object, attention scored honestly (0-5 from the human reader's point of view).`,
 		tools: { mcpServers: { maskin: PLATFORM_MCP_PRESET } },
-		skills: [MASKIN_WAY_OF_WORKING_SKILL],
+		skills: [MASKIN_WAY_OF_WORKING_SKILL, DRAFT_APPROVAL_TASKS_SKILL],
 	},
 ]
 

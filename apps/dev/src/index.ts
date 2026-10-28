@@ -22,6 +22,7 @@ import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -339,6 +340,10 @@ migrateAgentToolServers(db)
 // One-off: gives every existing agent its default Heartbeat. Does nothing unless
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
+
+// One-off: gives existing workspaces the draft-approval-tasks skill (skips any that already
+// have one). Runs once per database and never blocks or fails startup.
+void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
