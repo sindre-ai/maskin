@@ -19,6 +19,7 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject } from '@/hooks/use-objects'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTrigger } from '@/hooks/use-triggers'
+import { useWorkspaces } from '@/hooks/use-workspaces'
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -50,6 +51,7 @@ import {
 	CircleDot,
 	ExternalLink,
 	GitPullRequest,
+	Globe,
 	Link2,
 	RefreshCw,
 	Zap,
@@ -1434,5 +1436,151 @@ export function AgentReferenceCard({
 		<FoldableCard title={name} head={head} state={state}>
 			{link}
 		</FoldableCard>
+	)
+}
+
+/** What a link into another workspace points at, for the placeholder's words and its address. */
+type OtherWorkspaceKind = 'object' | 'loop' | 'trigger'
+
+const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
+	object: 'Object',
+	loop: 'Loop',
+	trigger: 'Trigger',
+}
+
+/**
+ * "{Kind} in {workspace name}" when you belong to that workspace (the name is on the workspace
+ * switcher's list), else "{Kind} in another workspace". Nothing is fetched from that workspace.
+ */
+export function useOtherWorkspaceLabel(kind: OtherWorkspaceKind, otherWorkspaceId: string): string {
+	const { data: workspaces } = useWorkspaces()
+	const name = workspaces
+		?.find((w) => w.id.toLowerCase() === otherWorkspaceId.toLowerCase())
+		?.name?.trim()
+	return `${OTHER_WORKSPACE_KIND[kind]} in ${name || 'another workspace'}`
+}
+
+/** The link to the target in the other workspace, without children; the placeholders give it their look. */
+export function OtherWorkspaceLink({
+	kind,
+	otherWorkspaceId,
+	id,
+	label,
+	newTab = false,
+	card = false,
+	className,
+	children,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+	label: string
+	newTab?: boolean
+	/** Drawn as a card on its own line: marked so the three-card cap and the list bullet see it. */
+	card?: boolean
+	className: string
+	children: ReactNode
+}) {
+	const props = {
+		'aria-label': label,
+		className,
+		...(card ? { 'data-linked-card': '' } : {}),
+		...(newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+	}
+	switch (kind) {
+		case 'loop':
+			return (
+				<Link
+					to="/$workspaceId/loops/$loopId"
+					params={{ workspaceId: otherWorkspaceId, loopId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		case 'trigger':
+			return (
+				<Link
+					to="/$workspaceId/triggers/$triggerId"
+					params={{ workspaceId: otherWorkspaceId, triggerId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		default:
+			return (
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId: otherWorkspaceId, objectId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+	}
+}
+
+/**
+ * A link into another workspace, inside a sentence: a globe and "{Kind} in {workspace name}" on a
+ * dashed, italic plate. Nothing is looked up, so there is no preview and no sheet; the whole chip
+ * is one link that opens the target, in the same tab.
+ */
+export function OtherWorkspaceChip({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			className="not-prose rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground no-underline box-decoration-clone transition-colors duration-180 ease-standard hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+		>
+			<ChipText
+				lead={<Globe size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />}
+				text={label}
+			/>
+		</OtherWorkspaceLink>
+	)
+}
+
+/**
+ * A link into another workspace that stands alone on its line: the same words on a dashed, italic
+ * card with a globe. It counts toward the three cards of a message like any card, fetches nothing
+ * and has no fold, preview or sheet. The whole card is one link that opens the target.
+ */
+export function OtherWorkspaceCard({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			card
+			className={cn(
+				CARD_SHELL,
+				'flex-row items-center gap-2 border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground no-underline transition-colors duration-180 ease-standard hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+			)}
+		>
+			<Globe size={14} aria-hidden className="shrink-0" />
+			{label}
+		</OtherWorkspaceLink>
 	)
 }

@@ -569,3 +569,83 @@ describe('MarkdownContent linkedCards', () => {
 		})
 	})
 })
+
+describe('MarkdownContent linkedCards: links into another workspace', () => {
+	const OTHER = '11111111-2222-4333-8444-555555555555'
+	const otherUrl = (kind: string, id: string) => `https://maskin.io/${OTHER}/${kind}/${id}`
+
+	// Stand-ins that only record what the placement asked for, by workspace. A file is never a
+	// placeholder, whichever workspace it is in.
+	type Target = { kind: string; id: string; workspaceId?: string | null }
+	const isOther = (target: Target) => target.kind !== 'file' && target.workspaceId === OTHER
+	const card = (target: Target) => (
+		<div data-testid={isOther(target) ? 'other-card' : 'card'}>{target.id}</div>
+	)
+	const chip = (target: Target) => (
+		<span data-testid={isOther(target) ? 'other-chip' : 'chip'}>{target.id}</span>
+	)
+	const lookedUp: string[] = []
+
+	function render_(content: string) {
+		lookedUp.length = 0
+		return render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{
+					workspaceId: WS,
+					renderCard: (target, _fallback, context) => {
+						if (!isOther(target)) lookedUp.push(target.id)
+						return context.after ? null : card(target)
+					},
+					renderChip: (target) => chip(target),
+				}}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+	}
+
+	it('draws an object, loop or trigger link alone on its line as a card', () => {
+		render_(
+			`[a](${otherUrl('objects', A)})\n\n[b](${otherUrl('loops', LOOP)})\n\n[c](${otherUrl('triggers', TRIGGER)})`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(3)
+	})
+
+	it('shares the three-card limit with the other kinds: the fourth link on its own line is a chip', () => {
+		render_(
+			`[a](${objectUrl(A)})\n\n[b](${otherUrl('loops', LOOP)})\n\n[c](${otherUrl('triggers', TRIGGER)})\n\n[d](${otherUrl('objects', B)})`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(2)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+	})
+
+	it('draws a link in a sentence as a chip and puts no card under it', () => {
+		render_(`I looked at [the bet](${otherUrl('objects', A)}) today.`)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+		expect(lookedUp).toEqual([])
+	})
+
+	it('keeps a link in a list a chip', () => {
+		render_(`- [One](${otherUrl('objects', A)})\n- [Two](${otherUrl('loops', LOOP)})`)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(2)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+	})
+
+	it('does not count toward the ten looked-up links of a message', () => {
+		const ids = Array.from(
+			{ length: 11 },
+			(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+		)
+		render_(ids.map((id, i) => `Link ${i} [x](${otherUrl('objects', id)}) here.`).join('\n\n'))
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(11)
+	})
+
+	it('leaves a file in another workspace as it was, and a link with no workspace as this one', () => {
+		render_(`[f](${otherUrl('files', FILE)})\n\nSee [x](/objects/${A}) here.`)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('other-chip')).not.toBeInTheDocument()
+	})
+})

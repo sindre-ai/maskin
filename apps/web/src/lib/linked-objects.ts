@@ -77,6 +77,8 @@ export function showsObjectCard(
 export interface LinkedTarget {
 	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
 	id: string
+	/** The workspace the address names, when it was read from one (see {@link HrefTarget}). */
+	workspaceId?: string | null
 }
 
 /** A {@link LinkedTarget} read from an address, with the workspace that address names. */
@@ -88,6 +90,7 @@ export interface HrefTarget extends LinkedTarget {
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
+const WORKSPACE_ID = new RegExp(`^${UUID_SRC}$`, 'i')
 const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
 const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
@@ -136,11 +139,16 @@ export function githubTargetOf(href: unknown): GithubTarget | null {
 
 /**
  * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
- * workspace, or a GitHub pull request or issue.
+ * workspace, or a GitHub pull request or issue. A link to an object, loop or trigger in another
+ * workspace carries that workspace's id.
  */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
-	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| {
+			kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
+			id: string
+			otherWorkspaceId?: string
+	  }
 	| { kind: 'github'; href: string; target: GithubTarget }
 
 /**
@@ -176,12 +184,20 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 			continue
 		}
 		const match = APP_PATH.exec(url.pathname)
-		if (!match || !isAppHost(url.host) || match[1].toLowerCase() !== workspaceId.toLowerCase()) {
-			continue
-		}
+		if (!match || !isAppHost(url.host)) continue
+		const linkedWorkspace = match[1].toLowerCase()
+		const kind = OWN_KIND[match[2].toLowerCase()]
+		const here = linkedWorkspace === workspaceId.toLowerCase()
+		// Another workspace's file or agent stays words; its object, loop or trigger is a placeholder.
+		const staysWords = kind === 'file' || kind === 'agent' || !WORKSPACE_ID.test(linkedWorkspace)
+		if (!here && staysWords) continue
 		const at = m.index ?? 0
 		pushText(content.slice(cursor, at))
-		segments.push({ kind: OWN_KIND[match[2].toLowerCase()], id: match[3].toLowerCase() })
+		segments.push({
+			kind,
+			id: match[3].toLowerCase(),
+			...(here ? {} : { otherWorkspaceId: linkedWorkspace }),
+		})
 		cursor = at + address.length
 	}
 	pushText(content.slice(cursor))
@@ -224,6 +240,26 @@ export function targetOfHref(href: unknown): HrefTarget | null {
 		}
 	}
 	return null
+}
+
+/**
+ * Whether a link's address names another workspace than `workspaceId`: it has a workspace
+ * segment, that segment is a workspace id (not some other path) and it is not this workspace.
+ * Only an object, loop or trigger is drawn as a placeholder then; a file or agent link is left alone.
+ */
+export function isOtherWorkspace(
+	target: LinkedTarget,
+	workspaceId?: string,
+): target is LinkedTarget & { kind: 'object' | 'loop' | 'trigger'; workspaceId: string } {
+	const named = target.workspaceId
+	return Boolean(
+		workspaceId &&
+			named &&
+			target.kind !== 'file' &&
+			target.kind !== 'agent' &&
+			WORKSPACE_ID.test(named) &&
+			named.toLowerCase() !== workspaceId.toLowerCase(),
+	)
 }
 
 // A leading label such as "Draft:" or "Email to Torben:" may sit before a link on its own.
@@ -376,10 +412,16 @@ export const LINKED_CARDS_TAG = 'linked-cards'
  * An object gets a card in place at most three times per message, and not at all when `skipIds`
  * holds it (an earlier message in the chat already shows it) or it is already drawn: that link is
  * then a chip. Only the first ten objects a message links to are looked up; later links stay
- * plain links. Whether an object or file deserves a card at all is the renderer's call; until it
+ * plain links. A link into another workspace is drawn as a placeholder (a card on its own line,
+ * else a chip) with nothing fetched; it counts toward the three cards but not the ten lookups.
+ * Whether an object or file deserves a card at all is the renderer's call; until it
  * says yes the link shows. Loose, tight, nested and ordered lists all follow the same rules.
  */
-export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>): void {
+export function placeLinkedCards(
+	tree: HastNode,
+	skipIds?: ReadonlySet<string>,
+	workspaceId?: string,
+): void {
 	const drawn = new Set<string>()
 	const placed = { object: 0, file: 0 }
 	const trailed = new Set<string>()
@@ -387,14 +429,19 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
 	// Loops and triggers cost no request of their own (they read shared lists), but they count
 	// toward the same caps as objects so there is one rule.
+	// A link into another workspace is drawn as a placeholder and nothing is fetched for it, so it
+	// is neither looked up nor counted toward the lookup cap.
+	const other = (t: LinkedTarget) => isOtherWorkspace(t, workspaceId)
 	const fetchable = new Set(
 		linksIn(tree.children ?? [])
-			.filter(isLookedUp)
+			.filter((t) => isLookedUp(t) && !other(t))
 			.slice(0, MAX_OBJECT_FETCHES)
 			.map(key),
 	)
 	const available = (t: LinkedTarget) =>
-		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(key(t)))
+		!drawn.has(key(t)) &&
+		!skipIds?.has(t.id) &&
+		(t.kind === 'file' || other(t) || fetchable.has(key(t)))
 	// Whether a link standing alone may be replaced by its card here.
 	const cardable = (t: LinkedTarget, inList: boolean) =>
 		available(t) && (inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
@@ -404,7 +451,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const cardsAfter = (nodes: HastNode[]): HastNode[] => {
 		const links = linksIn(nodes)
 		const objects = links.filter((t) => {
-			if (t.kind !== 'object' || !available(t) || trailed.has(t.id)) return false
+			if (t.kind !== 'object' || other(t) || !available(t) || trailed.has(t.id)) return false
 			if (trailed.size >= MAX_OBJECT_CARDS) return false
 			trailed.add(t.id)
 			return true
@@ -557,7 +604,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
-			if (target && isLookedUp(target) && fetchable.has(key(target))) {
+			if (target && isLookedUp(target) && (fetchable.has(key(target)) || other(target))) {
 				const first = !seen.has(key(target))
 				seen.add(key(target))
 				node.data = {

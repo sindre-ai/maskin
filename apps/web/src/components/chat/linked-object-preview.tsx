@@ -6,6 +6,8 @@ import {
 	LoopReferenceChip,
 	ObjectReferenceCard,
 	ObjectReferenceChip,
+	OtherWorkspaceCard,
+	OtherWorkspaceChip,
 	TriggerReferenceCard,
 	TriggerReferenceChip,
 } from '@/components/chat/linked-object-reference'
@@ -22,7 +24,12 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { type GithubTarget, type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	type LinkedTarget,
+	isOtherWorkspace,
+	showsObjectCard,
+} from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
@@ -399,6 +406,20 @@ export function LinkedCardOrLink({
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
 }) {
+	// A link into another workspace is a placeholder, whatever it points at: nothing is fetched,
+	// and only a card on its own line is drawn (in a list it stays the chip, under a sentence nothing).
+	if (isOtherWorkspace(target, workspaceId)) {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return withLabel(
+			label,
+			<OtherWorkspaceCard
+				kind={target.kind}
+				otherWorkspaceId={target.workspaceId}
+				id={target.id}
+			/>,
+		)
+	}
 	if (target.kind === 'agent') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
@@ -501,6 +522,11 @@ export function renderLinkedChip(
 	fallback: ReactNode,
 	context: { workspaceId: string; cardFollows?: boolean },
 ): ReactNode {
+	if (isOtherWorkspace(target, context.workspaceId)) {
+		return (
+			<OtherWorkspaceChip kind={target.kind} otherWorkspaceId={target.workspaceId} id={target.id} />
+		)
+	}
 	switch (target.kind) {
 		case 'object':
 			return (

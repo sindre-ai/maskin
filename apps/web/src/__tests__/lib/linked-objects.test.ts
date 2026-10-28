@@ -6,6 +6,7 @@ import {
 	githubChipName,
 	githubChipText,
 	githubTargetOf,
+	isOtherWorkspace,
 	pickFacts,
 	plainSnippet,
 	shortName,
@@ -210,16 +211,29 @@ describe('splitOwnLinks', () => {
 		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
 	})
 
-	it('leaves a loop address of another workspace as words', () => {
-		const other = `https://maskin.io/${A}/loops/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	it('marks an object, loop or trigger address of another workspace with that workspace', () => {
+		for (const kind of ['objects', 'loops', 'triggers']) {
+			const other = `https://maskin.io/${A.toUpperCase()}/${kind}/${B}`
+			expect(splitOwnLinks(other, WS)).toEqual([
+				{ kind: kind.slice(0, -1), id: B, otherWorkspaceId: A },
+			])
+		}
 	})
 
-	it('leaves links to another workspace, another site or a non-object page as words', () => {
-		const other = `https://maskin.io/${A}/objects/${B}`
+	it('leaves a file of another workspace, another site or a non-object page as words', () => {
+		const otherFile = `https://maskin.io/${A}/files/${B}`
+		const notAWorkspace = `https://maskin.io/settings/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
+		const elsewhereOther = `https://example.com/${A}/objects/${B}`
 		const page = url('chats', A)
-		for (const text of [other, elsewhere, page, 'no links here']) {
+		for (const text of [
+			otherFile,
+			notAWorkspace,
+			elsewhere,
+			elsewhereOther,
+			page,
+			'no links here',
+		]) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
 	})
@@ -315,6 +329,31 @@ describe('splitOwnLinks with GitHub addresses', () => {
 		for (const text of [`${pr}/files`, 'https://github.com.evil.com/a/b/pull/1']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
+	})
+})
+
+describe('isOtherWorkspace', () => {
+	const other = '11111111-2222-4333-8444-555555555555'
+
+	it('is true for an object, loop or trigger whose address names a different workspace', () => {
+		for (const kind of ['object', 'loop', 'trigger'] as const) {
+			expect(isOtherWorkspace({ kind, id: A, workspaceId: other }, WS)).toBe(true)
+		}
+	})
+
+	it('is false for this workspace in any letter case, and for an address that names none', () => {
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: WS.toUpperCase() }, WS)).toBe(
+			false,
+		)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: null }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A }, WS)).toBe(false)
+	})
+
+	it('is false for a file, for a segment that is not a workspace id and without a current workspace', () => {
+		expect(isOtherWorkspace({ kind: 'file', id: A, workspaceId: other }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'agent', id: A, workspaceId: other }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: 'settings' }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: other })).toBe(false)
 	})
 })
 
