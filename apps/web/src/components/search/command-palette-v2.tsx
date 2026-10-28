@@ -76,7 +76,7 @@ import { SearchField } from './search-field'
 import { RowIcon, orderRows } from './search-results'
 import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 
-// The ⌘K launcher behind the search-v2 flag. It is the search page's field in a smaller
+// The ⌘K launcher. It is the search page's field in a smaller
 // size: the same pills, the same Tab / Backspace behaviour, the same endpoint (asked for
 // six rows), so the page and the launcher agree on what a word means and in what order
 // results come. Enter on the Search row, or ⌘↵, hands the words and the pills to /search.

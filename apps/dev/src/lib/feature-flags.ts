@@ -27,16 +27,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates the redesigned search page (bet
-	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
-	 * Frontend only, read once in the search route component, which swaps the
-	 * legacy page for the v2 page. Off means the page behaves as before. The
-	 * search endpoint, the shared types and the analytics events are not flagged:
-	 * they are additive and safe for everyone. Stays off until the 14-day
-	 * baseline has run. Retire once search v2 is on for everyone.
-	 */
-	SEARCH_V2: 'search-v2',
-	/**
 	 * Gates the weekly capability note that Chief of Staff sends in a person's
 	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).

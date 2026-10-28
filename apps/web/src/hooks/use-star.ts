@@ -36,6 +36,7 @@ type ObjectGraphCache = { object: ObjectResponse; connected_objects?: ObjectResp
 
 interface Snapshot {
 	list: Array<[readonly unknown[], ObjectListCache | undefined]>
+	groupPage: Array<[readonly unknown[], ObjectListCache | undefined]>
 	infinite: Array<[readonly unknown[], ObjectListInfiniteCache | undefined]>
 	board: Array<[readonly unknown[], ObjectBoardCache | undefined]>
 	detail: [readonly unknown[], ObjectResponse | undefined] | null
@@ -81,6 +82,13 @@ export function useStar(objectId: string): UseStarResult {
 			const hit = cache?.find((o) => o.id === objectId)
 			if (hit?.is_starred_by_me !== undefined) return hit.is_starred_by_me
 		}
+		// The grouped Objects page draws its rows from these.
+		for (const [, cache] of queryClient.getQueriesData<ObjectListCache>({
+			queryKey: queryKeys.objects.groupPagePrefix(workspaceId),
+		})) {
+			const hit = cache?.find((o) => o.id === objectId)
+			if (hit?.is_starred_by_me !== undefined) return hit.is_starred_by_me
+		}
 		for (const [, cache] of queryClient.getQueriesData<ObjectListInfiniteCache>({
 			queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
 		})) {
@@ -115,6 +123,14 @@ export function useStar(objectId: string): UseStarResult {
 				queryKey: queryKeys.objects.listPrefix(workspaceId),
 			})
 			for (const [key, cache] of list) {
+				if (!cache) continue
+				queryClient.setQueryData<ObjectListCache>(key, cache.map(stamp))
+			}
+
+			const groupPage = queryClient.getQueriesData<ObjectListCache>({
+				queryKey: queryKeys.objects.groupPagePrefix(workspaceId),
+			})
+			for (const [key, cache] of groupPage) {
 				if (!cache) continue
 				queryClient.setQueryData<ObjectListCache>(key, cache.map(stamp))
 			}
@@ -161,7 +177,7 @@ export function useStar(objectId: string): UseStarResult {
 				})
 			}
 
-			return { list, infinite, board, detail, graph }
+			return { list, groupPage, infinite, board, detail, graph }
 		},
 		[queryClient, workspaceId, objectId],
 	)
@@ -169,6 +185,7 @@ export function useStar(objectId: string): UseStarResult {
 	const restore = useCallback(
 		(snap: Snapshot) => {
 			for (const [key, cache] of snap.list) queryClient.setQueryData(key, cache)
+			for (const [key, cache] of snap.groupPage) queryClient.setQueryData(key, cache)
 			for (const [key, cache] of snap.infinite) queryClient.setQueryData(key, cache)
 			for (const [key, cache] of snap.board) queryClient.setQueryData(key, cache)
 			if (snap.detail) queryClient.setQueryData(snap.detail[0], snap.detail[1])

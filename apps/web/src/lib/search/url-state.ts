@@ -1,6 +1,4 @@
-// Search state in the URL. New params: q, types, statuses, updated, sort.
-// The legacy params type, status and group have other meanings on the old page and
-// keep working there; this parser never reads them. Pill order is not stored: on
+// Search state in the URL: q, types, statuses, updated, sort. Pill order is not stored: on
 // hydrate, pills go before the text.
 
 import { type SearchParts, partsFrom, pillValues } from './parts'
