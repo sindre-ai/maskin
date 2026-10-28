@@ -103,10 +103,44 @@ function isAppHost(host: string): boolean {
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object, file, loop, trigger or agent in this workspace. */
+/** A GitHub pull request or issue, read from its address alone. Nothing is fetched. */
+export interface GithubTarget {
+	type: 'pull' | 'issue'
+	repo: string
+	number: number
+}
+
+const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
+
+/**
+ * The pull request or issue an address points at: exactly github.com (not a lookalike or a
+ * subdomain), then `/{owner}/{repo}/pull/{n}` or `/{owner}/{repo}/issues/{n}`. A sub-path (files,
+ * commits, checks), any other github.com address and any other site is null and stays a plain link.
+ */
+export function githubTargetOf(href: unknown): GithubTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href)
+	} catch {
+		return null
+	}
+	if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.host !== 'github.com') {
+		return null
+	}
+	const match = GITHUB_PATH.exec(url.pathname)
+	if (!match) return null
+	return { type: match[2] === 'pull' ? 'pull' : 'issue', repo: match[1], number: Number(match[3]) }
+}
+
+/**
+ * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
+ * workspace, or a GitHub pull request or issue.
+ */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
 	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| { kind: 'github'; href: string; target: GithubTarget }
 
 /**
  * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
@@ -131,6 +165,13 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		try {
 			url = new URL(address)
 		} catch {
+			continue
+		}
+		const github = githubTargetOf(address)
+		if (github) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'github', href: address, target: github })
+			cursor = (m.index ?? 0) + address.length
 			continue
 		}
 		const match = APP_PATH.exec(url.pathname)
@@ -628,4 +669,14 @@ export function pickFacts(
  */
 export function unavailableCopy(kind: string): { card: string; chip: string } {
 	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
+}
+
+/** What a GitHub chip reads: the repository's name (not its owner) and the number. */
+export function githubChipText(target: GithubTarget): string {
+	return `${target.repo} #${target.number}`
+}
+
+/** The accessible name of a GitHub chip: it says it leaves the app. */
+export function githubChipName(target: GithubTarget): string {
+	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
 }

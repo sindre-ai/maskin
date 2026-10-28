@@ -3,6 +3,9 @@ import {
 	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
+	githubChipName,
+	githubChipText,
+	githubTargetOf,
 	pickFacts,
 	plainSnippet,
 	shortName,
@@ -217,6 +220,97 @@ describe('splitOwnLinks', () => {
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
 		const page = url('chats', A)
 		for (const text of [other, elsewhere, page, 'no links here']) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
+	})
+})
+
+describe('githubTargetOf', () => {
+	it('reads a pull request and an issue from the address alone', () => {
+		expect(githubTargetOf('https://github.com/sindre-ai/maskin/pull/2637')).toEqual({
+			type: 'pull',
+			repo: 'maskin',
+			number: 2637,
+		})
+		expect(githubTargetOf('https://github.com/sindre-ai/maskin/issues/12')).toEqual({
+			type: 'issue',
+			repo: 'maskin',
+			number: 12,
+		})
+	})
+
+	it('reads another owner and repo, a trailing slash, a query and a fragment', () => {
+		expect(githubTargetOf('https://github.com/vaerksted-ai/skjald.app/pull/7/')).toEqual({
+			type: 'pull',
+			repo: 'skjald.app',
+			number: 7,
+		})
+		expect(githubTargetOf('https://github.com/a/b/issues/3?x=1#issuecomment-9')?.number).toBe(3)
+	})
+
+	it('leaves a sub-path and any other github.com address as a plain link', () => {
+		for (const href of [
+			'https://github.com/sindre-ai/maskin/pull/2637/files',
+			'https://github.com/sindre-ai/maskin/pull/2637/commits',
+			'https://github.com/sindre-ai/maskin/issues/12/checks',
+			'https://github.com/sindre-ai/maskin/commit/5d8bd50',
+			'https://github.com/sindre-ai/maskin/tree/main',
+			'https://github.com/sindre-ai/maskin/pulls',
+			'https://github.com/sindre-ai/maskin/pull/abc',
+			'https://github.com/sindre-ai/maskin',
+			'https://github.com/sindre-ai',
+		]) {
+			expect(githubTargetOf(href)).toBeNull()
+		}
+	})
+
+	it('only counts the exact host github.com', () => {
+		for (const href of [
+			'https://github.com.evil.com/a/b/pull/1',
+			'https://evilgithub.com/a/b/pull/1',
+			'https://gist.github.com/a/b/pull/1',
+			'https://www.github.com/a/b/pull/1',
+			'https://github.com@evil.com/a/b/pull/1',
+			'https://github.com:8443/a/b/pull/1',
+			'https://gitlab.com/a/b/pull/1',
+			'ftp://github.com/a/b/pull/1',
+			'/a/b/pull/1',
+			'not an address',
+		]) {
+			expect(githubTargetOf(href)).toBeNull()
+		}
+		expect(githubTargetOf(undefined)).toBeNull()
+	})
+
+	it('names the chip by repository and number, and says it opens GitHub', () => {
+		const pull = githubTargetOf('https://github.com/sindre-ai/maskin/pull/2637')
+		const issue = githubTargetOf('https://github.com/sindre-ai/maskin/issues/12')
+		if (!pull || !issue) throw new Error('expected both to read')
+		expect(githubChipText(pull)).toBe('maskin #2637')
+		expect(githubChipName(pull)).toBe('Pull request maskin #2637, opens GitHub')
+		expect(githubChipName(issue)).toBe('Issue maskin #12, opens GitHub')
+	})
+})
+
+describe('splitOwnLinks with GitHub addresses', () => {
+	const pr = 'https://github.com/sindre-ai/maskin/pull/2637'
+
+	it('makes a bare pull request or issue address a segment, keeping the words around it', () => {
+		expect(splitOwnLinks(`review ${pr}, then https://github.com/a/b/issues/4.`, WS)).toEqual([
+			{ kind: 'text', text: 'review ' },
+			{ kind: 'github', href: pr, target: { type: 'pull', repo: 'maskin', number: 2637 } },
+			{ kind: 'text', text: ', then ' },
+			{
+				kind: 'github',
+				href: 'https://github.com/a/b/issues/4',
+				target: { type: 'issue', repo: 'b', number: 4 },
+			},
+			{ kind: 'text', text: '.' },
+		])
+	})
+
+	it('leaves a sub-path and a lookalike host as words', () => {
+		for (const text of [`${pr}/files`, 'https://github.com.evil.com/a/b/pull/1']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
 	})
