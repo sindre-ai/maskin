@@ -53,6 +53,9 @@ struct DecisionCardView: View {
 	@FocusState private var cardFocused: Bool
 	/// The workspace's display name for an object type (never the raw key).
 	var typeLabel: (String) -> String = { ForYouTypeLabel.label(for: $0) }
+	/// A draft that is shown, ready to edit and approve, under Drafts to review: the card does not
+	/// show it a second time and points there instead.
+	var draftIsElsewhere: (DecisionDraft) -> Bool = { _ in false }
 
 	@State private var fallbackComposer = ChatComposerModel(uploader: nil, selfActorID: "")
 	@State private var composerFocused = false
@@ -129,9 +132,15 @@ struct DecisionCardView: View {
 				statusChips
 			}
 			say
-			if let draft = card.decision?.draft { DraftPreview(draft: draft) }
-			if let drafts = card.decision?.drafts, !drafts.isEmpty {
+			if let draft = card.decision?.draft, !draftIsElsewhere(draft) { DraftPreview(draft: draft) }
+			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
 				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
+			}
+			if hasDraftElsewhere {
+				Text("Read and edit the message under Drafts to review.")
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink5)
+					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 
 			if let record, !isFailed(record) {
@@ -160,6 +169,11 @@ struct DecisionCardView: View {
 		.padding(.horizontal, MaskinSpace.s10)
 		.padding(.top, MaskinSpace.s9)
 		.padding(.bottom, MaskinSpace.s9)
+	}
+
+	private var hasDraftElsewhere: Bool {
+		guard let decision = card.decision else { return false }
+		return ((decision.draft.map { [$0] } ?? []) + decision.drafts).contains(where: draftIsElsewhere)
 	}
 
 	/// Who is speaking: the agent that did the work, else the Chief of Staff.
