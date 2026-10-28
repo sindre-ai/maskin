@@ -73,13 +73,23 @@ export function LinkedObjectCard({
 	// Nothing is posted in the chat: the person did not write a message.
 	const chat =
 		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
-	const properties = describeObjectProperties(object.metadata)
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
 	// instead of the next phase: the person's yes to this exact text, after which the agent is
 	// told to send it. Which objects qualify, and how they are sent, is the integration's own
 	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
+	// Open, the preview block shows who it goes to and what kind of message it is; the line under
+	// the title then leaves those out. Contracted, that block is hidden and the line keeps them.
+	const properties = describeObjectProperties(
+		object.metadata,
+		expanded && preview
+			? {
+					recipients: preview.recipients.flatMap((r) => [r.name, r.address]),
+					label: preview.label,
+				}
+			: undefined,
+	)
 	const delivery = preview?.delivery?.state
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is

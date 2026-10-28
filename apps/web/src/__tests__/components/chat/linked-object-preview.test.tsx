@@ -216,6 +216,31 @@ describe('LinkedObjectCard', () => {
 		expect(screen.getByText('LinkedIn message · P1')).toBeInTheDocument()
 	})
 
+	describe('a draft whose metadata names the recipient', () => {
+		const filed = () =>
+			objectRow({
+				metadata: { channel: 'linkedin_dm', priority: 'P1', recipient: 'Liz Benison' },
+				preview: previewOf({
+					recipients: [{ role: 'to', name: 'Liz Benison', address: null }],
+				}),
+			})
+
+		it('shows the recipient once when open: in the To row, not under the title', async () => {
+			useObject.mockReturnValue({ data: filed() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.getAllByText('Liz Benison')).toHaveLength(1)
+			expect(screen.queryByText(/Recipient: Liz Benison/)).not.toBeInTheDocument()
+			expect(screen.getByText('P1')).toBeInTheDocument()
+		})
+
+		it('still shows the recipient under the title when contracted', () => {
+			useObject.mockReturnValue({ data: filed() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			expect(screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison')).toBeInTheDocument()
+		})
+	})
+
 	it('shows nothing for an object from another workspace', () => {
 		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other' }) })
 		const { container } = renderCard()
