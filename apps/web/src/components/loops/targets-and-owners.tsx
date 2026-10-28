@@ -5,9 +5,7 @@ import type { ActorListItem, LoopSummary } from '@maskin/shared'
  * Loop-detail "TARGETS & OWNERS" section (bet D5). Renders one `<TargetCard>`
  * per target on the loop, on a responsive grid that stacks full-width on
  * mobile (≤ 640px) per the SPEC. Rendered only when the loop actually has
- * targets — a loop with `targets: null` (existing loops) reads nothing here,
- * and the caller further gates on the `loops-v4-polish.targets` sub-flag so
- * the section can be reverted independently of the rest of the bet.
+ * targets — a loop with `targets: null` (existing loops) reads nothing here.
  */
 export function TargetsAndOwners({
 	loop,

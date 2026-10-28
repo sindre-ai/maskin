@@ -5,7 +5,13 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { vi } from 'vitest'
 import { SessionManager } from '../../services/session-manager'
-import { SELF_HEAL_LOOKBACK_MS, SessionReconciler } from '../../services/session-reconciler'
+import {
+	SELF_HEAL_DEFAULT_LIMIT,
+	SELF_HEAL_GRACE_MS,
+	SELF_HEAL_LOOKBACK_MS,
+	SELF_HEAL_RECENT_LOOKBACK_MS,
+	SessionReconciler,
+} from '../../services/session-reconciler'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -67,6 +73,22 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		expect(result.backFilled.map((b) => b.sessionId)).not.toContain(stale?.id)
 	})
 
+	it('the short per-tick window skips a session settled before it, the full window reaches it', async () => {
+		const older = await completedAgo(SELF_HEAL_RECENT_LOOKBACK_MS + 60 * 60_000)
+		const reconciler = new SessionReconciler(db)
+
+		const recent = await reconciler.selfHealTerminalWithoutEvents(
+			Date.now(),
+			SELF_HEAL_GRACE_MS,
+			SELF_HEAL_DEFAULT_LIMIT,
+			SELF_HEAL_RECENT_LOOKBACK_MS,
+		)
+		expect(recent.backFilled.map((b) => b.sessionId)).not.toContain(older?.id)
+
+		const full = await reconciler.selfHealTerminalWithoutEvents()
+		expect(full.backFilled.map((b) => b.sessionId)).toContain(older?.id)
+	})
+
 	it('leaves a session alone when its events row exists in the same workspace', async () => {
 		const session = await completedAgo(5 * 60_000)
 		await db.insert(events).values({
@@ -90,7 +112,7 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		expect(index?.valid).toBe(true)
 	})
 
-	it('issues SQL that the settled-at index and the events workspace index can serve', async () => {
+	it('issues SQL that the settled-at index and the session events index can serve', async () => {
 		await completedAgo(5 * 60_000)
 		const captured: Array<{ query: string; params: unknown[] }> = []
 		const loggedDb = drizzle(sql, {
@@ -108,7 +130,36 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		const plan = await explainWithIndexes(issued.query, issued.params)
 
 		expect(plan).toContain('sessions_settled_at_idx')
-		expect(plan).toContain('events_ws_entity_id_idx')
+		// On an empty test table the planner cannot rank the two events indexes (no
+		// statistics, no visibility map), so a bare EXPLAIN says nothing about which it
+		// prefers. What this pins is that the probe CAN be answered by the partial session
+		// index (migration 0114): with the older workspace index dropped inside a
+		// transaction that is rolled back, it is the only index left to serve it.
+		const rolledBack = new Error('rollback')
+		let probePlan = ''
+		await sql
+			.begin(async (tx) => {
+				await tx.unsafe('DROP INDEX events_ws_entity_id_idx')
+				await tx.unsafe('SET LOCAL enable_seqscan = off')
+				const rows = await tx.unsafe(
+					`EXPLAIN (FORMAT JSON) ${issued.query}`,
+					issued.params as never[],
+				)
+				probePlan = JSON.stringify(rows)
+				throw rolledBack
+			})
+			.catch((err) => {
+				if (err !== rolledBack) throw err
+			})
+		expect(probePlan).toContain('events_session_entity_action_idx')
+	})
+
+	it('has a valid session events probe index', async () => {
+		const [index] = await sql`
+			SELECT i.indisvalid AS valid
+			FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+			WHERE c.relname = 'events_session_entity_action_idx'`
+		expect(index?.valid).toBe(true)
 	})
 })
 

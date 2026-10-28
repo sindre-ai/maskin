@@ -119,7 +119,7 @@ export const workspaceSettingsSchema = z.object({
 		// `archived` is a silent terminal — intentionally NOT in TERMINAL_BET_STATUSES
 		// (packages/shared/src/schemas/objects.ts) so archive doesn't fire retro or
 		// notification fan-out. Add other terminal states there, not archived.
-		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
+		bet: ['opportunity', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 		task: ['backlog', 'todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		loop: [...LOOP_STATUSES],
 	}),

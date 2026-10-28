@@ -54,7 +54,7 @@ describe('Object validation', () => {
 	it('accepts optional metadata', () => {
 		const result = createObjectSchema.safeParse({
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 			metadata: { signal_strength: 0.8 },
 		})
 		expect(result.success).toBe(true)

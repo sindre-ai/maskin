@@ -177,6 +177,24 @@ public struct RealtimeCallMachine: Sendable, Equatable {
 		return String(decoding: data, as: UTF8.self)
 	}()
 
+	/// A line someone typed in the chat during the call, as a conversation item the agent can use. It
+	/// does not ask for a response: the agent answers when the person speaks.
+	public static func chatMessageItem(from name: String, text: String) -> String {
+		let note = "\(name) typed in the chat during this call: \(text.prefix(chatMessageLimit))"
+		let event: [String: Any] = [
+			"type": "conversation.item.create",
+			"item": [
+				"type": "message", "role": "user",
+				"content": [["type": "input_text", "text": note]],
+			],
+		]
+		let data = (try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])) ?? Data()
+		return String(decoding: data, as: UTF8.self)
+	}
+
+	/// Longest typed message handed to the call, in characters.
+	static let chatMessageLimit = 2000
+
 	static func toolUnavailableOutput(callId: String) -> String {
 		let output = #"{"error":"Tools are unavailable on this call right now.","error_code":"voice_channel_unavailable"}"#
 		let event: [String: Any] = [

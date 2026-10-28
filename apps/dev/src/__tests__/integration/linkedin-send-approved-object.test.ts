@@ -10,7 +10,6 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	__setLinkedInClientForTests,
 	sendLinkedInMessage,
@@ -39,14 +38,10 @@ beforeAll(() => {
 
 afterAll(() => {
 	__setLinkedInClientForTests(null)
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 beforeEach(() => {
 	__setLinkedInClientForTests(null)
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 function stubbedClient() {
@@ -113,11 +108,6 @@ async function fileIn(
 		.returning()
 	store.blobs.set(row.storageKey, opts.bytes)
 	return row
-}
-
-function flagOn(wsId: string) {
-	process.env.FF_WORKSPACE_FEATURES = `${wsId}:linkedin-outreach-actions`
-	_resetFeatureFlagConfig()
 }
 
 async function setup(overrides: Record<string, unknown> = {}) {
@@ -306,7 +296,6 @@ describe('sendApprovedLinkedInObject with a file', () => {
 				attachment_file_id: file.id,
 			},
 		})
-		flagOn(base.ws.id)
 		return { ...base, store, file, object, ctx: { ...base.ctx, storage: store.storage } }
 	}
 
@@ -430,27 +419,6 @@ describe('sendApprovedLinkedInObject with a file', () => {
 			/not a file in this workspace/,
 		)
 		expect(reply).not.toHaveBeenCalled()
-	})
-
-	it('refuses a file while the outreach flag is off, and still sends plain text', async () => {
-		const reply = stubbedClient()
-		const { ctx, ws, actorId, object } = await withFile()
-		process.env.FF_WORKSPACE_FEATURES = undefined
-		_resetFeatureFlagConfig()
-		await approve(ws.id, actorId, object)
-		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/not switched on/,
-		)
-		expect(reply).not.toHaveBeenCalled()
-
-		const plain = await insertObject(db, ws.id, actorId, {
-			type: 'task',
-			content: 'No file here.',
-			metadata: { channel: 'linkedin_dm', thread_id: 'thread-42', to: 'Liz Benison' },
-		})
-		await approve(ws.id, actorId, plain)
-		await sendApprovedLinkedInObject(ctx, { object_id: plain.id })
-		expect(reply).toHaveBeenCalledTimes(1)
 	})
 
 	it('refuses raw attachments on the plain send, whoever calls it', async () => {

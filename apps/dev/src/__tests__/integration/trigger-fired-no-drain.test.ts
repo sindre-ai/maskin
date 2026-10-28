@@ -1,10 +1,10 @@
 import { triggerCooldowns, triggerEventQueue, triggers } from '@maskin/db/schema'
 import type { PgEvent } from '@maskin/realtime'
 import { and, eq, isNull } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { insertActor, insertSession, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
-import { emitObjectCreated, newQueueRunner, pollUntil, setV2Flag } from './queue-helpers'
+import { emitObjectCreated, newQueueRunner, pollUntil } from './queue-helpers'
 
 // S9 proof: resetTriggerBackoff is a queue drain point (S3), so a reset caused
 // by the runner's own trigger_fired event drained the queue of a trigger that
@@ -16,8 +16,6 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 describe('S9 — trigger_fired does not drain a cooling trigger', () => {
-	afterEach(() => setV2Flag(null))
-
 	/**
 	 * A trigger whose window opened, took two held events, and then EXPIRED. The
 	 * failure entry stays until a success, an edit or the sweep, which is exactly
@@ -36,7 +34,6 @@ describe('S9 — trigger_fired does not drain a cooling trigger', () => {
 			triggerId: trig.id,
 			status: 'completed',
 		})
-		setV2Flag(ws.id)
 		const harness = newQueueRunner()
 		await harness.runner.start()
 

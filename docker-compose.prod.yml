@@ -103,6 +103,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
       S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       # Product analytics. A variable that is not listed in this block never
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.
@@ -127,6 +128,16 @@ services:
       # admits. A hash is not secret. Empty means nobody matches, so probe
       # behaves as off.
       MASKIN_MCP_PROBE_KEY_SHA256: ${MASKIN_MCP_PROBE_KEY_SHA256:-}
+      # Claude login handling. Same rule as above: not listed here means never in
+      # the container. Both are read on every session launch, so a change needs
+      # an app restart only. MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED: only the
+      # literal true turns it on (the platform renews the login at launch and the
+      # agent container gets an access token, never the refresh token); empty or
+      # anything else keeps the current behaviour. CLAUDE_LAUNCH_BUFFER_MS: how
+      # much access-token life a launch must start with; empty means the 3 hour
+      # default.
+      MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED: ${MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED:-}
+      CLAUDE_LAUNCH_BUFFER_MS: ${CLAUDE_LAUNCH_BUFFER_MS:-}
       # GitHub integration (optional)
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}

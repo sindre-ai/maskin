@@ -1,10 +1,7 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { EditorBanner } from '@/components/shared/editor-banner'
-import { Textarea } from '@/components/ui/textarea'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
 	type HastNode,
@@ -12,8 +9,8 @@ import {
 	type LinkedTarget,
 	type StandaloneCard,
 	placeLinkedCards,
+	targetOfHref,
 } from '@/lib/linked-objects'
-import { splitMarkdownMarkers } from '@/lib/markdown-markers'
 import {
 	type ComponentOverridesContext,
 	MarkdownRenderer,
@@ -34,7 +31,6 @@ import {
 	lazy,
 	useCallback,
 	useEffect,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -146,230 +142,10 @@ function renderChartBlock({ language, source }: RenderCodeBlockArgs) {
 }
 
 /**
- * Toggle a markdown marker around `[start, end)` — `**` for bold, `_` for
- * italic, backtick for code. Wrapping an already-wrapped range unwraps it, so
- * the same shortcut is its own undo (mockup 8493–8506).
- */
-export function toggleMarkdownMarker(
-	value: string,
-	rawStart: number,
-	rawEnd: number,
-	marker: string,
-): { value: string; start: number; end: number } {
-	// Markdown will not emphasise a run padded with spaces — `**word **` renders
-	// as literal asterisks — and a double-click or a drag routinely picks up the
-	// trailing space. Wrap the words, leave the padding outside.
-	let start = rawStart
-	let end = rawEnd
-	while (start < end && /\s/.test(value[start] ?? '')) start += 1
-	while (end > start && /\s/.test(value[end - 1] ?? '')) end -= 1
-	if (start === end) return { value, start: rawStart, end: rawEnd }
-
-	const before = value.slice(Math.max(0, start - marker.length), start)
-	const after = value.slice(end, end + marker.length)
-	if (before === marker && after === marker) {
-		return {
-			value:
-				value.slice(0, start - marker.length) +
-				value.slice(start, end) +
-				value.slice(end + marker.length),
-			start: start - marker.length,
-			end: end - marker.length,
-		}
-	}
-	return {
-		value: value.slice(0, start) + marker + value.slice(start, end) + marker + value.slice(end),
-		start: start + marker.length,
-		end: end + marker.length,
-	}
-}
-
-/**
- * Where a click in the *rendered* prose lands in the *markdown source*.
- *
- * `nodeText` is the text node the click hit; finding it in the source and
- * adding the offset within it puts the caret under the pointer. Inline markup
- * (`**bold**`, links) shifts the answer by the marker characters, so this is a
- * near-miss rather than an exact map — still far better than the alternative,
- * which is every click landing at character 0. Returns null when the run can't
- * be located, and the caller falls back to the end of the document.
- */
-export function caretOffsetInSource(
-	source: string,
-	nodeText: string,
-	offsetInNode: number,
-): number | null {
-	const probe = nodeText.trim()
-	if (probe.length === 0) return null
-	const at = source.indexOf(probe)
-	if (at < 0) return null
-	// The rendered node may carry leading whitespace the source doesn't.
-	const lead = nodeText.length - nodeText.trimStart().length
-	const within = Math.max(0, Math.min(offsetInNode - lead, probe.length))
-	return at + within
-}
-
-/**
- * Source offset for one end of a DOM range. Only a text node can be mapped —
- * an offset into an element is a child index, not a character position.
- */
-function offsetOfRangeEnd(source: string, node: Node, offset: number): number | null {
-	if (node.nodeType !== Node.TEXT_NODE) return null
-	return caretOffsetInSource(source, node.textContent ?? '', offset)
-}
-
-/** Reads the caret position under a point, across both browser spellings. */
-function caretOffsetAtPoint(x: number, y: number, source: string): number | null {
-	const doc = document as Document & {
-		caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-		caretRangeFromPoint?: (x: number, y: number) => Range | null
-	}
-	let node: Node | null = null
-	let offset = 0
-	if (typeof doc.caretPositionFromPoint === 'function') {
-		const pos = doc.caretPositionFromPoint(x, y)
-		if (pos) {
-			node = pos.offsetNode
-			offset = pos.offset
-		}
-	} else if (typeof doc.caretRangeFromPoint === 'function') {
-		const range = doc.caretRangeFromPoint(x, y)
-		if (range) {
-			node = range.startContainer
-			offset = range.startOffset
-		}
-	}
-	if (!node || node.nodeType !== Node.TEXT_NODE) return null
-	return caretOffsetInSource(source, node.textContent ?? '', offset)
-}
-
-/**
- * One line of a markdown list: indent, marker, the space after it, an optional
- * task checkbox, then the item's own text.
- */
-const LIST_LINE = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/
-/** What one Tab step is worth. Two spaces — the nesting width remark reads. */
-const INDENT = '  '
-
-/** A rewritten textarea value plus where the selection should sit after it. */
-export interface EditorEdit {
-	value: string
-	start: number
-	end: number
-}
-
-/** The lines the selection touches, as a [start, end) slice of `value`. */
-function touchedLines(value: string, start: number, end: number): [number, number] {
-	const from = value.lastIndexOf('\n', start - 1) + 1
-	const nextBreak = value.indexOf('\n', end)
-	return [from, nextBreak === -1 ? value.length : nextBreak]
-}
-
-/**
- * Enter inside a list carries the marker down to the next line, and Enter on an
- * item that was left empty ends the list instead of laying down another marker
- * — the two behaviours every markdown editor has and a bare textarea doesn't.
- *
- * Returns null when the caret isn't in a list, so Enter falls through to the
- * browser's own newline.
- */
-export function continueListOnEnter(value: string, start: number, end: number): EditorEdit | null {
-	// A selection replaces its own range; only a collapsed caret continues.
-	if (start !== end) return null
-	const [lineStart, lineEnd] = touchedLines(value, start, start)
-	const match = LIST_LINE.exec(value.slice(lineStart, lineEnd))
-	if (!match) return null
-	const indent = match[1] ?? ''
-	const marker = match[2] ?? ''
-	const spacing = match[3] ?? ''
-	const checkbox = match[4]
-	const body = match[5] ?? ''
-
-	if (body.trim().length === 0) {
-		// Drop the marker and leave the caret on the now-blank line.
-		return {
-			value: value.slice(0, lineStart) + value.slice(start),
-			start: lineStart,
-			end: lineStart,
-		}
-	}
-
-	const ordered = /^(\d+)([.)])$/.exec(marker)
-	const nextMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : marker
-	const inserted = `\n${indent}${nextMarker}${spacing}${checkbox ? '[ ] ' : ''}`
-	const caret = start + inserted.length
-	return { value: value.slice(0, start) + inserted + value.slice(start), start: caret, end: caret }
-}
-
-/**
- * True where Tab means "indent" rather than "leave this field": inside a list
- * item, or across a selection that spans lines. Everywhere else Tab keeps
- * moving focus, so the editor never becomes a keyboard trap.
- */
-export function isIndentContext(value: string, start: number, end: number): boolean {
-	if (value.slice(start, end).includes('\n')) return true
-	const [lineStart, lineEnd] = touchedLines(value, start, start)
-	return LIST_LINE.test(value.slice(lineStart, lineEnd))
-}
-
-/** Shifts every line the selection touches one step in or out. */
-export function shiftIndent(
-	value: string,
-	start: number,
-	end: number,
-	outdent: boolean,
-): EditorEdit {
-	const [blockStart, blockEnd] = touchedLines(value, start, end)
-	let firstDelta = 0
-	let totalDelta = 0
-	const shifted = value
-		.slice(blockStart, blockEnd)
-		.split('\n')
-		.map((line, index) => {
-			if (outdent) {
-				const removed = /^(?:\t| {1,2})/.exec(line)?.[0] ?? ''
-				if (index === 0) firstDelta = -removed.length
-				totalDelta -= removed.length
-				return line.slice(removed.length)
-			}
-			// A blank line gets no indent — that would only leave trailing spaces.
-			if (line.length === 0) return line
-			if (index === 0) firstDelta = INDENT.length
-			totalDelta += INDENT.length
-			return INDENT + line
-		})
-		.join('\n')
-
-	return {
-		value: value.slice(0, blockStart) + shifted + value.slice(blockEnd),
-		start: Math.max(blockStart, start + firstDelta),
-		end: Math.max(blockStart, end + totalDelta),
-	}
-}
-
-/**
- * Maps a character offset in the draft onto a position in the overlay's text
- * nodes. The overlay renders exactly the draft, so the two share an offset
- * space — which is what lets a textarea selection, which has no geometry of
- * its own, borrow the overlay's.
- */
-function locateOffset(root: HTMLElement, target: number): { node: Node; offset: number } | null {
-	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-	let seen = 0
-	let node = walker.nextNode()
-	while (node) {
-		const length = node.textContent?.length ?? 0
-		if (seen + length >= target) return { node, offset: target - seen }
-		seen += length
-		node = walker.nextNode()
-	}
-	return null
-}
-
-/**
- * Where a message's links to objects and files turn into cards. A link that stands alone in its
- * paragraph or list item is replaced by its card in place; any other link's card goes under the
- * text, and an id drawn in place is never drawn again there.
+ * Where a message's links to objects and files turn into cards and chips. A link that stands
+ * alone on its line, or alone in a list item, is replaced by its card in place. Any other link to
+ * an object is a chip where it stands; a draft or file linked in a sentence gets its card under
+ * the text. An id drawn in place is never drawn again.
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
@@ -385,7 +161,24 @@ export interface LinkedCardsOptions {
 	renderCard: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+		context: {
+			workspaceId: string
+			conversationId?: string
+			agentId?: string
+			label?: string
+			inList?: boolean
+			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
+			after?: boolean
+		},
+	) => ReactNode
+	/**
+	 * Draws a link to an object that is not replaced by a card as a chip, or `fallback` (the
+	 * original link) while it cannot. Keep its identity stable.
+	 */
+	renderChip?: (
+		target: LinkedTarget,
+		fallback: ReactNode,
+		context: { workspaceId: string },
 	) => ReactNode
 }
 
@@ -399,41 +192,15 @@ function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
 const CARD_ITEM_CLASS =
 	'[ul>&]:has-[>[data-linked-card]]:list-none [ul>&]:has-[>[data-linked-card]]:before:hidden'
 
-/** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
-const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
-
-interface SelectionToolbarState {
-	x: number
-	y: number
-	text: string
-	// Where the selection sits in the markdown *source*. Null when the range
-	// couldn't be mapped, and the marker falls back to a first-match search.
-	start: number | null
-	end: number | null
-}
-
-function TextareaMarkdownContent({
-	content,
-	onChange,
-	editable = false,
-	className,
-	size = 'sm',
-	disallowedElements,
-	mentionActors,
-	onMentionClick,
-	renderVisuals = false,
-	editorLabel,
-	linkedCards: linkedCardsOption,
-}: {
+type MarkdownContentProps = {
 	content: string
-	// May return a promise. If it rejects, the editor is reopened with the
-	// user's draft intact: a failed save must never discard typed text.
+	// May return a promise; it is called on blur with the editor's markdown.
 	onChange?: (value: string) => unknown
 	editable?: boolean
 	className?: string
 	/** `doc` is the v2 document scale a detail page's body renders at (mockup
 	 *  1105–1122): a 15px lead paragraph, 12.5px bold micro-headings, 14px/1.65
-	 *  running copy, and em-dash list markers. */
+	 *  running copy, and em-dash list markers. Read-only rendering only. */
 	size?: 'sm' | 'xs' | 'doc'
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
@@ -444,7 +211,7 @@ function TextareaMarkdownContent({
 	 * unaffected — only ActivityComment opts in.
 	 */
 	renderVisuals?: boolean
-	/** Accessible name for the editing field — it has no visible label. */
+	/** Accessible name for the editing field. */
 	editorLabel?: string
 	/**
 	 * Opt-in, for chat messages: links to drafts and previewable files become cards, in place
@@ -452,14 +219,37 @@ function TextareaMarkdownContent({
 	 * the markdown renders exactly as before.
 	 */
 	linkedCards?: LinkedCardsOptions
-}) {
-	const [editing, setEditing] = useState(false)
+	/**
+	 * Editor only. Treat `content` as stored text to protect: a save rewrites
+	 * only the blocks the person touched, and text the editor cannot hold safely
+	 * opens read-only.
+	 */
+	preserveSource?: boolean
+	/** Editor only. Surface name carried on the editor events. */
+	surface?: string
+	objectId?: string
+}
+
+function RenderedMarkdownContent({
+	content,
+	className,
+	size = 'sm',
+	disallowedElements,
+	mentionActors,
+	onMentionClick,
+	renderVisuals = false,
+	linkedCards: linkedCardsOption,
+}: Omit<
+	MarkdownContentProps,
+	'onChange' | 'editable' | 'editorLabel' | 'preserveSource' | 'surface' | 'objectId'
+>) {
 	// Keyed on the values, not the object: a caller passing a fresh literal each render must not
 	// change the component map, or every card in the message would remount.
 	const cardsWorkspaceId = linkedCardsOption?.workspaceId
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
+	const chipRenderer = linkedCardsOption?.renderChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
@@ -469,13 +259,14 @@ function TextareaMarkdownContent({
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						renderCard: cardsRenderer,
+						renderChip: chipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer],
+		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer, chipRenderer],
 	)
-	// With linkedCards on, a paragraph or list item that is only a link to a draft or a
-	// previewable file renders as its card; the original element is what shows until the
-	// card is known to qualify, so a link never vanishes.
+	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
+	// any other link to an object as a chip; the original element is what shows until the card or
+	// chip is known to apply, so a link never vanishes.
 	const getComponentOverrides = useMemo(() => {
 		if (!linkedCards) return undefined
 		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
@@ -484,6 +275,7 @@ function TextareaMarkdownContent({
 			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
 				...linkedCards,
 				label: card.label ?? undefined,
+				inList: card.inList,
 			})
 		}
 		return ({ wrap }: ComponentOverridesContext) =>
@@ -493,6 +285,28 @@ function TextareaMarkdownContent({
 				li: ({ children }: { children?: ReactNode }) => (
 					<li className={CARD_ITEM_CLASS}>{wrap(children)}</li>
 				),
+				a: ({
+					node,
+					href,
+					children,
+					...rest
+				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					// Same as the renderer's own link: an address on the web opens in a new tab.
+					const external = typeof href === 'string' && /^https?:\/\//.test(href)
+					const link = (
+						<a
+							{...rest}
+							href={href}
+							{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+						>
+							{wrap(children)}
+						</a>
+					)
+					const target = node?.data?.linkedChip ? targetOfHref(href) : null
+					return target && linkedCards.renderChip
+						? linkedCards.renderChip(target, link, linkedCards)
+						: link
+				},
 				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
 					const list = (key: string) =>
 						String(node?.properties?.[key] ?? '')
@@ -502,7 +316,10 @@ function TextareaMarkdownContent({
 						<>
 							{list('objects').map((id) => (
 								<Fragment key={`object:${id}`}>
-									{linkedCards.renderCard({ kind: 'object', id }, null, linkedCards)}
+									{linkedCards.renderCard({ kind: 'object', id }, null, {
+										...linkedCards,
+										after: true,
+									})}
 								</Fragment>
 							))}
 							{list('files').map((id) => (
@@ -519,458 +336,51 @@ function TextareaMarkdownContent({
 		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
 		[linkedCards, cardsSkipIds],
 	)
-	const [draft, setDraft] = useState(content)
-	const containerRef = useRef<HTMLDivElement>(null)
-	const textareaRef = useRef<HTMLTextAreaElement>(null)
-	// Selection an in-progress edit (list continuation, indent, ⌘B) asked for,
-	// applied by a layout effect once the new value is on screen.
-	const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null)
-	// Source offset the caret should take when the editor mounts — set from the
-	// click that opened it. Null means "end of the document".
-	const pendingCaretRef = useRef<number | null>(null)
-	// Height of the rendered prose view at the moment edit mode is entered.
-	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
-	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
-	// Floating B / I / <> over a highlighted run in the editor (mockup 1030–1035).
-	const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null)
-	const docOverlayRef = useRef<HTMLDivElement>(null)
-
-	const handleBlur = useCallback(() => {
-		setEditing(false)
-		if (draft === content) return
-		const result = onChange?.(draft)
-		if (result && typeof (result as Promise<unknown>).then === 'function') {
-			// The save is optimistic and rolls back silently on failure. Reopen the
-			// editor with the draft still in it so a rejected write cannot destroy a
-			// long rewrite the user can no longer reach.
-			void (result as Promise<unknown>).catch(() => {
-				setDraft(draft)
-				setEditing(true)
-			})
-		}
-	}, [draft, content, onChange])
-
-	const startEditing = (initialDraft: string, caret: number | null = null) => {
-		if (containerRef.current) {
-			setLockedHeight(containerRef.current.offsetHeight)
-		}
-		pendingCaretRef.current = caret
-		setDraft(initialDraft)
-		setEditing(true)
-	}
-
-	// The toolbar belongs to the editor: it rises on a highlight inside the
-	// field and nowhere else. The textarea has no selection geometry, so the
-	// rect comes from the overlay behind it — same metrics, same coordinates.
-	const handleEditorSelect = useCallback(() => {
-		const ta = textareaRef.current
-		const overlay = docOverlayRef.current
-		if (!ta || !overlay) return
-		const { selectionStart: start, selectionEnd: end } = ta
-		if (start === end) {
-			setSelectionToolbar(null)
-			return
-		}
-		const from = locateOffset(overlay, start)
-		const to = locateOffset(overlay, end)
-		if (!from || !to) {
-			setSelectionToolbar(null)
-			return
-		}
-		const range = document.createRange()
-		range.setStart(from.node, from.offset)
-		range.setEnd(to.node, to.offset)
-		const rect = range.getBoundingClientRect()
-		if (!rect.width && !rect.height) {
-			setSelectionToolbar(null)
-			return
-		}
-		setSelectionToolbar({
-			x: (rect.left + rect.right) / 2,
-			y: rect.top - 8,
-			text: ta.value.slice(start, end),
-			start,
-			end,
-		})
-	}, [])
-
-	const applyMarkerToSelection = useCallback(
-		(marker: string) => {
-			const active = selectionToolbar
-			setSelectionToolbar(null)
-			const ta = textareaRef.current
-			// `?? ` not `||` — a selection at offset 0 is a real range.
-			if (!active || !ta || active.start === null || active.end === null) return
-			const next = toggleMarkdownMarker(ta.value, active.start, active.end, marker)
-			setDraft(next.value)
-			// Keep the words selected so a second press toggles them back off.
-			requestAnimationFrame(() => {
-				ta.focus()
-				ta.setSelectionRange(next.start, next.end)
-			})
-		},
-		[selectionToolbar],
-	)
-
-	const adjustHeight = useCallback(() => {
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.style.height = 'auto'
-		const scrollHeight = ta.scrollHeight
-		const min = lockedHeight ?? 0
-		ta.style.height = `${Math.max(scrollHeight, min)}px`
-	}, [lockedHeight])
-
-	// Rewrites the field and asks for a caret position once React has committed
-	// the new value. Deliberately *not* a requestAnimationFrame callback: a
-	// frame can be delayed past the next keystroke, which restores a stale caret
-	// mid-word and scatters the characters. The layout effect below runs before
-	// paint and before any further input, so the caret can't arrive late.
-	const applyEdit = useCallback((edit: EditorEdit) => {
-		pendingSelectionRef.current = { start: edit.start, end: edit.end }
-		setDraft(edit.value)
-	}, [])
-
-	const handleEditorKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Escape') {
-				setEditing(false)
-				setDraft(content)
-				return
-			}
-			const el = e.currentTarget
-			// Tab is claimed only where it means indentation — see isIndentContext.
-			if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-				if (!isIndentContext(el.value, el.selectionStart, el.selectionEnd)) return
-				e.preventDefault()
-				applyEdit(shiftIndent(el.value, el.selectionStart, el.selectionEnd, e.shiftKey))
-				return
-			}
-			if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-				const edit = continueListOnEnter(el.value, el.selectionStart, el.selectionEnd)
-				if (!edit) return
-				e.preventDefault()
-				applyEdit(edit)
-				return
-			}
-			if (!(e.metaKey || e.ctrlKey)) return
-			// ⌘⏎ commits, mirroring Escape's revert — otherwise the only way out
-			// of a full-page editor is to find something else to click.
-			if (e.key === 'Enter') {
-				e.preventDefault()
-				e.currentTarget.blur()
-				return
-			}
-			// AltGr is Ctrl+Alt on Windows/Linux, so `AltGr+E` (`€` on the Nordic,
-			// German, Polish and Turkish layouts) arrives here with `ctrlKey` set.
-			// Without this the character never lands and the selection gets wrapped
-			// in backticks instead. Same guard as the panel chords in
-			// `ui/sidebar.tsx` and `objects/object-detail-shell.tsx`.
-			if (e.altKey) return
-			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
-			if (!marker) return
-			e.preventDefault()
-			applyEdit(toggleMarkdownMarker(el.value, el.selectionStart, el.selectionEnd, marker))
-		},
-		[content, applyEdit],
-	)
-
-	useLayoutEffect(() => {
-		if (!editing) return
-		adjustHeight()
-		const ta = textareaRef.current
-		if (!ta || document.activeElement === ta) return
-		ta.focus()
-		const end = ta.value.length
-		ta.setSelectionRange(end, end)
-	}, [editing, adjustHeight])
-
-	// Runs after every commit; a no-op unless an edit left a caret request.
-	useLayoutEffect(() => {
-		const pending = pendingSelectionRef.current
-		if (!pending) return
-		pendingSelectionRef.current = null
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.setSelectionRange(pending.start, pending.end)
-		adjustHeight()
-	})
-
-	// Focus is taken here rather than with `autoFocus` so the caret can land
-	// where the click did. Keyed on `editing` alone: re-running on a height
-	// change would yank the caret back mid-typing.
-	useLayoutEffect(() => {
-		if (!editing) return
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.focus()
-		const caret = Math.min(pendingCaretRef.current ?? ta.value.length, ta.value.length)
-		ta.setSelectionRange(caret, caret)
-		pendingCaretRef.current = null
-	}, [editing])
-
-	// The toolbar is pinned to viewport coordinates captured at selection time,
-	// so it detaches from its text the moment anything scrolls. Dismiss instead
-	// of leaving it floating over unrelated content.
-	useEffect(() => {
-		if (!selectionToolbar) return
-		const dismiss = () => setSelectionToolbar(null)
-		window.addEventListener('scroll', dismiss, true)
-		window.addEventListener('resize', dismiss)
-		return () => {
-			window.removeEventListener('scroll', dismiss, true)
-			window.removeEventListener('resize', dismiss)
-		}
-	}, [selectionToolbar])
-
-	if (editable && editing) {
-		const isDoc = size === 'doc'
-		// The primitive sets `md:text-sm` and a focus ring. At the document scale
-		// both have to go, or the copy shrinks a pixel and a stray ring appears
-		// the moment you click in — the field has to *be* the view, exactly.
-		const field = (
-			<Textarea
-				ref={textareaRef}
-				aria-label={editorLabel}
-				className={cn(
-					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
-					isDoc
-						? 'relative min-h-0 rounded-[9px] bg-transparent px-2 py-1 text-[15px] text-transparent caret-foreground md:text-[15px]'
-						: 'bg-transparent p-0 text-sm text-muted-foreground',
-				)}
-				style={{ minHeight: lockedHeight, lineHeight: isDoc ? '1.65' : '1.7142857' }}
-				value={draft}
-				onChange={(e) => {
-					setDraft(e.target.value)
-					adjustHeight()
-				}}
-				onKeyDown={handleEditorKeyDown}
-				onSelect={isDoc ? handleEditorSelect : undefined}
-				onBlur={(e) => {
-					// A toolbar press blurs the field; its own mousedown re-focuses, so
-					// only a blur to somewhere else should commit and dismiss.
-					if (e.relatedTarget?.closest('[data-selection-toolbar]')) return
-					setSelectionToolbar(null)
-					handleBlur()
-				}}
-			/>
-		)
-
-		if (!isDoc) return field
-
-		return (
-			<div className="-ml-2 flex w-[calc(100%+8px)] max-w-[75ch] flex-col">
-				{/* Fixed over the highlighted run. The buttons act on mousedown so
-				    the browser never clears the selection first, and the field's
-				    blur handler ignores a blur that lands on them. */}
-				{selectionToolbar && (
-					<div
-						data-selection-toolbar=""
-						className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
-						style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-					>
-						{(
-							[
-								{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
-								{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
-								{
-									marker: '`',
-									label: 'Code',
-									glyph: '<>',
-									className: 'font-mono text-[11px] font-semibold',
-								},
-							] as const
-						).map((action) => (
-							<button
-								key={action.label}
-								type="button"
-								title={action.label}
-								aria-label={action.label}
-								onMouseDown={(e) => {
-									e.preventDefault()
-									applyMarkerToSelection(action.marker)
-								}}
-								className={cn(
-									'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
-									action.className,
-								)}
-							>
-								{action.glyph}
-							</button>
-						))}
-					</div>
-				)}
-
-				{/* What you read is the overlay; the textarea over it is transparent
-				    but for its caret. Same font, size, leading, padding and wrapping,
-				    so every glyph lands in the same place — which is what lets the
-				    delimiters recede without the caret drifting off the text. */}
-				<div className="relative rounded-[9px] bg-muted/60">
-					<div
-						ref={docOverlayRef}
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-0 whitespace-pre-wrap break-words px-2 py-1 text-[15px] leading-[1.65] text-foreground"
-					>
-						{splitMarkdownMarkers(draft).map((segment, index) => (
-							<span
-								// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-								key={index}
-								className={cn(segment.isMarker && 'text-border-strong')}
-							>
-								{segment.text}
-							</span>
-						))}
-						{/* Keeps the overlay's height in step when the draft ends in a newline. */}
-						{draft.endsWith('\n') && '\u200b'}
-					</div>
-					{field}
-				</div>
-				<p className="mt-1.5 px-2 text-[10.5px] text-muted-foreground">
-					<kbd className="font-mono">Esc</kbd> to cancel · <kbd className="font-mono">⌘↵</kbd> to
-					save · <kbd className="font-mono">⌘B</kbd> <kbd className="font-mono">⌘I</kbd>{' '}
-					<kbd className="font-mono">⌘E</kbd> to format
-				</p>
-			</div>
-		)
-	}
-
-	if (editable && !content) {
-		return (
-			<Textarea
-				aria-label={editorLabel}
-				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
-				placeholder="Click to add content..."
-				onFocus={() => startEditing('')}
-				readOnly
-			/>
-		)
-	}
 
 	return (
-		<>
-			{/* Fixed to the selection, above it (mockup 1030–1035). The buttons act
-			    on mousedown so the browser never clears the selection first. */}
-			{selectionToolbar && (
-				<div
-					className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
-					style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-				>
-					{(
-						[
-							{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
-							{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
-							{
-								marker: '`',
-								label: 'Code',
-								glyph: '<>',
-								className: 'font-mono text-[11px] font-semibold',
-							},
-						] as const
-					).map((action) => (
-						<button
-							key={action.label}
-							type="button"
-							title={action.label}
-							aria-label={action.label}
-							onMouseDown={(e) => {
-								e.preventDefault()
-								applyMarkerToSelection(action.marker)
-							}}
-							className={cn(
-								'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
-								action.className,
-							)}
-						>
-							{action.glyph}
-						</button>
-					))}
-				</div>
-			)}
-			<div
-				ref={containerRef}
-				className={cn(
-					className,
-					// The doc view sits on the editor's own plate and measure, so the
-					// swap into edit mode moves nothing (mockup 1027–1037).
-					size === 'doc' &&
-						editable &&
-						'-ml-2 w-[calc(100%+8px)] max-w-[75ch] cursor-text rounded-[9px] px-2 py-1 transition-colors hover:bg-muted/60',
-				)}
-				onClick={(e) => {
-					if (!editable) return
-					// Links, task checkboxes and any other control in the body have to
-					// keep working — swallowing their click into the editor makes the
-					// rendered document unusable as a document.
-					if (
-						(e.target as HTMLElement).closest(
-							'a,button,input,select,textarea,summary,[role="button"]',
-						)
-					) {
-						return
-					}
-					// Selecting text must not drop you into the editor and lose it.
-					if (String(window.getSelection() ?? '').trim()) return
-					startEditing(content, caretOffsetAtPoint(e.clientX, e.clientY, content))
-				}}
-				onKeyDown={(e) => {
-					if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
-				}}
-				tabIndex={editable ? 0 : undefined}
-			>
-				<MarkdownRenderer
-					content={content}
-					size={size}
-					disallowedElements={disallowedElements}
-					mentionActors={mentionActors as MentionActor[] | undefined}
-					onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
-					renderVisuals={renderVisuals}
-					renderCodeBlock={renderChartBlock}
-					renderImage={renderMarkdownImage}
-					rehypePlugins={rehypePlugins as unknown as never[] | undefined}
-					getComponentOverrides={getComponentOverrides}
-				/>
-			</div>
-		</>
+		<div className={className}>
+			<MarkdownRenderer
+				content={content}
+				size={size}
+				disallowedElements={disallowedElements}
+				mentionActors={mentionActors as MentionActor[] | undefined}
+				onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+				renderVisuals={renderVisuals}
+				renderCodeBlock={renderChartBlock}
+				renderImage={renderMarkdownImage}
+				rehypePlugins={rehypePlugins as unknown as never[] | undefined}
+				getComponentOverrides={getComponentOverrides}
+			/>
+		</div>
 	)
 }
+
 /**
  * Thin adapter over the split @maskin/markdown/react package (bet 666e3c4a).
  *
  * - editable=false: MarkdownRenderer (react-markdown, 0 KB added on read
- *   routes), reached through TextareaMarkdownContent's rendered view.
- * - editable=true + rich-markdown-editor flag on: MarkdownEditor from the
- *   dynamic-imported Tiptap chunk.
- * - editable=true + flag off: today's Textarea blur-emit behaviour, so nothing
- *   changes for a flag-off user.
+ *   routes), reached through RenderedMarkdownContent.
+ * - editable=true: MarkdownEditor from the dynamic-imported Tiptap chunk.
  *
- * Blur-emit save semantics hold on both branches: onChange(markdown) fires only
- * on blur (tech spec §9).
+ * Blur-emit save semantics: onChange(markdown) fires only on blur (tech spec §9).
  */
 export function MarkdownContent({
+	editable,
+	onChange,
+	editorLabel,
 	preserveSource,
 	surface,
 	objectId,
-	...props
-}: Parameters<typeof TextareaMarkdownContent>[0] & {
-	/**
-	 * Rich editor only. Treat `content` as stored text to protect: a save rewrites
-	 * only the blocks the person touched, and text the editor cannot hold safely
-	 * opens read-only. Ignored on the Textarea path, which saves what was typed.
-	 */
-	preserveSource?: boolean
-	/** Rich editor only. Surface name carried on the editor events. */
-	surface?: string
-	objectId?: string
-}) {
-	const editorEnabled = useFeatureFlag('rich-markdown-editor')
-
-	if (props.editable && editorEnabled) {
+	...renderProps
+}: MarkdownContentProps) {
+	if (editable) {
 		return (
 			<EditorAdapter
-				content={props.content}
-				onChange={props.onChange}
-				className={props.className}
-				disallowedElements={props.disallowedElements}
+				content={renderProps.content}
+				onChange={onChange}
+				className={renderProps.className}
+				editorLabel={editorLabel}
+				disallowedElements={renderProps.disallowedElements}
 				preserveSource={preserveSource}
 				surface={surface}
 				objectId={objectId}
@@ -978,7 +388,7 @@ export function MarkdownContent({
 		)
 	}
 
-	return <TextareaMarkdownContent {...props} />
+	return <RenderedMarkdownContent {...renderProps} />
 }
 
 export const READ_ONLY_DESCRIPTION_BANNER =
@@ -988,7 +398,7 @@ export const READ_ONLY_DESCRIPTION_BANNER =
 export const REFUSED_DESCRIPTION_BANNER =
 	"Part of this description can't be written back without losing something, so that part was left as it was. Your other changes are saved."
 
-// Flag-on: dynamic-imported Tiptap surface. Blur-emit is delegated to the
+// Dynamic-imported Tiptap surface. Blur-emit is delegated to the
 // editor itself (spec §9). While the chunk is fetching, render the raw
 // markdown so nothing flashes empty. `surface` / `objectId` ride on the editor
 // events; the object description and create form pass them.
@@ -996,6 +406,7 @@ function EditorAdapter({
 	content,
 	onChange,
 	className,
+	editorLabel,
 	disallowedElements,
 	preserveSource,
 	surface,
@@ -1004,6 +415,7 @@ function EditorAdapter({
 	content: string
 	onChange?: (value: string) => unknown
 	className?: string
+	editorLabel?: string
 	disallowedElements?: string[]
 	preserveSource?: boolean
 	surface?: string
@@ -1098,6 +510,7 @@ function EditorAdapter({
 					onEdit={handleEdit}
 					variant="document"
 					className={className}
+					ariaLabel={editorLabel}
 					disallowedNodes={disallowedNodes}
 					onParseError={handleParseError}
 					onToolbarAction={handleToolbarAction}

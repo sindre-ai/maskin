@@ -1,16 +1,22 @@
-import type { SearchGroup, SearchRow } from '@/hooks/use-workspace-search'
+import type { SearchGroup, SearchRow } from '@/hooks/legacy/use-workspace-search'
 import {
+	type SearchEntry,
+	type SearchSortKey,
 	type SearchSurface,
+	type SearchUiVersion,
 	type TaxonomyEntityType,
 	trackSearchPerformed,
 	trackSearchResultOpened,
 } from '@/lib/analytics'
 import { useEffect, useRef } from 'react'
 
-/** How long a typed query rests before it is committed and searched. The search
- *  page and the palette both debounce on this, and a search only counts as
- *  settled after it — so the two surfaces cannot drift apart. */
+/** How long a typed query rests before it is committed and searched on the
+ *  search page, and a search only counts as settled after it. */
 export const SEARCH_DEBOUNCE_MS = 300
+
+/** The palette filters its local lists on every keystroke, so only the
+ *  `/objects/search` call waits; this is how long. */
+export const PALETTE_SERVER_DEBOUNCE_MS = 100
 
 /** Number of whitespace-separated words in the query. An integer only: the
  *  query text itself is never sent to analytics. */
@@ -100,11 +106,118 @@ export function useTrackSettledSearch(input: SettledSearchInput): void {
 	}, [surface, active, trimmed, type, status, isSettled, isError, isPartial, total])
 }
 
+export interface SettledSearchV2Input {
+	/** The surface the search ran on. The page by default; the launcher passes command_palette. */
+	surface?: SearchSurface
+	/** False when there is nothing to report (no words typed). Clears the dedupe memory. */
+	active: boolean
+	query: string
+	types: string[]
+	statuses: string[]
+	updated: string
+	sort: SearchSortKey
+	entry: SearchEntry
+	/** The request succeeded and this is its own answer, not the previous results kept on screen. */
+	isSettled: boolean
+	isPartial: boolean
+	total: number
+}
+
+/**
+ * The v2 page's `search_performed`. Fires once per settled request with words in it:
+ * never while loading, on error, or for placeholder data. A different query, type
+ * set, status set or Updated window is a new search; a sort change is not (it
+ * reorders the same results). Filter-only searches (no words) do not fire, so the
+ * event keeps the meaning it had on the old page.
+ */
+export function useTrackSettledSearchV2(input: SettledSearchV2Input): void {
+	const {
+		surface = 'search_view',
+		active,
+		query,
+		types,
+		statuses,
+		updated,
+		sort,
+		entry,
+		isSettled,
+		isPartial,
+		total,
+	} = input
+	const trimmed = query.trim()
+	const typeFilter = [...types].sort().join(',')
+	const statusFilter = [...statuses].sort().join(',')
+	const firedKey = useRef<string | null>(null)
+	const firedSearch = useRef<SettledSearch | null>(null)
+
+	useEffect(
+		() => () => {
+			delete lastSearch[surface]
+		},
+		[surface],
+	)
+
+	useEffect(() => {
+		if (!active || !trimmed) {
+			firedKey.current = null
+			firedSearch.current = null
+			delete lastSearch[surface]
+			return
+		}
+		if (!isSettled) return
+		const key = [trimmed, typeFilter, statusFilter, updated].join('\u0000')
+		if (firedKey.current === key) {
+			if (firedSearch.current) lastSearch[surface] = firedSearch.current
+			return
+		}
+		firedKey.current = key
+		const searchId = newSearchId()
+		firedSearch.current = { id: searchId, resultCount: total }
+		lastSearch[surface] = firedSearch.current
+		trackSearchPerformed({
+			surface,
+			search_id: searchId,
+			result_count: total,
+			is_partial: isPartial,
+			query_length: trimmed.length,
+			words_count: countWords(trimmed),
+			type_filter: typeFilter || null,
+			status_filter: statusFilter || null,
+			ui_version: 'v2',
+			entry,
+			pill_count: types.length + statuses.length,
+			filter_count: (types.length ? 1 : 0) + (statuses.length ? 1 : 0) + (updated ? 1 : 0),
+			sort,
+		})
+	}, [
+		surface,
+		active,
+		trimmed,
+		typeFilter,
+		statusFilter,
+		updated,
+		sort,
+		entry,
+		isSettled,
+		isPartial,
+		total,
+		types.length,
+		statuses.length,
+	])
+}
+
 const ENTITY_TYPE_BY_GROUP: Record<Exclude<SearchGroup, 'objects'>, TaxonomyEntityType> = {
 	chats: 'conversation',
 	loops: 'loop',
 	agents: 'agent',
+	people: 'actor',
 	automations: 'trigger',
+}
+
+/** The taxonomy entity type of a v2 result row: the object's own type for objects, else by group. */
+export function searchEntityType(group: SearchGroup, objectType: string): TaxonomyEntityType {
+	if (group === 'objects') return objectType as TaxonomyEntityType
+	return ENTITY_TYPE_BY_GROUP[group]
 }
 
 export function searchRowEntityType(row: SearchRow): TaxonomyEntityType {
@@ -127,6 +240,7 @@ export function trackSearchRowOpened(p: {
 	hasQuery: boolean
 	/** Size of the list the row was shown in; used when no search is on record. */
 	listSize: number
+	uiVersion?: SearchUiVersion
 }): void {
 	const search = p.hasQuery ? lastSearch[p.surface] : undefined
 	trackSearchResultOpened({
@@ -138,5 +252,6 @@ export function trackSearchRowOpened(p: {
 		result_count: search?.resultCount ?? p.listSize,
 		position: p.position,
 		result_group: p.group,
+		...(p.uiVersion ? { ui_version: p.uiVersion } : {}),
 	})
 }

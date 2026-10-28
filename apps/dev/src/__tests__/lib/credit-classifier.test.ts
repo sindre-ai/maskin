@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyCreditExhaustion, classifySessionExit } from '../../lib/credit-classifier'
+import {
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
 	describe('Claude Code CLI banner strings', () => {
@@ -377,5 +382,37 @@ describe('classifyCreditExhaustion reset time', () => {
 			reset_source: 'cli-banner',
 			reset_confidence: 'authoritative',
 		})
+	})
+})
+
+describe('Claude auth death', () => {
+	const resultLine = (text: string, isError: boolean) =>
+		JSON.stringify({ type: 'result', is_error: isError, result: text })
+	const DEAD = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+
+	it('recognises the CLI giving up on a 401, with or without the API error detail', () => {
+		expect(isClaudeAuthDeathText(DEAD)).toBe(true)
+		expect(isClaudeAuthDeathText(`  Failed to authenticate. API Error: 401 {"type":"error"}`)).toBe(
+			true,
+		)
+		expect(isClaudeAuthDeathText('Reviewed the PR, no problems')).toBe(false)
+	})
+
+	it('matches when the final result is that error', () => {
+		expect(endsInClaudeAuthDeath(`working...\n${resultLine(DEAD, true)}\n`)).toBe(true)
+	})
+
+	it('ignores the same words in a tool result or a successful final result', () => {
+		const quoted = JSON.stringify({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', content: DEAD }] },
+		})
+		expect(endsInClaudeAuthDeath(`${quoted}\n${resultLine('Done', false)}\n`)).toBe(false)
+		expect(endsInClaudeAuthDeath(`${resultLine(DEAD, false)}\n`)).toBe(false)
+		expect(endsInClaudeAuthDeath('')).toBe(false)
+	})
+
+	it('is not a failover banner, so a dead login never moves a healthy slot', () => {
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toBeNull()
 	})
 })

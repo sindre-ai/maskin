@@ -11,10 +11,9 @@ import { and, asc, eq, inArray, like } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { getProvider } from '../../lib/integrations/registry'
 import { integrationScopeGaps } from '../../lib/integrations/scope-drift'
-import { CapabilityScanner } from '../../services/capability-scanner'
+import { CapabilityScanner, KILLSWITCH_ENV_VAR } from '../../services/capability-scanner'
 import { buildIntegration, insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -41,7 +40,6 @@ describe('CapabilityScanner (integration)', () => {
 	let slackIntegrationId: string
 	let answers: Map<string, Answer>
 	let probe: ProbeFn
-	let previousFlagEnv: string | undefined
 	let previousEncryptionKey: string | undefined
 
 	const BUILTIN = 'maskin:builtin'
@@ -110,11 +108,6 @@ describe('CapabilityScanner (integration)', () => {
 		})
 	}
 
-	function flagOn(id: string) {
-		process.env.FF_WORKSPACE_FEATURES = `${id}:capability-scan`
-		_resetFeatureFlagConfig()
-	}
-
 	function scanner() {
 		return new CapabilityScanner(db, { probe })
 	}
@@ -136,7 +129,6 @@ describe('CapabilityScanner (integration)', () => {
 	}
 
 	beforeEach(async () => {
-		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
 		previousEncryptionKey = process.env.INTEGRATION_ENCRYPTION_KEY
 		process.env.INTEGRATION_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 		spies.createLLMAdapter.mockClear()
@@ -146,7 +138,6 @@ describe('CapabilityScanner (integration)', () => {
 		chiefOfStaffId = seeded.chiefOfStaffId
 		agentIds = seeded.agentIds
 		slackIntegrationId = seeded.slackId
-		flagOn(workspaceId)
 		answers = new Map<string, Answer>([
 			[BUILTIN, tools({ create_objects: 'h-create', get_objects: 'h-get' })],
 			[slackKey(), tools({ slack_send_message: 'h-send' })],
@@ -160,9 +151,7 @@ describe('CapabilityScanner (integration)', () => {
 	})
 
 	afterEach(() => {
-		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
 		process.env.INTEGRATION_ENCRYPTION_KEY = previousEncryptionKey ?? undefined
-		_resetFeatureFlagConfig()
 	})
 
 	it('tick 1 writes a baseline and no findings', async () => {
@@ -343,19 +332,8 @@ describe('CapabilityScanner (integration)', () => {
 		expect(await eventsFor('capability_changed')).toHaveLength(0)
 	})
 
-	it('flag off: no scanner work and no capability event', async () => {
-		process.env.FF_WORKSPACE_FEATURES = ''
-		_resetFeatureFlagConfig()
-		const result = await scanner().scanWorkspace(workspaceId)
-		expect(result).toEqual({ status: 'skipped', reason: 'flag_off' })
-		await scanner().tick()
-		expect(probe).not.toHaveBeenCalled()
-		expect(await capabilityEventCount()).toBe(0)
-	})
-
 	it('a workspace without a Chief of Staff is skipped', async () => {
 		const bare = await seedWorkspace({ chiefOfStaff: false })
-		flagOn(bare.workspaceId)
 		const result = await scanner().scanWorkspace(bare.workspaceId)
 		expect(result).toEqual({ status: 'skipped', reason: 'no_chief_of_staff' })
 		expect(await capabilityEventCount(bare.workspaceId)).toBe(0)
@@ -370,13 +348,6 @@ describe('CapabilityScanner (integration)', () => {
 		// The daily tick is not a boot tick and always scans.
 		const daily = await scanner().scanWorkspace(workspaceId)
 		expect(daily.status).toBe('scanned')
-	})
-
-	it('tick() only processes workspaces with the flag on', async () => {
-		const other = await seedWorkspace()
-		await scanner().tick()
-		expect(await eventsFor('capability_scan_completed')).toHaveLength(1)
-		expect(await capabilityEventCount(other.workspaceId)).toBe(0)
 	})
 
 	it('a full tick starts no session and makes no model call', async () => {
@@ -566,5 +537,29 @@ describe('CapabilityScanner (integration)', () => {
 		await scanner().scanWorkspace(workspaceId)
 		const [scan] = await eventsFor('capability_scan_completed')
 		expect(scan.data).toMatchObject({ unscanned_servers: 1 })
+	})
+
+	describe('kill switch', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('FEATURE_CAPABILITY_SCAN=0 means start() sets no timers and nothing ticks', async () => {
+			vi.useFakeTimers()
+			const killed = new CapabilityScanner(db, { probe, env: { [KILLSWITCH_ENV_VAR]: '0' } })
+			killed.start()
+			expect(vi.getTimerCount()).toBe(0)
+			await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000)
+			expect(probe).not.toHaveBeenCalled()
+		})
+
+		it('without the env var start() sets the daily and boot timers, and stop() clears them', () => {
+			vi.useFakeTimers()
+			const running = new CapabilityScanner(db, { probe, env: {} })
+			running.start()
+			expect(vi.getTimerCount()).toBe(2)
+			running.stop()
+			expect(vi.getTimerCount()).toBe(0)
+		})
 	})
 })

@@ -11,7 +11,7 @@ const config = {
 }
 
 describe('createVoiceToolkit', () => {
-	it('exposes exactly the tools an MCP client gets from tools/list', async () => {
+	it('exposes the tools an MCP client gets from tools/list, minus the app-only ones', async () => {
 		const server = createMcpServer(config)
 		const client = new Client({ name: 'chat', version: '0' })
 		const [a, b] = InMemoryTransport.createLinkedPair()
@@ -20,8 +20,24 @@ describe('createVoiceToolkit', () => {
 
 		const { tools } = await createVoiceToolkit(config)
 
-		expect(tools.map((t) => t.name).sort()).toEqual(chat.tools.map((t) => t.name).sort())
+		const appOnly = chat.tools.filter((t) => {
+			const visibility = (t._meta?.ui as { visibility?: string[] } | undefined)?.visibility
+			return Array.isArray(visibility) && !visibility.includes('model')
+		})
+		expect(appOnly.map((t) => t.name)).toContain('approve_object_draft')
+		expect(tools.map((t) => t.name).sort()).toEqual(
+			chat.tools
+				.filter((t) => !appOnly.includes(t))
+				.map((t) => t.name)
+				.sort(),
+		)
 		expect(tools.length).toBeGreaterThan(8)
+	})
+
+	it('does not offer approve_object_draft, which only a person can complete', async () => {
+		const { tools } = await createVoiceToolkit(config)
+		expect(tools.map((t) => t.name)).not.toContain('approve_object_draft')
+		expect(tools.map((t) => t.name)).toContain('gmail_send_email')
 	})
 
 	it('hands the model the real schemas, including list_objects pagination', async () => {

@@ -109,7 +109,7 @@ describe('parseLoopDescription — second example sentence', () => {
 		expect(plan.objectTypes[0]).toMatchObject({
 			type: 'bet',
 			name: 'Bet',
-			stateChain: ['signal', 'active', 'at_risk', 'rescue'],
+			stateChain: ['opportunity', 'active', 'at_risk', 'rescue'],
 		})
 		expect(plan.triggers[0]).toMatchObject({
 			kindLabel: 'EVENT',
@@ -133,9 +133,9 @@ describe('parseLoopDescription — workspace status-chain composite', () => {
 	it('uses the provided per-type status chain when given', () => {
 		const plan = parseLoopDescription(
 			'when a bet hits at-risk, ping the Strategist to write a rescue plan',
-			{ statusChains: { bet: ['signal', 'active', 'live'] } },
+			{ statusChains: { bet: ['opportunity', 'active', 'live'] } },
 		)
-		expect(plan.objectTypes[0].stateChain).toEqual(['signal', 'active', 'live'])
+		expect(plan.objectTypes[0].stateChain).toEqual(['opportunity', 'active', 'live'])
 	})
 })
 
@@ -212,7 +212,7 @@ describe('parseLoopDescription — kindLabel vs isNew', () => {
 		const known = parseLoopDescription(AC_EXAMPLE, { statusChains: { feedback: ['new', 'done'] } })
 		expect(known.objectTypes[0].isNew).toBe(false)
 
-		const unknown = parseLoopDescription(AC_EXAMPLE, { statusChains: { bet: ['signal'] } })
+		const unknown = parseLoopDescription(AC_EXAMPLE, { statusChains: { bet: ['opportunity'] } })
 		expect(unknown.objectTypes[0].isNew).toBe(true)
 	})
 

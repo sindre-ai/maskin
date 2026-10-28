@@ -46,6 +46,36 @@ public struct ChatQuestionAnswer: Codable, Sendable, Equatable {
 	}
 }
 
+/// How a card was answered (`metadata.card_answer`): a person's decline of an agent's request,
+/// which the card reads back so it still says "Declined" after a reload.
+public struct ChatCardAnswer: Codable, Sendable, Equatable {
+	public enum Outcome: String, Codable, Sendable { case declined, done }
+
+	public var messageID: Int
+	public var outcome: Outcome
+
+	public init(messageID: Int, outcome: Outcome) {
+		self.messageID = messageID
+		self.outcome = outcome
+	}
+
+	enum CodingKeys: String, CodingKey { case messageID = "message_id", outcome }
+}
+
+/// The intro step a message was sent from (`metadata.from_suggested_step`). Client-supplied and
+/// carrying no authority; it only lets tap-to-start be counted from saved messages.
+public struct ChatSuggestedStepRef: Codable, Sendable, Equatable {
+	public var introMessageID: Int
+	public var index: Int
+
+	public init(introMessageID: Int, index: Int) {
+		self.introMessageID = introMessageID
+		self.index = index
+	}
+
+	enum CodingKeys: String, CodingKey { case introMessageID = "intro_message_id", index }
+}
+
 /// The client-supplied part of a message's `metadata`. Exactly the keys the API accepts, so the
 /// encoded form can go straight on the wire (and be stored in the outbox).
 public struct ChatSendMetadata: Codable, Sendable, Equatable {
@@ -56,21 +86,35 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 	/// Actor ids. The backend auto-joins a mentioned agent that is not yet a participant.
 	public var mentions: [String]?
 	public var questionAnswer: ChatQuestionAnswer?
+	/// A card button's nudge to the agent: delivered, but not something to read in the chat.
+	public var hiddenFromChat: Bool?
+	public var cardAnswer: ChatCardAnswer?
+	public var fromSuggestedStep: ChatSuggestedStepRef?
 
 	public init(
 		attachments: [ChatAttachmentRef]? = nil, mentions: [String]? = nil,
-		questionAnswer: ChatQuestionAnswer? = nil
+		questionAnswer: ChatQuestionAnswer? = nil, hiddenFromChat: Bool? = nil,
+		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil
 	) {
 		self.attachments = attachments?.isEmpty == true ? nil : attachments
 		self.mentions = mentions?.isEmpty == true ? nil : mentions
 		self.questionAnswer = questionAnswer
+		self.hiddenFromChat = hiddenFromChat == true ? true : nil
+		self.cardAnswer = cardAnswer
+		self.fromSuggestedStep = fromSuggestedStep
 	}
 
 	enum CodingKeys: String, CodingKey {
 		case attachments, mentions, questionAnswer = "question_answer"
+		case hiddenFromChat = "hidden_from_chat", cardAnswer = "card_answer"
+		case fromSuggestedStep = "from_suggested_step"
 	}
 
-	public var isEmpty: Bool { attachments == nil && mentions == nil && questionAnswer == nil }
+	public var isEmpty: Bool {
+		attachments == nil && mentions == nil && questionAnswer == nil && hiddenFromChat == nil
+			&& cardAnswer == nil
+			&& fromSuggestedStep == nil
+	}
 
 	/// The same data as a `JSONValue`, so an optimistic bubble reads it exactly like a server row.
 	public var jsonValue: JSONValue? {
@@ -123,6 +167,20 @@ public struct ChatQuestionItem: Sendable, Equatable, Identifiable {
 }
 
 extension ChatMessage {
+	/// A card button's nudge to the agent, or a helper's result handed back to the agent that
+	/// started it: delivered, but not something to read in the chat (the web hides them too).
+	public var isHiddenFromChat: Bool {
+		metadata?["hidden_from_chat"]?.boolValue == true || metadata?["helper_return"] != nil
+	}
+
+	/// How a person answered an agent's card, when this message is that answer.
+	public var cardAnswer: ChatCardAnswer? {
+		guard let raw = metadata?["card_answer"], let id = raw["message_id"]?.intValue,
+			let outcome = raw["outcome"]?.stringValue.flatMap(ChatCardAnswer.Outcome.init(rawValue:))
+		else { return nil }
+		return ChatCardAnswer(messageID: id, outcome: outcome)
+	}
+
 	public var attachments: [ChatAttachmentRef] {
 		guard case .array(let items)? = metadata?["attachments"] else { return [] }
 		return items.compactMap { item in

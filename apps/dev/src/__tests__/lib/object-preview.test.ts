@@ -94,6 +94,22 @@ describe('buildObjectPreview', () => {
 		])
 	})
 
+	it('shows the message an email reply answers without changing the approval hash', () => {
+		const base = {
+			content: 'Hi Mette,\n\nThursday works.',
+			metadata: { kind: 'email', to: 'mette@northwind.dk', subject: 'Thursday' },
+		}
+		const plain = buildObjectPreview(base)
+		const withContext = buildObjectPreview({
+			...base,
+			metadata: { ...base.metadata, reply_to: 'Can we meet Thursday?' },
+		})
+		expect(withContext?.context).toBe('Can we meet Thursday?')
+		expect(plain?.context).toBeNull()
+		expect(withContext?.content_hash).toBe(plain?.content_hash)
+		expect({ ...withContext, context: null }).toEqual(plain)
+	})
+
 	it('reads a leading Subject line when the metadata has no subject', () => {
 		const preview = buildObjectPreview({
 			content: 'Subject: Thursday\n\nHi Mette',
