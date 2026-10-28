@@ -33,13 +33,19 @@ import {
 	deriveDriveHumans,
 	pickDriveVariant,
 } from '@/lib/drive-humans'
+import { DRIVE_WIZARD_COPY } from '@/lib/drive-wizard-copy'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations_/google-drive')({
 	component: DriveDetailPage,
+	// Google sends a cancelled consent back with oauth=cancelled (see the OAuth
+	// callback). Any other value is dropped.
+	validateSearch: (search: Record<string, unknown>) => ({
+		...(search.oauth === 'cancelled' ? { oauth: 'cancelled' as const } : {}),
+	}),
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
@@ -75,6 +81,10 @@ function BackToIntegrations() {
 	)
 }
 
+// Symbolic key the OAuth callback maps to this page, so a cancel on Google's
+// consent screen lands back here.
+const DRIVE_ORIGIN = 'google-drive'
+
 const PILL_BY_VARIANT: Record<DriveDetailVariant, { tone: StatusPillTone; label: string }> = {
 	connected: { tone: 'ok', label: DRIVE_COPY.statusPill.connected },
 	'scope-add': { tone: 'warn', label: DRIVE_COPY.statusPill.partial },
@@ -88,7 +98,24 @@ function DriveDetail() {
 	const { data: actors } = useActors(workspaceId)
 	const connect = useConnectIntegration(workspaceId)
 	const navigate = useNavigate()
-	const startConnect = () => connect.mutate({ provider: DRIVE_PROVIDER })
+	const { oauth } = Route.useSearch()
+	// Held in state and stripped from the URL, so a refresh does not bring the
+	// message back.
+	const [cancelled, setCancelled] = useState(oauth === 'cancelled')
+	useEffect(() => {
+		if (oauth) {
+			navigate({
+				to: '/$workspaceId/settings/integrations/google-drive',
+				params: { workspaceId },
+				search: {},
+				replace: true,
+			})
+		}
+	}, [oauth, navigate, workspaceId])
+	const startConnect = () => {
+		setCancelled(false)
+		connect.mutate({ provider: DRIVE_PROVIDER, origin: DRIVE_ORIGIN })
+	}
 	const disconnect = useDisconnectGoogle(workspaceId)
 	const [target, setTarget] = useState<{ email: string; name: string } | null>(null)
 	const [done, setDone] = useState<{
@@ -146,6 +173,17 @@ function DriveDetail() {
 				</div>
 			)}
 
+			{/* The wizard shows the cancel itself; every other variant would drop it. */}
+			{cancelled && variant !== 'all-disconnected' && (
+				<p
+					role="alert"
+					className="rounded-md border border-error/40 bg-error/10 p-3 text-sm text-error"
+					data-testid="drive-cancelled-alert"
+				>
+					{DRIVE_WIZARD_COPY.error}
+				</p>
+			)}
+
 			{variant === 'scope-add' && (
 				<p className="text-sm text-muted-foreground">{DRIVE_COPY.pageDescription}</p>
 			)}
@@ -169,7 +207,7 @@ function DriveDetail() {
 
 			{variant === 'all-disconnected' ? (
 				<ConnectWizard
-					state={connect.isPending ? 'loading' : connect.isError ? 'error' : 'default'}
+					state={connect.isPending ? 'loading' : connect.isError || cancelled ? 'error' : 'default'}
 					onContinue={startConnect}
 					onCancel={() =>
 						navigate({

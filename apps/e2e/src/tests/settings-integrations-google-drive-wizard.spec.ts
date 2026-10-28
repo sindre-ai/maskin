@@ -103,6 +103,27 @@ test.describe('Drive connect wizard', () => {
 		await expect(page.getByRole('button', { name: 'Continue with Google →' })).toBeEnabled()
 	})
 
+	// What Google's cancel lands on: the OAuth callback redirects here with oauth=cancelled.
+	// A real cancel needs a Google test client, so this loads the redirect target directly.
+	test('a cancelled consent opens on the cancel message and a refresh clears it', async ({
+		page,
+		account,
+	}) => {
+		await mockIntegrations(page, [])
+		await page.addInitScript(() => localStorage.setItem('ff:google-drive-integration-ui', 'on'))
+		await page.goto(`/${account.workspaceId}/settings/integrations/google-drive?oauth=cancelled`)
+
+		await expect(page.getByText('Sign-in was cancelled. Try again when ready.')).toBeVisible()
+		await expect(page).not.toHaveURL(/oauth=/)
+		await expect(page.getByRole('button', { name: 'Continue with Google →' })).toBeEnabled()
+
+		await page.reload()
+		await expect(
+			page.getByRole('heading', { name: 'Connect your Google account for Drive' }),
+		).toBeVisible()
+		await expect(page.getByText('Sign-in was cancelled. Try again when ready.')).toHaveCount(0)
+	})
+
 	test('the wizard footer is keyboard reachable', async ({ page, account }) => {
 		await mockIntegrations(page, [])
 		await gotoDrive(page, account.workspaceId)

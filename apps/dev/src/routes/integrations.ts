@@ -50,6 +50,7 @@ import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrat
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
+import { resolveOrigin } from '../lib/integrations/oauth/origins'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
@@ -1353,6 +1354,17 @@ app.openapi(connectRoute, (async (c) => {
 		install_new_org?: boolean
 		return_to?: unknown
 		native_return_url?: unknown
+		origin?: unknown
+	}
+
+	// Page that started the flow, so a cancel can land back on it. Looked up in a
+	// server-side table; a value that is supplied but unknown is refused.
+	let origin: string | undefined
+	if (oauthBody.origin !== undefined && oauthBody.origin !== null) {
+		if (!resolveOrigin(oauthBody.origin, providerName)) {
+			return c.json(createApiError('BAD_REQUEST', 'origin is not allowed for this provider'), 400)
+		}
+		origin = oauthBody.origin as string
 	}
 
 	// Native app return target. Strictly allowlisted by exact match; a value that
@@ -1383,6 +1395,7 @@ app.openapi(connectRoute, (async (c) => {
 		nonce,
 		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
 		...(nativeReturn ? { nativeReturn } : {}),
+		...(origin ? { origin } : {}),
 	}
 
 	// If provider uses PKCE, generate and include code verifier in state
@@ -1724,6 +1737,33 @@ app.openapi(callbackRoute, (async (c) => {
 	if (native && query.error && !query.code) {
 		clearOAuthNonceCookie(c, providerName)
 		return nativeEnd({ status: 'error', reason: 'denied' })
+	}
+
+	// Web flow that started from a page with a registered origin (the Drive
+	// connect wizard): a cancel goes back there. Sits after the state, cookie,
+	// pending-row and member checks, so a forged or replayed cancel gets the same
+	// 400s as before. Flows without an origin, and any error other than
+	// access_denied, keep the response below.
+	if (!native && !query.code && query.error === 'access_denied' && stateData.origin !== undefined) {
+		const origin = resolveOrigin(stateData.origin, providerName)
+		if (origin) {
+			logger.info('OAuth consent cancelled, returning to origin', {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				origin: stateData.origin,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			return c.redirect(
+				frontendUrlForReturn(
+					stateData.workspaceId,
+					`/${stateData.workspaceId}${origin.path}?oauth=cancelled`,
+				),
+			)
+		}
+		logger.warn('OAuth state carried an origin that no longer resolves', {
+			provider: providerName,
+			origin: stateData.origin,
+		})
 	}
 
 	// Handle provider-specific callback

@@ -14,6 +14,7 @@ const mockConnect = vi.fn()
 const mockDriveWatches = vi.fn()
 const mockDisconnect = vi.fn()
 const mockNavigate = vi.fn()
+const mockSearch = vi.fn<() => { oauth?: string }>(() => ({}))
 const connectState = { isPending: false, isError: false }
 const mockFlag = vi.fn<() => boolean>(() => true)
 
@@ -22,7 +23,10 @@ vi.mock('@tanstack/react-router', async () => {
 	return {
 		...mockTanStackRouter(),
 		useNavigate: () => mockNavigate,
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => ({
+			...options,
+			useSearch: () => mockSearch(),
+		}),
 	}
 })
 
@@ -104,6 +108,7 @@ describe('Google Drive detail page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockFlag.mockReturnValue(true)
+		mockSearch.mockReturnValue({})
 		mockDriveWatches.mockReturnValue({ data: [], isLoading: false, isError: false })
 		connectState.isPending = false
 		connectState.isError = false
@@ -151,7 +156,7 @@ describe('Google Drive detail page', () => {
 		).toBeVisible()
 
 		await userEvent.click(within(priya).getByRole('button', { name: 'Add Drive permissions →' }))
-		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
+		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive', origin: 'google-drive' })
 		await userEvent.click(within(banner).getByRole('button', { name: 'Connect Drive →' }))
 		expect(mockConnect).toHaveBeenCalledTimes(2)
 	})
@@ -203,7 +208,47 @@ describe('Google Drive detail page', () => {
 		const kai = screen.getByTestId('scope-row-kai@acme.test')
 		expect(within(kai).getByLabelText('Full access to your Drive files, not granted')).toBeVisible()
 		await userEvent.click(within(banner).getByRole('button', { name: 'Reconnect →' }))
-		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
+		expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive', origin: 'google-drive' })
+	})
+
+	describe('cancelled consent outside the wizard', () => {
+		const scopeAddRows = () => [
+			googleRow('priya@acme.test', 'actor-priya'),
+			googleRow('kai@acme.test', 'actor-kai'),
+			driveRow('kai@acme.test'),
+		]
+
+		it('scope-add: shows the cancel message in an alert until the next connect', async () => {
+			setRows(scopeAddRows())
+			mockSearch.mockReturnValue({ oauth: 'cancelled' })
+			render(<DriveDetailPage />)
+
+			expect(screen.getByTestId('drive-detail')).toHaveAttribute('data-variant', 'scope-add')
+			expect(screen.getByTestId('drive-cancelled-alert')).toHaveTextContent(
+				'Sign-in was cancelled. Try again when ready.',
+			)
+			expect(screen.getByRole('alert')).toBe(screen.getByTestId('drive-cancelled-alert'))
+
+			await userEvent.click(screen.getByRole('button', { name: 'Connect Drive →' }))
+			expect(screen.queryByTestId('drive-cancelled-alert')).not.toBeInTheDocument()
+		})
+
+		it('shows no alert without the oauth param', () => {
+			setRows(scopeAddRows())
+			render(<DriveDetailPage />)
+
+			expect(screen.queryByTestId('drive-cancelled-alert')).not.toBeInTheDocument()
+		})
+
+		it('flag off: the param is not read and nothing renders', () => {
+			mockFlag.mockReturnValue(false)
+			setRows(scopeAddRows())
+			mockSearch.mockReturnValue({ oauth: 'cancelled' })
+			render(<DriveDetailPage />)
+
+			expect(screen.queryByTestId('drive-cancelled-alert')).not.toBeInTheDocument()
+			expect(mockNavigate).not.toHaveBeenCalled()
+		})
 	})
 
 	describe('connect wizard', () => {
@@ -224,7 +269,7 @@ describe('Google Drive detail page', () => {
 			expect(screen.queryByTestId('drive-first-call')).not.toBeInTheDocument()
 
 			await userEvent.click(screen.getByRole('button', { name: 'Continue with Google →' }))
-			expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive' })
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive', origin: 'google-drive' })
 		})
 
 		it('loading: the primary button reads Opening Google… and is disabled', () => {
@@ -245,6 +290,36 @@ describe('Google Drive detail page', () => {
 				'Sign-in was cancelled. Try again when ready.',
 			)
 			expect(screen.getByRole('button', { name: 'Continue with Google →' })).toBeEnabled()
+		})
+
+		it('cancelled consent: shows the message, strips the param, Continue works again', async () => {
+			noGoogleRows()
+			mockSearch.mockReturnValue({ oauth: 'cancelled' })
+			render(<DriveDetailPage />)
+
+			expect(screen.getByTestId('drive-connect-wizard')).toHaveAttribute('data-state', 'error')
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				'Sign-in was cancelled. Try again when ready.',
+			)
+			expect(mockNavigate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					to: '/$workspaceId/settings/integrations/google-drive',
+					search: {},
+					replace: true,
+				}),
+			)
+
+			await userEvent.click(screen.getByRole('button', { name: 'Continue with Google →' }))
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'google-drive', origin: 'google-drive' })
+			expect(screen.getByTestId('drive-connect-wizard')).toHaveAttribute('data-state', 'default')
+		})
+
+		it('no oauth param: no cancel message and no navigation', () => {
+			noGoogleRows()
+			render(<DriveDetailPage />)
+
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 
 		it('Cancel returns to the integrations list', async () => {
