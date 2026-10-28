@@ -483,6 +483,11 @@ describe('LinkedObjectCard', () => {
 	describe('a draft longer than the clamp', () => {
 		const CLAMP = 304
 		let heights: { scroll: number }
+		// The clock the card reads, moved by hand so a test can wait out the guard without waiting.
+		let now: number
+		const advance = (ms: number) => {
+			now += ms
+		}
 		const longDraft = (hash = 'hash-1') =>
 			objectRow({
 				title: 'Follow up with Torben',
@@ -509,18 +514,10 @@ describe('LinkedObjectCard', () => {
 				() => heights.scroll,
 			)
 			vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(CLAMP)
-		})
-		afterEach(() => vi.restoreAllMocks())
-
-		// The clock the card reads, moved by hand so a test can wait out the guard without waiting.
-		let now: number
-		const advance = (ms: number) => {
-			now += ms
-		}
-		beforeEach(() => {
 			now = 1_000_000
 			vi.spyOn(Date, 'now').mockImplementation(() => now)
 		})
+		afterEach(() => vi.restoreAllMocks())
 
 		it('makes no approve call on the first tap, which opens the full text, and approves on the second', async () => {
 			useObject.mockReturnValue({ data: longDraft() })
