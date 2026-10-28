@@ -2608,10 +2608,8 @@ export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInse
 // same event, exactly one INSERT claims — the loser's returning() is empty
 // and the dispatch is skipped.
 //
-// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
-// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
-// double-fire window the table exists to prevent. The v1 code path simply
-// never writes to this table, so having it live pre-flag is safe.
+// Ships unconditional (tech spec §3.4 + §7.3): the table exists to prevent the
+// double-fire window during a rolling deploy.
 //
 // session_id is diagnostic only. If the UPDATE that stamps it after
 // createSession() fails, the row still guards against double-fire — its
@@ -2649,8 +2647,7 @@ export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
 // three indexes are partial on replayed_at IS NULL so they only ever cover
 // the pending backlog.
 //
-// The table ships unconditional (additive, nothing reads it with the flag
-// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+// The table ships unconditional (additive).
 
 export const triggerEventQueue = pgTable(
 	'trigger_event_queue',

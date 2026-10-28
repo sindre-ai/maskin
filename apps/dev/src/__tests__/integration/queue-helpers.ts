@@ -3,7 +3,6 @@ import { EventEmitter } from 'node:events'
 import { events } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
@@ -56,12 +55,6 @@ export function newQueueRunner() {
 		runner,
 		internals: runner as unknown as RunnerInternals,
 	}
-}
-
-/** Turns trigger_engine_v2 on for one workspace (or off for all, when null). */
-export function setV2Flag(workspaceId: string | null): void {
-	process.env.FF_WORKSPACE_FEATURES = workspaceId ? `${workspaceId}:trigger_engine_v2` : undefined
-	_resetFeatureFlagConfig()
 }
 
 /** Inserts a real events row (so the dispatch path can read it back) and emits it. Returns events.id. */

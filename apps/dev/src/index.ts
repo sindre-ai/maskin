@@ -343,9 +343,7 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
-// Daily capability scan, shadow mode. A server job with no model call. Does
-// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
-// capability-scan.
+// Daily capability scan. A server job with no model call.
 const capabilityScanner = new CapabilityScanner(db)
 capabilityScanner.start()
 logger.info('Capability scanner started')
