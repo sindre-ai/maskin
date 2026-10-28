@@ -265,10 +265,13 @@ public final class LinkedItemStore {
 	/// stays a link.
 	private func fetchTrigger(_ target: LinkedTarget) async throws -> LinkedItem? {
 		guard loadTriggers != nil else { return nil }
-		let listing = try await triggerListing()
-		if let found = listing.triggers.first(where: { $0.id.lowercased() == target.uuid }) {
-			return .trigger(LinkedTrigger(target: target, trigger: found))
+		func find(in listing: TriggerListing) -> Trigger? {
+			listing.triggers.first { $0.id.lowercased() == target.uuid }
 		}
+		var listing = try await triggerListing(maxAge: retryAfter)
+		// A trigger made since the list was read is not gone: before saying so, read the list again.
+		if find(in: listing) == nil { listing = try await triggerListing(maxAge: Self.missRecheck) }
+		if let found = find(in: listing) { return .trigger(LinkedTrigger(target: target, trigger: found)) }
 		return listing.isComplete ? .deleted(target) : nil
 	}
 
@@ -290,8 +293,11 @@ public final class LinkedItemStore {
 		return byID
 	}
 
-	private func triggerListing() async throws -> TriggerListing {
-		if let held = triggersHeld, now().timeIntervalSince(held.readAt) < retryAfter { return held.value }
+	/// A list read less than this long ago is not read again to double-check a missing trigger.
+	static let missRecheck: TimeInterval = 2
+
+	private func triggerListing(maxAge: TimeInterval) async throws -> TriggerListing {
+		if let held = triggersHeld, now().timeIntervalSince(held.readAt) < maxAge { return held.value }
 		guard let loadTriggers else { return TriggerListing(triggers: [], isComplete: false) }
 		let started = triggersRead == nil
 		let task: Task<TriggerListing, Error>

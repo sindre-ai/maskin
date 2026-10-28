@@ -234,4 +234,38 @@ struct LinkedLoopTriggerTests {
 		try? await Task.sleep(for: .milliseconds(100))
 		#expect(directory.named(.trigger, id: triggerID) == nil)
 	}
+
+	final class Clock: @unchecked Sendable {
+		private let lock = NSLock()
+		private var _now = Date(timeIntervalSince1970: 1000)
+		private var _triggers: [Trigger] = []
+		private var _reads = 0
+		var now: Date { lock.withLock { _now } }
+		var reads: Int { lock.withLock { _reads } }
+		func advance(_ seconds: TimeInterval) { lock.withLock { _now = _now.addingTimeInterval(seconds) } }
+		func set(_ triggers: [Trigger]) { lock.withLock { _triggers = triggers } }
+		func read() -> [Trigger] { lock.withLock { _reads += 1; return _triggers } }
+	}
+
+	@Test("a trigger made after the list was read is found, not called deleted")
+	func triggerMadeSinceTheRead() async {
+		let clock = Clock()
+		let store = LinkedItemStore(
+			objects: FakeDraftsRemote(), files: FakeLinkedFiles(),
+			triggers: { TriggerListing(triggers: clock.read(), isComplete: true) }, workspaceID: { "ws-1" }, retryAfter: 30,
+			now: { clock.now })
+		let other = LinkedTarget(kind: .trigger, uuid: missingID)
+		await store.resolve([other])
+		#expect(store.item(for: other) == .deleted(other))
+		// The agent makes a trigger and links it ten seconds later: the held list does not have it.
+		clock.set([trigger()])
+		clock.advance(10)
+		let target = LinkedTarget(kind: .trigger, uuid: triggerID)
+		await store.resolve([target])
+		guard case .trigger? = store.item(for: target) else {
+			Issue.record("called deleted: \(String(describing: store.state(for: target)))")
+			return
+		}
+		#expect(clock.reads == 2)
+	}
 }
