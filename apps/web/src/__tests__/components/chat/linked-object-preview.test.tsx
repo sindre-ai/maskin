@@ -28,7 +28,12 @@ vi.mock('@/hooks/use-object-type-label', () => ({
 }))
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({
-		workspace: { settings: { statuses: { task: ['backlog', 'in_review', 'done'] } } },
+		workspace: {
+			settings: {
+				statuses: { task: ['backlog', 'in_review', 'done'] },
+				field_definitions: { task: [{ name: 'priority', type: 'enum' }] },
+			},
+		},
 	}),
 }))
 vi.mock('@/components/objects/property-selects', () => ({

@@ -1,9 +1,16 @@
+import {
+	LinkedCardFace,
+	UnavailableCard,
+	UnavailableChip,
+	typeIconColor,
+	typeIconOf,
+	typeTileClass,
+} from '@/components/chat/linked-card-face'
 import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
 import { loopActivityLine } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useActors } from '@/hooks/use-actors'
@@ -20,7 +27,15 @@ import {
 	statusLabel,
 	typeColors,
 } from '@/lib/constants'
-import { cutLabel, plainSnippet, shortName, showsObjectCard } from '@/lib/linked-objects'
+import {
+	type CardFact,
+	cutLabel,
+	pickFacts,
+	plainSnippet,
+	shortName,
+	showsObjectCard,
+} from '@/lib/linked-objects'
+import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -45,9 +60,6 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 
-const HOVER =
-	'transition-colors duration-180 ease-standard hover:border-border-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-
 /** The object in this workspace, or null while it loads (`undefined`) or when it is gone (`null`). */
 function useLinkedObject(workspaceId: string, objectId: string) {
 	const { data, isLoading } = useObject(objectId)
@@ -66,13 +78,6 @@ function useDriver(workspaceId: string, object: ObjectResponse | null | undefine
 	const actor = actors?.find((a) => a.id === object.driver)
 	if (actor) return { state: 'known' as const, actor }
 	return { state: actors ? ('gone' as const) : ('loading' as const) }
-}
-
-function priorityOf(object: ObjectResponse): string | null {
-	const priority = (object.metadata as Record<string, unknown> | null)?.priority
-	return typeof priority === 'string' || typeof priority === 'number'
-		? String(priority).trim() || null
-		: null
 }
 
 const PREVIEW_WIDTH = 380
@@ -109,15 +114,55 @@ type ChipSheetContent = {
 	path: string
 }
 
+/** Copies the address of a target in this workspace. Without the clipboard API nothing is copied and no toast shows. */
+async function copyLink(path: string) {
+	try {
+		await navigator.clipboard.writeText(`${window.location.origin}${path}`)
+		toast('Link copied', { duration: 1800 })
+	} catch {
+		// No clipboard here.
+	}
+}
+
+const PREVIEW_BUTTON =
+	'inline-flex h-7 items-center justify-center gap-1 rounded-md border border-border text-[11.5px] font-semibold text-foreground no-underline transition-colors duration-180 ease-standard hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/** The preview's two buttons: Copy link (an icon) and Open. The same address the chip links to. */
+function PreviewActions({ openLink, path }: Pick<ChipSheetContent, 'openLink' | 'path'>) {
+	return (
+		<span className="flex shrink-0 items-center gap-1.5">
+			<button
+				type="button"
+				aria-label="Copy link"
+				onClick={() => copyLink(path)}
+				className={cn(PREVIEW_BUTTON, 'size-7 text-muted-foreground hover:text-foreground')}
+			>
+				<Link2 size={14} aria-hidden />
+			</button>
+			{cloneElement(
+				openLink,
+				{
+					className: cn(
+						PREVIEW_BUTTON,
+						'border-transparent bg-primary px-2.5 text-primary-foreground hover:opacity-90',
+					),
+				},
+				<ExternalLink size={12} aria-hidden />,
+				'Open',
+			)}
+		</span>
+	)
+}
+
 /**
  * Opens the card under its child while the pointer is over it or focus is inside it. The chip
  * wraps with the sentence, so this wrapper is inline too: the card opens under the chip's last
  * line, at the left edge of the chip's bounding box (the right edge when that would run off the
- * screen). The
- * card is the one the chip stands for, read from the same cache entry, so nothing is fetched
- * here; while that entry loads the card shows its skeleton. The preview is for the eye only:
- * hidden from the accessibility tree and not a tab stop, since the chip is already the link and
- * its name carries the same facts. Escape closes it.
+ * screen). The card is the one the chip stands for, read from the same cache entry, so nothing is
+ * fetched here; while that entry loads the card shows its skeleton. It is a non-modal dialog
+ * labelled "Object preview" with Copy link and Open in its footer: it opens on hover or when the
+ * chip takes focus, Tab goes from the chip into Copy link and then Open, and Escape closes it and
+ * puts focus back on the chip.
  *
  * Where there is no preview (below 640px, or on touch) a tap on the chip opens the same card in a
  * bottom sheet instead of leaving the chat, see `ChipSheet`.
@@ -128,8 +173,8 @@ function ChipPreview({
 	enabled,
 	children,
 }: {
-	/** The card to open, drawn as a preview (see the cards' `preview` prop). */
-	card: ReactNode
+	/** The card to open, drawn as a preview (see the cards' `preview` prop), given the buttons for its footer. */
+	card: (actions: ReactNode) => ReactNode
 	sheet: ChipSheetContent
 	enabled: boolean
 	children: ReactNode
@@ -163,7 +208,10 @@ function ChipPreview({
 	useEffect(() => {
 		if (!shown) return
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') setOpen(false)
+			if (e.key !== 'Escape') return
+			// Focus inside the preview goes back to the chip. (Focusing it opens the preview, so close after.)
+			if (root.current?.contains(document.activeElement)) root.current.querySelector('a')?.focus()
+			setOpen(false)
 		}
 		document.addEventListener('keydown', onKeyDown)
 		return () => document.removeEventListener('keydown', onKeyDown)
@@ -197,12 +245,13 @@ function ChipPreview({
 				{shown ? (
 					// The top padding bridges the gap so the pointer can travel from chip to card.
 					<span
-						aria-hidden="true"
+						role="dialog"
+						aria-label="Object preview"
 						data-linked-preview=""
 						style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
 						className="absolute top-full z-50 block pt-1 chip-preview-rise"
 					>
-						{card}
+						{card(<PreviewActions openLink={sheet.openLink} path={sheet.path} />)}
 					</span>
 				) : null}
 			</span>
@@ -239,16 +288,6 @@ function ChipSheet({
 	openLink,
 	path,
 }: ChipSheetContent & { open: boolean; onClose: () => void; returnFocus: () => void }) {
-	// Only the address is copied; without the clipboard API nothing is copied and no toast shows.
-	const copyLink = async () => {
-		try {
-			await navigator.clipboard.writeText(`${window.location.origin}${path}`)
-			toast('Link copied', { duration: 1800 })
-		} catch {
-			// No clipboard here.
-		}
-	}
-
 	return (
 		<Sheet open={open} onOpenChange={(next) => !next && onClose()}>
 			<SheetContent
@@ -281,7 +320,7 @@ function ChipSheet({
 					<button
 						type="button"
 						aria-label="Copy link"
-						onClick={copyLink}
+						onClick={() => copyLink(path)}
 						className={cn(SHEET_BUTTON, 'size-10 text-muted-foreground hover:text-foreground')}
 					>
 						<Link2 size={16} aria-hidden />
@@ -297,8 +336,6 @@ function ChipSheet({
 // with it (box-decoration-clone draws the plate on every line piece) and no vertical padding.
 const CHIP =
 	'not-prose rounded-md bg-muted px-[0.4em] font-medium text-foreground no-underline box-decoration-clone transition-colors duration-180 ease-standard hover:bg-brand-subtle hover:text-brand-subtle-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-const DELETED_CHIP =
-	'rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground'
 const CHIP_DOT = 'inline-block rounded-full bg-current align-middle'
 const CHIP_ICON = 'mr-[0.4em] inline-block align-middle text-muted-foreground'
 // A word joiner, for the dot of a chip that is still loading.
@@ -385,14 +422,21 @@ export function ObjectReferenceChip({
 
 	// A draft keeps its plain link: its approval card sits under the text.
 	if (object === null) {
-		return <span className={DELETED_CHIP}>Deleted object</span>
+		return <UnavailableChip kind="object" reason="deleted" />
 	}
 	// While the object loads the original link stays and still previews (the card shows its
 	// skeleton); a draft has no preview.
 	if (object === undefined || showsObjectCard(object, workspaceId)) {
 		return (
 			<ChipPreview
-				card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+				card={(actions) => (
+					<ObjectReferenceCard
+						workspaceId={workspaceId}
+						objectId={objectId}
+						preview
+						actions={actions}
+					/>
+				)}
 				sheet={sheet}
 				enabled={object === undefined}
 			>
@@ -407,9 +451,17 @@ export function ObjectReferenceChip({
 	const name = `${typeLabel(object.type)}, ${status.charAt(0).toUpperCase()}${status.slice(1)}: ${title}${
 		owner ? `, ${owner.name}` : ''
 	}`
+	const TypeIcon = typeIconOf(object.type)
 	return (
 		<ChipPreview
-			card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+			card={(actions) => (
+				<ObjectReferenceCard
+					workspaceId={workspaceId}
+					objectId={objectId}
+					preview
+					actions={actions}
+				/>
+			)}
 			sheet={sheet}
 			enabled
 		>
@@ -421,10 +473,10 @@ export function ObjectReferenceChip({
 			>
 				<ChipText
 					lead={
-						<TypeBadge
-							type={object.type}
-							variant="dot"
-							className={cn(CHIP_DOT, 'mr-[0.4em] size-[0.5em]')}
+						<TypeIcon
+							size="0.85em"
+							aria-hidden
+							className={cn('mr-[0.4em] inline-block align-middle', typeIconColor(object.type))}
 						/>
 					}
 					text={cutLabel(shortName(title))}
@@ -548,8 +600,9 @@ function FoldableCard({
 }
 
 /**
- * What a card is drawn in: the link to its target (the whole card), or in the phone sheet a plain
- * box, since the sheet's own Open button is the link. `link` is that link without children.
+ * What a card is drawn in: the link to its target (the whole card), or in the hover preview and the
+ * phone sheet a plain box, since their own Open buttons are the link. `link` is that link without
+ * children.
  */
 function CardFace({
 	link,
@@ -558,23 +611,15 @@ function CardFace({
 	sheet,
 	children,
 }: {
-	link: ReactElement<{ className?: string; tabIndex?: number; children?: ReactNode }>
+	link: ReactElement<{ className?: string; children?: ReactNode }>
 	shell: string
 	preview: boolean
 	sheet: boolean
 	children: ReactNode
 }) {
-	if (sheet) return <span className={cn(shell, 'border-border p-3')}>{children}</span>
-	return cloneElement(
-		link,
-		{
-			tabIndex: preview ? -1 : undefined,
-			className: preview
-				? cn(shell, 'group border-border p-3 no-underline', HOVER)
-				: OPEN_CARD_LINK,
-		},
-		children,
-	)
+	// The hover preview and the phone sheet are plain boxes: their Open and Copy link are buttons.
+	if (preview || sheet) return <span className={cn(shell, 'border-border p-3')}>{children}</span>
+	return cloneElement(link, { className: OPEN_CARD_LINK }, children)
 }
 
 /** The workspace's own name for a type, on the type's own colours. */
@@ -595,25 +640,29 @@ function TypeTag({ type, label }: { type: string; label: string }) {
 
 /**
  * A link that stands alone on its line, drawn as a card where it stands: what the object is,
- * where it stands, who has it and when it last changed. Every field is on the object record. The
- * whole card is one link to the object.
+ * where it stands, the fields it has filled in, who has it and when it last changed. Every field is
+ * on the object record. The whole card is one link to the object.
  */
 export function ObjectReferenceCard({
 	workspaceId,
 	objectId,
 	preview = false,
 	sheet = false,
+	actions,
 }: {
 	workspaceId: string
 	objectId: string
-	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
 	preview?: boolean
 	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
 	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
+	const { workspace } = useWorkspace()
 	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
 	const marker = preview || sheet ? undefined : ''
 
@@ -631,22 +680,16 @@ export function ObjectReferenceCard({
 		)
 	}
 	if (object === null) {
-		return (
-			<span
-				data-linked-card={marker}
-				className={cn(
-					shell,
-					'border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
-				)}
-			>
-				Deleted object
-			</span>
-		)
+		return <UnavailableCard shell={shell} marker={marker} kind="object" reason="deleted" />
 	}
 
 	const title = object.title?.trim() || 'Untitled'
 	const snippet = plainSnippet(object.content)
-	const priority = priorityOf(object)
+	const fieldDefs = (
+		workspace.settings as { field_definitions?: Record<string, { name: string }[]> } | undefined
+	)?.field_definitions?.[object.type]
+	const facts = pickFacts(fieldDefs, object.metadata)
+	const TypeIcon = typeIconOf(object.type)
 	const working = object.active_session_state === 'running'
 	const head = <TypeTag type={object.type} label={typeLabel(object.type)} />
 	const state = <StatusBadge status={object.status} />
@@ -659,70 +702,55 @@ export function ObjectReferenceCard({
 				<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId: object.id }} />
 			}
 		>
-			<span className="flex items-center gap-1.5">
-				{head}
-				{state}
-				{priority ? (
-					<span className="font-mono text-[10.5px] font-semibold text-muted-foreground">
-						{priority}
-					</span>
-				) : null}
-				{sheet ? null : (
-					<span
-						className={cn(
-							'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground',
-							!preview && FOLD_ROOM,
-						)}
-					>
-						<span className="sr-only">Open</span>
-						<ArrowUpRight size={14} aria-hidden />
-					</span>
-				)}
-			</span>
-			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-				{title}
-			</span>
-			{snippet ? (
-				<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
-					{snippet}
-				</span>
-			) : null}
-			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
-				<span className="inline-flex min-w-0 items-center gap-1.5">
-					{driver.state === 'known' ? (
-						<>
-							<ActorAvatar
-								id={driver.actor.id}
-								name={driver.actor.name}
-								type={driver.actor.type}
-								size="sm"
-								className="size-4 shrink-0 text-[8px]"
-							/>
-							<span className="truncate">{driver.actor.name}</span>
-						</>
-					) : driver.state === 'none' ? (
-						'Unassigned'
-					) : driver.state === 'gone' ? (
-						'Unknown'
-					) : (
-						<Bar className="h-3 w-16" />
-					)}
-				</span>
-				{object.updatedAt ? (
-					<span>
-						Updated <RelativeTime date={object.updatedAt} />
-					</span>
-				) : null}
-				{working ? (
-					<span className="ml-auto inline-flex items-center gap-1 font-semibold text-brand">
-						<span
-							aria-hidden="true"
-							className="size-1.5 rounded-full bg-brand motion-safe:animate-pulse"
-						/>
-						Working now
-					</span>
-				) : null}
-			</span>
+			<LinkedCardFace
+				icon={<TypeIcon size={14} aria-hidden />}
+				tile={typeTileClass(object.type)}
+				eyebrow={typeLabel(object.type)}
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={title}
+				summary={snippet}
+				facts={facts}
+				actions={actions}
+				footer={
+					<>
+						<span className="inline-flex min-w-0 items-center gap-1.5">
+							{driver.state === 'known' ? (
+								<>
+									<ActorAvatar
+										id={driver.actor.id}
+										name={driver.actor.name}
+										type={driver.actor.type}
+										size="sm"
+										className={AVATAR}
+									/>
+									<span className="truncate">{driver.actor.name}</span>
+								</>
+							) : driver.state === 'none' ? (
+								'Unassigned'
+							) : driver.state === 'gone' ? (
+								'Unknown'
+							) : (
+								<Bar className="h-3 w-16" />
+							)}
+						</span>
+						{object.updatedAt ? (
+							<span>
+								Updated <RelativeTime date={object.updatedAt} />
+							</span>
+						) : null}
+						{working ? (
+							<span className="ml-auto inline-flex items-center gap-1 font-semibold text-brand">
+								<span
+									aria-hidden="true"
+									className="size-1.5 rounded-full bg-brand motion-safe:animate-pulse"
+								/>
+								Working now
+							</span>
+						) : null}
+					</>
+				}
+			/>
 		</CardFace>
 	)
 	return preview || sheet ? (
@@ -751,9 +779,40 @@ function useLinkedTrigger(
 
 const KIND_TAG =
 	'inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground'
-const OPEN_ARROW =
-	'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground'
 const AVATAR = 'size-4 shrink-0 text-[8px]'
+// Secondary tile and badge colours for a kind with no type colour of its own.
+const KIND_TILE = 'bg-secondary text-secondary-foreground'
+
+/** An agent as an avatar and a name, for a card footer. */
+function AgentLabel({ agent }: { agent: { id: string; name: string; type: string } }) {
+	return (
+		<span className="inline-flex min-w-0 items-center gap-1.5">
+			<ActorAvatar
+				id={agent.id}
+				name={agent.name}
+				type={agent.type}
+				size="sm"
+				className={AVATAR}
+			/>
+			<span className="truncate">{agent.name}</span>
+		</span>
+	)
+}
+
+/** The open arrow at the end of a card's first row, with room left for the fold button. */
+function OpenArrow() {
+	return (
+		<span
+			className={cn(
+				'inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground',
+				FOLD_ROOM,
+			)}
+		>
+			<span className="sr-only">Open</span>
+			<ArrowUpRight size={14} aria-hidden />
+		</span>
+	)
+}
 
 /** The loading card of a loop or trigger. */
 function LinkedCardSkeleton({ shell, marker }: { shell: string; marker: string | undefined }) {
@@ -766,25 +825,6 @@ function LinkedCardSkeleton({ shell, marker }: { shell: string; marker: string |
 			<Bar className="h-4 w-1/3" />
 			<Bar className="h-4 w-4/5" />
 			<Bar className="h-3 w-1/2" />
-		</span>
-	)
-}
-
-/** The card of a loop or trigger that is gone, in another workspace or not visible to you. */
-function LinkedCardDeleted({
-	shell,
-	marker,
-	label,
-}: { shell: string; marker: string | undefined; label: string }) {
-	return (
-		<span
-			data-linked-card={marker}
-			className={cn(
-				shell,
-				'border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
-			)}
-		>
-			{label}
 		</span>
 	)
 }
@@ -834,14 +874,16 @@ export function LoopReferenceChip({
 	fallback: ReactNode
 }) {
 	const loop = useLinkedLoop(workspaceId, loopId)
-	const card = <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} preview />
+	const card = (actions: ReactNode) => (
+		<LoopReferenceCard workspaceId={workspaceId} loopId={loopId} preview actions={actions} />
+	)
 	const sheet: ChipSheetContent = {
 		card: <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} sheet />,
 		openLink: <Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId }} />,
 		path: `/${workspaceId}/loops/${loopId}`,
 	}
 
-	if (loop === null) return <span className={DELETED_CHIP}>Deleted loop</span>
+	if (loop === null) return <UnavailableChip kind="loop" reason="deleted" />
 	if (loop === undefined) {
 		return (
 			<ChipPreview card={card} sheet={sheet} enabled>
@@ -879,13 +921,16 @@ export function LoopReferenceCard({
 	loopId,
 	preview = false,
 	sheet = false,
+	actions,
 }: {
 	workspaceId: string
 	loopId: string
-	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
 	preview?: boolean
 	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
 	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
 }) {
 	const loop = useLinkedLoop(workspaceId, loopId)
 	const agents = useLoopAgents(workspaceId, loop)
@@ -894,12 +939,17 @@ export function LoopReferenceCard({
 
 	if (loop === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (loop === null) {
-		return <LinkedCardDeleted shell={shell} marker={marker} label="Deleted loop" />
+		return <UnavailableCard shell={shell} marker={marker} kind="loop" reason="deleted" />
 	}
 
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const snippet = plainSnippet(loop.content)
 	const activity = loopActivityLine(loop)
+	const agentNames = agents.map((agent) => agent.name).join(', ')
+	const facts: CardFact[] = [
+		...(agentNames ? [{ label: 'Agents', value: agentNames }] : []),
+		...(activity ? [{ label: 'Activity', value: activity }] : []),
+	]
 	const name = loop.name?.trim() || 'Untitled loop'
 	const head = (
 		<span className={KIND_TAG}>
@@ -920,47 +970,27 @@ export function LoopReferenceCard({
 			sheet={sheet}
 			link={<Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId: loop.id }} />}
 		>
-			<span className="flex items-center gap-1.5">
-				{head}
-				{state}
-				{sheet ? null : (
-					<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
-						<span className="sr-only">Open</span>
-						<ArrowUpRight size={14} aria-hidden />
-					</span>
-				)}
-			</span>
-			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-				{name}
-			</span>
-			{snippet ? (
-				<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
-					{snippet}
-				</span>
-			) : null}
-			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
-				{agents.length > 0 ? (
-					<span className="inline-flex items-center">
-						{agents.slice(0, 5).map((agent) => (
-							<ActorAvatar
-								key={agent.id}
-								id={agent.id}
-								name={agent.name}
-								type={agent.type}
-								size="sm"
-								className={cn(AVATAR, '-ml-1.5 ring-2 ring-card first:ml-0')}
-							/>
-						))}
-						{agents.length > 5 ? <span className="ml-1">+{agents.length - 5}</span> : null}
-					</span>
-				) : null}
-				{activity ? <span>{activity}</span> : null}
-				{loop.updatedAt ? (
-					<span>
-						Updated <RelativeTime date={loop.updatedAt} />
-					</span>
-				) : null}
-			</span>
+			<LinkedCardFace
+				icon={<RefreshCw size={14} aria-hidden />}
+				tile={KIND_TILE}
+				eyebrow="Loop"
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={name}
+				summary={snippet}
+				facts={facts}
+				actions={actions}
+				footer={
+					<>
+						{agents[0] ? <AgentLabel agent={agents[0]} /> : null}
+						{loop.updatedAt ? (
+							<span>
+								Updated <RelativeTime date={loop.updatedAt} />
+							</span>
+						) : null}
+					</>
+				}
+			/>
 		</CardFace>
 	)
 	return preview || sheet ? (
@@ -988,14 +1018,21 @@ export function TriggerReferenceChip({
 	fallback: ReactNode
 }) {
 	const trigger = useLinkedTrigger(workspaceId, triggerId)
-	const card = <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} preview />
+	const card = (actions: ReactNode) => (
+		<TriggerReferenceCard
+			workspaceId={workspaceId}
+			triggerId={triggerId}
+			preview
+			actions={actions}
+		/>
+	)
 	const sheet: ChipSheetContent = {
 		card: <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} sheet />,
 		openLink: <Link to="/$workspaceId/triggers/$triggerId" params={{ workspaceId, triggerId }} />,
 		path: `/${workspaceId}/triggers/${triggerId}`,
 	}
 
-	if (trigger === null) return <span className={DELETED_CHIP}>Deleted trigger</span>
+	if (trigger === null) return <UnavailableChip kind="trigger" reason="deleted" />
 	if (trigger === undefined) {
 		return (
 			<ChipPreview card={card} sheet={sheet} enabled>
@@ -1033,13 +1070,16 @@ export function TriggerReferenceCard({
 	triggerId,
 	preview = false,
 	sheet = false,
+	actions,
 }: {
 	workspaceId: string
 	triggerId: string
-	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
 	preview?: boolean
 	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
 	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
 }) {
 	const trigger = useLinkedTrigger(workspaceId, triggerId)
 	const agent = useTriggerAgent(workspaceId, trigger)
@@ -1048,10 +1088,14 @@ export function TriggerReferenceCard({
 
 	if (trigger === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (trigger === null) {
-		return <LinkedCardDeleted shell={shell} marker={marker} label="Deleted trigger" />
+		return <UnavailableCard shell={shell} marker={marker} kind="trigger" reason="deleted" />
 	}
 
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
+	const facts: CardFact[] =
+		agent.state === 'loading'
+			? []
+			: [{ label: 'Wakes', value: agent.state === 'known' ? agent.actor.name : 'Unknown' }]
 	const head = (
 		<span className={KIND_TAG}>
 			<Icon size={11} aria-hidden />
@@ -1080,42 +1124,26 @@ export function TriggerReferenceCard({
 				/>
 			}
 		>
-			<span className="flex items-center gap-1.5">
-				{head}
-				{state}
-				{sheet ? null : (
-					<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
-						<span className="sr-only">Open</span>
-						<ArrowUpRight size={14} aria-hidden />
-					</span>
-				)}
-			</span>
-			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-				{trigger.name}
-			</span>
-			<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
-				{whenItFires(trigger)}
-			</span>
-			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
-				<span className="inline-flex min-w-0 items-center gap-1.5">
-					{agent.state === 'known' ? (
-						<>
-							<ActorAvatar
-								id={agent.actor.id}
-								name={agent.actor.name}
-								type={agent.actor.type}
-								size="sm"
-								className={AVATAR}
-							/>
-							<span className="truncate">{agent.actor.name}</span>
-						</>
+			<LinkedCardFace
+				icon={<Icon size={14} aria-hidden />}
+				tile={KIND_TILE}
+				eyebrow="Trigger"
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={trigger.name}
+				summary={whenItFires(trigger)}
+				facts={facts}
+				actions={actions}
+				footer={
+					agent.state === 'known' ? (
+						<AgentLabel agent={agent.actor} />
 					) : agent.state === 'gone' ? (
-						'Unknown'
+						<span>Unknown</span>
 					) : (
 						<Bar className="h-3 w-16" />
-					)}
-				</span>
-			</span>
+					)
+				}
+			/>
 		</CardFace>
 	)
 	return preview || sheet ? (

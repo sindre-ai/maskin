@@ -3,11 +3,13 @@ import {
 	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
+	pickFacts,
 	plainSnippet,
 	shortName,
 	showsObjectCard,
 	splitOwnLinks,
 	targetOfHref,
+	unavailableCopy,
 } from '@/lib/linked-objects'
 import { describe, expect, it } from 'vitest'
 
@@ -84,13 +86,37 @@ describe('targetOfHref', () => {
 		expect(targetOfHref(`https://x.io/ws/objects/${id.toUpperCase()}`)).toEqual({
 			kind: 'object',
 			id,
+			workspaceId: 'ws',
 		})
-		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
+		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id, workspaceId: 'ws' })
 	})
 
 	it('reads a loop or trigger id from an address', () => {
-		expect(targetOfHref(`https://x.io/ws/loops/${id.toUpperCase()}`)).toEqual({ kind: 'loop', id })
-		expect(targetOfHref(`/ws/triggers/${id}?tab=x`)).toEqual({ kind: 'trigger', id })
+		expect(targetOfHref(`https://x.io/ws/loops/${id.toUpperCase()}`)).toEqual({
+			kind: 'loop',
+			id,
+			workspaceId: 'ws',
+		})
+		expect(targetOfHref(`/ws/triggers/${id}?tab=x`)).toEqual({
+			kind: 'trigger',
+			id,
+			workspaceId: 'ws',
+		})
+	})
+
+	it('returns the workspace the address names, for this workspace and for another', () => {
+		const here = 'e2877e32-2c11-489e-96c8-a76200908ed4'
+		const other = '11111111-2222-4333-8444-555555555555'
+		for (const kind of ['objects', 'files', 'loops', 'triggers']) {
+			const inHere = targetOfHref(`https://maskin.io/${here}/${kind}/${id}`)
+			const inOther = targetOfHref(`https://maskin.io/${other.toUpperCase()}/${kind}/${id}#x`)
+			expect(inHere?.workspaceId).toBe(here)
+			expect(inOther?.workspaceId).toBe(other)
+		}
+	})
+
+	it('returns no workspace for an address that names none', () => {
+		expect(targetOfHref(`/objects/${id}`)).toEqual({ kind: 'object', id, workspaceId: null })
 	})
 
 	it('ignores a loop or trigger address with more id characters after the id', () => {
@@ -229,5 +255,77 @@ describe('cutLabel', () => {
 	it('cuts at character 90 when there is no space past character 60', () => {
 		const name = `short words ${'x'.repeat(120)}`
 		expect(cutLabel(name)).toBe(`${name.slice(0, CHIP_MAX_LENGTH)}…`)
+	})
+})
+
+describe('pickFacts', () => {
+	const fields = [
+		{ name: 'Title' },
+		{ name: 'status' },
+		{ name: 'priority' },
+		{ name: 'text' },
+		{ name: 'Driver' },
+		{ name: 'Role' },
+		{ name: 'Source' },
+		{ name: 'Company' },
+	]
+
+	it('takes filled fields in the order of the field list and skips title, status, text and driver', () => {
+		const metadata = {
+			Company: 'Norlix',
+			Role: 'CTO',
+			priority: 'P1',
+			title: 'x',
+			status: 'active',
+			text: 'y',
+			driver: 'z',
+		}
+		expect(pickFacts(fields, metadata)).toEqual([
+			{ label: 'priority', value: 'P1' },
+			{ label: 'Role', value: 'CTO' },
+			{ label: 'Company', value: 'Norlix' },
+		])
+	})
+
+	it('leaves out empty fields, and gives no rows when none is filled', () => {
+		expect(pickFacts(fields, { priority: '  ', Role: '', Source: null, Company: [] })).toEqual([])
+		expect(pickFacts(fields, { Source: 'Referral' })).toEqual([
+			{ label: 'Source', value: 'Referral' },
+		])
+		expect(pickFacts(fields, null)).toEqual([])
+		expect(pickFacts(undefined, { priority: 'P1' })).toEqual([])
+	})
+
+	it('shows at most three rows', () => {
+		const metadata = { priority: 'P1', Role: 'CTO', Source: 'Referral', Company: 'Norlix' }
+		expect(pickFacts(fields, metadata).map((f) => f.label)).toEqual(['priority', 'Role', 'Source'])
+	})
+
+	it('reads numbers, booleans and lists as one line of text', () => {
+		const metadata = { priority: 2, Role: false, Source: ['a', ' b ', ''], Company: 'two\nlines' }
+		expect(pickFacts(fields, metadata)).toEqual([
+			{ label: 'priority', value: '2' },
+			{ label: 'Role', value: 'false' },
+			{ label: 'Source', value: 'a, b' },
+		])
+		expect(pickFacts([{ name: 'Company' }], metadata)).toEqual([
+			{ label: 'Company', value: 'two lines' },
+		])
+	})
+})
+
+describe('unavailableCopy', () => {
+	it('words the deleted state', () => {
+		expect(unavailableCopy('bet', 'deleted')).toEqual({
+			card: 'This bet was deleted',
+			chip: 'Deleted bet',
+		})
+	})
+
+	it('words the private state', () => {
+		expect(unavailableCopy('loop', 'private')).toEqual({
+			card: "Private loop. You don't have access.",
+			chip: 'Private loop',
+		})
 	})
 })
