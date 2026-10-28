@@ -384,7 +384,8 @@ describe('ObjectReferenceChip preview in a pane', () => {
 	afterEach(() => {
 		vi.restoreAllMocks()
 		window.matchMedia = realMatchMedia
-		if (realClientWidth) Object.defineProperty(document.documentElement, 'clientWidth', realClientWidth)
+		if (realClientWidth)
+			Object.defineProperty(document.documentElement, 'clientWidth', realClientWidth)
 		else Reflect.deleteProperty(document.documentElement, 'clientWidth')
 	})
 
