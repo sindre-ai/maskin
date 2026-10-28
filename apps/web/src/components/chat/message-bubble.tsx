@@ -9,7 +9,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
+import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -521,12 +523,63 @@ function chipTitle(title: string): string {
 		: trimmed
 }
 
+const OWN_CHIP_CLASS =
+	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
 /**
- * A link to an object or file in your own message, drawn inline where it was typed as a chip with
- * the thing's name (cut at 30 characters; the full name is the tooltip). Until the name is known
- * the chip says what kind of thing it is, so the link never reads as an address.
+ * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed
+ * as a chip with the thing's name (cut at 30 characters; the full name is the tooltip). Until the
+ * name is known the chip says what kind of thing it is, so the link never reads as an address.
  */
 function OwnLinkChip({
+	workspaceId,
+	segment,
+}: {
+	workspaceId: string
+	segment: { kind: 'object' | 'file' | 'loop' | 'trigger'; id: string }
+}) {
+	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'trigger') return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
+	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
+}
+
+function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: loop } = useLoop(id, workspaceId)
+	const name = loop?.name?.trim()
+	return (
+		<Link
+			to="/$workspaceId/loops/$loopId"
+			params={{ workspaceId, loopId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Loop'}</span>
+		</Link>
+	)
+}
+
+function OwnTriggerChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: trigger } = useTrigger(id, workspaceId)
+	const name = trigger?.name?.trim()
+	return (
+		<Link
+			to="/$workspaceId/triggers/$triggerId"
+			params={{ workspaceId, triggerId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Trigger'}</span>
+		</Link>
+	)
+}
+
+function OwnObjectOrFileChip({
 	workspaceId,
 	segment,
 }: {
@@ -538,8 +591,7 @@ function OwnLinkChip({
 	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
 	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
 	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
-	const className =
-		'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	const className = OWN_CHIP_CLASS
 	const content = (
 		<>
 			<Link2 size={12} aria-hidden className="shrink-0" />

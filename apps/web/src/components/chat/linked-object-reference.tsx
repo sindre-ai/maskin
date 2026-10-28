@@ -1,16 +1,21 @@
+import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { loopActivityLine } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { useActors } from '@/hooks/use-actors'
+import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject } from '@/hooks/use-objects'
-import type { ObjectResponse } from '@/lib/api'
+import { useTrigger } from '@/hooks/use-triggers'
+import type { LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { defaultTypeColor, statusLabel, typeColors } from '@/lib/constants'
 import { plainSnippet, showsObjectCard } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, RefreshCw, Zap } from 'lucide-react'
 import {
 	type ReactNode,
 	useEffect,
@@ -75,20 +80,19 @@ function usePreviewCapable() {
 }
 
 /**
- * Opens the object card under its child while the pointer is over it or focus is inside it. The
+ * Opens the card under its child while the pointer is over it or focus is inside it. The
  * card is the one the chip stands for, read from the same cache entry, so nothing is fetched
  * here; while that entry loads the card shows its skeleton. The preview is for the eye only:
  * hidden from the accessibility tree and not a tab stop, since the chip is already the link and
  * its name carries the same facts. Escape closes it.
  */
 function ChipPreview({
-	workspaceId,
-	objectId,
+	card,
 	enabled,
 	children,
 }: {
-	workspaceId: string
-	objectId: string
+	/** The card to open, drawn as a preview (see the cards' `preview` prop). */
+	card: ReactNode
 	enabled: boolean
 	children: ReactNode
 }) {
@@ -141,7 +145,7 @@ function ChipPreview({
 						'ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5',
 					)}
 				>
-					<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />
+					{card}
 				</span>
 			) : null}
 		</span>
@@ -178,7 +182,10 @@ export function ObjectReferenceChip({
 	// skeleton); a draft has no preview.
 	if (object === undefined || showsObjectCard(object, workspaceId)) {
 		return (
-			<ChipPreview workspaceId={workspaceId} objectId={objectId} enabled={object === undefined}>
+			<ChipPreview
+				card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+				enabled={object === undefined}
+			>
 				{fallback}
 			</ChipPreview>
 		)
@@ -191,7 +198,10 @@ export function ObjectReferenceChip({
 		owner ? `, ${owner.name}` : ''
 	}`
 	return (
-		<ChipPreview workspaceId={workspaceId} objectId={objectId} enabled>
+		<ChipPreview
+			card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+			enabled
+		>
 			<Link
 				to="/$workspaceId/objects/$objectId"
 				params={{ workspaceId, objectId: object.id }}
@@ -360,6 +370,371 @@ export function ObjectReferenceCard({
 						Working now
 					</span>
 				) : null}
+			</span>
+		</Link>
+	)
+}
+
+/** The loop in this workspace's list, or null while it loads (`undefined`) or when it is not in it (`null`). */
+function useLinkedLoop(workspaceId: string, loopId: string): LoopSummary | null | undefined {
+	const { data, isLoading } = useLoop(loopId, workspaceId)
+	return isLoading ? undefined : (data ?? null)
+}
+
+/** The trigger in this workspace's list, or null while it loads (`undefined`) or when it is not in it (`null`). */
+function useLinkedTrigger(workspaceId: string, triggerId: string): TriggerResponse | null | undefined {
+	const { data, isLoading } = useTrigger(triggerId, workspaceId)
+	return isLoading ? undefined : (data ?? null)
+}
+
+const KIND_TAG =
+	'inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground'
+const OPEN_ARROW =
+	'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground'
+const AVATAR = 'size-4 shrink-0 text-[8px]'
+
+const DELETED_CHIP =
+	'inline-flex items-center rounded-[9px] border border-dashed border-border px-2 py-0.5 align-baseline text-[11.5px] italic text-muted-foreground'
+
+/** The loading card of a loop or trigger. */
+function LinkedCardSkeleton({ shell, marker }: { shell: string; marker: string | undefined }) {
+	return (
+		<span
+			data-linked-card={marker}
+			aria-busy="true"
+			className={cn(shell, 'gap-2 border-border p-3')}
+		>
+			<Bar className="h-4 w-1/3" />
+			<Bar className="h-4 w-4/5" />
+			<Bar className="h-3 w-1/2" />
+		</span>
+	)
+}
+
+/** The card of a loop or trigger that is gone, in another workspace or not visible to you. */
+function LinkedCardDeleted({
+	shell,
+	marker,
+	label,
+}: { shell: string; marker: string | undefined; label: string }) {
+	return (
+		<span
+			data-linked-card={marker}
+			className={cn(
+				shell,
+				'border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
+			)}
+		>
+			{label}
+		</span>
+	)
+}
+
+/** The loop's agents that the workspace's actor list knows, in the loop's order. */
+function useLoopAgents(workspaceId: string, loop: LoopSummary | null | undefined) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	return (loop?.agentIds ?? []).flatMap((id) => {
+		const actor = actors?.find((a) => a.id === id)
+		return actor ? [actor] : []
+	})
+}
+
+/** The agent a trigger wakes: `loading` until the actor list is in, `gone` when it is not on it. */
+function useTriggerAgent(workspaceId: string, trigger: TriggerResponse | null | undefined) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	if (!trigger) return { state: 'loading' as const }
+	const actor = actors?.find((a) => a.id === trigger.targetActorId)
+	if (actor) return { state: 'known' as const, actor }
+	return { state: actors ? ('gone' as const) : ('loading' as const) }
+}
+
+/**
+ * A link to a loop inside a sentence: refresh icon, name, state word and the first agent's avatar.
+ * The whole chip is one link to the loop, in the same tab. While the loops load the original link
+ * stays; a loop that is not in this workspace's list reads "Deleted loop".
+ */
+export function LoopReferenceChip({
+	workspaceId,
+	loopId,
+	fallback,
+}: {
+	workspaceId: string
+	loopId: string
+	fallback: ReactNode
+}) {
+	const loop = useLinkedLoop(workspaceId, loopId)
+	const agents = useLoopAgents(workspaceId, loop)
+	const card = <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} preview />
+
+	if (loop === null) return <span className={DELETED_CHIP}>Deleted loop</span>
+	if (loop === undefined) {
+		return (
+			<ChipPreview card={card} enabled>
+				{fallback}
+			</ChipPreview>
+		)
+	}
+
+	const name = loop.name?.trim() || 'Untitled loop'
+	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
+	const first = agents[0]
+	return (
+		<ChipPreview card={card} enabled>
+			<Link
+				to="/$workspaceId/loops/$loopId"
+				params={{ workspaceId, loopId: loop.id }}
+				aria-label={`Loop, ${state}: ${name}`}
+				className={cn(
+					'not-prose inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-0.5 pr-2 pl-2 align-middle text-[11.5px] no-underline',
+					HOVER,
+				)}
+			>
+				<RefreshCw size={11} aria-hidden className="shrink-0 text-muted-foreground" />
+				<span className="min-w-0 truncate font-semibold text-foreground">{name}</span>
+				<span className={cn('shrink-0 text-[10.5px] font-semibold', LOOP_PILL_STYLES[loop.pill].text)}>
+					{state}
+				</span>
+				{first ? (
+					<ActorAvatar
+						id={first.id}
+						name={first.name}
+						type={first.type}
+						size="sm"
+						className={AVATAR}
+					/>
+				) : null}
+			</Link>
+		</ChipPreview>
+	)
+}
+
+/**
+ * A link to a loop that stands alone on its line, drawn as a card where it stands: its name and
+ * description, where it stands on the autonomy ladder, who works it, and when it last changed.
+ * Every field is on the loops list the Loops page reads. The whole card is one link to the loop.
+ */
+export function LoopReferenceCard({
+	workspaceId,
+	loopId,
+	preview = false,
+}: {
+	workspaceId: string
+	loopId: string
+	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
+	preview?: boolean
+}) {
+	const loop = useLinkedLoop(workspaceId, loopId)
+	const agents = useLoopAgents(workspaceId, loop)
+	const shell = preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview ? undefined : ''
+
+	if (loop === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
+	if (loop === null) {
+		return <LinkedCardDeleted shell={shell} marker={marker} label="Deleted loop" />
+	}
+
+	const pill = LOOP_PILL_STYLES[loop.pill]
+	const snippet = plainSnippet(loop.content)
+	const activity = loopActivityLine(loop)
+	return (
+		<Link
+			to="/$workspaceId/loops/$loopId"
+			params={{ workspaceId, loopId: loop.id }}
+			data-linked-card={marker}
+			tabIndex={preview ? -1 : undefined}
+			className={cn(shell, 'group border-border p-3 no-underline', HOVER)}
+		>
+			<span className="flex items-center gap-1.5">
+				<span className={KIND_TAG}>
+					<RefreshCw size={11} aria-hidden />
+					Loop
+				</span>
+				<span className={cn('inline-flex items-center gap-1.5 text-[11px] font-semibold', pill.text)}>
+					<span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', pill.dot)} />
+					{pill.label}
+				</span>
+				<span className={OPEN_ARROW}>
+					<span className="sr-only">Open</span>
+					<ArrowUpRight size={14} aria-hidden />
+				</span>
+			</span>
+			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+				{loop.name?.trim() || 'Untitled loop'}
+			</span>
+			{snippet ? (
+				<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
+					{snippet}
+				</span>
+			) : null}
+			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
+				{agents.length > 0 ? (
+					<span className="inline-flex items-center">
+						{agents.slice(0, 5).map((agent) => (
+							<ActorAvatar
+								key={agent.id}
+								id={agent.id}
+								name={agent.name}
+								type={agent.type}
+								size="sm"
+								className={cn(AVATAR, '-ml-1.5 ring-2 ring-card first:ml-0')}
+							/>
+						))}
+						{agents.length > 5 ? <span className="ml-1">+{agents.length - 5}</span> : null}
+					</span>
+				) : null}
+				{activity ? <span>{activity}</span> : null}
+				{loop.updatedAt ? (
+					<span>
+						Updated <RelativeTime date={loop.updatedAt} />
+					</span>
+				) : null}
+			</span>
+		</Link>
+	)
+}
+
+/**
+ * A link to a trigger inside a sentence: the icon of its kind, name, On or Off in lower case and
+ * the avatar of the agent it wakes. The whole chip is one link to the trigger, in the same tab.
+ * While the triggers load the original link stays; one not in this workspace's list reads
+ * "Deleted trigger".
+ */
+export function TriggerReferenceChip({
+	workspaceId,
+	triggerId,
+	fallback,
+}: {
+	workspaceId: string
+	triggerId: string
+	fallback: ReactNode
+}) {
+	const trigger = useLinkedTrigger(workspaceId, triggerId)
+	const agent = useTriggerAgent(workspaceId, trigger)
+	const card = <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} preview />
+
+	if (trigger === null) return <span className={DELETED_CHIP}>Deleted trigger</span>
+	if (trigger === undefined) {
+		return (
+			<ChipPreview card={card} enabled>
+				{fallback}
+			</ChipPreview>
+		)
+	}
+
+	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
+	const state = trigger.enabled ? 'on' : 'off'
+	return (
+		<ChipPreview card={card} enabled>
+			<Link
+				to="/$workspaceId/triggers/$triggerId"
+				params={{ workspaceId, triggerId: trigger.id }}
+				aria-label={`Trigger, ${state}: ${trigger.name}`}
+				className={cn(
+					'not-prose inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-0.5 pr-2 pl-2 align-middle text-[11.5px] no-underline',
+					HOVER,
+				)}
+			>
+				<Icon size={11} aria-hidden className="shrink-0 text-muted-foreground" />
+				<span className="min-w-0 truncate font-semibold text-foreground">{trigger.name}</span>
+				<span
+					className={cn(
+						'shrink-0 text-[10.5px] font-semibold',
+						trigger.enabled ? 'text-success' : 'text-muted-foreground',
+					)}
+				>
+					{state}
+				</span>
+				{agent.state === 'known' ? (
+					<ActorAvatar
+						id={agent.actor.id}
+						name={agent.actor.name}
+						type={agent.actor.type}
+						size="sm"
+						className={AVATAR}
+					/>
+				) : null}
+			</Link>
+		</ChipPreview>
+	)
+}
+
+/**
+ * A link to a trigger that stands alone on its line, drawn as a card where it stands: its name,
+ * when it fires, whether it is on, and the agent it wakes. The instruction it sends and its raw
+ * schedule are never shown. The whole card is one link to the trigger.
+ */
+export function TriggerReferenceCard({
+	workspaceId,
+	triggerId,
+	preview = false,
+}: {
+	workspaceId: string
+	triggerId: string
+	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
+	preview?: boolean
+}) {
+	const trigger = useLinkedTrigger(workspaceId, triggerId)
+	const agent = useTriggerAgent(workspaceId, trigger)
+	const shell = preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview ? undefined : ''
+
+	if (trigger === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
+	if (trigger === null) {
+		return <LinkedCardDeleted shell={shell} marker={marker} label="Deleted trigger" />
+	}
+
+	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
+	return (
+		<Link
+			to="/$workspaceId/triggers/$triggerId"
+			params={{ workspaceId, triggerId: trigger.id }}
+			data-linked-card={marker}
+			tabIndex={preview ? -1 : undefined}
+			className={cn(shell, 'group border-border p-3 no-underline', HOVER)}
+		>
+			<span className="flex items-center gap-1.5">
+				<span className={KIND_TAG}>
+					<Icon size={11} aria-hidden />
+					Trigger
+				</span>
+				<span
+					className={cn(
+						'text-[11px] font-semibold',
+						trigger.enabled ? 'text-success' : 'text-muted-foreground',
+					)}
+				>
+					{trigger.enabled ? 'On' : 'Off'}
+				</span>
+				<span className={OPEN_ARROW}>
+					<span className="sr-only">Open</span>
+					<ArrowUpRight size={14} aria-hidden />
+				</span>
+			</span>
+			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+				{trigger.name}
+			</span>
+			<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
+				{describeTrigger(trigger)}
+			</span>
+			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					{agent.state === 'known' ? (
+						<>
+							<ActorAvatar
+								id={agent.actor.id}
+								name={agent.actor.name}
+								type={agent.actor.type}
+								size="sm"
+								className={AVATAR}
+							/>
+							<span className="truncate">{agent.actor.name}</span>
+						</>
+					) : agent.state === 'gone' ? (
+						'Unknown'
+					) : (
+						<Bar className="h-3 w-16" />
+					)}
+				</span>
 			</span>
 		</Link>
 	)
