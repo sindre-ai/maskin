@@ -29,6 +29,34 @@ describe('describeObjectProperties', () => {
 		).toEqual(['Account: Sebastian'])
 	})
 
+	it('leaves out what the preview already shows, and nothing else', () => {
+		const metadata = {
+			channel: 'linkedin_dm',
+			priority: 'P1',
+			recipient: ' liz benison ',
+			account: 'Sebastian',
+			email: 'LIZ@example.com',
+		}
+		expect(
+			describeObjectProperties(metadata, {
+				recipients: ['Liz Benison', null, 'liz@example.com'],
+				label: 'LinkedIn message',
+			}),
+		).toEqual(['P1', 'Account: Sebastian'])
+		// A label that reads differently from the channel keeps the channel line.
+		expect(describeObjectProperties(metadata, { recipients: [], label: 'Message' })).toContain(
+			'LinkedIn message',
+		)
+		// Without a preview nothing is dropped.
+		expect(describeObjectProperties(metadata)).toEqual([
+			'LinkedIn message',
+			'P1',
+			'Recipient: liz benison',
+			'Account: Sebastian',
+			'Email: LIZ@example.com',
+		])
+	})
+
 	it('is empty for no metadata', () => {
 		expect(describeObjectProperties(null)).toEqual([])
 		expect(describeObjectProperties([])).toEqual([])
