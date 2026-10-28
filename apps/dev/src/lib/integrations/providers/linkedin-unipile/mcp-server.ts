@@ -1,9 +1,5 @@
 import type { Database } from '@maskin/db'
-import {
-	deletePostInputShape,
-	editPostInputShape,
-	linkedinAttachmentsArraySchema,
-} from '@maskin/mcp'
+import { deletePostInputShape, editPostInputShape } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
@@ -260,10 +256,12 @@ export function registerLinkedInMcpInstance(
 						.min(1)
 						.max(3000)
 						.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
-					attachments: linkedinAttachmentsArraySchema
+					attachment_file_ids: z
+						.array(z.string().uuid())
+						.max(9)
 						.optional()
 						.describe(
-							'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
+							'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
 						),
 					can_read: z
 						.string()

@@ -29,7 +29,6 @@
  */
 
 import { z } from 'zod'
-import { linkedinAttachmentsArraySchema } from './linkedin-attachments'
 
 /**
  * Character limits are LinkedIn's, not ours. The 3000-char post body limit is
@@ -53,7 +52,7 @@ export type LinkedInCanComment = (typeof LINKEDIN_CAN_COMMENT_VALUES)[number]
 // ── __publish_post ─────────────────────────────────────────────────────────
 //
 // Personal-profile or per-page publish. Identity is pre-scoped by the
-// register-time `LinkedInMcpInstanceConfig.identityUrn`; `attachments` is the
+// register-time `LinkedInMcpInstanceConfig.identityUrn`; `attachment_file_ids` is the
 // only structural difference from Phase 1's `text`-only publish shape. No
 // `post_as` field: R11-A stopped taking identity as a per-call arg.
 
@@ -65,10 +64,12 @@ export const publishPostInputShape = {
 		.describe(
 			`Post body. Max ${LINKEDIN_POST_MAX_CHARS} chars — LinkedIn hard limit. Plain text; newlines allowed; @mentions and hashtags render as-is on LinkedIn.`,
 		),
-	attachments: linkedinAttachmentsArraySchema
+	attachment_file_ids: z
+		.array(z.string().uuid())
+		.max(9)
 		.optional()
 		.describe(
-			'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
+			'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
 		),
 } as const
 
