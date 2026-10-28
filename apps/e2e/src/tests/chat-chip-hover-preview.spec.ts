@@ -99,15 +99,22 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		}
 	})
 
-	test('mobile 375: nothing opens and a tap goes to the object', async ({ page, account }) => {
+	test('mobile 375: no hover preview, and a tap opens the sheet instead of the object', async ({
+		page,
+		account,
+	}) => {
 		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
 		const { chip, ws, task } = await openChatWithChip(account, page)
 		const preview = page.locator('[data-linked-preview]')
+		const chatUrl = page.url()
 
 		await chip.hover()
 		await chip.focus()
 		await expect(preview).toHaveCount(0)
 		await chip.click()
+		await expect(page.getByRole('dialog', { name: 'Object preview' })).toBeVisible()
+		await expect(page).toHaveURL(chatUrl)
+		await page.getByRole('link', { name: 'Open' }).click()
 		await expect(page).toHaveURL(new RegExp(`/${ws}/objects/${task.id}`))
 	})
 })
