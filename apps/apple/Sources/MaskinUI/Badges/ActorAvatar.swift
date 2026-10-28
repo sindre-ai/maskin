@@ -101,6 +101,7 @@ public struct ActorAvatar: View {
 	private var shape: AgentShape { kind == .agent ? ActorIdentity.agentShape(seed: seed) : .circle }
 	private var working: Bool { mood == .working }
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.actorPictures) private var pictures
 	@State private var bobbing = false
 	@State private var swaying = false
 
@@ -108,6 +109,7 @@ public struct ActorAvatar: View {
 		let shape = shape
 		let isPlatform = kind == .agent && isMaskinPlatformAgent(name: name)
 		avatarFace(shape: shape, isPlatform: isPlatform)
+			.overlay { picture(shape: shape) }
 			.opacity(mood == .paused ? 0.55 : 1)
 			.overlay {
 				if working { WorkingRing(shape: isPlatform ? .roundedSquare : shape) }
@@ -133,6 +135,22 @@ public struct ActorAvatar: View {
 			}
 			.accessibilityElement(children: .ignore)
 			.accessibilityLabel(accessibilityName)
+	}
+
+	/// The actor's uploaded picture over the face, once it has loaded. Until then, and when there is
+	/// none or it fails to load, the initials underneath show. Looked up by `seed`, which is the
+	/// actor id wherever the caller has one.
+	@MainActor @ViewBuilder
+	private func picture(shape: AgentShape) -> some View {
+		if let url = pictures.url(seed) {
+			AsyncImage(url: url) { phase in
+				if let image = phase.image {
+					image.resizable().scaledToFill()
+				}
+			}
+			.frame(width: size, height: size)
+			.clipShape(shape)
+		}
 	}
 
 	/// The face: the logo tile for the Maskin platform agent, otherwise initials on the avatar gradient.

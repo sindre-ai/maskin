@@ -1,26 +1,12 @@
 import { createHmac } from 'node:crypto'
-import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Custom webhook extensions (bring-your-own integrations). The surface sits
- * behind the byo-extensions-ui flag; nothing sets FF_TESTER_FEATURES in CI, so
- * the specs use the client-side test override. The backend is real: the
- * extension, its encrypted secret and the delivery rows all go through
- * /api/extensions and POST /api/webhooks/x/:token.
+ * Custom webhook extensions (bring-your-own integrations).
+ * The backend is real: the extension, its encrypted secret and the delivery
+ * rows all go through /api/extensions and POST /api/webhooks/x/:token.
  */
-
-const FLAG_KEY = 'ff:byo-extensions-ui'
-
-async function setFlag(page: Page, value: 'on' | 'off') {
-	await page.addInitScript(
-		({ key, v }) => {
-			localStorage.setItem(key, v)
-		},
-		{ key: FLAG_KEY, v: value },
-	)
-}
 
 function signedFireflies(secret: string, meetingId: string) {
 	const body = JSON.stringify({
@@ -40,7 +26,6 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await setFlag(page, 'on')
 			const name = `Fireflies ${Date.now()}`
 
 			await page.goto(`/${account.workspaceId}/settings/extensions`)
@@ -110,7 +95,6 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		})
 
 		test('shows field errors instead of saving an empty webhook', async ({ page, account }) => {
-			await setFlag(page, 'on')
 			await page.goto(`/${account.workspaceId}/settings/extensions`)
 			await page.getByRole('button', { name: 'Add extension' }).first().click()
 			await page.getByLabel('Name').fill(`Empty ${Date.now()}`)
@@ -123,23 +107,8 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 	})
 }
 
-test.describe('custom webhook extension flag', () => {
-	test('hides the custom section and the detail page while the flag is off', async ({
-		page,
-		account,
-	}) => {
-		await setFlag(page, 'off')
-		await page.goto(`/${account.workspaceId}/settings/extensions`)
-		await expect(page.getByRole('switch', { name: 'Work' })).toBeVisible()
-		await expect(page.getByRole('heading', { name: 'Custom' })).toHaveCount(0)
-		await page.goto(
-			`/${account.workspaceId}/settings/extensions/00000000-0000-4000-8000-000000000000`,
-		)
-		await expect(page.getByText('Page not found')).toBeVisible()
-	})
-
+test.describe('custom webhook extension dark mode', () => {
 	test('renders in dark mode', async ({ page, account }) => {
-		await setFlag(page, 'on')
 		await page.goto(`/${account.workspaceId}/settings/extensions`)
 		await page.evaluate(() => document.documentElement.classList.add('dark'))
 		await expect(page.getByRole('heading', { name: 'Custom' })).toBeVisible()

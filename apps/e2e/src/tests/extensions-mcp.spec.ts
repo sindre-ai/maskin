@@ -4,18 +4,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * Connect an MCP on a custom extension (bring-your-own integrations): the Add
- * an MCP modal, the tools probe, the 20-tool cap and the saved summary. The
- * surface sits behind the byo-extensions-ui flag, so the specs use the
- * client-side test override. The extension and the save go through the real
- * /api; only the tools probe is answered in the browser, because it would
- * otherwise call out to a vendor on the internet.
+ * an MCP modal, the tools probe, the 20-tool cap and the saved summary.
+ * The extension and the save go through the real /api; only the tools probe is
+ * answered in the browser, because it would otherwise call out to a vendor on
+ * the internet.
  */
-
-async function enableFlag(page: Page) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:byo-extensions-ui', 'on')
-	})
-}
 
 async function stubProbe(page: Page, toolCount: number) {
 	await page.route('**/api/extensions/mcp/probe', (route) =>
@@ -48,7 +41,6 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await enableFlag(page)
 			await stubProbe(page, 3)
 			const extName = `Acme ${Date.now()}`
 			const extId = await seedDraft(page, account.apiKey, account.workspaceId, extName)
@@ -82,7 +74,6 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await enableFlag(page)
 			await stubProbe(page, 21)
 			const extId = await seedDraft(page, account.apiKey, account.workspaceId, `Acme ${Date.now()}`)
 
@@ -108,7 +99,6 @@ test.describe('extension MCP error band', () => {
 		page,
 		account,
 	}) => {
-		await enableFlag(page)
 		await page.route('**/api/extensions/mcp/probe', (route) =>
 			route.fulfill({
 				json: { ok: false, reason: 'rejected', message: 'The server rejected the API key.' },

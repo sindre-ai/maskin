@@ -273,6 +273,11 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// Session self-heal's "does this session already have its completion event?" probe,
+		// answered from the index alone. Built CONCURRENTLY in migration 0114.
+		index('events_session_entity_action_idx')
+			.on(t.entityId, t.action, t.workspaceId)
+			.where(sql`${t.entityType} = 'session'`),
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
@@ -704,6 +709,12 @@ export const sessions = pgTable(
 		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
 		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
 		durationMs: bigint('duration_ms', { mode: 'number' }),
+		// Usage watermark (migration 0113): the newest session_logs.id whose `result`
+		// envelope is already added into the usage columns above, and the CLI's cumulative
+		// cost at that point. Lets a per-turn write and every settle path add only the
+		// results not yet counted, so none of them double-counts.
+		usageCountedLogId: bigint('usage_counted_log_id', { mode: 'number' }),
+		usageCountedCliCost: numeric('usage_counted_cli_cost', { precision: 12, scale: 6 }),
 		currentActivity: text('current_activity'),
 		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
 		// `status` text because reaper + retry-scheduler need to tell
@@ -823,6 +834,35 @@ export const apiKeys = pgTable(
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect
+
+// ── Comment Responder Claims ───────────────────────────────────────────────
+// One responder session per (comment event, actor). The thread-reply spawn and the
+// CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
+// wins starts it, the other stands down. See migration 0115.
+export type CommentResponderClaimedBy = 'thread_reply' | 'comment_fallback'
+export const commentResponderClaims = pgTable(
+	'comment_responder_claims',
+	{
+		sourceCommentEventId: bigint('source_comment_event_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		claimedBy: text('claimed_by').$type<CommentResponderClaimedBy>().notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({
+			name: 'comment_responder_claims_pk',
+			columns: [t.sourceCommentEventId, t.actorId],
+		}),
+		check(
+			'comment_responder_claims_claimed_by_enum',
+			sql`${t.claimedBy} IN ('thread_reply', 'comment_fallback')`,
+		),
+	],
+)
 
 // ── Session Logs ───────────────────────────────────────────────────────────
 
@@ -1204,6 +1244,48 @@ export const voiceSessions = pgTable('voice_sessions', {
 
 export type VoiceSession = typeof voiceSessions.$inferSelect
 export type NewVoiceSession = typeof voiceSessions.$inferInsert
+
+// ── Voice tool call log ─────────────────────────────────────────────────────
+//
+// One row per tool call the voice model made during a call: what it asked for
+// (redacted, size-capped), whether it worked, and the first part of what the
+// model was told back. An internal diagnostic log, not an entity: rows are never
+// edited, so there is no events row, and they are swept after 30 days
+// (services/voice-tool-call-log-cleaner.ts). Written best-effort; a missing row
+// never means the call failed.
+export const voiceToolCalls = pgTable(
+	'voice_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		voiceSessionId: uuid('voice_session_id')
+			.notNull()
+			.references(() => voiceSessions.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The id the realtime model gave the call; ties a row to the transcript.
+		callId: text('call_id'),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		toolName: text('tool_name').notNull(),
+		// Redacted and capped; see lib/voice-tool-call-redaction.ts.
+		argsSummary: jsonb('args_summary').$type<unknown>(),
+		success: boolean('success').notNull(),
+		errorCode: text('error_code'),
+		errorMessage: text('error_message'),
+		// Length of the tool's output before voice's cap, and whether the cap cut it.
+		outputChars: integer('output_chars').notNull(),
+		outputTruncated: boolean('output_truncated').notNull().default(false),
+		latencyMs: integer('latency_ms').notNull(),
+		outputPreview: text('output_preview'),
+	},
+	(t) => [
+		index('voice_tool_calls_session_started_idx').on(t.voiceSessionId, t.startedAt),
+		index('voice_tool_calls_started_at_idx').on(t.startedAt),
+	],
+)
+
+export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
+export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
 
 // ── Imports ───────────────────────────────────────────────────────────
 
@@ -2579,10 +2661,8 @@ export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInse
 // same event, exactly one INSERT claims — the loser's returning() is empty
 // and the dispatch is skipped.
 //
-// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
-// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
-// double-fire window the table exists to prevent. The v1 code path simply
-// never writes to this table, so having it live pre-flag is safe.
+// Ships unconditional (tech spec §3.4 + §7.3): the table exists to prevent the
+// double-fire window during a rolling deploy.
 //
 // session_id is diagnostic only. If the UPDATE that stamps it after
 // createSession() fails, the row still guards against double-fire — its
@@ -2620,8 +2700,7 @@ export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
 // three indexes are partial on replayed_at IS NULL so they only ever cover
 // the pending backlog.
 //
-// The table ships unconditional (additive, nothing reads it with the flag
-// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+// The table ships unconditional (additive).
 
 export const triggerEventQueue = pgTable(
 	'trigger_event_queue',
