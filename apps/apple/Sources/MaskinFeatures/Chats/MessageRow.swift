@@ -265,7 +265,13 @@ struct MessageRow: View {
 	private func linkedLayout(for targets: [LinkedTarget]) -> (parts: [LinkedMessagePart], appended: [LinkedTarget])? {
 		guard let linked, !targets.isEmpty else { return nil }
 		let looked = Set(targets.map(\.key))
-		let isCard: (LinkedTarget) -> Bool = { looked.contains($0.key) && linked.showsCard($0) }
+		let ownMessage = self.isOwn
+		let isCard: (LinkedTarget) -> Bool = { target in
+			guard looked.contains(target.key), linked.showsCard(target) else { return false }
+			// The approval card is for what an agent wrote; a draft you link is a link.
+			if ownMessage, case .draft? = linked.item(for: target) { return false }
+			return true
+		}
 		let skipping = Set(
 			targets.filter { target in
 				guard target.kind == .object, let owner = cardOwners[target.key], owner != message.id else { return false }
