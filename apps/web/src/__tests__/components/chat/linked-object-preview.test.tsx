@@ -237,9 +237,11 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('P1')).toBeInTheDocument()
 		})
 
-		it('still shows the recipient under the title when contracted', () => {
+		it('still shows the recipient under the title when contracted', async () => {
 			useObject.mockReturnValue({ data: filed() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
+			// A draft starts open; the person folds it.
+			await userEvent.click(screen.getByRole('button', { name: 'Contract preview' }))
 			expect(screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison')).toBeInTheDocument()
 		})
 	})

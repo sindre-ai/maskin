@@ -120,7 +120,8 @@ describe('MessageBubble', () => {
 			}),
 		)
 		const before = screen.getByText('Before the link.')
-		const card = screen.getByText('LinkedIn message · P1')
+		// A draft starts open, so its title (not the contracted subtitle) marks the card.
+		const card = screen.getByText('Retry window')
 		const after = screen.getByText('After the link.')
 		expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
