@@ -308,6 +308,39 @@ describe('loop and trigger chip preview', () => {
 	})
 })
 
+describe('loop and trigger chip sheet', () => {
+	beforeEach(() => {
+		useLoop.mockReturnValue(found(loopRow()))
+		useTrigger.mockReturnValue(found(triggerRow()))
+	})
+	const sheet = () => screen.queryByRole('dialog', { name: 'Object preview' })
+
+	it('opens the loop card in the sheet on a tap, as plain content', async () => {
+		const user = userEvent.setup()
+		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
+		await user.click(screen.getByRole('link', { name: /^Loop, supervised/ }))
+		expect(sheet()?.textContent).toContain('Sorts new insights into bets.')
+		expect(sheet()?.querySelectorAll('a')).toHaveLength(1)
+		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
+	})
+
+	it('opens the trigger card in the sheet on a tap, without the instruction text', async () => {
+		const user = userEvent.setup()
+		render(<TriggerReferenceChip workspaceId={WS} triggerId={TRIGGER_ID} fallback={fallback} />)
+		await user.click(screen.getByRole('link', { name: /^Trigger, on/ }))
+		expect(sheet()?.textContent).toContain('Morning sweep')
+		expect(sheet()?.textContent).not.toContain('SECRET INSTRUCTION TEXT')
+	})
+
+	it('opens no sheet for a deleted loop', async () => {
+		const user = userEvent.setup()
+		useLoop.mockReturnValue(found(undefined))
+		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
+		await user.click(screen.getByText('Deleted loop'))
+		expect(sheet()).toBeNull()
+	})
+})
+
 describe('loop and trigger card fold', () => {
 	it('folds a loop card to one row and unfolds it', async () => {
 		const user = userEvent.setup()

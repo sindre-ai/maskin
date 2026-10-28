@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
+const toast = vi.fn()
 
+vi.mock('sonner', () => ({ toast: (...args: unknown[]) => toast(...args) }))
 vi.mock('@/hooks/use-objects', () => ({ useObject: (id: string) => useObject(id) }))
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [{ id: 'actor-1', name: 'Developer', type: 'agent' }] }),
@@ -313,5 +315,102 @@ describe('ObjectReferenceChip preview', () => {
 			fireEvent.mouseEnter(screen.getByText('Deleted object'))
 		})
 		expect(preview()).toBeNull()
+	})
+})
+
+describe('ObjectReferenceChip sheet', () => {
+	const realMatchMedia = window.matchMedia
+	const setPointerDesktop = (matches: boolean) => {
+		window.matchMedia = ((query: string) => ({
+			matches,
+			media: query,
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		})) as unknown as typeof window.matchMedia
+	}
+	const chip = () => screen.getByRole('link', { name: /Bet, Active: Chat preview cards/ })
+	const sheet = () => screen.queryByRole('dialog', { name: 'Object preview' })
+
+	beforeEach(() => {
+		useObject.mockReset()
+		toast.mockReset()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		setPointerDesktop(false)
+	})
+	afterEach(() => {
+		window.matchMedia = realMatchMedia
+	})
+
+	it('opens the sheet on a tap instead of leaving, with the card as plain content', async () => {
+		const user = userEvent.setup()
+		renderChip()
+		expect(sheet()).toBeNull()
+		await user.click(chip())
+		const dialog = sheet()
+		expect(dialog).toHaveAttribute('aria-modal', 'true')
+		expect(dialog?.textContent).toContain('Chat preview cards')
+		expect(dialog?.textContent).toContain('Developer')
+		// The card is not a link: the only link in the sheet is Open.
+		expect(screen.getAllByRole('link', { name: 'Open' })).toHaveLength(1)
+		expect(dialog?.querySelectorAll('a')).toHaveLength(1)
+		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+		// The sheet's card is not counted as a card of the message.
+		expect(dialog?.querySelector('[data-linked-card]')).toBeNull()
+	})
+
+	it('closes with Close and Escape, and focus goes back to the chip', async () => {
+		const user = userEvent.setup()
+		renderChip()
+		await user.click(chip())
+		await user.click(screen.getByRole('button', { name: 'Close' }))
+		expect(sheet()).toBeNull()
+		await waitFor(() => expect(chip()).toHaveFocus())
+		await user.click(chip())
+		expect(sheet()).not.toBeNull()
+		await user.keyboard('{Escape}')
+		expect(sheet()).toBeNull()
+		await waitFor(() => expect(chip()).toHaveFocus())
+	})
+
+	it('copies the address and says so; says nothing when there is no clipboard', async () => {
+		const user = userEvent.setup()
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+		renderChip()
+		await user.click(chip())
+		await user.click(screen.getByRole('button', { name: 'Copy link' }))
+		expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/${WS}/objects/${ID}`)
+		expect(toast).toHaveBeenCalledWith('Link copied', { duration: 1800 })
+
+		toast.mockReset()
+		Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+		await user.click(screen.getByRole('button', { name: 'Copy link' }))
+		expect(toast).not.toHaveBeenCalled()
+	})
+
+	it('shows the card skeleton in the sheet while the object loads', async () => {
+		const user = userEvent.setup()
+		useObject.mockReturnValue({ data: undefined, isLoading: true })
+		renderChip()
+		await user.click(screen.getByText('the original link'))
+		expect(sheet()?.querySelector('[aria-busy="true"]')).not.toBeNull()
+		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
+	})
+
+	it('opens no sheet for a deleted object', async () => {
+		const user = userEvent.setup()
+		useObject.mockReturnValue({ data: undefined, isLoading: false })
+		renderChip()
+		await user.click(screen.getByText('Deleted object'))
+		expect(sheet()).toBeNull()
+	})
+
+	it('opens no sheet on a pointer device at 640px or wider', async () => {
+		const user = userEvent.setup()
+		setPointerDesktop(true)
+		renderChip()
+		await user.click(chip())
+		expect(sheet()).toBeNull()
 	})
 })

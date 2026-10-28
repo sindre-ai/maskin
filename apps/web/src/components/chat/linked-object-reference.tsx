@@ -5,6 +5,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
+import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useActors } from '@/hooks/use-actors'
 import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -21,8 +22,17 @@ import {
 } from '@/lib/constants'
 import { cutLabel, plainSnippet, shortName, showsObjectCard } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, ChevronDown, ChevronUp, RefreshCw, Zap } from 'lucide-react'
 import {
+	ArrowUpRight,
+	ChevronDown,
+	ChevronUp,
+	ExternalLink,
+	Link2,
+	RefreshCw,
+	Zap,
+} from 'lucide-react'
+import {
+	type MouseEvent,
 	type ReactElement,
 	type ReactNode,
 	cloneElement,
@@ -33,6 +43,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from 'react'
+import { toast } from 'sonner'
 
 const HOVER =
 	'transition-colors duration-180 ease-standard hover:border-border-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
@@ -88,6 +99,16 @@ function usePreviewCapable() {
 	)
 }
 
+/** What the phone sheet of a chip holds and where its Open and Copy link buttons go. */
+type ChipSheetContent = {
+	/** The card, drawn as the sheet's face (see the cards' `sheet` prop). */
+	card: ReactNode
+	/** A link element to the target, without children; the sheet gives it the Open button's look. */
+	openLink: ReactElement<{ className?: string; onClick?: () => void; children?: ReactNode }>
+	/** The target's address in this workspace, for Copy link. */
+	path: string
+}
+
 /**
  * Opens the card under its child while the pointer is over it or focus is inside it. The chip
  * wraps with the sentence, so this wrapper is inline too: the card opens under the chip's last
@@ -97,21 +118,30 @@ function usePreviewCapable() {
  * here; while that entry loads the card shows its skeleton. The preview is for the eye only:
  * hidden from the accessibility tree and not a tab stop, since the chip is already the link and
  * its name carries the same facts. Escape closes it.
+ *
+ * Where there is no preview (below 640px, or on touch) a tap on the chip opens the same card in a
+ * bottom sheet instead of leaving the chat, see `ChipSheet`.
  */
 function ChipPreview({
 	card,
+	sheet,
 	enabled,
 	children,
 }: {
 	/** The card to open, drawn as a preview (see the cards' `preview` prop). */
 	card: ReactNode
+	sheet: ChipSheetContent
 	enabled: boolean
 	children: ReactNode
 }) {
 	const capable = usePreviewCapable()
 	const [open, setOpen] = useState(false)
+	const [sheetOpen, setSheetOpen] = useState(false)
 	const shown = open && enabled && capable
+	const sheetShown = sheetOpen && enabled && !capable
 	const root = useRef<HTMLSpanElement>(null)
+	// The link that was tapped, so focus can go back to it when the sheet closes.
+	const tapped = useRef<HTMLElement | null>(null)
 	// The card is placed against the first and last line piece of the chip; `shift` moves it to the
 	// bounding box of all of them (nothing for a chip on one line).
 	const [place, setPlace] = useState({ alignEnd: false, shift: 0 })
@@ -139,30 +169,127 @@ function ChipPreview({
 		return () => document.removeEventListener('keydown', onKeyDown)
 	}, [shown])
 
+	// A tap on the chip's link opens the sheet and does not navigate.
+	const onClickCapture = (e: MouseEvent) => {
+		if (!enabled || capable) return
+		const link = (e.target as Element).closest('a')
+		if (!link || !root.current?.contains(link)) return
+		e.preventDefault()
+		e.stopPropagation()
+		tapped.current = link
+		setSheetOpen(true)
+	}
+
 	return (
-		<span
-			ref={root}
-			className="relative"
-			onMouseEnter={() => setOpen(true)}
-			onMouseLeave={() => setOpen(false)}
-			onFocus={() => setOpen(true)}
-			onBlur={(e) => {
-				if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false)
-			}}
-		>
-			{children}
-			{shown ? (
-				// The top padding bridges the gap so the pointer can travel from chip to card.
-				<span
-					aria-hidden="true"
-					data-linked-preview=""
-					style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
-					className="absolute top-full z-50 block pt-1 duration-180 ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5"
-				>
-					{card}
-				</span>
-			) : null}
-		</span>
+		<>
+			<span
+				ref={root}
+				className="relative"
+				onClickCapture={onClickCapture}
+				onMouseEnter={() => setOpen(true)}
+				onMouseLeave={() => setOpen(false)}
+				onFocus={() => setOpen(true)}
+				onBlur={(e) => {
+					if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false)
+				}}
+			>
+				{children}
+				{shown ? (
+					// The top padding bridges the gap so the pointer can travel from chip to card.
+					<span
+						aria-hidden="true"
+						data-linked-preview=""
+						style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
+						className="absolute top-full z-50 block pt-1 duration-180 ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5"
+					>
+						{card}
+					</span>
+				) : null}
+			</span>
+			<ChipSheet
+				open={sheetShown}
+				onClose={() => setSheetOpen(false)}
+				returnFocus={() => {
+					const link = tapped.current?.isConnected
+						? tapped.current
+						: root.current?.querySelector('a')
+					link?.focus()
+				}}
+				{...sheet}
+			/>
+		</>
+	)
+}
+
+const SHEET_BUTTON =
+	'inline-flex h-10 items-center justify-center rounded-lg border border-border text-[13px] font-semibold text-foreground transition-colors duration-180 ease-standard hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/**
+ * The bottom sheet a tap on a chip opens below 640px or on touch, where there is no hover preview:
+ * the chip's card (not a link), then Open, Copy link and Close. The status and owner a chip leaves
+ * out are on the card, and the reader keeps their place in the chat. It is a modal dialog, so
+ * focus moves in, Tab stays inside, Escape, the backdrop and Close shut it, and focus goes back to
+ * the chip. Nothing is fetched: the card reads the chip's own cache entry.
+ */
+function ChipSheet({
+	open,
+	onClose,
+	returnFocus,
+	card,
+	openLink,
+	path,
+}: ChipSheetContent & { open: boolean; onClose: () => void; returnFocus: () => void }) {
+	// Only the address is copied; without the clipboard API nothing is copied and no toast shows.
+	const copyLink = async () => {
+		try {
+			await navigator.clipboard.writeText(`${window.location.origin}${path}`)
+			toast('Link copied', { duration: 1800 })
+		} catch {
+			// No clipboard here.
+		}
+	}
+
+	return (
+		<Sheet open={open} onOpenChange={(next) => !next && onClose()}>
+			<SheetContent
+				side="bottom"
+				hideCloseButton
+				aria-modal="true"
+				aria-label="Object preview"
+				aria-describedby={undefined}
+				overlayClassName="bg-foreground/40 chip-sheet-fade"
+				className="chip-sheet-rise flex flex-col gap-3 rounded-t-2xl bg-popover p-4 pb-6 motion-reduce:animate-none"
+				onCloseAutoFocus={(e) => {
+					e.preventDefault()
+					returnFocus()
+				}}
+			>
+				<SheetTitle className="sr-only">Object preview</SheetTitle>
+				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border" />
+				{card}
+				<div className="mt-1 flex items-center gap-2">
+					{cloneElement(
+						openLink,
+						{
+							className:
+								'inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-primary-foreground no-underline transition-colors duration-180 ease-standard hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+							onClick: onClose,
+						},
+						<ExternalLink size={14} aria-hidden />,
+						'Open',
+					)}
+					<button
+						type="button"
+						aria-label="Copy link"
+						onClick={copyLink}
+						className={cn(SHEET_BUTTON, 'size-10 text-muted-foreground hover:text-foreground')}
+					>
+						<Link2 size={16} aria-hidden />
+					</button>
+					<SheetClose className={cn(SHEET_BUTTON, 'bg-background px-3.5')}>Close</SheetClose>
+				</div>
+			</SheetContent>
+		</Sheet>
 	)
 }
 
@@ -250,6 +377,11 @@ export function ObjectReferenceChip({
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
+	const sheet: ChipSheetContent = {
+		card: <ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} sheet />,
+		openLink: <Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }} />,
+		path: `/${workspaceId}/objects/${objectId}`,
+	}
 
 	// A draft keeps its plain link: its approval card sits under the text.
 	if (object === null) {
@@ -261,6 +393,7 @@ export function ObjectReferenceChip({
 		return (
 			<ChipPreview
 				card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+				sheet={sheet}
 				enabled={object === undefined}
 			>
 				{object === undefined ? loadingChip(fallback) : fallback}
@@ -277,6 +410,7 @@ export function ObjectReferenceChip({
 	return (
 		<ChipPreview
 			card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
+			sheet={sheet}
 			enabled
 		>
 			<Link
@@ -317,6 +451,8 @@ const CARD_SHELL =
 // The same card as a hover preview: no outer margin, a fixed width, lifted off the page.
 const PREVIEW_SHELL =
 	'not-prose @container flex w-[min(380px,78vw)] flex-col rounded-xl border bg-card shadow-md'
+// The same card as the face of the phone sheet: the width of the sheet, no margin, no shadow.
+const SHEET_SHELL = 'not-prose @container flex w-full flex-col rounded-xl border bg-card'
 
 /** A loading bar made of spans, so a preview inside a paragraph stays valid HTML. */
 function Bar({ className }: { className: string }) {
@@ -411,6 +547,36 @@ function FoldableCard({
 	)
 }
 
+/**
+ * What a card is drawn in: the link to its target (the whole card), or in the phone sheet a plain
+ * box, since the sheet's own Open button is the link. `link` is that link without children.
+ */
+function CardFace({
+	link,
+	shell,
+	preview,
+	sheet,
+	children,
+}: {
+	link: ReactElement<{ className?: string; tabIndex?: number; children?: ReactNode }>
+	shell: string
+	preview: boolean
+	sheet: boolean
+	children: ReactNode
+}) {
+	if (sheet) return <span className={cn(shell, 'border-border p-3')}>{children}</span>
+	return cloneElement(
+		link,
+		{
+			tabIndex: preview ? -1 : undefined,
+			className: preview
+				? cn(shell, 'group border-border p-3 no-underline', HOVER)
+				: OPEN_CARD_LINK,
+		},
+		children,
+	)
+}
+
 /** The workspace's own name for a type, on the type's own colours. */
 function TypeTag({ type, label }: { type: string; label: string }) {
 	const colors = typeColors[type] ?? defaultTypeColor
@@ -436,17 +602,20 @@ export function ObjectReferenceCard({
 	workspaceId,
 	objectId,
 	preview = false,
+	sheet = false,
 }: {
 	workspaceId: string
 	objectId: string
 	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
 	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
-	const shell = preview ? PREVIEW_SHELL : CARD_SHELL
-	const marker = preview ? undefined : ''
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
 
 	if (object === undefined) {
 		return (
@@ -482,12 +651,12 @@ export function ObjectReferenceCard({
 	const head = <TypeTag type={object.type} label={typeLabel(object.type)} />
 	const state = <StatusBadge status={object.status} />
 	const link = (
-		<Link
-			to="/$workspaceId/objects/$objectId"
-			params={{ workspaceId, objectId: object.id }}
-			tabIndex={preview ? -1 : undefined}
-			className={
-				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={
+				<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId: object.id }} />
 			}
 		>
 			<span className="flex items-center gap-1.5">
@@ -498,15 +667,17 @@ export function ObjectReferenceCard({
 						{priority}
 					</span>
 				) : null}
-				<span
-					className={cn(
-						'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground',
-						!preview && FOLD_ROOM,
-					)}
-				>
-					<span className="sr-only">Open</span>
-					<ArrowUpRight size={14} aria-hidden />
-				</span>
+				{sheet ? null : (
+					<span
+						className={cn(
+							'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground',
+							!preview && FOLD_ROOM,
+						)}
+					>
+						<span className="sr-only">Open</span>
+						<ArrowUpRight size={14} aria-hidden />
+					</span>
+				)}
 			</span>
 			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
 				{title}
@@ -552,9 +723,9 @@ export function ObjectReferenceCard({
 					</span>
 				) : null}
 			</span>
-		</Link>
+		</CardFace>
 	)
-	return preview ? (
+	return preview || sheet ? (
 		link
 	) : (
 		<FoldableCard title={title} head={head} state={state}>
@@ -664,11 +835,16 @@ export function LoopReferenceChip({
 }) {
 	const loop = useLinkedLoop(workspaceId, loopId)
 	const card = <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} preview />
+	const sheet: ChipSheetContent = {
+		card: <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} sheet />,
+		openLink: <Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId }} />,
+		path: `/${workspaceId}/loops/${loopId}`,
+	}
 
 	if (loop === null) return <span className={DELETED_CHIP}>Deleted loop</span>
 	if (loop === undefined) {
 		return (
-			<ChipPreview card={card} enabled>
+			<ChipPreview card={card} sheet={sheet} enabled>
 				{loadingChip(fallback, false)}
 			</ChipPreview>
 		)
@@ -677,7 +853,7 @@ export function LoopReferenceChip({
 	const name = loop.name?.trim() || 'Untitled loop'
 	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
 	return (
-		<ChipPreview card={card} enabled>
+		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
 				to="/$workspaceId/loops/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
@@ -702,16 +878,19 @@ export function LoopReferenceCard({
 	workspaceId,
 	loopId,
 	preview = false,
+	sheet = false,
 }: {
 	workspaceId: string
 	loopId: string
 	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
 	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
 }) {
 	const loop = useLinkedLoop(workspaceId, loopId)
 	const agents = useLoopAgents(workspaceId, loop)
-	const shell = preview ? PREVIEW_SHELL : CARD_SHELL
-	const marker = preview ? undefined : ''
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
 
 	if (loop === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (loop === null) {
@@ -735,21 +914,21 @@ export function LoopReferenceCard({
 		</span>
 	)
 	const link = (
-		<Link
-			to="/$workspaceId/loops/$loopId"
-			params={{ workspaceId, loopId: loop.id }}
-			tabIndex={preview ? -1 : undefined}
-			className={
-				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
-			}
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={<Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId: loop.id }} />}
 		>
 			<span className="flex items-center gap-1.5">
 				{head}
 				{state}
-				<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
-					<span className="sr-only">Open</span>
-					<ArrowUpRight size={14} aria-hidden />
-				</span>
+				{sheet ? null : (
+					<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
+						<span className="sr-only">Open</span>
+						<ArrowUpRight size={14} aria-hidden />
+					</span>
+				)}
 			</span>
 			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
 				{name}
@@ -782,9 +961,9 @@ export function LoopReferenceCard({
 					</span>
 				) : null}
 			</span>
-		</Link>
+		</CardFace>
 	)
-	return preview ? (
+	return preview || sheet ? (
 		link
 	) : (
 		<FoldableCard title={name} head={head} state={state}>
@@ -810,11 +989,16 @@ export function TriggerReferenceChip({
 }) {
 	const trigger = useLinkedTrigger(workspaceId, triggerId)
 	const card = <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} preview />
+	const sheet: ChipSheetContent = {
+		card: <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} sheet />,
+		openLink: <Link to="/$workspaceId/triggers/$triggerId" params={{ workspaceId, triggerId }} />,
+		path: `/${workspaceId}/triggers/${triggerId}`,
+	}
 
 	if (trigger === null) return <span className={DELETED_CHIP}>Deleted trigger</span>
 	if (trigger === undefined) {
 		return (
-			<ChipPreview card={card} enabled>
+			<ChipPreview card={card} sheet={sheet} enabled>
 				{loadingChip(fallback, false)}
 			</ChipPreview>
 		)
@@ -823,7 +1007,7 @@ export function TriggerReferenceChip({
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 	const state = trigger.enabled ? 'on' : 'off'
 	return (
-		<ChipPreview card={card} enabled>
+		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
 				to="/$workspaceId/triggers/$triggerId"
 				params={{ workspaceId, triggerId: trigger.id }}
@@ -848,16 +1032,19 @@ export function TriggerReferenceCard({
 	workspaceId,
 	triggerId,
 	preview = false,
+	sheet = false,
 }: {
 	workspaceId: string
 	triggerId: string
 	/** Drawn as the hover preview of a chip: same card, not a tab stop, not counted as a card. */
 	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
 }) {
 	const trigger = useLinkedTrigger(workspaceId, triggerId)
 	const agent = useTriggerAgent(workspaceId, trigger)
-	const shell = preview ? PREVIEW_SHELL : CARD_SHELL
-	const marker = preview ? undefined : ''
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
 
 	if (trigger === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
 	if (trigger === null) {
@@ -882,21 +1069,26 @@ export function TriggerReferenceCard({
 		</span>
 	)
 	const link = (
-		<Link
-			to="/$workspaceId/triggers/$triggerId"
-			params={{ workspaceId, triggerId: trigger.id }}
-			tabIndex={preview ? -1 : undefined}
-			className={
-				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={
+				<Link
+					to="/$workspaceId/triggers/$triggerId"
+					params={{ workspaceId, triggerId: trigger.id }}
+				/>
 			}
 		>
 			<span className="flex items-center gap-1.5">
 				{head}
 				{state}
-				<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
-					<span className="sr-only">Open</span>
-					<ArrowUpRight size={14} aria-hidden />
-				</span>
+				{sheet ? null : (
+					<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
+						<span className="sr-only">Open</span>
+						<ArrowUpRight size={14} aria-hidden />
+					</span>
+				)}
 			</span>
 			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
 				{trigger.name}
@@ -924,9 +1116,9 @@ export function TriggerReferenceCard({
 					)}
 				</span>
 			</span>
-		</Link>
+		</CardFace>
 	)
-	return preview ? (
+	return preview || sheet ? (
 		link
 	) : (
 		<FoldableCard title={trigger.name} head={head} state={state}>
