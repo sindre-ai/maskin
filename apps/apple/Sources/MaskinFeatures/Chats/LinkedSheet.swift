@@ -60,6 +60,8 @@ struct LinkedSheet: View {
 			switch target.kind {
 			case .object: runtime?.openObject(target.uuid)
 			case .file: runtime?.openFile(target.uuid)
+			case .agent: runtime?.openAgent(target.uuid)
+			case .chat: runtime?.openChat(target.uuid)
 			}
 		}
 	}
@@ -101,7 +103,7 @@ struct LinkedSheet: View {
 		case .unavailable?:
 			// Missing, in another workspace, or not reachable now: still a way to try it.
 			LinkedPlainRow(
-				target: entry.target, title: entry.target.kind == .file ? "Linked file" : "Linked object",
+				target: entry.target, title: "Linked \(entry.target.kind.rawValue)",
 				kindLabel: "Couldn't show a preview", symbol: entry.target.kind == .file ? "doc" : "doc.text")
 		case .loading?, nil:
 			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)

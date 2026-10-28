@@ -33,7 +33,7 @@ public final class InternalLinkDirectory {
 			switch item {
 			case .object(let object): return Object(type: object.type, title: object.title)
 			case .draft(let object, _): return Object(type: object.type, title: Self.title(object.title))
-			case .file, .deleted, .plain: return nil
+			case .file, .deleted, .plain, .agent, .chat, .chatUnavailable: return nil
 			}
 		case .loading?, .unavailable?:
 			return nil

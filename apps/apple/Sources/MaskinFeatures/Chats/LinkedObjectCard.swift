@@ -215,14 +215,17 @@ struct LinkedObjectCard: View {
 /// deleted from private, and nothing is private inside a workspace, so it never says "private".
 struct LinkedDeletedCard: View {
 	var kind = "object"
+	var symbol = "trash"
+	/// Replaces "This {kind} was deleted", for a card that says something else (a chat you cannot see).
+	var text: String?
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
-			Image(systemName: "trash")
+			Image(systemName: symbol)
 				.maskinSymbol(MaskinFontSize.t14, weight: .semibold)
 				.foregroundStyle(MaskinColor.ink4)
 				.accessibilityHidden(true)
-			Text("This \(kind) was deleted")
+			Text(text ?? "This \(kind) was deleted")
 				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				.multilineTextAlignment(.leading)
 			Spacer(minLength: 0)
