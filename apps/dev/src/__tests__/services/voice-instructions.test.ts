@@ -164,6 +164,11 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_CALL_CONDUCT).toContain('never read an address out loud')
 	})
 
+	it('forbids a spoken heads-up before a tool call', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('Never speak before a tool call')
+		expect(VOICE_CALL_CONDUCT).toContain('let me pull that up')
+	})
+
 	it('keeps the agent prompt first, then skills, then the earlier chat', () => {
 		const text = buildVoiceInstructions({
 			...base,
