@@ -1,5 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { fileUploads, files, workspaces } from '@maskin/db/schema'
+import { fileUploads, files, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -249,6 +249,8 @@ describe('large file uploads', () => {
 		const storage = createStorage()
 		const started = await (await start(createApp(storage), 100 * MiB)).json()
 
+		// workspace_members is NO ACTION, so the member row insertWorkspace added goes first.
+		await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId))
 		await db.delete(workspaces).where(eq(workspaces.id, workspaceId))
 
 		expect(
