@@ -11,13 +11,16 @@
  * Source precedence (§17.2): 1 authoritative pre-flight → 2 header on the failed
  * request → 4 remote callback → 3 CLI banner tail. See parseSubscriptionLimitReset.
  *
- * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+24h]. Outside → null. This is
+ * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+8d]. Outside → null. This is
  * defence in depth against a bad clock or a hostile input pushing a session's
  * retry either infinitely soon (thrash) or infinitely far (never).
  */
 
+import type { SessionResultFailureReason } from '@maskin/shared'
+
 const MIN_RETRY_MS = 60_000
-const MAX_RETRY_MS = 24 * 60 * 60 * 1000
+// Weekly limits reset up to 7 days out; one day of slack on top.
+const MAX_RETRY_MS = 8 * 24 * 60 * 60 * 1000
 
 export type SubscriptionLimitResetSource =
 	| 'anthropic-ratelimit-unified-reset'
@@ -207,7 +210,7 @@ function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// banner, or a bare "Resets <time>" line. Match either.
 	// The zone is a short code ("UTC") or an IANA name ("Europe/Copenhagen").
 	const bannerMatch =
-		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[.\n])/i.exec(
+		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[."\n])/i.exec(
 			tail,
 		)
 	if (!bannerMatch) return null
@@ -281,7 +284,7 @@ function anchorFragment(fragment: string, nowMs: number): number | null {
 	}
 
 	// "Jan 3 10am" style — month/day + time
-	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
+	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2}),?(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
 		fragment,
 	)
 	if (monthMatch) {
@@ -396,4 +399,40 @@ function clamp(candidateMs: number, nowMs: number): number | null {
 	if (candidateMs < min) return null
 	if (candidateMs > max) return null
 	return candidateMs
+}
+
+const NO_RESET_RETRY_BACKOFF_MS = 30 * 60 * 1000
+const NO_RESET_RETRY_REASONS: ReadonlySet<string> = new Set([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'max_plan_rate_limit',
+	'rate_limit_error',
+])
+
+/**
+ * §17.5 companion parser at the completion paths: the Date that settleSession writes to
+ * sessions.retry_at, from the classifier's `reset_at` (ISO-8601, may be null). Shared by
+ * handleCompletion and markRemoteSessionComplete so the two never diverge.
+ *
+ * Null when the failure is not an Anthropic limit (nothing to wait out). When no reset time
+ * parsed, a limit-shaped failure gets a fixed back-off, so the run is tried again within the
+ * scheduler's attempt cap rather than left dead with nobody told. A broken login
+ * (not_logged_in, oauth_revoked) or a billing error will not clear by waiting, so it gets none.
+ */
+export function pickRetryAt(
+	failureReason: SessionResultFailureReason | null,
+	now: Date = new Date(),
+): Date | null {
+	if (!failureReason) return null
+	if (failureReason.provider !== 'anthropic') return null
+	if (failureReason.reset_at) {
+		const parsed = Date.parse(failureReason.reset_at)
+		if (!Number.isNaN(parsed)) return new Date(parsed)
+	}
+	return NO_RESET_RETRY_REASONS.has(failureReason.reason_code)
+		? new Date(now.getTime() + NO_RESET_RETRY_BACKOFF_MS)
+		: null
 }
