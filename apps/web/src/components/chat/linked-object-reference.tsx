@@ -9,7 +9,7 @@ import {
 import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
 import { loopActivityLine } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { RelativeTime } from '@/components/shared/relative-time'
+import { RelativeTime, formatRelative } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
@@ -17,8 +17,10 @@ import { useActors } from '@/hooks/use-actors'
 import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject } from '@/hooks/use-objects'
+import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTrigger } from '@/hooks/use-triggers'
-import type { LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
+import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	defaultStatusColor,
@@ -39,6 +41,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
+	Bot,
 	ChevronDown,
 	ChevronUp,
 	ExternalLink,
@@ -1147,6 +1150,202 @@ export function TriggerReferenceCard({
 		link
 	) : (
 		<FoldableCard title={trigger.name} head={head} state={state}>
+			{link}
+		</FoldableCard>
+	)
+}
+
+/**
+ * What the app knows of a linked agent, read from the workspace's actor list and the sessions list
+ * the sidebar uses (the 100 newest), so a link costs no request of its own. `loading` until both
+ * are in, `gone` when the actor is not on the list, `person` when the address points at a human
+ * (that stays a plain link). A connected tool is a system actor: it is never working.
+ */
+function useLinkedAgent(workspaceId: string, agentId: string) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId)
+	if (!actors || isLoading) return { state: 'loading' as const }
+	const actor: ActorListItem | undefined = actors.find((a) => a.id === agentId)
+	if (!actor) return { state: 'gone' as const }
+	if (actor.type === 'human') return { state: 'person' as const }
+	const own = (sessions ?? []).filter((s) => s.actorId === agentId)
+	const newest = own.reduce<(typeof own)[number] | null>(
+		(latest, s) =>
+			!latest || new Date(s.createdAt ?? 0).getTime() > new Date(latest.createdAt ?? 0).getTime()
+				? s
+				: latest,
+		null,
+	)
+	return {
+		state: 'known' as const,
+		actor,
+		working: !actor.isSystem && own.some((s) => ACTIVE_STATUSES.has(s.status)),
+		lastActive: newest ? (newest.updatedAt ?? newest.createdAt) : null,
+	}
+}
+
+const agentName = (actor: ActorListItem) => actor.name?.trim() || 'Untitled agent'
+
+/**
+ * A link to an agent inside a sentence: bot icon and name, on the same plate as the object chip.
+ * Working now or Idle is in the preview and the accessible name. The whole chip is one link to the
+ * agent, in the same tab. While the lists load the original link stays; an agent that is not in
+ * this workspace's list reads "Deleted agent", and an address that points at a person stays the
+ * original link.
+ */
+export function AgentReferenceChip({
+	workspaceId,
+	agentId,
+	fallback,
+}: {
+	workspaceId: string
+	agentId: string
+	fallback: ReactNode
+}) {
+	const agent = useLinkedAgent(workspaceId, agentId)
+	const card = (actions: ReactNode) => (
+		<AgentReferenceCard workspaceId={workspaceId} agentId={agentId} preview actions={actions} />
+	)
+	const sheet: ChipSheetContent = {
+		card: <AgentReferenceCard workspaceId={workspaceId} agentId={agentId} sheet />,
+		openLink: <Link to="/$workspaceId/agents/$agentId" params={{ workspaceId, agentId }} />,
+		path: `/${workspaceId}/agents/${agentId}`,
+	}
+
+	if (agent.state === 'person') return <>{fallback}</>
+	if (agent.state === 'gone') return <UnavailableChip kind="agent" />
+	if (agent.state === 'loading') {
+		return (
+			<ChipPreview card={card} sheet={sheet} enabled>
+				{loadingChip(fallback, false)}
+			</ChipPreview>
+		)
+	}
+
+	const name = agentName(agent.actor)
+	return (
+		<ChipPreview card={card} sheet={sheet} enabled>
+			<Link
+				to="/$workspaceId/agents/$agentId"
+				params={{ workspaceId, agentId: agent.actor.id }}
+				aria-label={`Agent, ${agent.working ? 'Working now' : 'Idle'}: ${name}`}
+				className={CHIP}
+			>
+				<ChipText
+					lead={<Bot size="0.95em" aria-hidden className={CHIP_ICON} />}
+					text={cutLabel(shortName(name))}
+				/>
+			</Link>
+		</ChipPreview>
+	)
+}
+
+/**
+ * A link to an agent that stands alone on its line, drawn as a card where it stands: its name and
+ * description, whether it is working now, when it was last active and how many skills it has. Its
+ * instructions, tools, keys and email are never shown. The whole card is one link to the agent.
+ * It draws nothing for a person: the caller keeps the original link then (see `AgentCardOrLink`).
+ */
+export function AgentReferenceCard({
+	workspaceId,
+	agentId,
+	preview = false,
+	sheet = false,
+	actions,
+}: {
+	workspaceId: string
+	agentId: string
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
+	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
+}) {
+	const agent = useLinkedAgent(workspaceId, agentId)
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
+
+	if (agent.state === 'person') return null
+	if (agent.state === 'loading') return <LinkedCardSkeleton shell={shell} marker={marker} />
+	if (agent.state === 'gone') {
+		return <UnavailableCard shell={shell} marker={marker} kind="agent" />
+	}
+
+	const { actor, working, lastActive } = agent
+	const name = agentName(actor)
+	const skills = actor.skills?.length ?? 0
+	const facts: CardFact[] = [
+		...(lastActive ? [{ label: 'Last active', value: formatRelative(new Date(lastActive)) }] : []),
+		...(skills > 0 ? [{ label: 'Skills', value: String(skills) }] : []),
+	]
+	const head = (
+		<span className={KIND_TAG}>
+			<Bot size={11} aria-hidden />
+			Agent
+		</span>
+	)
+	const state = working ? (
+		<span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand">
+			<span
+				aria-hidden="true"
+				className="size-1.5 shrink-0 rounded-full bg-brand motion-safe:animate-pulse"
+			/>
+			Working now
+		</span>
+	) : (
+		<span className="text-[11px] font-semibold text-muted-foreground">Idle</span>
+	)
+	const link = (
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={
+				<Link
+					to="/$workspaceId/agents/$agentId"
+					params={{ workspaceId, agentId: actor.id }}
+					aria-label={`Agent, ${working ? 'Working now' : 'Idle'}: ${name}`}
+				/>
+			}
+		>
+			<LinkedCardFace
+				icon={<Bot size={14} aria-hidden />}
+				tile={KIND_TILE}
+				eyebrow="Agent"
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={name}
+				summary={actor.description?.trim() || undefined}
+				facts={facts}
+				actions={actions}
+				footer={
+					<>
+						<span className="inline-flex min-w-0 items-center gap-1.5">
+							<ActorAvatar
+								id={actor.id}
+								name={name}
+								type={actor.type}
+								size="sm"
+								imageUrl={actor.avatar_url ?? undefined}
+								className={AVATAR}
+							/>
+							<span className="truncate">{name}</span>
+						</span>
+						{lastActive ? (
+							<span>
+								Last active <RelativeTime date={lastActive} />
+							</span>
+						) : null}
+					</>
+				}
+			/>
+		</CardFace>
+	)
+	return preview || sheet ? (
+		link
+	) : (
+		<FoldableCard title={name} head={head} state={state}>
 			{link}
 		</FoldableCard>
 	)

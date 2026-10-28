@@ -1,4 +1,6 @@
 import {
+	AgentReferenceCard,
+	AgentReferenceChip,
 	LoopReferenceCard,
 	LoopReferenceChip,
 	ObjectReferenceCard,
@@ -12,6 +14,7 @@ import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
+import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
@@ -304,6 +307,18 @@ export function LinkedCardOrLink({
 	/** The card goes under the sentence that links it: only a draft is drawn. */
 	after?: boolean
 }) {
+	if (target.kind === 'agent') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return (
+			<AgentCardOrLink
+				workspaceId={workspaceId}
+				agentId={target.id}
+				fallback={fallback}
+				label={label}
+			/>
+		)
+	}
 	if (target.kind === 'loop' || target.kind === 'trigger') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
@@ -335,6 +350,23 @@ export function LinkedCardOrLink({
 			label={inList ? label : undefined}
 		/>
 	)
+}
+
+/** An agent's card on its own line; an address that points at a person keeps the original link. */
+function AgentCardOrLink({
+	workspaceId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	agentId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	if (actors?.find((a) => a.id === agentId)?.type === 'human') return <>{fallback}</>
+	return withLabel(label, <AgentReferenceCard workspaceId={workspaceId} agentId={agentId} />)
 }
 
 function withLabel(label: string | undefined, card: ReactNode): ReactNode {
@@ -392,6 +424,14 @@ export function renderLinkedChip(
 				<TriggerReferenceChip
 					workspaceId={context.workspaceId}
 					triggerId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'agent':
+			return (
+				<AgentReferenceChip
+					workspaceId={context.workspaceId}
+					agentId={target.id}
 					fallback={fallback}
 				/>
 			)
