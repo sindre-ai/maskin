@@ -36,6 +36,18 @@ export const FLAGS = {
 	 * baseline has run. Retire once search v2 is on for everyone.
 	 */
 	SEARCH_V2: 'search-v2',
+	/**
+	 * Gates the weekly capability note that Chief of Staff sends in a person's
+	 * 1-1 (bet
+	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace at the
+	 * top of runCapabilityDigest. Off means no note is sent in that workspace and
+	 * findings stay pending, so they merge into the first note once it is on.
+	 * The scan itself is not flagged (it only writes events); its off-switch is
+	 * the env var FEATURE_CAPABILITY_SCAN=0. Retire once the notes are on for
+	 * everyone.
+	 */
+	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

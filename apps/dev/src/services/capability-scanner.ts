@@ -35,6 +35,9 @@ const BOOT_DELAY_MS = 60_000
 /** The boot tick only scans a workspace that has no completed scan this recent. */
 const BOOT_SKIP_WINDOW_MS = 20 * 60 * 60 * 1000
 
+/** FEATURE_CAPABILITY_SCAN=0 stops the scanner from starting. Default is on. */
+export const KILLSWITCH_ENV_VAR = 'FEATURE_CAPABILITY_SCAN'
+
 export const CAPABILITY_ACTIONS = {
 	snapshot: 'capability_snapshot',
 	changed: 'capability_changed',
@@ -49,6 +52,8 @@ export interface CapabilityScannerOptions {
 	/** Test seam: replaces the network and in-process probes. */
 	probe?: ProbeFn
 	now?: () => Date
+	/** Test seam: replaces process.env for the kill switch. */
+	env?: NodeJS.ProcessEnv
 }
 
 export type WorkspaceScanResult =
@@ -70,6 +75,7 @@ export class CapabilityScanner {
 	private running = false
 	private readonly probe: ProbeFn
 	private readonly now: () => Date
+	private readonly env: NodeJS.ProcessEnv
 
 	constructor(
 		private db: Database,
@@ -77,10 +83,15 @@ export class CapabilityScanner {
 	) {
 		this.probe = options.probe ?? probeSource
 		this.now = options.now ?? (() => new Date())
+		this.env = options.env ?? process.env
 	}
 
 	start(): void {
 		if (this.timer) return
+		if (this.env[KILLSWITCH_ENV_VAR] === '0') {
+			logger.info('Capability scanner disabled by kill switch', { envVar: KILLSWITCH_ENV_VAR })
+			return
+		}
 		this.timer = setInterval(() => void this.tick(), TICK_MS)
 		// Deploys are exactly when built-in tools change, so scan once after boot,
 		// unless this workspace already scanned within the last 20 hours.
