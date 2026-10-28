@@ -47,7 +47,6 @@ import {
 	verifyExtensionSignature,
 } from '../lib/integrations/extensions'
 import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
-import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
