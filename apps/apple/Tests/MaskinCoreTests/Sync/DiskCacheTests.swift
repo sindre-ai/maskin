@@ -80,6 +80,7 @@ struct DiskCacheTests {
 		defer { try? FileManager.default.removeItem(at: dir) }
 		let cache = makeCache(dir)
 		cache.write([Row(id: "1", title: "One")], key: key, version: 1)
+		cache.flush()
 		let file = try #require(
 			FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)?
 				.compactMap { $0 as? URL }.first { $0.pathExtension == "cache" })
@@ -199,9 +200,51 @@ struct DiskCacheTests {
 		#expect(cache.read([Row].self, key: k1, version: 1) != nil)
 		clock.advance(1)
 		cache.write(payload, key: k3, version: 1)
+		// Eviction runs after the write, in the background.
+		cache.flush()
 		#expect(cache.read([Row].self, key: k2, version: 1) == nil)
 		#expect(cache.read([Row].self, key: k1, version: 1) != nil)
 		#expect(cache.read([Row].self, key: k3, version: 1) != nil)
+	}
+
+	@Test func aBurstOfWritesToOneKeyReadsBackTheLastOne() {
+		let dir = tempDirectory()
+		defer { try? FileManager.default.removeItem(at: dir) }
+		let cache = makeCache(dir)
+		for i in 0..<50 { cache.write([Row(id: "\(i)", title: "v\(i)")], key: key, version: 1) }
+		// No flush: a read of the key orders itself after its queued writes.
+		#expect(cache.read([Row].self, key: key, version: 1)?.value == [Row(id: "49", title: "v49")])
+	}
+
+	@Test func theSizeBoundHoldsAcrossManyWritesWithoutRescanningEachOne() {
+		let dir = tempDirectory()
+		defer { try? FileManager.default.removeItem(at: dir) }
+		let clock = FakeClock()
+		let payload = [Row(id: "1", title: String(repeating: "x", count: 400))]
+		let probe = makeCache(dir, clock: clock)
+		probe.write(payload, key: key, version: 1)
+		let one = probe.totalBytes
+		probe.clearAll()
+
+		let cache = makeCache(dir, clock: clock, limits: .init(maxTotalBytes: one * 3 + one / 2))
+		for i in 0..<20 {
+			clock.advance(1)
+			cache.write(payload, key: DiskCache.Key(actorId: "a", name: "k\(i)"), version: 1)
+		}
+		cache.flush()
+		#expect(cache.totalBytes <= one * 3 + one / 2)
+		// The newest survive, the oldest went.
+		#expect(cache.read([Row].self, key: DiskCache.Key(actorId: "a", name: "k19"), version: 1) != nil)
+		#expect(cache.read([Row].self, key: DiskCache.Key(actorId: "a", name: "k0"), version: 1) == nil)
+	}
+
+	@Test func clearAllDropsQueuedWritesToo() {
+		let dir = tempDirectory()
+		defer { try? FileManager.default.removeItem(at: dir) }
+		let cache = makeCache(dir)
+		for i in 0..<20 { cache.write([Row(id: "\(i)", title: "x")], key: DiskCache.Key(actorId: "a", name: "k\(i)"), version: 1) }
+		cache.clearAll()
+		#expect(cache.totalBytes == 0)
 	}
 
 	@Test func theCacheDirectoryIsExcludedFromBackup() throws {
@@ -209,6 +252,7 @@ struct DiskCacheTests {
 		defer { try? FileManager.default.removeItem(at: dir) }
 		let cache = makeCache(dir)
 		cache.write([Row(id: "1", title: "A")], key: key, version: 1)
+		cache.flush()
 		let values = try dir.resourceValues(forKeys: [.isExcludedFromBackupKey])
 		#expect(values.isExcludedFromBackup == true)
 	}

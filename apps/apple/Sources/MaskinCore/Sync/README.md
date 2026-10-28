@@ -40,6 +40,21 @@ Chats are intentionally not here (`chat-final` owns them and follows this README
 5. `reset()` (workspace switch, sign-out) clears memory and `freshness`; the next load hydrates
    from the new bucket.
 
+## Threading: writes are asynchronous
+
+`DiskCache.write` returns at once; the encode, the atomic file write and eviction run on a serial
+utility queue, so a store's `@MainActor` code never waits on the disk. From a caller's side the
+guarantees stay the same: a `read`, `remove` or `clear` of the same cache is ordered after earlier
+writes (a read of a key with a write still queued waits for it), and a value that is too large or
+fails to encode still reads back as a miss. What is NOT immediate is eviction and file visibility:
+use `flush()` (tests, code inspecting the files) to wait. Sign-out's static `clearAll()` drains
+queued writes first, so a late write cannot put a signed-out account's data back.
+
+Reads are synchronous and decode once (hydrating a store at `init` is the one remaining main-thread
+disk read; keep snapshots view-sized). A read counts as a use for LRU in memory, written back to the
+file at most once a minute; eviction tracks the total incrementally and only scans the directory when
+the bound is in danger, on first use, or hourly for expiry.
+
 ## TTLs, bounds, invalidation
 
 - Entries expire after 14 days (`Limits.maxAge`), are rejected above 4 MB each, and the whole
