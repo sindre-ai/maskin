@@ -108,9 +108,9 @@ describe('MarkdownContent linkedCards, GitHub links', () => {
 		draw(
 			[
 				`[a](${PR})`,
-				`[b](https://github.com/a/b/pull/2)`,
-				`[c](https://github.com/a/b/pull/3)`,
-				`[d](https://github.com/a/b/pull/4)`,
+				'[b](https://github.com/a/b/pull/2)',
+				'[c](https://github.com/a/b/pull/3)',
+				'[d](https://github.com/a/b/pull/4)',
 				`[o](${objectUrl(A)})`,
 			].join('\n\n'),
 		)
