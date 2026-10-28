@@ -10,6 +10,7 @@ import {
 	isOtherWorkspace,
 	peopleLine,
 	pickFacts,
+	plainPreview,
 	plainSnippet,
 	settingsChipText,
 	settingsTargetOf,
@@ -508,6 +509,65 @@ describe('plainSnippet', () => {
 		const out = plainSnippet('word '.repeat(200))
 		expect(out.length).toBeLessThanOrEqual(281)
 		expect(out.endsWith('…')).toBe(true)
+	})
+})
+
+describe('plainPreview', () => {
+	const words = (content: string | null) =>
+		plainPreview(content)
+			.map((part) => (part.muted ? `<${part.text}>` : part.text))
+			.join('')
+
+	it('shows a markdown link as its text', () => {
+		expect(words('See [PR 2527](https://github.com/sindre-ai/maskin/pull/2527) now')).toBe(
+			'See PR 2527 now',
+		)
+	})
+
+	it('shows the text of a link cut off in the address', () => {
+		expect(words('See [PR 2527](https://github.com/sindre-ai/maskin/pu')).toBe('See PR 2527')
+		expect(words('See [PR 2527](')).toBe('See PR 2527')
+	})
+
+	it('shows the text of a link cut off in the text', () => {
+		expect(words('See [PR 25')).toBe('See PR 25')
+		expect(words('See [')).toBe('See')
+	})
+
+	it('shows a bare address as a muted "link", keeping the full stop after it', () => {
+		expect(plainPreview('Merged, see https://maskin.io/ws/objects/abc.')).toEqual([
+			{ text: 'Merged, see ' },
+			{ text: 'link', muted: true },
+			{ text: '.' },
+		])
+		expect(words('see <https://x.test/a_b_c> and https://x.test/d')).toBe('see <link> and <link>')
+	})
+
+	it('shows a bare address cut short as "link"', () => {
+		expect(words('see https://maskin.io/e2877e32-2c11')).toBe('see <link>')
+	})
+
+	it('removes bold, italic, code, heading and list marks on one line', () => {
+		expect(words('## Plan\n- Do **the** _thing_\n1. Run `pnpm test`')).toBe(
+			'Plan Do the thing Run pnpm test',
+		)
+	})
+
+	it('leaves a message with no links as it was', () => {
+		expect(words('The retry window is still open on three accounts.')).toBe(
+			'The retry window is still open on three accounts.',
+		)
+	})
+
+	it('is empty for no text', () => {
+		expect(plainPreview(null)).toEqual([])
+		expect(plainPreview('')).toEqual([])
+	})
+
+	it('reads only the start of a long message and ends with an ellipsis', () => {
+		const parts = plainPreview(`${'word '.repeat(200)}[tail](https://x.test)`)
+		expect(parts.at(-1)).toEqual({ text: '…' })
+		expect(words('word '.repeat(200)).length).toBeLessThan(450)
 	})
 })
 

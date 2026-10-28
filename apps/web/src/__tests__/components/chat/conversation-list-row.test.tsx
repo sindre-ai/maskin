@@ -159,6 +159,20 @@ describe('ConversationListRow', () => {
 		expect(screen.getByText('You:')).toBeInTheDocument()
 	})
 
+	it('shows a link in the last message as its text, with no markdown', () => {
+		renderRow(
+			buildConversation({
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Billing Agent',
+				snippet: '**Merged** [PR 2527](https://github.com/sindre-ai/maskin/pull/2527), see https://maskin.io/x/objects/abc',
+			}),
+		)
+		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
+		expect(screen.getByText('link').className).toContain('opacity-80')
+		const preview = screen.getByText('Billing Agent:').parentElement
+		expect(preview?.textContent).toBe('Billing Agent: Merged PR 2527, see link')
+	})
+
 	it('falls back to a placeholder when the conversation has no messages', () => {
 		renderRow(buildConversation({ snippet: null }))
 		expect(screen.getByText('No messages yet')).toBeInTheDocument()
