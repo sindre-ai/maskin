@@ -19,7 +19,7 @@ const workWebExtension: ModuleWebDefinition = {
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
-			bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
+			bet: ['opportunity', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 			loop: ['draft', 'paused', 'learning', 'supervised', 'fully_autonomous'],
 		},

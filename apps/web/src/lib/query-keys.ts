@@ -44,6 +44,10 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		// Sits under messagesPrefix, so the conversation SSE invalidation refreshes it too.
+		threadMessages: (id: string, rootId: number) =>
+			['conversations', 'detail', id, 'messages', { thread_root_id: rootId }] as const,
+		replyThreads: (workspaceId: string) => ['conversations', workspaceId, 'replyThreads'] as const,
 		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
@@ -105,6 +109,15 @@ export const queryKeys = {
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
+	},
+	extensions: {
+		all: (workspaceId: string) => ['extensions', workspaceId] as const,
+		detail: (workspaceId: string, id: string) => ['extensions', workspaceId, id] as const,
+		deliveries: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'deliveries'] as const,
+		recipes: (workspaceId: string) => ['extensions', workspaceId, 'recipes'] as const,
+		attempted: (workspaceId: string, id: string) =>
+			['extensions', workspaceId, id, 'attempted'] as const,
 	},
 	workspaceSkills: {
 		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,

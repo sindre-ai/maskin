@@ -20,6 +20,8 @@ export type InsertConversationMessageArgs = {
 	threadRootId?: number | null
 	/** With threadRootId: also show the reply in the main timeline. */
 	threadAlsoInChannel?: boolean
+	/** Do not copy a message of an object's chat onto the object as a comment (a call receipt is not something said). */
+	skipObjectMirror?: boolean
 }
 
 export type InsertedConversationMessage = typeof messages.$inferSelect
@@ -83,7 +85,7 @@ export async function insertConversationMessage(
 		},
 	})
 
-	if ((args.kind ?? 'message') === 'message') {
+	if ((args.kind ?? 'message') === 'message' && !args.skipObjectMirror) {
 		await mirrorAsObjectComment(db, {
 			conversationId: args.conversationId,
 			workspaceId: args.workspaceId,
@@ -93,6 +95,23 @@ export async function insertConversationMessage(
 			messageId: created.id,
 		})
 	}
+
+	// A person @mentioned in the message gets a push. Same fresh-insert guarantee
+	// as below; auto-posted final outputs are left to notifyChatReply. This runs
+	// BEFORE notifyChatReply on purpose: createChatNotifications skips a target
+	// that already has a row for the message, so a person who is both mentioned
+	// and in the thread gets the immediate mention push, not the delayed thread one.
+	await notifyChatMention(db, {
+		workspaceId: args.workspaceId,
+		authorId: args.actorId,
+		conversationId: args.conversationId,
+		messageId: created.id,
+		content: args.content,
+		kind: args.kind,
+		metadata: args.metadata,
+		sessionId: args.sessionId,
+		threadRootId: args.threadRootId ?? null,
+	})
 
 	// The single hook for "an agent replied": every auto-posted final output
 	// (both InteractiveTurnFinalizer paths) lands here, and only a fresh insert
@@ -106,19 +125,7 @@ export async function insertConversationMessage(
 		kind: args.kind,
 		metadata: args.metadata,
 		sessionId: args.sessionId,
-	})
-
-	// A person @mentioned in the message gets a push. Same fresh-insert guarantee
-	// as above; auto-posted final outputs are left to notifyChatReply.
-	await notifyChatMention(db, {
-		workspaceId: args.workspaceId,
-		authorId: args.actorId,
-		conversationId: args.conversationId,
-		messageId: created.id,
-		content: args.content,
-		kind: args.kind,
-		metadata: args.metadata,
-		sessionId: args.sessionId,
+		threadRootId: args.threadRootId ?? null,
 	})
 
 	// The person replying in the chat answers any agent question waiting on them there.

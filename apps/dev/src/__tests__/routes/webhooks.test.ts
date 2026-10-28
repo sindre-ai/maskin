@@ -32,10 +32,15 @@ function createWebhookTestApp() {
 
 describe('Webhook Routes', () => {
 	beforeEach(() => {
+		vi.stubEnv('GITHUB_APP_WEBHOOK_SECRET', 'test-webhook-secret')
 		mockGetProvider.mockReset()
 		mockListProviders.mockReset()
 		mockVerify.mockReset()
 		mockNormalizeEvent.mockReset()
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
 	})
 
 	describe('POST /api/webhooks/:provider', () => {

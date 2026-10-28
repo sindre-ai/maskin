@@ -7886,6 +7886,12 @@
 											"voice_enabled": {
 												"type": "boolean"
 											},
+											"avatar_url": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -11964,6 +11970,439 @@
 				}
 			}
 		},
+		"/api/actors/{id}/avatar": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Actors"
+				],
+				"summary": "Upload an actor avatar (PNG or JPG, up to 2 MB)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"multipart/form-data": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"file": {
+										"type": "string",
+										"format": "binary"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Avatar stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"avatar_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"avatar_url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No file",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is neither the actor itself nor a workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"413": {
+						"description": "Over 2 MB",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"415": {
+						"description": "Not PNG/JPG",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "Get an actor's avatar image",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Image bytes (PNG or JPEG)"
+					},
+					"404": {
+						"description": "No avatar",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/actors/{actorId}/skills": {
 			"get": {
 				"tags": [
@@ -13587,7 +14026,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -14599,7 +15038,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -36925,6 +37364,175 @@
 				}
 			}
 		},
+		"/api/internal/mcp-guard/report": {
+			"post": {
+				"tags": [
+					"Internal"
+				],
+				"summary": "Record a tool call the guard wrapper refused",
+				"description": "Called by maskin-mcp-guard inside an agent container. Authentication: `Authorization: Bearer <session key>`. The key is bound to one session and one extension, minted at launch. Session and extension come from the key, never from the body. A key stays valid for 60 seconds after its session ends.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"tool_name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"tool_name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Denial recorded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"recorded": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"recorded"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Key is missing, unknown, expired, or names another session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/events/history": {
 			"get": {
 				"tags": [
@@ -37663,6 +38271,10 @@
 											"voice_session_id": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
 											},
 											"final_output": {
 												"type": "object",
@@ -40609,6 +41221,10 @@
 											"voice_session_id": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
 											},
 											"final_output": {
 												"type": "object",
@@ -50913,6 +51529,17 @@
 					{
 						"schema": {
 							"type": "string",
+							"format": "uuid",
+							"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own."
+						},
+						"required": false,
+						"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own.",
+						"name": "for_actor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -50960,6 +51587,12 @@
 														"type": "string"
 													},
 													"rationale": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"due_at": {
 														"type": [
 															"string",
 															"null"
@@ -51731,6 +52364,7 @@
 													"latest_event_id",
 													"headline",
 													"rationale",
+													"due_at",
 													"created_at",
 													"entity_type",
 													"entity_id",
@@ -51748,6 +52382,120 @@
 					},
 					"400": {
 						"description": "Missing workspace ID",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "A person asked for someone else's list",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "for_actor_id is not a member of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -59546,6 +60294,968 @@
 				}
 			}
 		},
+		"/api/files/uploads": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Start a direct-to-storage upload of a large file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 255
+									},
+									"description": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
+									},
+									"mime_type": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 255,
+										"pattern": "^[a-z0-9!#$&^_.+-]+\\/[a-z0-9!#$&^_.+-]+$"
+									},
+									"size_bytes": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 1073741824
+									}
+								},
+								"required": [
+									"name",
+									"mime_type",
+									"size_bytes"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Upload started; PUT each part to its URL, then complete the upload",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"upload_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"file_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"part_size": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										},
+										"parts": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"part_number": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"url": {
+														"type": "string",
+														"format": "uri"
+													}
+												},
+												"required": [
+													"part_number",
+													"url"
+												]
+											}
+										},
+										"expires_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"upload_id",
+										"file_id",
+										"part_size",
+										"parts",
+										"expires_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}/complete": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Finish a direct-to-storage upload and create the file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"parts": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"part_number": {
+													"type": "integer",
+													"minimum": 1,
+													"maximum": 10000
+												},
+												"etag": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200
+												}
+											},
+											"required": [
+												"part_number",
+												"etag"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 10000
+									}
+								},
+								"required": [
+									"parts"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "File created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"description": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
+										"mimeType": {
+											"type": "string"
+										},
+										"sizeBytes": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"storageKey": {
+											"type": "string"
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"content": {
+											"type": "string"
+										},
+										"encoding": {
+											"type": "string",
+											"enum": [
+												"base64",
+												"utf8"
+											]
+										},
+										"url": {
+											"type": "string",
+											"format": "uri"
+										},
+										"annotations": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"maxLength": 100
+													},
+													"pinNumber": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"selector": {
+														"type": "string",
+														"maxLength": 1000,
+														"default": ""
+													},
+													"bounds": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															},
+															"w": {
+																"type": "number"
+															},
+															"h": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y",
+															"w",
+															"h"
+														]
+													},
+													"comment": {
+														"type": "string",
+														"maxLength": 500
+													},
+													"position": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"bounds",
+													"comment"
+												]
+											},
+											"maxItems": 200,
+											"default": []
+										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
+										"warning": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"description",
+										"kind",
+										"mimeType",
+										"sizeBytes",
+										"storageKey",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"content",
+										"encoding",
+										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The uploaded parts do not match what was declared",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished, abandoned or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Storage is unavailable; the upload is intact and can be completed again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Abandon a direct-to-storage upload",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Upload abandoned; its stored parts are discarded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"aborted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"aborted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished or being finished",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Storage could not discard the parts; the upload stays open to be reclaimed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/files/{id}/comments": {
 			"get": {
 				"tags": [
@@ -60856,6 +62566,3768 @@
 					},
 					"429": {
 						"description": "Rate limit exceeded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "List the workspace's custom extensions",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Extensions, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"workspaceId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"slug": {
+												"type": "string"
+											},
+											"name": {
+												"type": "string"
+											},
+											"status": {
+												"type": "string",
+												"enum": [
+													"active",
+													"disabled",
+													"draft"
+												]
+											},
+											"mcpConfig": {
+												"type": [
+													"object",
+													"null"
+												],
+												"additionalProperties": {}
+											},
+											"webhookConfig": {
+												"type": [
+													"object",
+													"null"
+												],
+												"additionalProperties": {}
+											},
+											"webhookToken": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"webhookUrl": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"hasSigningSecret": {
+												"type": "boolean"
+											},
+											"hasMcpKey": {
+												"type": "boolean"
+											},
+											"toolGrants": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"mcpLastError": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"createdBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
+											},
+											"createdAt": {
+												"type": "string"
+											},
+											"updatedAt": {
+												"type": "string"
+											},
+											"lastDeliveryAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"committedDeliveries": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id",
+											"workspaceId",
+											"slug",
+											"name",
+											"status",
+											"mcpConfig",
+											"webhookConfig",
+											"webhookToken",
+											"webhookUrl",
+											"hasSigningSecret",
+											"hasMcpKey",
+											"toolGrants",
+											"mcpLastError",
+											"createdBy",
+											"createdAt",
+											"updatedAt",
+											"lastDeliveryAt",
+											"committedDeliveries"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Create a custom extension",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"slug": {
+										"type": "string",
+										"minLength": 2,
+										"maxLength": 48,
+										"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 80
+									},
+									"status": {
+										"type": "string",
+										"enum": [
+											"active",
+											"disabled",
+											"draft"
+										]
+									},
+									"mcp_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"envKey": {
+												"type": "string"
+											},
+											"server": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"stdio"
+																]
+															},
+															"command": {
+																"type": "string"
+															},
+															"args": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"envFromCredential": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"command",
+															"args"
+														]
+													},
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"http"
+																]
+															},
+															"url": {
+																"type": "string",
+																"format": "uri"
+															}
+														},
+														"required": [
+															"type",
+															"url"
+														]
+													}
+												]
+											},
+											"autoInject": {
+												"type": "boolean",
+												"default": true
+											},
+											"credentialProvider": {
+												"type": "string"
+											},
+											"tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"name": {
+															"type": "string"
+														},
+														"kind": {
+															"type": "string",
+															"enum": [
+																"read",
+																"write"
+															]
+														},
+														"description": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"name",
+														"kind"
+													]
+												},
+												"maxItems": 20,
+												"default": []
+											}
+										},
+										"required": [
+											"envKey",
+											"server",
+											"credentialProvider"
+										]
+									},
+									"webhook_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									},
+									"signing_secret": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512
+									},
+									"mcp_api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": [
+									"slug",
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Slug taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/recipes": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Vendor recipes that pre-fill the extension forms (\"Start from a recipe\")",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Hardcoded recipes, pre-fill only",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"slug": {
+												"type": "string"
+											},
+											"displayName": {
+												"type": "string"
+											},
+											"mcpConfig": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"webhookConfig": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"docsUrl": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"slug",
+											"displayName",
+											"docsUrl"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/generate-secret": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Mint a signing secret (32 random bytes, hex) to paste into the vendor. Nothing is stored.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "A fresh secret, shown once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"secret": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"secret"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/mcp/probe": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Verify an MCP server: list its tools with the given API key. Nothing is stored; the key is used for this call only.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"server_url": {
+										"type": "string",
+										"maxLength": 2048,
+										"format": "uri"
+									},
+									"api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": [
+									"server_url"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The tools the server lists, or why it could not be verified",
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"tools": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string"
+															},
+															"kind": {
+																"type": "string",
+																"enum": [
+																	"read",
+																	"write"
+																]
+															},
+															"description": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"name",
+															"kind"
+														]
+													}
+												}
+											},
+											"required": [
+												"ok",
+												"tools"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														false
+													]
+												},
+												"reason": {
+													"type": "string",
+													"enum": [
+														"rejected",
+														"unreachable",
+														"invalid",
+														"blocked"
+													]
+												},
+												"message": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"ok",
+												"reason",
+												"message"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Get a custom extension (never includes the signing secret)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The extension",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"patch": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Update a custom extension. The slug cannot change; a new signing_secret replaces the old one.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 80
+									},
+									"status": {
+										"type": "string",
+										"enum": [
+											"active",
+											"disabled",
+											"draft"
+										]
+									},
+									"mcp_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"envKey": {
+												"type": "string"
+											},
+											"server": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"stdio"
+																]
+															},
+															"command": {
+																"type": "string"
+															},
+															"args": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"envFromCredential": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"command",
+															"args"
+														]
+													},
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"http"
+																]
+															},
+															"url": {
+																"type": "string",
+																"format": "uri"
+															}
+														},
+														"required": [
+															"type",
+															"url"
+														]
+													}
+												]
+											},
+											"autoInject": {
+												"type": "boolean",
+												"default": true
+											},
+											"credentialProvider": {
+												"type": "string"
+											},
+											"tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"name": {
+															"type": "string"
+														},
+														"kind": {
+															"type": "string",
+															"enum": [
+																"read",
+																"write"
+															]
+														},
+														"description": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"name",
+														"kind"
+													]
+												},
+												"maxItems": 20,
+												"default": []
+											}
+										},
+										"required": [
+											"envKey",
+											"server",
+											"credentialProvider"
+										]
+									},
+									"webhook_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									},
+									"signing_secret": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512
+									},
+									"mcp_api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/regenerate-token": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Mint a new webhook token. The old URL stops working immediately (404).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The extension with its new webhook URL",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No webhook",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/deliveries": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Committed deliveries from the last 14 days (the idempotency ledger)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Newest first, at most 50",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"windowDays": {
+											"type": "integer"
+										},
+										"committed": {
+											"type": "integer"
+										},
+										"deliveries": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"externalId": {
+														"type": "string"
+													},
+													"receivedAt": {
+														"type": "string"
+													},
+													"processedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"externalId",
+													"receivedAt",
+													"processedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"windowDays",
+										"committed",
+										"deliveries"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/sample": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Dry run: show the event a sample payload would produce. Writes nothing.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"payload": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256000
+									},
+									"webhook_config": {
+										"type": "object",
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									}
+								},
+								"required": [
+									"payload"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The mapped event, or the first field that did not resolve",
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"event": {
+													"type": "object",
+													"properties": {
+														"externalId": {
+															"type": "string"
+														},
+														"entityType": {
+															"type": "string"
+														},
+														"action": {
+															"type": "string"
+														},
+														"data": {}
+													},
+													"required": [
+														"externalId",
+														"entityType",
+														"action"
+													]
+												}
+											},
+											"required": [
+												"ok",
+												"event"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														false
+													]
+												},
+												"field": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"ok",
+												"field",
+												"message"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Read the extension's tool grants and the tools they apply to",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Stored grants and declared tools",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants/{agentId}": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Grant an agent access. Each declared tool starts from its default (read allow, write deny); tools in the body override that. Replaces any earlier entry for the agent.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"tools": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"enum": [
+												"allow",
+												"deny"
+											]
+										}
+									}
+								},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Remove an agent's entry, which denies it every tool again",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants/{agentId}/tools/{toolName}": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Flip one tool for one agent. Touches only that tool; an agent with no entry gets an entry holding just this tool.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						"required": true,
+						"name": "toolName",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"effect": {
+										"type": "string",
+										"enum": [
+											"allow",
+											"deny"
+										]
+									}
+								},
+								"required": [
+									"effect"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/attempted": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Tools each agent tried to call and was refused, over the last 30 days",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Distinct refused tool names per agent, from blocked_tool_calls",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"windowDays": {
+											"type": "integer"
+										},
+										"agents": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"agentId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"tools": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"lastAttemptedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"agentId",
+													"tools",
+													"lastAttemptedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"windowDays",
+										"agents"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
 						"content": {
 							"application/json": {
 								"schema": {

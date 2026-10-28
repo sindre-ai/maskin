@@ -6,7 +6,7 @@ import Testing
 @Suite("StatusCategory")
 struct StatusCategoryTests {
 	@Test("every default workspace status has the documented category", arguments: [
-		("backlog", StatusCategory.backlog), ("todo", .backlog), ("new", .backlog), ("signal", .backlog),
+		("backlog", StatusCategory.backlog), ("todo", .backlog), ("new", .backlog), ("opportunity", .backlog),
 		("define", .backlog), ("paused", .backlog), ("parked", .backlog),
 		("in_review", .needsYou), ("waiting_for_input", .needsYou), ("decide_pricing", .needsYou),
 		("in_progress", .active), ("active", .active), ("live", .active), ("processing", .active),

@@ -24,6 +24,8 @@ export interface PushMessage {
 	notificationId: string
 	objectId?: string | null
 	conversationId?: string | null
+	/** With conversationId: the thread to open inside the chat (the root message id). */
+	threadRootId?: number | null
 	decision?: PushDecision | null
 	/** Banner behaviour: `time-sensitive` breaks through Focus (decisions), `passive` is silent. */
 	interruption?: PushInterruption

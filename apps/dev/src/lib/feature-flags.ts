@@ -61,6 +61,17 @@ export const FLAGS = {
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
 	/**
+	 * Bring-your-own integrations UI: the custom extensions list on Settings >
+	 * Extensions, the add-extension modal and the extension detail page
+	 * (/settings/extensions/$extId). Gates the visible surfaces only. The
+	 * extensions table, the /api/extensions API and POST /api/webhooks/x/:token
+	 * are not flagged: without an extension row every request to the route is
+	 * a 404, so it is safe for everyone. Default off; on for the two tester
+	 * humans through FF_TESTER_FEATURES. Retire once the surface is on for
+	 * everyone (delete the boundary, then this entry).
+	 */
+	BYO_EXTENSIONS_UI: 'byo-extensions-ui',
+	/**
 	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
 	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
 	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it

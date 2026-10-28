@@ -9,13 +9,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
+import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { splitOwnLinks } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Link2, Pencil, RotateCcw } from 'lucide-react'
+import { Bell, Box, Copy, Link2, MessageSquareReply, Pencil, RotateCcw } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
@@ -57,7 +59,14 @@ interface MessageBubbleProps {
 	updatedLinkedObjectIds?: ReadonlySet<string>
 	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
 	onRetried?: (message: MessageResponse) => void
+	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
+	onReplyInThread?: () => void
 }
+
+// Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
+// coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
+const REPLY_BUTTON_CLASS =
+	'rounded p-2.5 text-muted-foreground transition-colors hover:text-foreground md:p-1 any-pointer-coarse:p-2.5'
 
 /**
  * Renders one thread message. The current actor's own messages render as a
@@ -75,6 +84,7 @@ export function MessageBubble({
 	shownLinkedObjectIds,
 	updatedLinkedObjectIds,
 	onRetried,
+	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -92,6 +102,7 @@ export function MessageBubble({
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
 	// Any real, persisted message with text can be copied, own or not.
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
+	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
@@ -208,7 +219,10 @@ export function MessageBubble({
 											e.preventDefault()
 											saveEdit()
 										}
-										if (e.key === 'Escape') setEditing(false)
+										if (e.key === 'Escape') {
+											e.preventDefault()
+											setEditing(false)
+										}
 									}}
 									aria-label="Edit message"
 									autoFocus
@@ -268,6 +282,16 @@ export function MessageBubble({
 							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
 						>
 							<Copy size={12} aria-hidden />
+						</button>
+					) : null}
+					{canReply && !editing ? (
+						<button
+							type="button"
+							onClick={onReplyInThread}
+							aria-label="Reply in thread"
+							className={REPLY_BUTTON_CLASS}
+						>
+							<MessageSquareReply size={12} aria-hidden />
 						</button>
 					) : null}
 					{canAct && !editing ? (
@@ -480,19 +504,31 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canCopy ? (
+				{canCopy || canReply ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
+						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100"
 						aria-label="Message actions"
 					>
-						<button
-							type="button"
-							onClick={() => copyMessage(message.content)}
-							aria-label="Copy message"
-							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-						>
-							<Copy size={12} aria-hidden />
-						</button>
+						{canCopy ? (
+							<button
+								type="button"
+								onClick={() => copyMessage(message.content)}
+								aria-label="Copy message"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<Copy size={12} aria-hidden />
+							</button>
+						) : null}
+						{canReply ? (
+							<button
+								type="button"
+								onClick={onReplyInThread}
+								aria-label="Reply in thread"
+								className={REPLY_BUTTON_CLASS}
+							>
+								<MessageSquareReply size={12} aria-hidden />
+							</button>
+						) : null}
 						{canRetryAgent ? (
 							<button
 								type="button"
@@ -525,12 +561,67 @@ function chipTitle(title: string): string {
 		: trimmed
 }
 
+const OWN_CHIP_CLASS =
+	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
 /**
- * A link to an object or file in your own message, drawn inline where it was typed as a chip with
- * the thing's name (cut at 30 characters; the full name is the tooltip). Until the name is known
- * the chip says what kind of thing it is, so the link never reads as an address.
+ * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed
+ * as a chip with the thing's name (cut at 30 characters; the full name is the tooltip). Until the
+ * name is known the chip says what kind of thing it is, so the link never reads as an address.
  */
 function OwnLinkChip({
+	workspaceId,
+	segment,
+}: {
+	workspaceId: string
+	segment:
+		| { kind: 'loop'; id: string }
+		| { kind: 'trigger'; id: string }
+		| { kind: 'object' | 'file'; id: string }
+}) {
+	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'trigger')
+		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
+	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
+}
+
+function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: loop } = useLoop(id, workspaceId)
+	const name = loop?.name?.trim()
+	return (
+		<Link
+			to="/$workspaceId/loops/$loopId"
+			params={{ workspaceId, loopId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Loop'}</span>
+		</Link>
+	)
+}
+
+function OwnTriggerChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: trigger } = useTrigger(id, workspaceId)
+	const name = trigger?.name?.trim()
+	return (
+		<Link
+			to="/$workspaceId/triggers/$triggerId"
+			params={{ workspaceId, triggerId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Trigger'}</span>
+		</Link>
+	)
+}
+
+function OwnObjectOrFileChip({
 	workspaceId,
 	segment,
 }: {
@@ -542,8 +633,7 @@ function OwnLinkChip({
 	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
 	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
 	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
-	const className =
-		'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	const className = OWN_CHIP_CLASS
 	const content = (
 		<>
 			<Link2 size={12} aria-hidden className="shrink-0" />

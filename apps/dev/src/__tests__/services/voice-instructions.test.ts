@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CALL_CONDUCT,
+	VOICE_DRAFT_RULE,
+	VOICE_FOR_YOU_RULE,
+	VOICE_LANGUAGE_RULE,
 	VOICE_SKILLS_TOTAL_MAX_CHARS,
 	VOICE_WRITE_CONFIRMATION,
 	buildVoiceInstructions,
@@ -101,12 +104,64 @@ describe('buildVoiceInstructions', () => {
 		expect(buildVoiceInstructions({ ...base, systemPrompt: null })).toContain(VOICE_CALL_CONDUCT)
 	})
 
+	it('tells every agent to answer in the language the person speaks, in natural spoken Danish', () => {
+		for (const systemPrompt of ['You are the agent.', null]) {
+			expect(buildVoiceInstructions({ ...base, systemPrompt })).toContain(VOICE_LANGUAGE_RULE)
+		}
+		expect(VOICE_LANGUAGE_RULE).toContain('language the person is speaking')
+		expect(VOICE_LANGUAGE_RULE).toContain('natural spoken Danish')
+		expect(VOICE_LANGUAGE_RULE).toContain('pronounce Danish')
+	})
+
+	it('tells the agent to read what needs the caller from list_for_you, top card first', () => {
+		const text = buildVoiceInstructions(base)
+		expect(text).toContain(VOICE_FOR_YOU_RULE)
+		expect(VOICE_FOR_YOU_RULE).toContain('list_for_you')
+		expect(VOICE_FOR_YOU_RULE).toContain('top card')
+		expect(VOICE_FOR_YOU_RULE).toContain('due_at is today')
+	})
+
 	it('tells the agent to just do ordinary changes, and for a held one to call first and ask once', () => {
 		const text = buildVoiceInstructions(base)
 		expect(text).toContain(VOICE_WRITE_CONFIRMATION)
 		expect(VOICE_WRITE_CONFIRMATION).toContain('run at once')
 		expect(VOICE_WRITE_CONFIRMATION).toContain('without asking first')
 		expect(VOICE_WRITE_CONFIRMATION).toContain('confirmation_id')
+	})
+
+	it('tells the agent to save changed wording and read it back before asking for approval', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_DRAFT_RULE)
+		expect(VOICE_DRAFT_RULE).toContain(
+			"save the new wording with update_objects on the draft's task",
+		)
+		expect(VOICE_DRAFT_RULE).toContain('read back what was saved from the result')
+		expect(VOICE_DRAFT_RULE.indexOf('read back')).toBeLessThan(
+			VOICE_DRAFT_RULE.indexOf('ask for approval'),
+		)
+	})
+
+	it('tells the agent a draft or card is answered by tapping it, not by a spoken yes', () => {
+		expect(VOICE_DRAFT_RULE).toContain('approved by tapping it in the chat')
+		expect(VOICE_DRAFT_RULE).toContain('decision card is answered by tapping it')
+		expect(VOICE_DRAFT_RULE).toContain('a spoken yes does not approve a draft or answer a card')
+	})
+
+	it('tells the agent to report a background job only from a tool result of the same turn', () => {
+		expect(VOICE_DRAFT_RULE).toContain(
+			'running or done only from a tool result you received in this same turn',
+		)
+	})
+
+	it('tells the agent to call a change done only after its tool result says it ran, and that the chat shows a receipt', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_DRAFT_RULE)
+		expect(VOICE_DRAFT_RULE).toContain('only after its tool result says it ran')
+		expect(VOICE_DRAFT_RULE).toContain('the chat shows a receipt')
+	})
+
+	it('tells the agent to show drafts, lists and links in the chat instead of reading them out', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('show_in_chat')
+		expect(VOICE_CALL_CONDUCT).toContain('short summary')
+		expect(VOICE_CALL_CONDUCT).toContain('never read an address out loud')
 	})
 
 	it('keeps the agent prompt first, then skills, then the earlier chat', () => {

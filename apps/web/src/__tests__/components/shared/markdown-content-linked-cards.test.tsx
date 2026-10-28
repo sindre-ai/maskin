@@ -24,7 +24,7 @@ const renderCard = (
 			</>
 		)
 	}
-	if (target.kind === 'object' && !context.after && !context.inList) {
+	if (target.kind !== 'file' && !context.after && !context.inList) {
 		return (
 			<>
 				{context.label ? <p>{context.label}</p> : null}
@@ -49,6 +49,10 @@ const B = 'b8278eef-4a95-43df-911e-3cb3473a55fb'
 const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
 const objectUrl = (id: string) => `https://maskin.io/${WS}/objects/${id}`
 const fileUrl = (id: string) => `https://maskin.io/${WS}/files/${id}`
+const LOOP = 'c9389ff0-5ba6-4eae-a49c-4d4c4e84e6c0'
+const TRIGGER = 'd0490aa1-6cb7-4faf-b5ad-5e5d5f95f7d1'
+const loopUrl = (id: string) => `https://maskin.io/${WS}/loops/${id}`
+const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
 
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
@@ -368,5 +372,67 @@ describe('MarkdownContent linkedCards', () => {
 		expect(withCards.container.innerHTML).toBe(before)
 		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
+	})
+
+	describe('loops and triggers', () => {
+		it('draws a loop or trigger link alone on its line as a card, whatever the link text says', () => {
+			renderMessage(
+				`[the nightly loop](${loopUrl(LOOP)})\n\n[when it runs](${triggerUrl(TRIGGER)})`,
+			)
+			expect(screen.getAllByTestId('reference').map((el) => el.textContent)).toEqual([
+				LOOP,
+				TRIGGER,
+			])
+			expect(screen.queryByText('the nightly loop')).not.toBeInTheDocument()
+		})
+
+		it('draws a loop or trigger in a sentence as a chip where it stands', () => {
+			renderMessage(
+				`Check [this loop](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`,
+			)
+			expect(screen.getAllByTestId('chip').map((el) => el.getAttribute('data-id'))).toEqual([
+				LOOP,
+				TRIGGER,
+			])
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+
+		it('shares the three-card limit with objects: the fourth link on its own line is a chip', () => {
+			renderMessage(
+				[objectUrl(A), objectUrl(B), loopUrl(LOOP), triggerUrl(TRIGGER)]
+					.map((url) => `[x](${url})`)
+					.join('\n\n'),
+			)
+			expect(screen.getAllByTestId('card')).toHaveLength(2)
+			expect(screen.getAllByTestId('reference')).toHaveLength(1)
+			expect(screen.getByTestId('chip')).toHaveAttribute('data-id', TRIGGER)
+		})
+
+		it('draws a second link to the same loop as a chip', () => {
+			renderMessage(`[a](${loopUrl(LOOP)})\n\n[b](${loopUrl(LOOP)})`)
+			expect(screen.getAllByTestId('reference')).toHaveLength(1)
+			expect(screen.getAllByTestId('chip')).toHaveLength(1)
+		})
+
+		it('keeps a loop in a list a chip', () => {
+			renderMessage(`- [One](${loopUrl(LOOP)})\n- [Two](${triggerUrl(TRIGGER)})`)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+			expect(screen.getAllByTestId('chip')).toHaveLength(2)
+		})
+
+		it('counts loops and triggers in the ten looked-up links of a message', () => {
+			const ids = Array.from(
+				{ length: 11 },
+				(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+			)
+			renderMessage(ids.map((id, i) => `Link ${i} [x](${loopUrl(id)}) here.`).join('\n\n'))
+			expect(screen.getAllByTestId('chip')).toHaveLength(10)
+		})
+
+		it('draws nothing for a loop address in a code span', () => {
+			renderMessage(`Use \`${loopUrl(LOOP)}\` as the address.`)
+			expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
 	})
 })

@@ -6,6 +6,7 @@ import type {
 } from '../../services/voice-realtime-call'
 
 vi.mock('../../lib/analytics/voice-events', () => ({
+	captureForYouCardActionByVoice: vi.fn(),
 	captureVoiceToolCall: vi.fn(),
 	captureVoiceTurnCompleted: vi.fn(),
 }))
@@ -27,11 +28,15 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 vi.mock('../../lib/sentry-voice', () => ({ captureVoiceException: vi.fn() }))
 
 const {
+	VOICE_LEGACY_TRANSCRIPTION,
+	VOICE_REALTIME_VOICE,
 	VOICE_SOCKET_MAX_RECONNECTS,
 	attachVoiceCall,
+	buildTranscriptionConfig,
 	closeVoiceCall,
 	createRealtimeCall,
 	realtimeSocketUrl,
+	resolveRealtimeVoice,
 } = await import('../../services/voice-realtime-call')
 
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
@@ -611,5 +616,128 @@ describe('createRealtimeCall — vendor 429', () => {
 			'{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 429 })))
 		expect(await createRealtimeCall(input)).toEqual({ kind: 'quota_exhausted', vendorBody: body })
+	})
+})
+
+describe('buildTranscriptionConfig', () => {
+	it('names Danish and English as expected languages and the names as keywords, without the old single language field', () => {
+		const config = buildTranscriptionConfig(['Sebastian', 'Rune', 'Maskin'])
+		expect(config).toMatchObject({
+			model: 'gpt-live-transcribe',
+			languages: ['da', 'en'],
+			keywords: ['Sebastian', 'Rune', 'Maskin'],
+		})
+		expect(config).not.toHaveProperty('language')
+		expect(config.prompt).toContain('Danish and English')
+	})
+
+	it('drops blank, duplicate, over-long and unsafe keywords and leaves the field out when none are left', () => {
+		const config = buildTranscriptionConfig(['Sam', ' Sam ', '', 'x'.repeat(61), 'A<b>\nC'])
+		expect(config.keywords).toEqual(['Sam', 'A b C'])
+		expect(buildTranscriptionConfig([])).not.toHaveProperty('keywords')
+		expect(buildTranscriptionConfig()).not.toHaveProperty('keywords')
+	})
+
+	it('sends at most 20 keywords', () => {
+		const names = Array.from({ length: 30 }, (_, n) => `Name${n}`)
+		expect(buildTranscriptionConfig(names).keywords).toHaveLength(20)
+	})
+})
+
+describe('resolveRealtimeVoice', () => {
+	it('defaults to the current voice when unset or blank', () => {
+		expect(VOICE_REALTIME_VOICE).toBe('verse')
+		expect(resolveRealtimeVoice({})).toBe('verse')
+		expect(resolveRealtimeVoice({ MASKIN_VOICE_REALTIME_VOICE: '  ' })).toBe('verse')
+	})
+
+	it('follows the environment variable for a documented voice, ignoring case and spaces', () => {
+		expect(resolveRealtimeVoice({ MASKIN_VOICE_REALTIME_VOICE: 'marin' })).toBe('marin')
+		expect(resolveRealtimeVoice({ MASKIN_VOICE_REALTIME_VOICE: ' Cedar ' })).toBe('cedar')
+	})
+
+	it('falls back to the current voice for one that is not documented', () => {
+		expect(resolveRealtimeVoice({ MASKIN_VOICE_REALTIME_VOICE: 'robot' })).toBe('verse')
+	})
+})
+
+describe('createRealtimeCall — session settings and the transcription retry', () => {
+	const input = {
+		apiKey: 'sk-test',
+		callsUrl: 'https://api.openai.com/v1/realtime/calls',
+		offerSdp: 'v=0',
+		instructions: '',
+		voice: 'marin',
+		model: 'gpt-realtime',
+		tools: [],
+		transcriptionNames: ['Sam', 'Chief of Staff', 'Acme ApS'],
+	}
+	const ok = () =>
+		new Response('v=0 answer', { status: 201, headers: { location: '/v1/realtime/calls/rtc_1' } })
+	const sentSession = (fetchMock: ReturnType<typeof vi.fn>, call: number) => {
+		const form = (fetchMock.mock.calls[call] as [string, RequestInit])[1].body as FormData
+		return JSON.parse(form.get('session') as string) as {
+			audio: { input: { transcription: Record<string, unknown> }; output: { voice: string } }
+		}
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('sends the expected languages and the three names, and the chosen voice', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'ok', callId: 'rtc_1' })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const session = sentSession(fetchMock, 0)
+		expect(session.audio.input.transcription).toMatchObject({
+			languages: ['da', 'en'],
+			keywords: ['Sam', 'Chief of Staff', 'Acme ApS'],
+		})
+		expect(session.audio.output.voice).toBe('marin')
+	})
+
+	it('retries once on the old transcription block when OpenAI answers 400 about transcription', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					'{"error":{"message":"Unknown parameter: session.audio.input.transcription.languages."}}',
+					{
+						status: 400,
+					},
+				),
+			)
+			.mockResolvedValueOnce(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'ok', callId: 'rtc_1' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect(sentSession(fetchMock, 0).audio.input.transcription).toHaveProperty('languages')
+		expect(sentSession(fetchMock, 1).audio.input.transcription).toEqual(VOICE_LEGACY_TRANSCRIPTION)
+	})
+
+	it('reports the second answer when the old block is refused too, and does not retry again', async () => {
+		const body = '{"error":{"message":"bad transcription"}}'
+		const fetchMock = vi.fn().mockImplementation(async () => new Response(body, { status: 400 }))
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toEqual({ kind: 'error', status: 400, body })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not retry a 400 that is not about transcription, nor other errors', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response('{"error":{"message":"Invalid SDP"}}', { status: 400 }))
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'error', status: 400 })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+
+		const serverError = vi
+			.fn()
+			.mockResolvedValue(new Response('transcription down', { status: 500 }))
+		vi.stubGlobal('fetch', serverError)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'error', status: 500 })
+		expect(serverError).toHaveBeenCalledTimes(1)
 	})
 })

@@ -124,6 +124,10 @@ vi.mock('../../lib/credit-classifier', () => ({
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.
 	classifySessionExit: (tail: string, exitCode: number) =>
 		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
+	// The 401 close-out report is not under test here; its rule is covered in
+	// lib/credit-classifier.test.ts.
+	endsInClaudeAuthDeath: () => false,
+	isClaudeAuthDeathText: () => false,
 }))
 
 import { execFile } from 'node:child_process'
@@ -1932,6 +1936,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildExtensionMcpServers: no extensions in this workspace
+				[],
 				// buildKeychainEnv: no bring-your-own keys in this workspace
 				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly

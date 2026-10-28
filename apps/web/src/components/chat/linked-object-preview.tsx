@@ -1,4 +1,11 @@
-import { ObjectReferenceCard, ObjectReferenceChip } from '@/components/chat/linked-object-reference'
+import {
+	LoopReferenceCard,
+	LoopReferenceChip,
+	ObjectReferenceCard,
+	ObjectReferenceChip,
+	TriggerReferenceCard,
+	TriggerReferenceChip,
+} from '@/components/chat/linked-object-reference'
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
@@ -337,7 +344,8 @@ export function LinkedObjectCard({
  * the reference card (what it is, where it stands, who has it), except in a list, where only a
  * draft is a card. A file is a card once it is known to be previewable. Otherwise `fallback` (the
  * original link or paragraph; nothing for a card that is only ever added) stays, so a link never
- * vanishes.
+ * vanishes. A loop or a trigger is never a draft: it is a reference card on its own line, a chip
+ * (the fallback) in a list, and nothing under a sentence.
  */
 export function LinkedCardOrLink({
 	workspaceId,
@@ -364,6 +372,18 @@ export function LinkedCardOrLink({
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
 }) {
+	if (target.kind === 'loop' || target.kind === 'trigger') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return withLabel(
+			label,
+			target.kind === 'loop' ? (
+				<LoopReferenceCard workspaceId={workspaceId} loopId={target.id} />
+			) : (
+				<TriggerReferenceCard workspaceId={workspaceId} triggerId={target.id} />
+			),
+		)
+	}
 	return target.kind === 'object' ? (
 		<ObjectCardOrLink
 			workspaceId={workspaceId}
@@ -414,21 +434,40 @@ export function renderLinkedCard(
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
 }
 
-/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
+/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop or trigger inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
 export function renderLinkedChip(
 	target: LinkedTarget,
 	fallback: ReactNode,
 	context: { workspaceId: string },
 ): ReactNode {
-	return target.kind === 'object' ? (
-		<ObjectReferenceChip
-			workspaceId={context.workspaceId}
-			objectId={target.id}
-			fallback={fallback}
-		/>
-	) : (
-		fallback
-	)
+	switch (target.kind) {
+		case 'object':
+			return (
+				<ObjectReferenceChip
+					workspaceId={context.workspaceId}
+					objectId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'loop':
+			return (
+				<LoopReferenceChip
+					workspaceId={context.workspaceId}
+					loopId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'trigger':
+			return (
+				<TriggerReferenceChip
+					workspaceId={context.workspaceId}
+					triggerId={target.id}
+					fallback={fallback}
+				/>
+			)
+		default:
+			return fallback
+	}
 }
 
 function ObjectCardOrLink({

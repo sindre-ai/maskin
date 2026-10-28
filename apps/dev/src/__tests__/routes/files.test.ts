@@ -232,6 +232,42 @@ describe('Files Routes', () => {
 			expect(putCall?.[1]).toEqual(pngBytes)
 		})
 
+		it('accepts a video above the general 10MB cap', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const video = Buffer.alloc(20 * 1024 * 1024)
+			const body = {
+				...buildCreateFileBody(),
+				name: 'clip.mp4',
+				mime_type: 'video/mp4',
+				content: video.toString('base64'),
+				encoding: 'base64' as const,
+			}
+			const inserted = buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })
+			mockResults.insertQueue = [[inserted], [{ id: 'evt-1' }]]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			expect(vi.mocked(storageProvider.put).mock.calls[0]?.[1]).toHaveLength(video.byteLength)
+		})
+
+		it('rejects a video above the 50MB video cap', async () => {
+			const { app, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const body = {
+				...buildCreateFileBody(),
+				name: 'clip.mp4',
+				mime_type: 'video/mp4',
+				content: Buffer.alloc(51 * 1024 * 1024).toString('base64'),
+				encoding: 'base64' as const,
+			}
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect([400, 500]).toContain(res.status)
+			expect(res.status).not.toBe(201)
+			expect(storageProvider.put).not.toHaveBeenCalled()
+		})
+
 		it('returns 400 on invalid MIME type', async () => {
 			const { app } = createImportTestApp(filesRoutes, '/api/files')
 			const body = { ...buildCreateFileBody(), mime_type: 'notamimetype' }

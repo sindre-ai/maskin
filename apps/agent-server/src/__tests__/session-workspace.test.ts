@@ -63,6 +63,27 @@ class InMemoryStorage implements StorageProvider {
 
 	async ensureBucket(): Promise<void> {}
 
+	// Large-object methods are not exercised by this test.
+	async createMultipartUpload(): Promise<string> {
+		throw new Error('Multipart not exercised by this test')
+	}
+	async presignUploadPart(): Promise<string> {
+		throw new Error('Multipart not exercised by this test')
+	}
+	async completeMultipartUpload(): Promise<void> {
+		throw new Error('Multipart not exercised by this test')
+	}
+	async abortMultipartUpload(): Promise<void> {
+		throw new Error('Multipart not exercised by this test')
+	}
+	async headObject(key: string): Promise<{ size: number } | null> {
+		const value = this.objects.get(key)
+		return value ? { size: value.byteLength } : null
+	}
+	async presignDownload(): Promise<string> {
+		throw new Error('Presign not exercised by this test')
+	}
+
 	keys(): string[] {
 		return Array.from(this.objects.keys())
 	}

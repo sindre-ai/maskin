@@ -31,11 +31,13 @@ import {
 } from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { isTimelineMessage } from '@/lib/message-threads'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { NeededTools } from './needed-tools'
+import { MessageThreadPill } from './replies/message-thread-pill'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 import { SuggestedSteps } from './suggested-steps'
@@ -62,6 +64,8 @@ interface ThreadMessagesProps {
 	onSendStep?: (content: string, metadata: MessageMetadata) => void
 	/** A step send is in flight. */
 	sendingStep?: boolean
+	/** Opens the reply thread rooted at this message id. Without it bubbles have no Reply action. */
+	onOpenReplies?: (rootId: number) => void
 }
 
 export function ThreadMessages({
@@ -71,12 +75,16 @@ export function ThreadMessages({
 	onPickStep,
 	onSendStep,
 	sendingStep = false,
+	onOpenReplies,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const threadsPane = useThreadsPane()
+	// `messages` is everything the pages hold, replies included: activity pairing, answered
+	// questions and failed-turn logic need the full list. `timeline` is what the main chat draws.
 	const messages = flattenMessagesOldestFirst(data)
+	const timeline = useMemo(() => messages.filter(isTimelineMessage), [messages])
 	// The step row is disabled only once the actor list has loaded and the intro's
 	// agent is not in it. While it loads, or when it fails, the row stays usable.
 	const actors = useActors(workspaceId)
@@ -87,8 +95,8 @@ export function ThreadMessages({
 	const showHandoffCards = Boolean(threadsPane)
 	const handoffsByNextMessage = useMemo(() => {
 		if (!showHandoffCards) return new Map<number | 'end', typeof handoffs>()
-		return groupHandoffsByNextMessage(handoffs, messages)
-	}, [handoffs, messages, showHandoffCards])
+		return groupHandoffsByNextMessage(handoffs, timeline)
+	}, [handoffs, timeline, showHandoffCards])
 	const renderHandoffCards = (items: typeof handoffs | undefined) =>
 		items && items.length > 0 && threadsPane ? (
 			<div className="ml-[39px] flex max-w-[660px] flex-col gap-2">
@@ -102,6 +110,10 @@ export function ThreadMessages({
 		conversationId,
 		messages,
 	)
+	// A turn with no message tag yet hangs under the newest message. A reply that stays in its thread
+	// is not drawn here, so that wait is shown by the thread pane instead.
+	const newestMessage = messages[messages.length - 1]
+	const fallbackIsInThread = !!newestMessage && !isTimelineMessage(newestMessage)
 	// Replies copied in from a background run, whose thinking and tool calls live in that run's log.
 	const backfilledActivity = useBackfilledRunActivity(workspaceId, messages)
 	// Every session `useActiveSessionsForConversation` returns already carries
@@ -116,7 +128,7 @@ export function ThreadMessages({
 
 	// Head/tail dividers for each run of voice-call messages. Derived from the
 	// messages themselves (metadata.source === 'voice').
-	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(messages), [messages])
+	const voiceBoundaries = useMemo(() => deriveVoiceCallBoundaries(timeline), [timeline])
 
 	// Which agent questions already have a human answer, so an answered set of
 	// options collapses instead of inviting a second, contradictory pick.
@@ -146,7 +158,7 @@ export function ThreadMessages({
 			new Map(prev).set(key, snapshotRedo(messages, byTriggerMessageId.get(key) ?? [])),
 		)
 	}
-	const visibleMessages = messages.filter((m) => {
+	const visibleMessages = timeline.filter((m) => {
 		if (supersededFailedIds.has(m.id)) return false
 		// A helper's result handed to the agent that started it: the agent gets it, the
 		// person reads it in the helper's thread as its final output.
@@ -206,7 +218,7 @@ export function ThreadMessages({
 	// synchronously when the reader opens a different conversation.
 	const nearBottomRef = useRef(true)
 	const messagesContentRef = useRef<HTMLDivElement | null>(null)
-	const hasMessages = messages.length > 0
+	const hasMessages = timeline.length > 0
 
 	// Opening a conversation always starts at its newest message. This component
 	// is reused across conversations, so without a reset the previous thread's
@@ -222,13 +234,13 @@ export function ThreadMessages({
 	// SSE-delivered replies). Doesn't yank the view when the user has
 	// scrolled up to read history.
 	useEffect(() => {
-		if (messages.length === lastMessageCountRef.current) return
-		const grew = messages.length > lastMessageCountRef.current
-		lastMessageCountRef.current = messages.length
+		if (timeline.length === lastMessageCountRef.current) return
+		const grew = timeline.length > lastMessageCountRef.current
+		lastMessageCountRef.current = timeline.length
 		if (!grew) return
 		if (!nearBottomRef.current) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
-	}, [messages.length])
+	}, [timeline.length])
 
 	// Rows keep growing after they mount (markdown, images, activity cards,
 	// session chips), which pushes the newest message below the fold of a view
@@ -324,7 +336,9 @@ export function ThreadMessages({
 		)
 	}
 
-	if (messages.length === 0) {
+	// Replies are not in `timeline`, so a loaded page of only replies is not an empty chat:
+	// older pages may still hold top-level messages.
+	if (timeline.length === 0 && !hasNextPage) {
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState
@@ -356,7 +370,7 @@ export function ThreadMessages({
 			) : null}
 			<ResumeBanner
 				conversationId={conversationId}
-				messages={messages}
+				messages={timeline}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
 			/>
 			{hasNextPage ? (
@@ -413,7 +427,8 @@ export function ThreadMessages({
 						message.id,
 						redoneTurns,
 					)
-					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
+					const turnsBelowHere =
+						isLast && !fallbackIsInThread ? [...turnsBelow, ...fallback] : turnsBelow
 					// A helper's question is put to the person from outside this chat, so it
 					// is drawn as a card rather than as a message from the helper.
 					const helperQuestion = message.metadata?.question?.reply_to_session
@@ -448,7 +463,7 @@ export function ThreadMessages({
 						intro?.steps != null &&
 						onPickStep != null &&
 						onSendStep != null &&
-						!messages.slice(messages.indexOf(message) + 1).some((m) => m.actorType === 'human')
+						!timeline.slice(timeline.indexOf(message) + 1).some((m) => m.actorType === 'human')
 					return (
 						<Fragment key={message.id}>
 							{renderHandoffCards(handoffsByNextMessage.get(message.id))}
@@ -474,6 +489,11 @@ export function ThreadMessages({
 									questionAnswered={answeredQuestionIds.has(message.id)}
 									spawnInfo={spawnByMessageId.get(message.id)}
 									onRetried={handleRetried}
+									onReplyInThread={
+										onOpenReplies
+											? () => onOpenReplies(message.threadRootId ?? message.id)
+											: undefined
+									}
 									shownLinkedObjectIds={linkedPlacements.get(message.id)?.skipIds}
 									updatedLinkedObjectIds={linkedPlacements.get(message.id)?.updatedIds}
 									// Keyed by index as well as session: one session can put two
@@ -489,6 +509,13 @@ export function ThreadMessages({
 										/>
 									))}
 								/>
+								{message.thread && onOpenReplies ? (
+									<MessageThreadPill
+										summary={message.thread}
+										own={message.actorId === ownActorId}
+										onOpen={() => onOpenReplies(message.id)}
+									/>
+								) : null}
 								{intro && (showSteps || intro.tools) ? (
 									<div className="ml-[39px] flex max-w-[660px] flex-col gap-3">
 										{showSteps && intro.steps ? (

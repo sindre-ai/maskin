@@ -10,6 +10,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
@@ -34,6 +35,7 @@ import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
+import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
@@ -124,6 +126,7 @@ const storageProvider = new S3StorageProvider({
 	accessKeyId: process.env.S3_ACCESS_KEY ?? 'admin',
 	secretAccessKey: process.env.S3_SECRET_KEY ?? 'admin',
 	region: process.env.S3_REGION ?? 'us-east-1',
+	publicEndpoint: process.env.S3_PUBLIC_ENDPOINT || undefined,
 })
 
 try {
@@ -245,6 +248,10 @@ const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
 
+const blockedToolCallsCleaner = new BlockedToolCallsCleaner(db)
+blockedToolCallsCleaner.start()
+logger.info('Blocked tool calls cleaner started')
+
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
@@ -278,6 +285,12 @@ logger.info('Webhook deliveries reconciler started')
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
+
+// Direct uploads: aborts uploads nobody finished and settles ones whose complete
+// request died, so no parts or stitched object are left behind.
+const fileUploadReaperJob = new FileUploadReaperJob(db, storageProvider)
+fileUploadReaperJob.start()
+logger.info('File upload reaper started')
 
 // Keychain: flips chat-captured keys from pending_undo to active once the undo
 // window has passed. One UPDATE per minute, no key use.
@@ -451,6 +464,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()

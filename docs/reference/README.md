@@ -14,7 +14,7 @@ This directory holds one canonical page per Maskin primitive. Each page follows 
 ## Primitive pages
 
 - [objects.md](./objects.md) — the base object model shared by every Maskin entity: create, get, update, delete, and metadata semantics.
-- [bets.md](./bets.md) — the bet primitive: shaped, time-boxed outcomes; lifecycle statuses (`signal → define → active → refine → done`); success, acceptance criteria, and exit criteria.
+- [bets.md](./bets.md) — the bet primitive: shaped, time-boxed outcomes; lifecycle statuses (`opportunity → define → active → refine → done`); success, acceptance criteria, and exit criteria.
 - [tasks.md](./tasks.md) — the task primitive: units of work under a bet, driver assignment, statuses (`todo → in_progress → in_review → done`), and handoff conventions.
 - [insights.md](./insights.md) — the insight primitive: durable learnings that inform future bets, tag taxonomy, and `informs` edges.
 - [sessions.md](./sessions.md) — the session primitive: agent runs, lifecycle, resume paths, and how sessions connect to the object they act on.

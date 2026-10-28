@@ -369,8 +369,56 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		expect(sent.tools).toEqual(VOICE_TOOLS)
+		// The toolkit's tools, then the call's own show_in_chat (not held, so no confirmation_id).
+		expect(sent.tools.slice(0, VOICE_TOOLS.length)).toEqual(VOICE_TOOLS)
+		expect(sent.tools.map((t) => t.name)).toContain('show_in_chat')
+		expect(JSON.stringify(sent.tools.at(-1))).not.toContain('confirmation_id')
 		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('puts the expected languages, the three names and the configured voice in the vendor session', async () => {
+		process.env.MASKIN_VOICE_REALTIME_VOICE = 'cedar'
+		try {
+			openSocketImmediately()
+			setVoiceInvokeToolFactory(async () => ({
+				tools: VOICE_TOOLS,
+				invokeTool: vi.fn(),
+				readOnlyTools: new Set<string>(),
+				unreachableServers: [],
+				close: async () => {},
+			}))
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response('v=0 vendor answer', {
+					status: 201,
+					headers: { location: '/v1/realtime/calls/rtc_abc' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [
+				[sessionRow()],
+				[memberRow()],
+				[offerAgent()],
+				[], // agentSkills
+				[{ name: 'Sam', timezone: null }], // caller
+				[{ name: 'Acme ApS' }], // workspace name
+				[{ settings: null }], // transcript persistence
+			]
+			mockResults.update = [{ id: SESSION }]
+
+			expect((await post(app)).status).toBe(200)
+			const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+			const sent = JSON.parse(form.get('session') as string) as {
+				audio: { input: { transcription: Record<string, unknown> }; output: { voice: string } }
+			}
+			expect(sent.audio.input.transcription).toMatchObject({
+				languages: ['da', 'en'],
+				keywords: ['Sam', 'Chief of Staff', 'Acme ApS'],
+			})
+			expect(sent.audio.output.voice).toBe('cedar')
+		} finally {
+			process.env.MASKIN_VOICE_REALTIME_VOICE = undefined
+		}
 	})
 
 	describe('when the session was started from a chat', () => {

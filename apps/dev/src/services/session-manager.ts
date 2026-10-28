@@ -80,10 +80,16 @@ import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
+	reportClaudeSessionAuthDeath,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifySessionExit } from '../lib/credit-classifier'
+import {
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -99,6 +105,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { HANDOFF_PROOF_BLOCK } from '../lib/handoff-rule'
 import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
@@ -106,7 +113,6 @@ import {
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
-import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
 	customGatewayServerSpec,
@@ -121,10 +127,10 @@ import {
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
 import {
-	byoApiKeyEnvName,
-	byoLoginEnvNames,
-	redactLaunchEnv,
-} from '../lib/integrations/keychain-env'
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -195,6 +201,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -695,6 +702,34 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// The human's message went unanswered on the spent subscription. Re-run
+			// the responder for it so a fresh session answers on the new one —
+			// the same call as the chat's "retry" action, so nobody re-sends by hand.
+			onResumeAfterMove: async ({ conversationId, workspaceId, agentId }) => {
+				const [latest] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.conversationId, conversationId),
+							eq(messages.kind, 'message'),
+							ne(messages.actorId, agentId),
+						),
+					)
+					.orderBy(desc(messages.id))
+					.limit(1)
+				if (!latest) return
+				// Lazy import: conversation-responder imports this module's types.
+				const { evaluateAndRespond } = await import('./conversation-responder')
+				await evaluateAndRespond({
+					db,
+					sessionManager: this,
+					workspaceId,
+					conversationId,
+					messageId: latest.id,
+					options: { forceRespond: true, targetAgentId: agentId },
+				})
+			},
 			// An empty completion that survives the retries is tried once on
 			// another model. Both are optional: with no env var set the finalizer
 			// still retries and still tells the human.
@@ -2319,6 +2354,7 @@ export class SessionManager extends EventEmitter {
 					typeof sessionConfig.origin_conversation_id === 'string'))
 		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
 		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2327,7 +2363,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2335,11 +2371,12 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2678,6 +2715,21 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
+		const extensionMcp = await buildExtensionMcpServers(
+			this.db,
+			session.workspaceId,
+			agent.id,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
+		)
+		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
+		Object.assign(envVars, extensionMcp.env)
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2948,9 +3000,11 @@ ${cont.continues_prompt}
 				const gated = isGatedRow(integration.config)
 				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
 				if (missing.length > 0) {
+					// A login is never put in the container, so asking for access cannot fix it.
+					const usesLogin = missing.some((v) => index.get(v)?.kind === 'login')
 					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
 					unattached.push(
-						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}${usesLogin ? ' (a saved login can only be typed on your computer, not given to a tool server that runs here)' : ''}`,
 					)
 					continue
 				}
@@ -3114,6 +3168,16 @@ ${cont.continues_prompt}
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			if (Object.keys(keychainEnv).length > 0) {
@@ -3339,8 +3403,10 @@ ${cont.continues_prompt}
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, that an agent grant names
-	 * for the session's actor. The grant filter runs in SQL so a key
+	 * keys, active or still inside their undo window, that an agent grant names for the
+	 * session's actor. A saved LOGIN is never injected, so its password never reaches the
+	 * session: the agent types it with desktop_type and a {{keychain:Name.password}}
+	 * reference that Maskin fills in (lib/integrations/keychain-typing.ts). The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3348,8 +3414,7 @@ ${cont.continues_prompt}
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
-	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
@@ -3382,7 +3447,7 @@ ${cont.continues_prompt}
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+					eq(integrations.providerMode, 'byo_apikey'),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3398,13 +3463,7 @@ ${cont.continues_prompt}
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const isLogin = row.providerMode === 'byo_login'
-			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
-			const name = isLogin
-				? (loginNames?.username ?? null)
-				: row.displayName
-					? byoApiKeyEnvName(row.displayName)
-					: null
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3427,20 +3486,7 @@ ${cont.continues_prompt}
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				if (isLogin && loginNames) {
-					const login = decodeLogin(credential.value)
-					if (!login) {
-						logger.error('Keychain login is not a well-formed login; not injected', {
-							sessionId: session.id,
-							integrationId: row.id,
-						})
-						continue
-					}
-					env[loginNames.username] = login.username
-					env[loginNames.password] = login.password
-				} else {
-					env[name] = credential.value
-				}
+				env[name] = credential.value
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.
@@ -4230,6 +4276,14 @@ ${cont.continues_prompt}
 			void this.emitCompletedWithSkills(session, status)
 		}
 
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
+
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -4814,14 +4868,30 @@ ${cont.continues_prompt}
 		// Same reason as the idle close: save the usage before the row goes final.
 		await this.accumulateSessionUsage(session.id, { allTurns: true })
 
+		// A helper that stopped on a Claude limit banner carries the reset time in
+		// its result text. Read it the way the two exit paths do, so the retry
+		// scheduler can rerun the helper once the allowance is back. Banners only:
+		// this is the helper's final error text, not a whole stdout tail, so the
+		// looser substring signals have nothing to add.
+		const limitReason = outcome.isError
+			? classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false })
+			: null
+		const scheduledRetryAt = pickRetryAt(limitReason)
+
 		const settled = await settleSession(
 			session.id,
 			outcome.isError
 				? {
 						kind: 'fail',
-						classification: 'unknown',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: limitReason,
+						}),
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
+						failureReason: limitReason ?? undefined,
+						retryAt: scheduledRetryAt ?? undefined,
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -4836,6 +4906,14 @@ ${cont.continues_prompt}
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
+
+		if (outcome.isError && isClaudeAuthDeathText(outcome.text)) {
+			reportClaudeSessionAuthDeath({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
 
 		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
 
@@ -6301,6 +6379,14 @@ ${cont.continues_prompt}
 		// on both the started and completed events. Best-effort. A user stop has
 		// no outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
+
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				config: updated.config as Record<string, unknown> | null,
+			})
+		}
 
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({

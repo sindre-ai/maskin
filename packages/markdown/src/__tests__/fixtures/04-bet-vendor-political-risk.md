@@ -9,7 +9,7 @@ Positioning consequence: Maskin's model-router + BYOK + self-host story now has 
 - **Supported if:** landing-page or sales copy referencing the OpenAI/Cursor cutoff and Anthropic/Pentagon precedent pulls above baseline; enterprise buyers ask about BYOK/model-router as a risk-mitigation line item; the AI-agent-control-plane / vendor-neutral category (Aramb, bb, AgentConnect, Manor AI, per f9f1faa7) keeps compounding.
 - **Falsified if:** buyers treat vendor political risk as noise, cutoffs stay one-off and don't cascade, provider-neutrality pitch continues reading as theoretical.
 
-**Distinct from existing signal bets**
+**Distinct from existing opportunity bets**
 
 - [5d985104 — Differentiate on workflow, verification, and distribution — not on raw model intelligence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/5d985104-c818-46a5-8550-dc76d6098edb): that bet is about *why* not to compete on model layer. This bet is the *market-timing* wing — provider-neutrality is now a live buyer concern with hard-evidence events, not a general positioning stance.
 - [5c5660dd — Own the governance layer for self-hosted MCP agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/5c5660dd-46ed-46e6-811b-7aaf71bbec7b): governance surface (tool registry, per-tool approval). This bet is provider-layer risk.

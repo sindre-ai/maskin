@@ -8,6 +8,7 @@ import {
 	voiceSessions,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
 import { createVoiceToolkit } from '@maskin/mcp'
 import type { VoiceToolkit } from '@maskin/mcp'
@@ -15,6 +16,7 @@ import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
+	captureLiveCallStarted,
 	captureVoiceSessionDenied,
 	captureVoiceSessionStarted,
 } from '../lib/analytics/voice-events'
@@ -24,6 +26,7 @@ import { errorSchema } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
+import { cardIdOf, readStartCards } from '../services/voice-call-state'
 import {
 	findReadableConversationId,
 	formatVoiceChatHistory,
@@ -33,13 +36,19 @@ import { buildVoiceInstructions } from '../services/voice-instructions'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
-	VOICE_REALTIME_VOICE,
 	attachVoiceCall,
 	closeVoiceCall,
 	createRealtimeCall,
 	realtimeCallsUrl,
+	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
-import { endVoiceSession, setCloseVendorSessionFn } from '../services/voice-session-lifecycle'
+import { postClosingReceipt } from '../services/voice-receipt'
+import {
+	endVoiceSession,
+	setCloseVendorSessionFn,
+	setEndedReceiptFn,
+} from '../services/voice-session-lifecycle'
+import { VOICE_SHOW_IN_CHAT_TOOL, voiceShowInChatTool } from '../services/voice-show-in-chat'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
 import { withConfirmationArg } from '../services/voice-write-gate'
 
@@ -55,6 +64,8 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 // Ending a call (hangup, sweeper, shutdown, socket drop) closes the server
 // socket and hangs the call up at OpenAI.
 setCloseVendorSessionFn(closeVoiceCall)
+// ...and leaves one closing receipt in the call's chat, whichever path ended it.
+setEndedReceiptFn((db, ended, info) => postClosingReceipt(db, ended, { reason: info.reason }))
 
 // ── Schemas ──────────────────────────────────────────────────────────
 
@@ -509,6 +520,17 @@ app.openapi(postOfferRoute, async (c) => {
 		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
 	}
 
+	// The names the transcription is told to expect. Missing ones are skipped: the hint is
+	// never worth failing a call over.
+	const [workspace] = await db
+		.select({ name: workspaces.name })
+		.from(workspaces)
+		.where(eq(workspaces.id, session.workspaceId))
+		.limit(1)
+	const transcriptionNames = [caller?.name, agent.name, workspace?.name].filter(
+		(n): n is string => typeof n === 'string',
+	)
+
 	const instructions = buildVoiceInstructions({
 		systemPrompt: agent.systemPrompt,
 		workspaceId: session.workspaceId,
@@ -537,15 +559,19 @@ app.openapi(postOfferRoute, async (c) => {
 		await releasePendingSession(db, session.id)
 		throw err
 	}
+	// show_in_chat is the call's own tool (see services/voice-show-in-chat.ts): not in the MCP
+	// toolkit, and not a write, so it takes no confirmation_id and is never held.
+	const readOnlyTools = new Set([...toolkit.readOnlyTools, VOICE_SHOW_IN_CHAT_TOOL])
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: withConfirmationArg(toolkit.tools, toolkit.readOnlyTools),
+			tools: withConfirmationArg([...toolkit.tools, voiceShowInChatTool], readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
 			instructions,
-			voice: VOICE_REALTIME_VOICE,
+			voice: resolveRealtimeVoice(),
+			transcriptionNames,
 			model: VOICE_REALTIME_MODEL,
 		})
 	} catch (err) {
@@ -638,13 +664,16 @@ app.openapi(postOfferRoute, async (c) => {
 		throw err
 	}
 
+	// The top of the ranked list is read before the call is attached, so the call's channel and its
+	// closing receipt share the same list.
+	const startCards = await readStartCards(db, session)
 	const [toolsAvailable, persistTranscripts] = await Promise.all([
 		attachVoiceCall({
 			db,
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
-			readOnlyTools: toolkit.readOnlyTools,
+			readOnlyTools,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
@@ -660,6 +689,13 @@ app.openapi(postOfferRoute, async (c) => {
 		conversation_id: session.conversationId,
 		model: VOICE_REALTIME_MODEL,
 		vendor: 'openai_realtime',
+	})
+	const topCard = startCards?.[0]
+	void captureLiveCallStarted(humanActorId, {
+		voice_session_id: session.id,
+		actor_id: humanActorId,
+		workspace_id: session.workspaceId,
+		rank_1_card_id: topCard ? cardIdOf(topCard) : null,
 	})
 
 	return c.json(

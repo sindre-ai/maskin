@@ -116,6 +116,15 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 		}
 	})
 
+	it('tells a chat session to show proof before it says work was handed to another agent', async () => {
+		const s = await setup()
+		const chat = await promptFor(s, s.reader.id, { conversation: true })
+		const background = await promptFor(s, s.reader.id)
+		expect(chat).toContain('## Handing work to another agent')
+		expect(chat).toContain('quote the session id or url')
+		expect(background).not.toContain('## Handing work to another agent')
+	})
+
 	it('keeps the settings pointer for a run with nobody to ask', async () => {
 		const s = await setup()
 		const background = await promptFor(s, s.reader.id)
