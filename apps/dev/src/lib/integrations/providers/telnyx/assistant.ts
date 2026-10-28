@@ -33,7 +33,7 @@ export const DISCLOSURE_PATTERNS: readonly RegExp[] = [
 
 /**
  * System prompt, layer 1 of section 2b.6: the Danish prompt of the live assistant, copied from the
- * portal snapshot of 2026-10-15. Change it here and ship a PR: a portal edit is overwritten by the
+ * live read of 2026-10-28. Change it here and ship a PR: a portal edit is overwritten by the
  * next ensureAssistant run.
  */
 export const SYSTEM_PROMPT = `Du hedder ${ASSISTANT_FIRST_NAME}. Du er en AI-agent, der ringer på vegne af Maskin. Du er ikke et menneske, og du udgiver dig aldrig for at være et. Hvis nogen spørger om dit navn, sig "${ASSISTANT_FIRST_NAME}, en AI-agent fra Maskin". Sig ikke et efternavn.
@@ -118,8 +118,23 @@ const CONVERSATION_NODE_INSTRUCTIONS =
 const DISCLOSURE_NODE_ID = 'n_disclosure'
 const AGENT_NODE_ID = 'n_agent'
 
-/** Every tool is a synchronous POST with a 5 second budget. */
+/**
+ * Every webhook tool is a synchronous POST with a 5 second budget. Telnyx reads it from the tool
+ * itself, next to "type": a timeout_ms inside the webhook object is stored but not applied.
+ */
 const TOOL_TIMEOUT_MS = 5000
+
+/**
+ * The only tool that ends a call: end_call_polite just records the outcome and replies, it does
+ * not hang up. Same type and description as the shared "Default hangup" tool of the live assistant.
+ */
+const HANGUP_TOOL = {
+	type: 'hangup',
+	hangup: {
+		description:
+			'To be used whenever the conversation has ended and it would be appropriate to hangup the call.',
+	},
+}
 
 /**
  * Voice, speech-to-text, interruption and post-call settings, as read from the live assistant on
@@ -179,22 +194,25 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 		transcription: TRANSCRIPTION,
 		interruption_settings: INTERRUPTION_SETTINGS,
 		post_conversation_settings: { enabled: false },
-		tools: TOOL_DECLARATIONS.map((tool) => ({
-			type: 'webhook',
-			webhook: {
-				name: tool.name,
-				description: tool.description,
-				url: `${input.toolsBaseUrl}/${tool.name}`,
-				method: 'POST',
-				headers: [{ name: 'Authorization', value: `Bearer ${input.toolWebhookSecret}` }],
+		tools: [
+			HANGUP_TOOL,
+			...TOOL_DECLARATIONS.map((tool) => ({
+				type: 'webhook',
 				timeout_ms: TOOL_TIMEOUT_MS,
-				async: false,
-				body_parameters: tool.parameters,
-				// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
-				// variable names that start with telnyx_; call_control_id is the system variable.
-				preset_body_fields: { call_control_id: '{{call_control_id}}' },
-			},
-		})),
+				webhook: {
+					name: tool.name,
+					description: tool.description,
+					url: `${input.toolsBaseUrl}/${tool.name}`,
+					method: 'POST',
+					headers: [{ name: 'Authorization', value: `Bearer ${input.toolWebhookSecret}` }],
+					async: false,
+					body_parameters: tool.parameters,
+					// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
+					// variable names that start with telnyx_; call_control_id is the system variable.
+					preset_body_fields: { call_control_id: '{{call_control_id}}' },
+				},
+			})),
+		],
 		tool_ids: [...(input.toolIds ?? [])],
 		conversation_flow: {
 			start_node_id: DISCLOSURE_NODE_ID,

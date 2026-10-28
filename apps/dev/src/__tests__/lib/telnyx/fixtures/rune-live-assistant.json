@@ -52,6 +52,10 @@
 		"instructions": "Den danske AI-hilsen er lige blevet sagt. Vent på modpartens svar, og fortsæt derefter samtalen efter assistentens instruktioner."
 	},
 	"toolTimeoutMs": 5000,
+	"hangupTool": {
+		"type": "hangup",
+		"description": "To be used whenever the conversation has ended and it would be appropriate to hangup the call."
+	},
 	"presetBodyFields": {
 		"call_control_id": "{{call_control_id}}"
 	},
