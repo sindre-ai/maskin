@@ -34,6 +34,7 @@ import {
 } from './voice-receipt'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
+import { recordVoiceToolCallLog } from './voice-tool-call-log'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -195,6 +196,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const { db, session, agentName, invokeTool, send } = deps
 	const now = deps.now ?? Date.now
 	const callState: VoiceCallState = voiceCallState(session.id)
+	const toolCallLogWrites = new Set<Promise<void>>()
 	const writeGate = createWriteGate({
 		voiceSessionId: session.id,
 		isReadOnlyTool: deps.isReadOnlyTool,
@@ -366,6 +368,11 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		let receiptReason: string | undefined
 		let receiptSend: ReceiptSendInfo | undefined
 		let receiptState: 'ran' | 'failed' | 'skip' = 'skip'
+		// What the tool call log keeps: the arguments as the model sent them, the length of what the
+		// tool returned before the cap, and the error text.
+		let loggedArgs: unknown = null
+		let rawOutputChars: number | null = null
+		let logError: string | null = null
 		try {
 			let rawArgs: unknown
 			try {
@@ -374,6 +381,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			} catch {
 				rawArgs = null
 			}
+			loggedArgs = rawArgs
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
@@ -405,6 +413,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				} catch (err) {
 					if (!(err instanceof VoiceShowInChatError)) throw err
 					errorCode = 'voice_tool_failed'
+					logError = err.message
 					output = JSON.stringify({
 						error: err.message,
 						error_code: errorCode,
@@ -424,6 +433,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				if (review.kind !== 'run') {
 					errorCode =
 						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					logError = `${msg.name} held: ${errorCode}`
 					const inChat =
 						review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
 					output = JSON.stringify({
@@ -436,6 +446,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 						workspaceId: session.workspaceId,
 					})
 					const { text, isError } = toolResultText(result)
+					rawOutputChars = text.length
 					if (review.confirmed) {
 						receiptSend = {
 							yesCount: review.confirmed.yesCount,
@@ -444,6 +455,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					}
 					if (isError) {
 						errorCode = 'voice_tool_failed'
+						logError = text
 						output = JSON.stringify({ error: cap(text), error_code: errorCode })
 						receiptState = 'failed'
 						receiptReason = text
@@ -457,6 +469,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		} catch (err) {
 			errorCode = 'voice_tool_failed'
+			logError = err instanceof Error ? err.message : String(err)
 			if (receiptArgs && msg.name !== VOICE_SHOW_IN_CHAT_TOOL) {
 				receiptState = 'failed'
 				receiptReason = err instanceof Error ? err.message : String(err)
@@ -513,6 +526,26 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				tool_name: msg.name,
 			})
 		}
+		// Fire and forget: the call is over and the model has its answer. recordVoiceToolCallLog
+		// never throws; idle() waits for it so tests can read the row back.
+		const logged = (async () =>
+			recordVoiceToolCallLog(db, {
+				voiceSessionId: session.id,
+				workspaceId: session.workspaceId,
+				callId: msg.call_id,
+				startedAt: new Date(startedAt),
+				toolName: msg.name,
+				args: loggedArgs ?? msg.arguments,
+				success: ok,
+				errorCode,
+				errorMessage: logError,
+				outputChars: rawOutputChars ?? output.length,
+				outputTruncated: rawOutputChars !== null && rawOutputChars > VOICE_MAX_TOOL_OUTPUT_CHARS,
+				latencyMs,
+				output,
+			}))().catch(() => {})
+		toolCallLogWrites.add(logged)
+		void logged.finally(() => toolCallLogWrites.delete(logged))
 		await recordCounter(session.id, () => recordVoiceToolCall(db, session.id))
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
@@ -616,6 +649,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		},
 
-		idle: () => transcriptQueue,
+		idle: async () => {
+			await transcriptQueue
+			await Promise.all([...toolCallLogWrites])
+		},
 	}
 }

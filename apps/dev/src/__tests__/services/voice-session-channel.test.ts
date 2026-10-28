@@ -26,6 +26,11 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 	recordVoiceToolCall: (...args: unknown[]) => recordToolCall(...args),
 }))
 
+const recordLog = vi.fn()
+vi.mock('../../services/voice-tool-call-log', () => ({
+	recordVoiceToolCallLog: (...args: unknown[]) => recordLog(...args),
+}))
+
 const captureException = vi.fn()
 vi.mock('../../lib/sentry-voice', () => ({
 	captureVoiceException: (...args: unknown[]) => captureException(...args),
@@ -136,6 +141,7 @@ beforeEach(() => {
 	endSession.mockReset().mockResolvedValue({})
 	recordTurn.mockReset()
 	recordToolCall.mockReset()
+	recordLog.mockReset().mockResolvedValue(undefined)
 	captureException.mockReset()
 	writeLine.mockReset()
 	showInChat.mockReset()
@@ -150,6 +156,81 @@ describe('voice channel — open', () => {
 		const { channel, sent } = setup()
 		await channel.onOpen()
 		expect(sent).toEqual([{ type: 'ready', persist_transcripts: false, conversation_id: null }])
+	})
+})
+
+describe('voice channel — tool call log', () => {
+	it('logs the arguments as the model sent them, the raw output length and the cap', async () => {
+		const big = 'x'.repeat(25_000)
+		const invoke = vi.fn().mockResolvedValue(textResult(big))
+		const { channel, toolCall } = setup(invoke)
+		await toolCall('get_objects', { ids: [ENTITY], workspace_id: OTHER_WORKSPACE })
+		await channel.idle()
+
+		expect(recordLog).toHaveBeenCalledTimes(1)
+		const row = recordLog.mock.calls[0]?.[1] as Record<string, unknown>
+		expect(row).toMatchObject({
+			voiceSessionId: SESSION_ID,
+			workspaceId: WORKSPACE,
+			callId: 'call_1',
+			toolName: 'get_objects',
+			// What the model sent, not what the server ran with.
+			args: { ids: [ENTITY], workspace_id: OTHER_WORKSPACE },
+			success: true,
+			errorCode: null,
+			outputChars: 25_000,
+			outputTruncated: true,
+		})
+		expect((row.output as string).length).toBeLessThan(25_000)
+	})
+
+	it('logs a failed call with its error text', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValue({ isError: true, content: [{ type: 'text', text: 'invalid id' }] })
+		const { channel, toolCall } = setup(invoke)
+		await toolCall('get_objects', { ids: ['abc'] })
+		await channel.idle()
+		expect(recordLog.mock.calls[0]?.[1]).toMatchObject({
+			success: false,
+			errorCode: 'voice_tool_failed',
+			errorMessage: 'invalid id',
+			outputChars: 10,
+			outputTruncated: false,
+		})
+	})
+
+	it('still answers the model when the log writer rejects or throws', async () => {
+		const invoke = vi.fn().mockResolvedValue(textResult('fine'))
+		for (const failure of [
+			() => Promise.reject(new Error('db down')),
+			() => {
+				throw new Error('sync boom')
+			},
+		]) {
+			recordLog.mockReset().mockImplementation(failure)
+			const { channel, sent, toolCall } = setup(invoke)
+			await toolCall('list_objects', {})
+			await channel.idle()
+			expect(lastResult(sent)).toMatchObject({ ok: true })
+			expect(lastResult(sent).event.item.output).toBe('fine')
+		}
+	})
+
+	it('does not wait for the writer before telling the model', async () => {
+		let release: () => void = () => {}
+		recordLog.mockReset().mockImplementation(
+			() =>
+				new Promise<void>((r) => {
+					release = r
+				}),
+		)
+		const invoke = vi.fn().mockResolvedValue(textResult('fine'))
+		const { channel, sent, toolCall } = setup(invoke)
+		await toolCall('list_objects', {})
+		expect(lastResult(sent)).toMatchObject({ ok: true })
+		release()
+		await channel.idle()
 	})
 })
 
