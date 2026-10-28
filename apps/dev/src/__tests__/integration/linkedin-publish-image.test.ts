@@ -1,8 +1,13 @@
 import { INTEGRATION_STATUS_ACTIVE, files, integrations } from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
+import { toolName } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { registerLinkedInMcpInstance } from '../../lib/integrations/providers/linkedin-unipile/mcp-server'
 import {
 	__setLinkedInClientForTests,
 	publishLinkedInPost,
@@ -68,15 +73,18 @@ function fakeStorage() {
 async function setup() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
-	await db.insert(integrations).values({
-		workspaceId: ws.id,
-		provider: 'linkedin-unipile',
-		status: INTEGRATION_STATUS_ACTIVE,
-		credentials: encrypt(JSON.stringify({ account_id: 'mock-account-id', account_status: 'OK' })),
-		actorId,
-		createdBy: actorId,
-	})
-	return { actorId, ws, store: fakeStorage() }
+	const [integration] = await db
+		.insert(integrations)
+		.values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: INTEGRATION_STATUS_ACTIVE,
+			credentials: encrypt(JSON.stringify({ account_id: 'mock-account-id', account_status: 'OK' })),
+			actorId,
+			createdBy: actorId,
+		})
+		.returning()
+	return { actorId, ws, integration, store: fakeStorage() }
 }
 
 async function fileIn(
@@ -186,5 +194,41 @@ describe('linkedin publish_post with workspace file ids', () => {
 		expect(retry.replayed).toBe(true)
 		expect(other.replayed).toBe(false)
 		expect(publishPost).toHaveBeenCalledTimes(2)
+	})
+})
+
+describe('linkedin publish_post tool with the removed raw attachments field', () => {
+	it('refuses a call that still sends attachments and posts nothing', async () => {
+		const { actorId, ws, integration } = await setup()
+		const publishPost = stubbedClient()
+		const cfg = {
+			...IDENTITY,
+			unipileAccSlug: 'test-acc',
+			identityUrn: 'urn:li:person:test',
+			workspaceId: ws.id,
+			actorId,
+			integrationId: integration.id,
+			unipileAccountId: 'mock-account-id',
+		} as LinkedInMcpInstanceConfig
+		const server = new McpServer({ name: 'test', version: '1.0.0' })
+		registerLinkedInMcpInstance(server, cfg, { db, actorId, workspaceId: ws.id })
+		const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
+		await server.connect(serverSide)
+		const mcp = new Client({ name: 'test-client', version: '1.0.0' })
+		await mcp.connect(clientSide)
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'publish_post'),
+			arguments: {
+				text: 'Sun is out',
+				attachments: [{ content: 'AAAA', content_type: 'image/png', filename: 'sun.png' }],
+			},
+		})
+
+		const text = (result.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
+		expect(result.isError).toBe(true)
+		expect(text).toContain('INVALID_INPUT')
+		expect(text).toContain('attachment_file_ids')
+		expect(publishPost).not.toHaveBeenCalled()
 	})
 })
