@@ -501,7 +501,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					}
 				},
 				editorProps: {
-					attributes: ariaLabel ? { 'aria-label': ariaLabel } : {},
+					// Naming the field replaces Tiptap's own attributes, so keep its role here.
+					attributes: ariaLabel ? { role: 'textbox', 'aria-label': ariaLabel } : {},
 					handleKeyDown: (_view, event) => {
 						if (
 							variant === 'comment' &&
