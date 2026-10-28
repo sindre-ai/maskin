@@ -163,10 +163,18 @@ describe('TriggerReferenceCard', () => {
 	})
 
 	it('never shows the instruction text or the raw schedule', () => {
+		// A weekday range is a schedule the app cannot put into words; the row would echo it raw.
 		useTrigger.mockReturnValue(found(triggerRow()))
 		const { container } = renderCard()
 		expect(container.textContent).not.toContain('SECRET INSTRUCTION TEXT')
 		expect(container.textContent).not.toContain('0 9 * * 1-5')
+		expect(screen.getByText('Runs on a schedule')).toBeInTheDocument()
+	})
+
+	it('describes a schedule the app can put into words', () => {
+		useTrigger.mockReturnValue(found(triggerRow({ config: { expression: '0 9 * * *' } })))
+		renderCard()
+		expect(screen.getByText(/^Runs every day at 9:00/i)).toBeInTheDocument()
 	})
 
 	it('reads Off muted for a trigger that is off', () => {

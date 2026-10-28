@@ -439,6 +439,17 @@ function useLoopAgents(workspaceId: string, loop: LoopSummary | null | undefined
 	})
 }
 
+/**
+ * The "when it fires" line of a trigger, as the Loops page row shows it, except that a schedule
+ * the app cannot put into words (`describeTrigger` then echoes the raw cron expression) reads
+ * "Runs on a schedule": the raw expression is never shown here.
+ */
+function whenItFires(trigger: TriggerResponse): string {
+	const text = describeTrigger(trigger)
+	const expression = trigger.type === 'cron' ? String(trigger.config?.expression ?? '') : ''
+	return expression && text.includes(expression) ? 'Runs on a schedule' : text
+}
+
 /** The agent a trigger wakes: `loading` until the actor list is in, `gone` when it is not on it. */
 function useTriggerAgent(workspaceId: string, trigger: TriggerResponse | null | undefined) {
 	const { data: actors } = useActors(workspaceId, { enabled: true })
@@ -714,7 +725,7 @@ export function TriggerReferenceCard({
 				{trigger.name}
 			</span>
 			<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
-				{describeTrigger(trigger)}
+				{whenItFires(trigger)}
 			</span>
 			<span className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-subtle pt-2 text-[11px] text-muted-foreground">
 				<span className="inline-flex min-w-0 items-center gap-1.5">
