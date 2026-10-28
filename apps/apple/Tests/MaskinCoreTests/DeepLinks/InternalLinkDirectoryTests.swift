@@ -24,7 +24,7 @@ import Testing
 		#expect(directory.object(id) == nil)
 		#expect(directory.object(id) == nil)
 		#expect(await eventually { directory.object(id) != nil })
-		#expect(directory.object(id) == .init(type: "bet", title: "Launch video"))
+		#expect(directory.object(id) == .init(type: "bet", title: "Launch video", status: "active"))
 		#expect(remote.detailCalls.count == 1)
 	}
 
@@ -34,7 +34,7 @@ import Testing
 		let directory = InternalLinkDirectory(store: { store })
 		_ = directory.object(id)
 		#expect(await eventually { directory.object(id) != nil })
-		#expect(directory.object(id) == .init(type: "bet", title: nil))
+		#expect(directory.object(id) == .init(type: "bet", title: nil, status: "active"))
 	}
 
 	@Test("a failed lookup is not retried on every render")
@@ -61,5 +61,46 @@ import Testing
 	func noStore() {
 		let directory = InternalLinkDirectory(store: { nil })
 		#expect(directory.object(id) == nil)
+	}
+
+	@Test("an object with a blank status has no status")
+	func blankStatus() async {
+		let remote = FakeDraftsRemote()
+		remote.set(
+			.success(ObjectDetail(object: WorkObject(id: id, type: "doc", title: "Notes", status: "  "), workspaceId: "ws-1")),
+			for: id)
+		let store = LinkedItemStore(objects: remote, files: FakeLinkedFiles(), workspaceID: { "ws-1" })
+		let directory = InternalLinkDirectory(store: { store })
+		_ = directory.lookup(id)
+		#expect(await eventually { directory.object(id) != nil })
+		#expect(directory.object(id)?.status == nil)
+	}
+
+	@Test("lookup says loading first, then the object")
+	func lookupLoadsThenReady() async {
+		let (store, _) = makeStore([id: detail(title: "Launch video")])
+		let directory = InternalLinkDirectory(store: { store })
+		#expect(directory.lookup(id) == .loading)
+		#expect(await eventually { directory.object(id) != nil })
+		#expect(directory.lookup(id) == .object(.init(type: "bet", title: "Launch video", status: "active")))
+	}
+
+	@Test("lookup says deleted for an object that is gone, and unreadable when the read fails")
+	func lookupDeletedAndUnreadable() async {
+		let (store, _) = makeStore([:])
+		let directory = InternalLinkDirectory(store: { store })
+		_ = directory.lookup(id)
+		#expect(await eventually { directory.lookup(id) == .deleted })
+
+		let (down, remote) = makeStore([:])
+		remote.set(.failure(ObjectsError("down")), for: id)
+		let other = InternalLinkDirectory(store: { down })
+		_ = other.lookup(id)
+		#expect(await eventually { other.lookup(id) == .unreadable })
+	}
+
+	@Test("with no store, lookup is unreadable")
+	func lookupNoStore() {
+		#expect(InternalLinkDirectory(store: { nil }).lookup(id) == .unreadable)
 	}
 }
