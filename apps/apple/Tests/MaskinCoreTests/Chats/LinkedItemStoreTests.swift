@@ -169,7 +169,7 @@ struct LinkedItemStoreTests {
 		let target = LinkedTarget(kind: .object, uuid: one)
 		await store.resolve([target])
 		let directory = InternalLinkDirectory(store: { store })
-		#expect(directory.object(one) == .init(type: "task", title: "Fix login"))
+		#expect(directory.object(one) == .init(type: "task", title: "Fix login", status: "in_progress"))
 		await store.resolve([target])
 		#expect(objects.detailCalls.count == 1)
 	}
