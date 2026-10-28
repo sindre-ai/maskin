@@ -382,7 +382,10 @@ function useLinkedLoop(workspaceId: string, loopId: string): LoopSummary | null 
 }
 
 /** The trigger in this workspace's list, or null while it loads (`undefined`) or when it is not in it (`null`). */
-function useLinkedTrigger(workspaceId: string, triggerId: string): TriggerResponse | null | undefined {
+function useLinkedTrigger(
+	workspaceId: string,
+	triggerId: string,
+): TriggerResponse | null | undefined {
 	const { data, isLoading } = useTrigger(triggerId, workspaceId)
 	return isLoading ? undefined : (data ?? null)
 }
@@ -502,7 +505,9 @@ export function LoopReferenceChip({
 			>
 				<RefreshCw size={11} aria-hidden className="shrink-0 text-muted-foreground" />
 				<span className="min-w-0 truncate font-semibold text-foreground">{name}</span>
-				<span className={cn('shrink-0 text-[10.5px] font-semibold', LOOP_PILL_STYLES[loop.pill].text)}>
+				<span
+					className={cn('shrink-0 text-[10.5px] font-semibold', LOOP_PILL_STYLES[loop.pill].text)}
+				>
 					{state}
 				</span>
 				{first ? (
@@ -560,7 +565,9 @@ export function LoopReferenceCard({
 					<RefreshCw size={11} aria-hidden />
 					Loop
 				</span>
-				<span className={cn('inline-flex items-center gap-1.5 text-[11px] font-semibold', pill.text)}>
+				<span
+					className={cn('inline-flex items-center gap-1.5 text-[11px] font-semibold', pill.text)}
+				>
 					<span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', pill.dot)} />
 					{pill.label}
 				</span>

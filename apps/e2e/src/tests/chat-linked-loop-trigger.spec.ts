@@ -91,7 +91,9 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 					)
 					// Colours ease over 180ms; let them settle before the picture.
 					await page.waitForTimeout(400)
-					await page.screenshot({ path: `test-results/linked-loop-trigger-${vp.width}-${colorScheme}.png` })
+					await page.screenshot({
+						path: `test-results/linked-loop-trigger-${vp.width}-${colorScheme}.png`,
+					})
 				}
 				await page.mouse.move(5, 5)
 				await expect(preview).toHaveCount(0)

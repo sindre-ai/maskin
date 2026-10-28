@@ -350,14 +350,24 @@ describe('MarkdownContent linkedCards', () => {
 
 	describe('loops and triggers', () => {
 		it('draws a loop or trigger link alone on its line as a card, whatever the link text says', () => {
-			renderMessage(`[the nightly loop](${loopUrl(LOOP)})\n\n[when it runs](${triggerUrl(TRIGGER)})`)
-			expect(screen.getAllByTestId('reference').map((el) => el.textContent)).toEqual([LOOP, TRIGGER])
+			renderMessage(
+				`[the nightly loop](${loopUrl(LOOP)})\n\n[when it runs](${triggerUrl(TRIGGER)})`,
+			)
+			expect(screen.getAllByTestId('reference').map((el) => el.textContent)).toEqual([
+				LOOP,
+				TRIGGER,
+			])
 			expect(screen.queryByText('the nightly loop')).not.toBeInTheDocument()
 		})
 
 		it('draws a loop or trigger in a sentence as a chip where it stands', () => {
-			renderMessage(`Check [this loop](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`)
-			expect(screen.getAllByTestId('chip').map((el) => el.getAttribute('data-id'))).toEqual([LOOP, TRIGGER])
+			renderMessage(
+				`Check [this loop](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`,
+			)
+			expect(screen.getAllByTestId('chip').map((el) => el.getAttribute('data-id'))).toEqual([
+				LOOP,
+				TRIGGER,
+			])
 			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
 		})
 
@@ -385,7 +395,10 @@ describe('MarkdownContent linkedCards', () => {
 		})
 
 		it('counts loops and triggers in the ten looked-up links of a message', () => {
-			const ids = Array.from({ length: 11 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+			const ids = Array.from(
+				{ length: 11 },
+				(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+			)
 			renderMessage(ids.map((id, i) => `Link ${i} [x](${loopUrl(id)}) here.`).join('\n\n'))
 			expect(screen.getAllByTestId('chip')).toHaveLength(10)
 		})
