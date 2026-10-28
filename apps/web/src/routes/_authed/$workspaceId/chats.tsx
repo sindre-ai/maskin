@@ -4,7 +4,9 @@ import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
@@ -55,6 +57,12 @@ function ChatsListTitle() {
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
+	// The list sits beside the thread; with the call panel open as well, the
+	// thread would be squeezed below 360px under about 1280px, so the list steps
+	// aside for the length of the call.
+	const onCall = useVoiceCallLive()
+	const narrowForCall = useMediaQuery('(max-width: 1279px)')
+	const listAside = onCall && narrowForCall
 	const navigate = useNavigate()
 	const matches = useMatches()
 	const { filter = 'all', wide } = Route.useSearch()
@@ -145,7 +153,7 @@ function ChatsLayout() {
 		<>
 			{header}
 			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
-				{wide ? null : (
+				{wide || listAside ? null : (
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
 					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">

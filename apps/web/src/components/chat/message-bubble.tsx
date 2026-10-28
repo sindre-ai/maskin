@@ -27,6 +27,7 @@ import { IntegrationAccessRequestCard } from './integration-access-request-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
+import { McpServerRequestCard } from './mcp-server-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -436,6 +437,18 @@ export function MessageBubble({
 						request={message.metadata.integration_access_request}
 					/>
 				) : null}
+				{/* An agent's add_mcp_server call: the server's details ready to Add, with an input for
+				    each secret. Adding it saves the server and gives it to the agent on the server. */}
+				{message.metadata?.mcp_server_request ? (
+					<McpServerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageId={message.id}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.mcp_server_request}
+					/>
+				) : null}
 				{/* An agent's show_computer call: a card that opens the agent's own computer so
 				    the person can act on it, then hands control back with Done. */}
 				{message.metadata?.computer_request ? (
@@ -573,11 +586,13 @@ function OwnLinkChip({
 	segment:
 		| { kind: 'loop'; id: string }
 		| { kind: 'trigger'; id: string }
+		| { kind: 'agent'; id: string }
 		| { kind: 'object' | 'file'; id: string }
 }) {
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
 }
 
@@ -613,6 +628,34 @@ function OwnTriggerChip({ workspaceId, id }: { workspaceId: string; id: string }
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Trigger'}</span>
+		</Link>
+	)
+}
+
+function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	const actor = actors?.find((a) => a.id === id)
+	const name = actor?.name?.trim()
+	// An address that points at a person is not an agent link: it stays a plain link.
+	if (actor?.type === 'human') {
+		const address = `${window.location.origin}/${workspaceId}/agents/${id}`
+		return (
+			<a href={address} target="_blank" rel="noopener noreferrer" className="underline">
+				{address}
+			</a>
+		)
+	}
+	return (
+		<Link
+			to="/$workspaceId/agents/$agentId"
+			params={{ workspaceId, agentId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
 		</Link>
 	)
 }

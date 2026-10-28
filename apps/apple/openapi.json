@@ -38725,6 +38725,89 @@
 													"level"
 												]
 											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
+												]
+											},
 											"computer_request": {
 												"type": "object",
 												"properties": {
@@ -41673,6 +41756,89 @@
 													"provider",
 													"display_name",
 													"level"
+												]
+											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
 												]
 											},
 											"computer_request": {
@@ -48861,6 +49027,428 @@
 					},
 					"404": {
 						"description": "Session or active integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/mcp-server-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post a card in the session chat asking the person to add a tool server",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"hint": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 300
+									},
+									"type": {
+										"type": "string",
+										"enum": [
+											"stdio",
+											"http"
+										]
+									},
+									"command": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 512
+									},
+									"args": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"maxLength": 2048
+										},
+										"maxItems": 100
+									},
+									"url": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									},
+									"env": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"headers": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"secret_env": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									},
+									"secret_headers": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										},
+										"message_id": {
+											"type": "number"
+										}
+									},
+									"required": [
+										"posted",
+										"message_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The server definition is not valid, or carries a secret the agent must not hold",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
 						"content": {
 							"application/json": {
 								"schema": {

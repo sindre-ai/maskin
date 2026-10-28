@@ -290,6 +290,15 @@ public enum ThreadLayout {
 		messages.last { $0.actorID == currentActorID && !$0.isSystem }?.id
 	}
 
+	/// Messages that carry a status line: the newest own message, plus every own message the server
+	/// has not confirmed yet. Without the second part, sending several in a row leaves all but the
+	/// last one looking like plain, slightly faded bubbles with no sign they are on their way.
+	public static func statusLineIDs(in messages: [ChatMessage], currentActorID: String) -> Set<String> {
+		var ids = Set(messages.filter { $0.actorID == currentActorID && !$0.isSystem && $0.isPending }.map(\.id))
+		if let latest = latestOwnMessageID(in: messages, currentActorID: currentActorID) { ids.insert(latest) }
+		return ids
+	}
+
 	/// Run position of every message in `items`, by message id.
 	public static func runs(in items: [ThreadItem]) -> [String: Run] {
 		var result: [String: Run] = [:]

@@ -146,7 +146,8 @@ private struct ChatsContainer: View {
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
-				initialRecipient: request.recipient
+				initialRecipient: request.recipient,
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -390,7 +391,7 @@ private struct ChatThreadHost: View {
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
 				topic: conversations.conversation(id: conversationID)?.title, now: Date())
 			Task {
-				await coordinator.reconcile(turns)
+				await coordinator.reconcile(turns, conversationId: conversationID)
 				await coordinator.sweep()
 			}
 		}
