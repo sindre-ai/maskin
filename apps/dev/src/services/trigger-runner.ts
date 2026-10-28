@@ -190,9 +190,7 @@ const NOTHING_CONFIGURED_SUPPRESSION_MS = 24 * 60 * 60_000
 
 /** The pause for a non-transient credentials failure; see the two constants above for the lengths. */
 function credentialsSuppression(now: Date, nothingConfigured: boolean): WorkspaceSuppression {
-	const ms = nothingConfigured
-		? NOTHING_CONFIGURED_SUPPRESSION_MS
-		: NO_CREDENTIALS_SUPPRESSION_MS
+	const ms = nothingConfigured ? NOTHING_CONFIGURED_SUPPRESSION_MS : NO_CREDENTIALS_SUPPRESSION_MS
 	return {
 		until: new Date(now.getTime() + ms),
 		reason: 'no LLM credentials connected for this workspace',
