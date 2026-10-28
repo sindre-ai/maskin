@@ -54,9 +54,15 @@ struct LinkedSheet: View {
 	}
 
 	private func openAfterClosing(_ target: LinkedTarget) {
+		// A link into another workspace goes through the app's link handler, as a push tap does.
+		let elsewhere = store?.otherWorkspaceURL(for: target)
 		dismiss()
 		Task {
 			try? await Task.sleep(for: .milliseconds(450))
+			if let elsewhere {
+				runtime?.open(elsewhere)
+				return
+			}
 			switch target.kind {
 			case .object: runtime?.openObject(target.uuid)
 			case .file: runtime?.openFile(target.uuid)
