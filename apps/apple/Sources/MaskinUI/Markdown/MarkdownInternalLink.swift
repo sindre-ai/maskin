@@ -42,6 +42,12 @@ extension EnvironmentValues {
 	@Entry public var markdownStandaloneLink: (@MainActor (URL, String?) -> MarkdownStandaloneLinkStyle)? = nil
 }
 
+extension EnvironmentValues {
+	/// Whether a link alone on its line may draw as a card. On by default; a surface that already sits
+	/// in a card (the For You card) turns it off, and the link draws as a chip instead.
+	@Entry public var markdownCards: Bool = true
+}
+
 /// A link that is the whole of a message or paragraph: `[Title](url)` or a bare address.
 public enum MarkdownStandaloneLink {
 	public struct Match: Equatable, Sendable {
@@ -70,6 +76,19 @@ public enum MarkdownStandaloneLink {
 			return Match(url: url, title: nil)
 		}
 		return nil
+	}
+}
+
+extension MarkdownStandaloneLink {
+	/// The paragraph as inline markdown when it is only a link, so it draws as a chip. A bare address
+	/// becomes a link whose text is the address, which the chip then replaces with the thing's name.
+	/// Nil when the paragraph is anything else.
+	public static func chipMarkdown(for text: String) -> String? {
+		guard let link = match(text) else { return nil }
+		if link.title != nil { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+		let address = link.url.absoluteString
+		let destination = address.replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+		return "[\(address.replacingOccurrences(of: "]", with: "%5D"))](\(destination))"
 	}
 }
 
