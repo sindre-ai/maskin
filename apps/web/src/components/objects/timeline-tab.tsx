@@ -1,5 +1,6 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -16,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
 import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
@@ -77,6 +79,10 @@ type TimelineEntry =
 				 *  files aren't objects, so ObjectReference (which useObjects the id)
 				 *  would 404 the file and render as "deleted object". */
 				file?: GraphFileSummary
+				/** A session endpoint (e.g. `produced_by`). Sessions aren't objects either,
+				 *  so it gets its own chip that names the agent instead of a placeholder
+				 *  object whose status would read "unknown". */
+				sessionId?: string
 			}
 	  }
 
@@ -393,6 +399,7 @@ export function TimelineTab({
 			const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
 			const linkedTitle = direction === 'outbound' ? rel.targetTitle : rel.sourceTitle
 			const file = filesById.get(linkedId)
+			const linkedType = direction === 'outbound' ? rel.targetType : rel.sourceType
 			rows.push({
 				kind: 'event',
 				key: `rel-${rel.id}`,
@@ -410,6 +417,7 @@ export function TimelineTab({
 					verb: relationshipVerb(rel.type, direction),
 					objectId: linkedId,
 					file,
+					sessionId: linkedType === 'session' ? linkedId : undefined,
 					// Skip the object branch for file endpoints — the graph returns
 					// files under `files[]`, not `connected_objects`, and ObjectReference
 					// would useObject(linkedId) and 404 → "deleted object".
@@ -891,6 +899,12 @@ function EventRow({
 				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
 				{entry.reference.file ? (
 					<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+				) : entry.reference.sessionId ? (
+					<SessionReferenceChip
+						sessionId={entry.reference.sessionId}
+						workspaceId={workspaceId}
+						actorsById={actorsById}
+					/>
 				) : (
 					<ObjectReference
 						objectId={entry.reference.objectId}
@@ -945,6 +959,12 @@ function EventRow({
 						<span className="shrink-0 text-xs text-muted-foreground">{entry.reference.verb}</span>
 						{entry.reference.file ? (
 							<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+						) : entry.reference.sessionId ? (
+							<SessionReferenceChip
+								sessionId={entry.reference.sessionId}
+								workspaceId={workspaceId}
+								actorsById={actorsById}
+							/>
 						) : (
 							<ObjectReference
 								objectId={entry.reference.objectId}
@@ -984,6 +1004,42 @@ function FileReferenceChip({
 		>
 			<FileIcon size={12} className="shrink-0 text-muted-foreground" aria-hidden />
 			<span className="truncate">{file.name || file.id}</span>
+		</Link>
+	)
+}
+
+/**
+ * The session an edge points at (e.g. the one that produced this object).
+ * Names the agent that ran it; if the session or its agent can't be resolved
+ * (deleted, still loading) it reads "Session" rather than a made-up status.
+ */
+function SessionReferenceChip({
+	sessionId,
+	workspaceId,
+	actorsById,
+}: {
+	sessionId: string
+	workspaceId: string
+	actorsById: Map<string, ActorListItem>
+}) {
+	const { data: session } = useSession(sessionId, workspaceId)
+	const actor = session ? actorsById.get(session.actorId) : undefined
+	const label = actor ? `${actor.name} session` : 'Session'
+	const className =
+		'inline-flex min-w-0 items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs text-foreground'
+
+	if (!actor) return <span className={className}>{label}</span>
+	return (
+		<Link
+			to="/$workspaceId/agents/$agentId"
+			params={{ workspaceId, agentId: actor.id }}
+			className={cn(
+				className,
+				'transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+			)}
+		>
+			<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+			<span className="truncate">{label}</span>
 		</Link>
 	)
 }
