@@ -85,6 +85,16 @@ describe('targetOfHref', () => {
 		expect(targetOfHref(`/ws/files/${id}`)).toEqual({ kind: 'file', id })
 	})
 
+	it('reads a loop or trigger id from an address', () => {
+		expect(targetOfHref(`https://x.io/ws/loops/${id.toUpperCase()}`)).toEqual({ kind: 'loop', id })
+		expect(targetOfHref(`/ws/triggers/${id}?tab=x`)).toEqual({ kind: 'trigger', id })
+	})
+
+	it('ignores a loop or trigger address with more id characters after the id', () => {
+		expect(targetOfHref(`/ws/loops/${id}x`)).toBeNull()
+		expect(targetOfHref('/ws/loops')).toBeNull()
+	})
+
 	it('ignores any other address', () => {
 		expect(targetOfHref('https://x.io/ws/agents')).toBeNull()
 		expect(targetOfHref(undefined)).toBeNull()
@@ -133,6 +143,19 @@ describe('splitOwnLinks', () => {
 	it('keeps every link, including a repeated one', () => {
 		const link = url('objects', A)
 		expect(splitOwnLinks(`${link} ${link}`, WS).filter((s) => s.kind === 'object')).toHaveLength(2)
+	})
+
+	it('finds a bare address of a loop and of a trigger', () => {
+		expect(splitOwnLinks(`${url('loops', A)} wakes ${url('triggers', B)}`, WS)).toEqual([
+			{ kind: 'loop', id: A },
+			{ kind: 'text', text: ' wakes ' },
+			{ kind: 'trigger', id: B },
+		])
+	})
+
+	it('leaves a loop address of another workspace as words', () => {
+		const other = `https://maskin.io/${A}/loops/${B}`
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
 	})
 
 	it('leaves links to another workspace, another site or a non-object page as words', () => {
