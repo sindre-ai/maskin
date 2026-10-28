@@ -28,7 +28,7 @@ export function NavSearch() {
 			<Search aria-hidden="true" className="size-[15px] shrink-0" />
 			{/* Icon only up to 1024px: the labelled button is 227px and crushes the page title. */}
 			<span className="hidden min-[1024px]:inline">Search or run a command</span>
-			<kbd className="hidden rounded-[5px] border border-border bg-muted px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
+			<kbd className="hidden rounded-[5px] border border-border bg-background px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
 				{paletteShortcut}
 			</kbd>
 		</button>
