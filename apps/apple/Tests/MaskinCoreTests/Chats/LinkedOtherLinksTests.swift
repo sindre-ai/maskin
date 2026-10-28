@@ -15,16 +15,17 @@ struct LinkedOtherLinksTests {
 	let fileID = "33333333-2222-3333-4444-555555555555"
 
 	/// A store for `here`, whose switcher list holds only Acme Studio.
-	private func store(objects: FakeDraftsRemote = FakeDraftsRemote(), files: FakeLinkedFiles = FakeLinkedFiles())
+	private func makeStore(objects: FakeDraftsRemote = FakeDraftsRemote(), files: FakeLinkedFiles = FakeLinkedFiles())
 		-> LinkedItemStore
 	{
+		let current = here
 		let member = acme
 		return LinkedItemStore(
-			objects: objects, files: files, workspaceID: { "7d1f0c52-0e0a-4f43-9c1e-aaaaaaaaaaaa" },
+			objects: objects, files: files, workspaceID: { current },
 			workspaceName: { $0.lowercased() == member ? "Acme Studio" : nil })
 	}
 
-	private func object(in workspace: String) -> LinkedTarget {
+	private func objectTarget(in workspace: String) -> LinkedTarget {
 		LinkedTarget.parse(href: "https://maskin.io/\(workspace)/objects/\(id)")!
 	}
 
@@ -32,7 +33,7 @@ struct LinkedOtherLinksTests {
 
 	@Test("a full address names its workspace; a relative path names none")
 	func addressWorkspace() {
-		#expect(object(in: here).workspaceID == here)
+		#expect(objectTarget(in: here).workspaceID == here)
 		#expect(LinkedTarget.parse(href: "maskin://\(acme)/files/\(fileID)")?.workspaceID == acme)
 		#expect(LinkedTarget.parse(href: "/\(here)/objects/\(id)")?.workspaceID == nil)
 		#expect(LinkedTarget.parse(href: "/objects/\(id)")?.workspaceID == nil)
@@ -40,9 +41,9 @@ struct LinkedOtherLinksTests {
 
 	@Test("the same thing linked from two workspaces is still one target")
 	func identityIgnoresWorkspace() {
-		#expect(object(in: here) == object(in: acme))
-		#expect(object(in: here) == LinkedTarget(kind: .object, uuid: id))
-		#expect(Set([object(in: here), object(in: acme)]).count == 1)
+		#expect(objectTarget(in: here) == objectTarget(in: acme))
+		#expect(objectTarget(in: here) == LinkedTarget(kind: .object, uuid: id))
+		#expect(Set([objectTarget(in: here), objectTarget(in: acme)]).count == 1)
 	}
 
 	// MARK: Same workspace
@@ -50,8 +51,8 @@ struct LinkedOtherLinksTests {
 	@Test("a link into the workspace being read is looked up as before")
 	func sameWorkspace() async {
 		let objects = FakeDraftsRemote()
-		let store = store(objects: objects)
-		let target = object(in: here)
+		let store = makeStore(objects: objects)
+		let target = objectTarget(in: here)
 		#expect(store.state(for: target) == nil)
 		#expect(store.showsCard(target))
 		await store.resolve([target])
@@ -66,8 +67,8 @@ struct LinkedOtherLinksTests {
 	func otherMemberWorkspace() async {
 		let objects = FakeDraftsRemote()
 		let files = FakeLinkedFiles()
-		let store = store(objects: objects, files: files)
-		let object = object(in: acme)
+		let store = makeStore(objects: objects, files: files)
+		let object = objectTarget(in: acme)
 		let file = LinkedTarget.parse(href: "https://maskin.io/\(acme)/files/\(fileID)")!
 		// Known from the address alone, before any lookup.
 		#expect(store.isCard(object))
@@ -95,8 +96,8 @@ struct LinkedOtherLinksTests {
 	@Test("a link into a workspace the reader is not in says another workspace")
 	func otherNonMemberWorkspace() async {
 		let objects = FakeDraftsRemote()
-		let store = store(objects: objects)
-		let target = object(in: stranger)
+		let store = makeStore(objects: objects)
+		let target = objectTarget(in: stranger)
 		await store.resolve([target])
 		#expect(objects.detailCalls.isEmpty)
 		guard case .otherWorkspace(let link)? = store.item(for: target) else {
@@ -110,7 +111,7 @@ struct LinkedOtherLinksTests {
 
 	@Test("the placeholder counts as a card toward the three in a message")
 	func countsTowardTheCap() {
-		let store = store()
+		let store = makeStore()
 		let ids = (1...4).map { "0000000\($0)-2222-3333-4444-555555555555" }
 		let text = ids.map { "[Link](https://maskin.io/\(stranger)/objects/\($0))" }.joined(separator: "\n\n")
 		let parts = LinkedMessageLayout.parts(
@@ -125,7 +126,7 @@ struct LinkedOtherLinksTests {
 	@Test("the link directory does not look up an object in another workspace")
 	func directoryDoesNotLookUp() async {
 		let objects = FakeDraftsRemote()
-		let store = store(objects: objects)
+		let store = makeStore(objects: objects)
 		let directory = InternalLinkDirectory(store: { store })
 		#expect(directory.object(id, workspace: stranger) == nil)
 		try? await Task.sleep(for: .milliseconds(50))
