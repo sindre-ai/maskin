@@ -24,6 +24,7 @@ vi.mock('@tanstack/react-router', () => ({
 			className={className}
 			aria-label={rest['aria-label'] as string | undefined}
 			tabIndex={rest.tabIndex as number | undefined}
+			data-linked-card={rest['data-linked-card'] as string | undefined}
 		>
 			{children}
 		</a>
