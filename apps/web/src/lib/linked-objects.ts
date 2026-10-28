@@ -584,22 +584,37 @@ function factText(value: unknown): string {
 	return ''
 }
 
+/** A field name or enum value as plain words with a capital: "moves_the_bar" is "Moves the bar". */
+export function plainWords(raw: string): string {
+	const words = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+	return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// A link or a git ref is not a fact to read at a glance, the card itself is the way in.
+const LINK_FIELD_NAME = /(^|[\s_-])(url|link|branch)$/i
+const LINK_VALUE = /^https?:\/\//i
+
 /**
  * The fact rows of an object card: up to three fields of the type's field list that the record
  * has filled in, in the list's order, leaving out title, status, text and driver. Label is the
- * field's name and value its text on one line. An empty field is left out, so a record with none
- * filled gets no rows.
+ * field's name in plain words and value its text on one line (an enum value in plain words too).
+ * A link field, by its name or by a value that is a web address, is left out. An empty field is
+ * left out, so a record with none filled gets no rows.
  */
 export function pickFacts(
-	fields: ReadonlyArray<{ name: string }> | null | undefined,
+	fields: ReadonlyArray<{ name: string; type?: string }> | null | undefined,
 	metadata: Record<string, unknown> | null | undefined,
 ): CardFact[] {
 	const facts: CardFact[] = []
 	for (const field of fields ?? []) {
 		if (facts.length >= MAX_CARD_FACTS) break
-		if (FACT_SKIPPED.has(field.name.toLowerCase())) continue
-		const value = factText(metadata?.[field.name])
-		if (value) facts.push({ label: field.name, value })
+		if (FACT_SKIPPED.has(field.name.toLowerCase()) || LINK_FIELD_NAME.test(field.name)) continue
+		const text = factText(metadata?.[field.name])
+		if (!text || LINK_VALUE.test(text)) continue
+		facts.push({
+			label: plainWords(field.name),
+			value: field.type === 'enum' ? plainWords(text) : text,
+		})
 	}
 	return facts
 }

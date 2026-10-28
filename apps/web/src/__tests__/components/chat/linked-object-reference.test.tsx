@@ -233,7 +233,7 @@ describe('ObjectReferenceCard face', () => {
 	it('draws no fact rows when no field is filled in', () => {
 		useObject.mockReturnValue({ data: objectRow({ metadata: { priority: '' } }), isLoading: false })
 		renderCard()
-		expect(screen.queryByText('priority')).not.toBeInTheDocument()
+		expect(screen.queryByText('Priority')).not.toBeInTheDocument()
 		expect(screen.queryByText('Owner team')).not.toBeInTheDocument()
 	})
 
@@ -243,7 +243,7 @@ describe('ObjectReferenceCard face', () => {
 			isLoading: false,
 		})
 		renderCard()
-		expect(screen.getByText('priority')).toBeInTheDocument()
+		expect(screen.getByText('Priority')).toBeInTheDocument()
 		expect(screen.getByText('P2')).toBeInTheDocument()
 		expect(screen.queryByText('Source')).not.toBeInTheDocument()
 	})
@@ -256,11 +256,11 @@ describe('ObjectReferenceCard face', () => {
 			isLoading: false,
 		})
 		renderCard()
-		const labels = ['priority', 'Owner team', 'Source']
+		const labels = ['Priority', 'Owner team', 'Source']
 		for (const label of labels) expect(screen.getByText(label)).toBeInTheDocument()
 		expect(screen.queryByText('Budget')).not.toBeInTheDocument()
 		const text = screen.getByRole('link').textContent ?? ''
-		expect(text.indexOf('priority')).toBeLessThan(text.indexOf('Owner team'))
+		expect(text.indexOf('Priority')).toBeLessThan(text.indexOf('Owner team'))
 		expect(text.indexOf('Owner team')).toBeLessThan(text.indexOf('Source'))
 	})
 

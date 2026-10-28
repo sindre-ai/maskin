@@ -82,7 +82,7 @@ export function LinkedCardFace({
 				<span className="mt-2 flex flex-col gap-0.5">
 					{facts.map((fact) => (
 						<span key={fact.label} className="flex gap-2 text-[11.5px] leading-snug">
-							<span className="w-16 shrink-0 truncate text-muted-foreground">{fact.label}</span>
+							<span className="w-24 shrink-0 truncate text-muted-foreground">{fact.label}</span>
 							<span className="min-w-0 flex-1 truncate text-foreground">{fact.value}</span>
 						</span>
 					))}

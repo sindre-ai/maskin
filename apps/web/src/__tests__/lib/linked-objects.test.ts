@@ -281,7 +281,7 @@ describe('pickFacts', () => {
 			driver: 'z',
 		}
 		expect(pickFacts(fields, metadata)).toEqual([
-			{ label: 'priority', value: 'P1' },
+			{ label: 'Priority', value: 'P1' },
 			{ label: 'Role', value: 'CTO' },
 			{ label: 'Company', value: 'Norlix' },
 		])
@@ -298,19 +298,55 @@ describe('pickFacts', () => {
 
 	it('shows at most three rows', () => {
 		const metadata = { priority: 'P1', Role: 'CTO', Source: 'Referral', Company: 'Norlix' }
-		expect(pickFacts(fields, metadata).map((f) => f.label)).toEqual(['priority', 'Role', 'Source'])
+		expect(pickFacts(fields, metadata).map((f) => f.label)).toEqual(['Priority', 'Role', 'Source'])
 	})
 
 	it('reads numbers, booleans and lists as one line of text', () => {
 		const metadata = { priority: 2, Role: false, Source: ['a', ' b ', ''], Company: 'two\nlines' }
 		expect(pickFacts(fields, metadata)).toEqual([
-			{ label: 'priority', value: '2' },
+			{ label: 'Priority', value: '2' },
 			{ label: 'Role', value: 'false' },
 			{ label: 'Source', value: 'a, b' },
 		])
 		expect(pickFacts([{ name: 'Company' }], metadata)).toEqual([
 			{ label: 'Company', value: 'two lines' },
 		])
+	})
+
+	it('writes field names and enum values as plain words', () => {
+		const defs = [
+			{ name: 'moves_the_bar', type: 'text' },
+			{ name: 'advisor_conversation', type: 'enum' },
+			{ name: 'stage', type: 'enum' },
+		]
+		const metadata = {
+			moves_the_bar: 'yes_for_sure',
+			advisor_conversation: 'not_started',
+			stage: 'in-review',
+		}
+		expect(pickFacts(defs, metadata)).toEqual([
+			{ label: 'Moves the bar', value: 'yes_for_sure' },
+			{ label: 'Advisor conversation', value: 'Not started' },
+			{ label: 'Stage', value: 'In review' },
+		])
+	})
+
+	it('leaves out link fields, by name or by a web address', () => {
+		const defs = [
+			{ name: 'pr_url', type: 'text' },
+			{ name: 'branch', type: 'text' },
+			{ name: 'Docs link', type: 'text' },
+			{ name: 'reference', type: 'text' },
+			{ name: 'Role', type: 'text' },
+		]
+		const metadata = {
+			pr_url: 'https://github.com/x/y/pull/1',
+			branch: 'feat/task-1',
+			'Docs link': 'https://example.com',
+			reference: 'https://example.com/spec',
+			Role: 'CTO',
+		}
+		expect(pickFacts(defs, metadata)).toEqual([{ label: 'Role', value: 'CTO' }])
 	})
 })
 
