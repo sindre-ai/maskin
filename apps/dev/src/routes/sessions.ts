@@ -494,9 +494,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 	const fromIso = fromDate.toISOString()
 	const toIso = toDate.toISOString()
 
+	// Bucketed by when the session settled, or by its last activity while it has not:
+	// a running or paused chat has no completed_at, and its usage is saved turn by turn,
+	// so it must show up live instead of only after it ends.
 	const rows = (await db.execute(sql`
 		SELECT
-			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
+			date_trunc(${bucket}, COALESCE(completed_at, updated_at) AT TIME ZONE 'UTC') AS bucket,
 			COUNT(*)::int AS session_count,
 			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
 			COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
@@ -508,9 +511,8 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		FROM sessions
 		WHERE workspace_id = ${workspaceId}
 			AND actor_id = ${actorId}
-			AND completed_at IS NOT NULL
-			AND completed_at >= ${fromIso}::timestamptz
-			AND completed_at <  ${toIso}::timestamptz
+			AND COALESCE(completed_at, updated_at) >= ${fromIso}::timestamptz
+			AND COALESCE(completed_at, updated_at) <  ${toIso}::timestamptz
 		GROUP BY 1
 		ORDER BY 1 ASC
 	`)) as unknown as Array<{
