@@ -91,7 +91,9 @@ export function useMarkUnread(workspaceId: string) {
 		mutationFn: ({ entityType, entityId }: { entityType: string; entityId: string }) =>
 			// A For You card with no object is "read" by dismissing its notification.
 			entityType === NOTIFICATION_ENTITY
-				? api.notifications.update(entityId, { status: 'pending' })
+				? api.notifications
+						.update(entityId, { status: 'pending' })
+						.then(() => ({ updated: true as const }))
 				: api.subscriptions.markUnread(workspaceId, entityType, entityId),
 		onMutate: async ({ entityType, entityId }) => {
 			if (entityType !== 'object') return
@@ -161,7 +163,9 @@ export function useMarkRead(workspaceId: string) {
 			lastEventId: number
 		}) =>
 			entityType === NOTIFICATION_ENTITY
-				? api.notifications.update(entityId, { status: 'dismissed' })
+				? api.notifications
+						.update(entityId, { status: 'dismissed' })
+						.then(() => ({ updated: true as const }))
 				: api.subscriptions.markRead(workspaceId, entityType, entityId, lastEventId),
 		onMutate: async ({ entityType, entityId }) => {
 			if (entityType !== 'object') return
