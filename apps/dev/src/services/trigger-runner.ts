@@ -26,6 +26,10 @@ import {
 	trackTriggerCronTickDropped,
 } from '../lib/analytics/trigger-queue-events'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
+import {
+	claimCommentResponder,
+	releaseCommentResponderClaim,
+} from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
@@ -2375,6 +2379,24 @@ export class CommentDispatcher {
 		entityId: string
 		actionPrompt: string
 	}): Promise<boolean> {
+		// The fallback is the responder of last resort: it stands down when the thread-reply
+		// auto-spawn (routes/events.ts) has claimed, or is claiming, this actor for this comment.
+		// The claim is a primary-key INSERT, so it holds even when the two run ~50ms apart.
+		const claimed = await claimCommentResponder(this.db, {
+			sourceCommentEventId: ctx.sourceCommentEventId,
+			actorId: ctx.actorId,
+			claimedBy: 'comment_fallback',
+		})
+		if (!claimed) {
+			logger.info('Comment fallback stood down: another responder session holds the claim', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			// A responder exists for this comment, so it is not an unanswered one.
+			return true
+		}
 		try {
 			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
 			await startSession({
@@ -2401,6 +2423,10 @@ export class CommentDispatcher {
 				actorId: ctx.actorId,
 				sourceCommentEventId: ctx.sourceCommentEventId,
 				error: err instanceof Error ? err.message : String(err),
+			})
+			await releaseCommentResponderClaim(this.db, {
+				sourceCommentEventId: ctx.sourceCommentEventId,
+				actorId: ctx.actorId,
 			})
 			return false
 		}
