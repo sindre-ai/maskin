@@ -55,7 +55,9 @@ test.describe('Chat — a link to a settings page draws as a gear chip', () => {
 					colorScheme === 'dark',
 				)
 				await page.waitForTimeout(400)
-				await page.screenshot({ path: `test-results/linked-settings-${vp.width}-${colorScheme}.png` })
+				await page.screenshot({
+					path: `test-results/linked-settings-${vp.width}-${colorScheme}.png`,
+				})
 			}
 
 			// A tap goes to the page, in the same tab.
