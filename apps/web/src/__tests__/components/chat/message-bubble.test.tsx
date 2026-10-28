@@ -17,6 +17,7 @@ vi.mock('@/lib/workspace-context', () => ({
 			settings: { statuses: { bet: ['active', 'done'] } },
 		},
 	}),
+	useIsEnterpriseWorkspace: () => workspaceState.enterprise,
 }))
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))

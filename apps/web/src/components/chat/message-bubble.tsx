@@ -28,7 +28,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { useWorkspace } from '@/lib/workspace-context'
+import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -113,7 +113,7 @@ export function MessageBubble({
 	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
-	const enterprise = useWorkspace().workspace.enterprise
+	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
