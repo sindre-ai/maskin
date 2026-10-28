@@ -3,8 +3,7 @@ import { EventEmitter } from 'node:events'
 import { events, triggerDispatches } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
@@ -17,10 +16,6 @@ import { db, getTestActorId } from './global-setup'
 // dispatches thanks to the trigger_dispatches idempotency table
 // (INSERT ... ON CONFLICT DO NOTHING), and asserts exactly N rows land in
 // the table itself.
-//
-// **Runs with trigger_engine_v2 OFF** — the whole point is that the
-// idempotency guard is unconditional (tech spec §3.4 + §7.3). Load-bearing
-// during kill-switch: a flag flip must NOT re-open the blue-green window.
 //
 // Both runners share one EventEmitter subbed for PgNotifyBridge so every
 // emit fans out to both handleEvent listeners, mirroring what happens in
@@ -54,23 +49,11 @@ async function pollUntil<T>(check: () => T | undefined, timeoutMs = 5_000): Prom
 }
 
 describe('S2 — trigger_dispatches idempotency prevents blue-green double-fire', () => {
-	let previousFlagEnv: string | undefined
-
-	beforeEach(() => {
-		// Ensure trigger_engine_v2 is OFF for this test — the guard must fire
-		// regardless of flag state.
-		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
-		process.env.FF_WORKSPACE_FEATURES = undefined
-		_resetFeatureFlagConfig()
-	})
-
 	afterEach(async () => {
-		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
-		_resetFeatureFlagConfig()
 		await db.delete(triggerDispatches)
 	})
 
-	it('two concurrent runners against the same DB fire 100 events → exactly 100 dispatches (flag OFF)', async () => {
+	it('two concurrent runners against the same DB fire 100 events → exactly 100 dispatches', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
 		const targetActor = await insertActor(db, { type: 'agent', name: 'Blue-green target' })
@@ -83,14 +66,6 @@ describe('S2 — trigger_dispatches idempotency prevents blue-green double-fire'
 			// we're testing, not the matcher.
 			config: { entity_type: 'object', action: 'created' },
 		})
-
-		// Assert flag really is OFF for this workspace so the test claims what it
-		// claims — a stray FF_WORKSPACE_FEATURES value would silently invalidate
-		// the "unconditional" part of the proof. `process.env.X = undefined`
-		// coerces to the string "undefined", so we can't just check for
-		// `.toBeUndefined()`; substring-check the workspace id instead.
-		const raw = process.env.FF_WORKSPACE_FEATURES ?? ''
-		expect(raw.includes(`${ws.id}:trigger_engine_v2`)).toBe(false)
 
 		const bridge = makeStubBridge()
 		const blue = trackingSessionManager()

@@ -703,11 +703,11 @@ describe('TimelineTab', () => {
 	})
 
 	// D8 delta (bet/d166-loops-v4-polish) — every assertion below exercises
-	// the polish variant, opted in via the `loopsV4PolishUnread` prop the
-	// loop-detail route passes when the sub-flag is on. Objects (the other
+	// the polish variant, opted in via the `loopUnread` prop the
+	// loop-detail route passes. Objects (the other
 	// consumer of TimelineTab) never sets the prop, so these behaviours are
 	// scoped to the loop-detail surface by construction.
-	describe('loops-v4-polish.unread variant', () => {
+	describe('loop unread variant', () => {
 		beforeEach(() => {
 			vi.mocked(trackMarkReadClicked).mockReset()
 			markReadMutate.mockReset()
@@ -737,7 +737,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -802,7 +802,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -832,7 +832,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -864,7 +864,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -935,7 +935,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -967,7 +967,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 

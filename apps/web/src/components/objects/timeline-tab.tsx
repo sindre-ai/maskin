@@ -266,13 +266,12 @@ function prevStatusOf(event: EventResponse): string | null {
  * opacity-75, the boundary announces itself to screen readers on mount, an
  * EARLIER divider marks the current-window boundary in the stream, and
  * Mark read fires the `mark_read_clicked` PostHog event with
- * `{loop_id, unread_count}`. Gated at the callsite behind the
- * `loops-v4-polish.unread` sub-flag (feature-flag boundary lives in
- * `_authed/$workspaceId/loops/$loopId.tsx`). Absent → the pre-bet divider
- * ships as before, so Objects (the other consumer of this component) is
+ * `{loop_id, unread_count}`. Passed by
+ * the loop detail page (`_authed/$workspaceId/loops/$loopId.tsx`). Absent → the
+ * pre-bet divider ships as before, so Objects (the other consumer of this component) is
  * completely untouched.
  */
-export interface LoopsV4PolishUnreadOptions {
+export interface LoopUnreadOptions {
 	/** Emitted on the analytics payload for `mark_read_clicked` — matches
 	 *  the SPEC's verbatim `{loopId, unreadCount}` contract. */
 	loopId: string
@@ -287,11 +286,11 @@ const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 export function TimelineTab({
 	object,
-	loopsV4PolishUnread,
+	loopUnread,
 	additionalEvents,
 }: {
 	object: ObjectResponse
-	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+	loopUnread?: LoopUnreadOptions
 	/** Extra events to merge into the stream — used by the loop detail page to
 	 * fold in agent-work events (session lifecycle, trigger fires) that don't
 	 * carry `entityId = object.id` and so aren't returned by the object graph.
@@ -494,9 +493,9 @@ export function TimelineTab({
 		// Emit BEFORE the mutate so a late failure that rolls the dismiss back
 		// still has a click recorded — the metric is "did the admin engage
 		// with the boundary", not "did the server successfully persist it".
-		if (loopsV4PolishUnread) {
+		if (loopUnread) {
 			trackMarkReadClicked({
-				loop_id: loopsV4PolishUnread.loopId,
+				loop_id: loopUnread.loopId,
 				unread_count: unreadCount,
 			})
 		}
@@ -509,7 +508,7 @@ export function TimelineTab({
 				},
 			},
 		)
-	}, [markRead, object.id, latestCommentEventId, loopsV4PolishUnread, unreadCount])
+	}, [markRead, object.id, latestCommentEventId, loopUnread, unreadCount])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -530,7 +529,7 @@ export function TimelineTab({
 	// render. Only computed when the polish variant is on; every other
 	// consumer of TimelineTab reads null and pays no cost.
 	const earlierAnchorKey = useMemo(() => {
-		if (!loopsV4PolishUnread) return null
+		if (!loopUnread) return null
 		const threshold = Date.now() - EARLIER_WINDOW_MS
 		for (const entry of entries) {
 			if (!entry.time) continue
@@ -539,7 +538,7 @@ export function TimelineTab({
 			if (ts < threshold) return entry.key
 		}
 		return null
-	}, [loopsV4PolishUnread, entries])
+	}, [loopUnread, entries])
 
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
@@ -591,19 +590,18 @@ export function TimelineTab({
 		const unreadHere =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId
 		const unreadDivider = unreadHere ? (
-			loopsV4PolishUnread ? (
+			loopUnread ? (
 				<PolishUnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : (
 				<NewDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			)
 		) : null
 		// EARLIER divider — polish variant only.
-		const earlierDivider =
-			loopsV4PolishUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
+		const earlierDivider = loopUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
 		// D8 (loops v4 polish path): dim entries the current viewer has already
 		// read. Per-viewer via `unreadEventIds`.
 		const dimAsRead =
-			!!loopsV4PolishUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
+			!!loopUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
 		return (
 			<li key={entry.key} className="list-none">
 				{unreadDivider}
@@ -616,9 +614,7 @@ export function TimelineTab({
 							// D9 decided-fold applies only in the default (Object detail)
 							// path — the loops v4 polish variant keeps the full ActivityComment card.
 							const foldedAnswer =
-								!loopsV4PolishUnread &&
-								answer !== null &&
-								isDecidedFoldEligible(entry.event, replies)
+								!loopUnread && answer !== null && isDecidedFoldEligible(entry.event, replies)
 									? answer
 									: null
 							return foldedAnswer ? (
@@ -718,7 +714,7 @@ export function TimelineTab({
 			 * aria-live host that lives above the strip; content swaps in
 			 * and out of it, not the other way around).
 			 */}
-			{loopsV4PolishUnread && (
+			{loopUnread && (
 				<output className="sr-only" aria-live="polite" aria-atomic="true">
 					{showUnreadDivider ? `${unreadCount} unread activity items` : ''}
 				</output>

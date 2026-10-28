@@ -24,7 +24,6 @@ import { sha256 } from '../lib/capabilities/schema-hash'
 import { BUILTIN_SOURCE_KEY } from '../lib/capabilities/sources'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import { findDirectChat } from './direct-chat'
@@ -124,9 +123,6 @@ interface RecipientRun {
 /** Returns 'sent', a skip reason that was recorded, or null for a quiet week. */
 async function digestForRecipient(db: Database, run: RecipientRun): Promise<string | null> {
 	const { workspaceId, senderId, recipientId } = run
-	// Delivery is off for everyone but the testers. No row, no count: this is the common case.
-	if (!isFlagEnabled(recipientId, FLAGS.AGENT_PROACTIVE_1_1)) return null
-
 	const chat = await findDirectChat(db, { workspaceId, humanId: recipientId, agentId: senderId })
 	const last = chat ? await lastDigest(db, workspaceId, chat.id) : null
 
