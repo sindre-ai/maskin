@@ -244,6 +244,7 @@ function ChipPreview({
 				{children}
 				{shown ? (
 					// The top padding bridges the gap so the pointer can travel from chip to card.
+					// biome-ignore lint/a11y/useSemanticElements: a non-modal popup anchored under the chip; native <dialog> is against project convention (apps/web/CLAUDE.md) and would need showModal or top-layer positioning
 					<span
 						role="dialog"
 						aria-label="Object preview"
@@ -787,13 +788,7 @@ const KIND_TILE = 'bg-secondary text-secondary-foreground'
 function AgentLabel({ agent }: { agent: { id: string; name: string; type: string } }) {
 	return (
 		<span className="inline-flex min-w-0 items-center gap-1.5">
-			<ActorAvatar
-				id={agent.id}
-				name={agent.name}
-				type={agent.type}
-				size="sm"
-				className={AVATAR}
-			/>
+			<ActorAvatar id={agent.id} name={agent.name} type={agent.type} size="sm" className={AVATAR} />
 			<span className="truncate">{agent.name}</span>
 		</span>
 	)
