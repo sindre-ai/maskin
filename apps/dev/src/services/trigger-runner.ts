@@ -31,7 +31,6 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -750,7 +749,7 @@ export class TriggerRunner {
 
 	/**
 	 * The provider's reset time from a credit-exhaustion session_failed, or null
-	 * to fall back to the exponential backoff. Null when the flag is off, the
+	 * to fall back to the exponential backoff. Null when the
 	 * event is not a classified credit_exhaustion carrying a string retry_at,
 	 * or retry_at is unparseable, already past, or beyond RETRY_AT_MAX_MS —
 	 * event data is external input, and an epoch-9999 timestamp would otherwise
@@ -758,7 +757,6 @@ export class TriggerRunner {
 	 */
 	private async readRetryAt(event: PgEvent): Promise<Date | null> {
 		if (event.action !== 'session_failed') return null
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return null
 		const data = await this.fetchEventData(event.event_id)
 		if (data?.classification !== 'credit_exhaustion' || typeof data.retry_at !== 'string') {
 			return null
@@ -944,56 +942,28 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Flag-gate `commented` action so a workspace that hasn't rolled to
-			// trigger_engine_v2 can never end up with commented-action triggers
-			// silently dead in the matcher — the trigger builder rejects the flag-off
-			// state with an error, so a saved trigger with action=commented always
-			// implies its workspace is expected to be on v2. If the flag flips off
-			// again (kill switch), the trigger stops firing entirely; better than
-			// firing with the on_target_type row hidden. Ships as one call site here;
-			// S1's two gate points (loadCooldowns / loadSuppressions) share the
-			// same temporary helper and get swapped to the S7 public resolver in
-			// one aggregate-merge pass.
-			if (
-				event.action === 'commented' &&
-				!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)
-			) {
-				continue
-			}
-
 			// Check filter conditions — for status_changed / updated events the entity lives
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
 			// {changes} shape). For `commented` the root merges `data`, the comment's
 			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
 			//
-			// Matcher v2 (tech spec §2.1) is flag-gated per workspace: when
-			// `trigger_engine_v2` is ON, array-valued entries take any-of semantics
+			// Matcher v2 (tech spec §2.1): array-valued entries take any-of semantics
 			// and every miss emits `trigger_match_failed` so the bet #8 dashboard
-			// can watch dead triggers reactivate. When OFF, today's strict-equality
-			// body runs unchanged (array values reference-equal against a literal
-			// array → always false, matching v1 behaviour); no PostHog row emitted
-			// so a pre-rollout workspace does not spam analytics.
+			// can watch dead triggers reactivate.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
 				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				if (isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) {
-					const result = evaluateFilterV2(filter, filterRoot)
-					if (!result.matches) {
-						void trackTriggerMatchFailed({
-							workspaceId: event.workspace_id,
-							triggerId: trigger.id,
-							eventId: event.event_id,
-							filterShape: result.missShape,
-						})
-						continue
-					}
-				} else {
-					const matches = Object.entries(filter).every(
-						([key, value]) => resolvePath(filterRoot, key) === value,
-					)
-					if (!matches) continue
+				const result = evaluateFilterV2(filter, filterRoot)
+				if (!result.matches) {
+					void trackTriggerMatchFailed({
+						workspaceId: event.workspace_id,
+						triggerId: trigger.id,
+						eventId: event.event_id,
+						filterShape: result.missShape,
+					})
+					continue
 				}
 			}
 
@@ -1042,13 +1012,12 @@ export class TriggerRunner {
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
 			// Idempotency claim — S2 of the trigger-engine fix bet (tech spec §3.4).
-			// Ships UNCONDITIONAL (no flag check): during blue-green rolling deploys
-			// both trigger-runner instances receive the same PG NOTIFY payload and
+			// During blue-green rolling deploys both
+			// trigger-runner instances receive the same PG NOTIFY payload and
 			// would otherwise both dispatch. First INSERT to succeed claims the
 			// (trigger_id, event_id); the other's ON CONFLICT DO NOTHING returns
 			// zero rows and the dispatch skips. Load-bearing during rollback per
-			// §7.3 — a kill-switch flip must not re-open this window, so the
-			// guard cannot sit behind the v2 gate.
+			// §7.3.
 			const eventIdBigint = Number(event.event_id)
 			const claimed = await this.db
 				.insert(triggerDispatches)
@@ -1364,9 +1333,8 @@ export class TriggerRunner {
 
 	/**
 	 * Hydrate `triggerFailures` from `trigger_cooldowns` at boot — reads every
-	 * row whose `backoff_until` is still in the future, joins to `triggers` to
-	 * find the owning workspace, and skips rows for workspaces that have not
-	 * opted into the v2 gate (§3.2, §7.1).
+	 * row whose `backoff_until` is still in the future and whose trigger still
+	 * exists (§3.2, §7.1).
 	 *
 	 * A DB read failure THROWS: booting with empty Maps against a live DB is
 	 * exactly the deploy-wipe bug this table exists to prevent (§6.3).
@@ -1379,7 +1347,6 @@ export class TriggerRunner {
 			lastFailedAt: Date
 			backoffUntil: Date
 			reason: string | null
-			workspaceId: string
 		}[]
 		try {
 			rows = await this.db
@@ -1389,7 +1356,6 @@ export class TriggerRunner {
 					lastFailedAt: triggerCooldowns.lastFailedAt,
 					backoffUntil: triggerCooldowns.backoffUntil,
 					reason: triggerCooldowns.reason,
-					workspaceId: triggers.workspaceId,
 				})
 				.from(triggerCooldowns)
 				.innerJoin(triggers, eq(triggers.id, triggerCooldowns.triggerId))
@@ -1400,12 +1366,7 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.triggerFailures.set(row.triggerId, {
 				count: row.count,
 				lastFailedAt: row.lastFailedAt,
@@ -1414,7 +1375,7 @@ export class TriggerRunner {
 			})
 			loaded++
 		}
-		logger.info(`Trigger cooldowns loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Trigger cooldowns loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1443,19 +1404,14 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.workspaceSuppressions.set(row.workspaceId, {
 				until: row.suppressedUntil,
 				reason: row.reason,
 			})
 			loaded++
 		}
-		logger.info(`Workspace suppressions loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Workspace suppressions loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1495,8 +1451,7 @@ export class TriggerRunner {
 
 	/**
 	 * Parks an event that is about to be dropped so it replays when the window
-	 * lifts (tech spec §4.2). Behind trigger_engine_v2: with the flag off the
-	 * drop is exactly today's, and nothing touches the queue. The queue's own
+	 * lifts (tech spec §4.2). The queue's own
 	 * audit events are never parked — see QUEUE_EVENT_ENTITY_TYPE.
 	 */
 	private async holdDroppedEvent(
@@ -1504,7 +1459,6 @@ export class TriggerRunner {
 		opts: Parameters<typeof enqueueDroppedEvent>[2],
 	): Promise<void> {
 		if (event.entity_type === QUEUE_EVENT_ENTITY_TYPE) return
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return
 		await enqueueDroppedEvent(this.db, event, opts)
 	}
 
@@ -1562,7 +1516,6 @@ export class TriggerRunner {
 		try {
 			const replayed = await drainQueue(this.db, scope, {
 				source,
-				canReplay: (workspaceId) => isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2),
 				isHeld,
 				replay,
 			})

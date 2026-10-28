@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
 const toast = vi.fn()
+// The field list per type in the workspace schema, which the card reads its fact rows from.
+let fieldDefinitions: Record<string, { name: string; type: string }[]> = {}
 
 vi.mock('sonner', () => ({ toast: (...args: unknown[]) => toast(...args) }))
 vi.mock('@/hooks/use-objects', () => ({ useObject: (id: string) => useObject(id) }))
@@ -12,6 +14,9 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type.charAt(0).toUpperCase() + type.slice(1),
+}))
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspace: { settings: { field_definitions: fieldDefinitions } } }),
 }))
 vi.mock('@tanstack/react-router', () => ({
 	Link: ({
@@ -57,7 +62,7 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 const renderChip = () =>
 	render(<ObjectReferenceChip workspaceId={WS} objectId={ID} fallback={fallback} />)
 
-// The round marks inside the chip's link: the type dot, then the status dot when there is one.
+// The round marks inside the chip's link: the status dot, when there is one. The type is an icon.
 const chipDots = () =>
 	Array.from(screen.getByRole('link').querySelectorAll<HTMLElement>('span.rounded-full'))
 
@@ -124,15 +129,44 @@ describe('ObjectReferenceChip plate', () => {
 		useObject.mockReturnValue({ data: objectRow({ status: 'blocked' }), isLoading: false })
 		renderChip()
 		const dots = chipDots()
-		expect(dots).toHaveLength(2)
-		expect(dots[1]).toHaveAttribute('aria-hidden', 'true')
-		expect(dots[1].className).toContain('text-status-blocked-text')
+		expect(dots).toHaveLength(1)
+		expect(dots[0]).toHaveAttribute('aria-hidden', 'true')
+		expect(dots[0].className).toContain('text-status-blocked-text')
 	})
 
 	it('draws no status dot for an object with no status', () => {
 		useObject.mockReturnValue({ data: objectRow({ status: '' }), isLoading: false })
 		renderChip()
-		expect(chipDots()).toHaveLength(1)
+		expect(chipDots()).toHaveLength(0)
+	})
+
+	it('leads with a kind icon at 0.85em in the type colour, not a dot', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderChip()
+		const icon = screen.getByRole('link').querySelector('svg')
+		expect(icon).toHaveAttribute('aria-hidden', 'true')
+		expect(icon).toHaveAttribute('width', '0.85em')
+		expect(icon?.getAttribute('class')).toContain('text-type-bet-text')
+	})
+
+	it('gives each built-in type its icon and a custom type the neutral tag', () => {
+		const iconOf = (type: string) => {
+			useObject.mockReturnValue({ data: objectRow({ type }), isLoading: false })
+			const { unmount } = renderChip()
+			const classes = screen.getByRole('link').querySelector('svg')?.getAttribute('class') ?? ''
+			unmount()
+			return classes
+		}
+		const icons = ['contact', 'company', 'insight', 'bet', 'task', 'file'].map(iconOf)
+		expect(icons[0]).toContain('lucide-user')
+		expect(icons[1]).toContain('lucide-building')
+		expect(icons[2]).toContain('lucide-lightbulb')
+		expect(icons[3]).toContain('lucide-target')
+		expect(icons[4]).toContain('lucide-square-check')
+		expect(icons[5]).toContain('lucide-file-text')
+		const custom = iconOf('article')
+		expect(custom).toContain('lucide-tag')
+		expect(custom).toContain('text-muted-foreground')
 	})
 
 	it('has no status word and no owner avatar', () => {
@@ -152,12 +186,95 @@ describe('ObjectReferenceChip plate', () => {
 		expect(link?.querySelector('[aria-hidden="true"]')?.className).toContain('animate-pulse')
 	})
 
-	it('draws the deleted chip with a dashed border at the sentence size', () => {
+	it('draws the deleted chip with a trash icon and a dashed border at the sentence size', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
 		const chip = screen.getByText('Deleted object')
 		expect(chip.className).toContain('border-dashed')
 		expect(chip.className).not.toMatch(/text-\[/)
+		expect(chip.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
+	})
+})
+
+describe('ObjectReferenceCard face', () => {
+	beforeEach(() => {
+		useObject.mockReset()
+		fieldDefinitions = {
+			bet: [
+				{ name: 'title', type: 'text' },
+				{ name: 'priority', type: 'enum' },
+				{ name: 'Owner team', type: 'text' },
+				{ name: 'Source', type: 'text' },
+				{ name: 'Budget', type: 'number' },
+			],
+		}
+	})
+	afterEach(() => {
+		fieldDefinitions = {}
+	})
+	const renderCard = () => render(<ObjectReferenceCard workspaceId={WS} objectId={ID} />)
+
+	it('has an icon tile in the type colours, the type name as the eyebrow and the status as a badge', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		const link = screen.getByRole('link')
+		const tile = link.querySelector('span.size-6')
+		expect(tile?.className).toContain('bg-type-bet-bg')
+		expect(tile?.querySelector('svg')).not.toBeNull()
+		expect(screen.getByText('Bet')).toHaveClass('eyebrow')
+		expect(link).toHaveTextContent(/active/i)
+		expect(link).toHaveTextContent('Chat preview cards')
+		expect(link).toHaveTextContent('Text')
+	})
+
+	it('uses the secondary tile colours for a type with no colour of its own', () => {
+		useObject.mockReturnValue({ data: objectRow({ type: 'contact' }), isLoading: false })
+		renderCard()
+		expect(screen.getByRole('link').querySelector('span.size-6')?.className).toContain(
+			'bg-secondary',
+		)
+	})
+
+	it('draws no fact rows when no field is filled in', () => {
+		useObject.mockReturnValue({ data: objectRow({ metadata: { priority: '' } }), isLoading: false })
+		renderCard()
+		expect(screen.queryByText('Priority')).not.toBeInTheDocument()
+		expect(screen.queryByText('Owner team')).not.toBeInTheDocument()
+	})
+
+	it('draws one fact row for one filled field, labelled with the field name', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ metadata: { priority: 'P2' } }),
+			isLoading: false,
+		})
+		renderCard()
+		expect(screen.getByText('Priority')).toBeInTheDocument()
+		expect(screen.getByText('P2')).toBeInTheDocument()
+		expect(screen.queryByText('Source')).not.toBeInTheDocument()
+	})
+
+	it('draws at most three fact rows, in the order of the schema', () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				metadata: { Budget: 5, Source: 'Referral', 'Owner team': 'Growth', priority: 'P1' },
+			}),
+			isLoading: false,
+		})
+		renderCard()
+		const labels = ['Priority', 'Owner team', 'Source']
+		for (const label of labels) expect(screen.getByText(label)).toBeInTheDocument()
+		expect(screen.queryByText('Budget')).not.toBeInTheDocument()
+		const text = screen.getByRole('link').textContent ?? ''
+		expect(text.indexOf('Priority')).toBeLessThan(text.indexOf('Owner team'))
+		expect(text.indexOf('Owner team')).toBeLessThan(text.indexOf('Source'))
+	})
+
+	it('says an object was deleted, with a trash icon, in the dashed look', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: false })
+		renderCard()
+		const card = screen.getByText('This object was deleted')
+		expect(card).toHaveClass('border-dashed', 'italic')
+		expect(card.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
 	})
 })
 
@@ -269,11 +386,14 @@ describe('ObjectReferenceChip preview', () => {
 		expect(preview()).toBeNull()
 	})
 
-	it('opens on keyboard focus and closes on blur', async () => {
+	it('opens on keyboard focus and closes when focus leaves it', async () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.tab()
 		expect(chip()).toHaveFocus()
+		expect(preview()).not.toBeNull()
+		await user.tab()
+		await user.tab()
 		expect(preview()).not.toBeNull()
 		await user.tab()
 		expect(preview()).toBeNull()
@@ -288,13 +408,63 @@ describe('ObjectReferenceChip preview', () => {
 		expect(preview()).toBeNull()
 	})
 
-	it('is hidden from assistive tech and is not a second tab stop', async () => {
+	it('is a non-modal dialog named Object preview, in the accessibility tree', async () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.hover(chip())
-		expect(preview()).toHaveAttribute('aria-hidden', 'true')
-		expect(screen.getAllByRole('link')).toHaveLength(1)
-		expect(preview()?.querySelector('a')).toHaveAttribute('tabindex', '-1')
+		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		expect(dialog).toBe(preview())
+		expect(dialog).not.toHaveAttribute('aria-hidden')
+		expect(dialog).not.toHaveAttribute('aria-modal')
+	})
+
+	it('holds the card as plain content with Copy link and Open as its only controls', async () => {
+		const user = userEvent.setup()
+		renderChip()
+		await user.hover(chip())
+		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		expect(dialog).toHaveTextContent('Chat preview cards')
+		expect(dialog.querySelectorAll('a')).toHaveLength(1)
+		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+		expect(dialog.querySelectorAll('button')).toHaveLength(1)
+		expect(dialog.querySelector('[data-linked-card]')).toBeNull()
+	})
+
+	it('moves from the chip into Copy link and then Open with Tab', async () => {
+		const user = userEvent.setup()
+		renderChip()
+		await user.tab()
+		expect(chip()).toHaveFocus()
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toHaveFocus()
+		await user.tab()
+		expect(screen.getByRole('link', { name: 'Open' })).toHaveFocus()
+	})
+
+	it('closes on Escape from inside the preview and puts focus back on the chip', async () => {
+		const user = userEvent.setup()
+		renderChip()
+		await user.tab()
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toHaveFocus()
+		await user.keyboard('{Escape}')
+		expect(preview()).toBeNull()
+		expect(chip()).toHaveFocus()
+	})
+
+	it('copies the address the chip links to and says so', async () => {
+		const user = userEvent.setup()
+		toast.mockReset()
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+		renderChip()
+		await user.tab()
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toHaveFocus()
+		await user.keyboard('{Enter}')
+		expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/${WS}/objects/${ID}`)
+		expect(toast).toHaveBeenCalledWith('Link copied', { duration: 1800 })
 	})
 
 	it('shows the card skeleton while the object loads', () => {
@@ -444,7 +614,11 @@ describe('ObjectReferenceChip sheet', () => {
 		})) as unknown as typeof window.matchMedia
 	}
 	const chip = () => screen.getByRole('link', { name: /Bet, Active: Chat preview cards/ })
-	const sheet = () => screen.queryByRole('dialog', { name: 'Object preview' })
+	// The sheet is the modal dialog; the hover preview is a non-modal one with the same name.
+	const sheet = () =>
+		Array.from(document.querySelectorAll('[role="dialog"]')).find(
+			(el) => el.getAttribute('aria-modal') === 'true',
+		) ?? null
 
 	beforeEach(() => {
 		useObject.mockReset()

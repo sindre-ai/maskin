@@ -179,6 +179,8 @@ test.describe('Chat — the sheet and the preview split at 640px', () => {
 
 		await chip.hover()
 		await expect(preview).toBeVisible()
+		// It fades in and rises over 180ms.
+		await expect(preview).toHaveCSS('animation-duration', '0.18s')
 		await chip.click()
 		await expect(page.getByRole('dialog', { name: 'Object preview' })).toHaveCount(0)
 		await expect(page).toHaveURL(new RegExp(`/${ws}/objects/${task.id}`))

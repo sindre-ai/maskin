@@ -287,6 +287,43 @@ private actor FakeCalls: VoiceCalling {
 		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed after"])
 	}
 
+	@Test("telling the agent what was chosen adds the note and asks it to carry on")
+	func tellsTheAgent() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		transport.sent.removeAll()
+		call.tell("I chose: Ship on: Ship Friday?")
+		#expect(handedOn(transport) == ["I chose: Ship on: Ship Friday?"])
+		#expect(transport.sent.last == RealtimeCallMachine.responseRequest)
+	}
+
+	@Test("while the agent is speaking only the note is added, not a second response")
+	func tellsWithoutTalkingOver() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		transport.receive("output_audio_buffer.started")
+		#expect(call.phase == .speaking)
+		transport.sent.removeAll()
+		call.tell("I chose: Hold on: Ship?")
+		#expect(handedOn(transport) == ["I chose: Hold on: Ship?"])
+		#expect(!transport.sent.contains(RealtimeCallMachine.responseRequest))
+	}
+
+	@Test("a note told before the connection is open waits for it")
+	func tellWaitsForTheChannel() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.tell("I chose: Ship on: Ship?")
+		await settle()
+		#expect(handedOn(transport).isEmpty)
+		transport.receive("session.created")
+		#expect(handedOn(transport) == ["I chose: Ship on: Ship?"])
+	}
+
 	@Test("a line typed before the connection is open waits for it")
 	func queuesUntilOpen() async {
 		let (call, _, transport) = make()

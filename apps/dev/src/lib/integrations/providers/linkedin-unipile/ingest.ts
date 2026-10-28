@@ -1,12 +1,12 @@
 /**
  * Unipile webhook ingest: a verified, parsed envelope becomes at most one
- * `events` row per active integration row, deduped and flag-gated.
+ * `events` row per active integration row, deduped.
  *
  * Lives in the provider directory (not the route) so the route keeps owning
  * the transport (headers, secret, status codes for signature and JSON) and this
  * module owns the pipeline:
  *
- *   account -> integration rows -> flag -> claims -> classify -> commit
+ *   account -> integration rows -> claims -> classify -> commit
  *
  * Everything runs inline inside a work budget. Permanent conditions answer 200
  * with a skip reason (Unipile's retries would only repeat them). Only a
@@ -18,7 +18,6 @@ import type { Database } from '@maskin/db'
 import { integrations, webhookDeliveries } from '@maskin/db/schema'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { recordEvents } from '../../../events/record-event'
-import { isFlagEnabled } from '../../../feature-flags'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 import { ClaimReleasedError, commitWebhookDelivery } from '../../webhooks/commit'
@@ -61,8 +60,8 @@ interface InFlight {
 }
 
 /**
- * Owner actor for flag checks and the fallback event actor: the connecting
- * human on the integration row.
+ * Owner actor, the fallback event actor: the connecting human on the
+ * integration row.
  */
 function ownerActorId(row: IntegrationRow): string {
 	return row.actorId ?? row.createdBy
@@ -230,13 +229,6 @@ async function processRow(
 	inFlight: InFlight[],
 	reporter: DeliveryReporter,
 ): Promise<RowResult> {
-	// Flag is read per integration row, on the owner actor, before any claim, so
-	// a flag-off delivery writes no claim and switching on later needs no replay.
-	if (!isFlagEnabled(ownerActorId(integration), map.flag)) {
-		reporter.report(integration, { outcome: 'dropped', reason: 'flag_off' })
-		return { outcome: 'skipped', reason: 'flag_off' }
-	}
-
 	const keys: string[] = []
 	if (envelope.accountId && envelope.envelopeId) {
 		keys.push(`evt:${envelope.accountId}:${envelope.envelopeId}`)

@@ -13,6 +13,14 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 	case handoff(SpawnedSession, behind: [String])
 	/// A live call: one card holding every line of the call, which the thread does not also show as bubbles.
 	case liveCall(LiveCallCard)
+	/// Where a live call started or ended: `LIVE MEETING · STARTED 14:02`.
+	case callDivider(LiveCallDivider)
+	/// Something the agent did during a live call: a row of its own, in message order beside the
+	/// call's card rather than inside it.
+	case receipt(LiveReceiptEvent)
+	/// The card that closes a call. `transcript` is what its "Read transcript" opens; nil when the
+	/// call is not on this device.
+	case callSummary(LiveCallSummary, transcript: LiveTranscript?)
 
 	public var id: String {
 		switch self {
@@ -22,6 +30,9 @@ public enum ThreadItem: Identifiable, Equatable, Sendable {
 		case .message(let m, _): m.id
 		case .handoff(let session, _): "handoff-\(session.id)"
 		case .liveCall(let card): card.id
+		case .callDivider(let divider): divider.id
+		case .receipt(let event): event.id
+		case .callSummary(let summary, _): "summary-\(summary.id)"
 		}
 	}
 }
@@ -60,23 +71,56 @@ public enum ThreadLayout {
 	///     the "new" divider goes (nil: no divider, e.g. a thread that was never read).
 	public static func items(
 		for messages: [ChatMessage], unreadAfter cursor: Int? = nil, currentActorID: String? = nil,
-		calls: [LiveCallRecord] = [], calendar: Calendar = .current
+		calls: [LiveCallRecord] = [], callSummaries: Bool = false, inlineTranscript: Bool = true,
+		calendar: Calendar = .current, now: Date = Date()
 	) -> [ThreadItem] {
 		var items: [ThreadItem] = []
 		// Each message belongs to at most one call; the card sits where the call's first message was.
 		var callOf: [String: Int] = [:]
 		var members: [[ChatMessage]] = Array(repeating: [], count: calls.count)
+		// The server's closing receipt of each call, if it has posted one.
+		var receiptSummaryCalls: Set<Int> = []
 		for message in messages where !message.isSystem {
-			if let index = calls.firstIndex(where: {
-				LiveCallWindow.contains($0, message, currentActorID: currentActorID)
+			if case .summary = LiveReceipt.parse(message),
+				let index = calls.firstIndex(where: { LiveCallWindow.closes($0, message) })
+			{
+				receiptSummaryCalls.insert(index)
+			}
+		}
+		// Per call: its spoken lines leave the thread only when the thread holds what replaces them.
+		let hides = calls.map {
+			!inlineTranscript && LiveSpokenLine.hidesSpokenLines(for: $0, in: messages, currentActorID: currentActorID)
+		}
+		for message in messages where !message.isSystem && !LiveReceipt.isReceipt(message) {
+			if let index = calls.indices.first(where: {
+				LiveCallWindow.contains(calls[$0], message, currentActorID: currentActorID, spokenOnly: hides[$0])
 			}) {
 				callOf[message.id] = index
 				members[index].append(message)
 			}
 		}
 		var emitted: Set<Int> = []
+		// The app-built summaries wait until every row is down, then go where their call ended.
+		var fallbackSummaries: [(call: Int, item: ThreadItem)] = []
 		func card(_ index: Int) -> ThreadItem {
 			.liveCall(LiveCallCard(record: calls[index], messages: members[index], currentActorID: currentActorID))
+		}
+		// The card, and after a finished call the summary the app builds itself when the server posted none.
+		// With `inlineTranscript` off and a replacement present, the call's lines stay out of the thread
+		// (they remain in the store, in the transcript view and with the agent) and the summary stands
+		// in for the card.
+		func appendCard(_ index: Int) {
+			if !hides[index] { items.append(card(index)) }
+			guard callSummaries, !receiptSummaryCalls.contains(index), let fallback = LiveCallWindow.fallbackSummary(
+				for: calls[index], messages: members[index], currentActorID: currentActorID)
+			else { return }
+			fallbackSummaries.append(
+				(
+					call: index,
+					item: .callSummary(
+						fallback,
+						transcript: LiveTranscript(
+							record: calls[index], messages: members[index], currentActorID: currentActorID))))
 		}
 		var lastDay: Date?
 		var previous: ChatMessage?
@@ -103,7 +147,7 @@ public enum ThreadLayout {
 			// A call nobody spoke in has no message to sit at: it goes where it started.
 			for index in calls.indices where members[index].isEmpty && !emitted.contains(index) {
 				if calls[index].showsCard, let at = message.createdAt, calls[index].startedAt <= at {
-					items.append(card(index))
+					appendCard(index)
 					emitted.insert(index)
 					previous = nil
 				}
@@ -115,13 +159,28 @@ public enum ThreadLayout {
 				previous = nil
 			}
 			if folded, let index = callOf[message.id] {
-				items.append(card(index))
+				appendCard(index)
 				emitted.insert(index)
 				previous = nil
 				continue
 			}
 			if message.isSystem {
 				items.append(.system(message))
+				previous = nil
+				continue
+			}
+			if let parsed = LiveReceipt.parse(message) {
+				switch parsed {
+				case .event(let event):
+					items.append(.receipt(event))
+				case .summary(let summary):
+					let index = calls.firstIndex { LiveCallWindow.closes($0, message) }
+					let placed = index.map { summary.placed(in: calls[$0]) } ?? summary
+					let transcript = index.map {
+						LiveTranscript(record: calls[$0], messages: members[$0], currentActorID: currentActorID)
+					}
+					items.append(.callSummary(placed, transcript: transcript))
+				}
 				previous = nil
 				continue
 			}
@@ -146,9 +205,47 @@ public enum ThreadLayout {
 		}
 		// A call that is still running and has nothing said yet shows its empty state, not a card.
 		for index in calls.indices where !emitted.contains(index) && calls[index].showsCard {
-			items.append(card(index))
+			appendCard(index)
 		}
+		for (call, summary) in fallbackSummaries {
+			let limit = (calls[call].endedAt ?? .distantFuture).addingTimeInterval(LiveCallWindow.grace)
+			items.insert(summary, at: items.firstIndex { $0.time.map { $0 > limit } ?? false } ?? items.count)
+		}
+		insertLocalDecisions(calls: calls, messages: messages, into: &items)
+		LiveMeetingChrome.insertDividers(
+			LiveMeetingChrome.spans(messages: messages, records: calls, now: now), into: &items, calendar: calendar)
 		return items
+	}
+
+	/// A server DECIDED row this close after a dock answer (or just before it, for clock skew) is that
+	/// answer's own row.
+	private static let decisionMatchWindow: TimeInterval = 60
+
+	/// Draws the answers tapped in a call's dock as DECIDED rows, each at its own time in the call and
+	/// before the call's summary, until the server's own DECIDED row for it is in `messages`. Each
+	/// server row stands in for at most one answer.
+	private static func insertLocalDecisions(
+		calls: [LiveCallRecord], messages: [ChatMessage], into items: inout [ThreadItem]
+	) {
+		var server: [Date] = messages.compactMap { message -> Date? in
+			guard case .event(let event)? = LiveReceipt.parse(message), event.kind == .decided else { return nil }
+			return event.at
+		}
+		for record in calls {
+			for decision in record.decisions.sorted(by: { $0.at < $1.at }) {
+				let near = decision.at.addingTimeInterval(-LiveCallWindow.skew)...decision.at.addingTimeInterval(decisionMatchWindow)
+				if let match = server.firstIndex(where: { near.contains($0) }) {
+					server.remove(at: match)
+					continue
+				}
+				let next = items.firstIndex { $0.time.map { $0 > decision.at } ?? false }
+				let summary = items.firstIndex {
+					if case .callSummary(_, let transcript) = $0 { transcript?.recordID == record.id } else { false }
+				}
+				let index = min(next ?? items.count, summary ?? items.count)
+				items.insert(.receipt(decision.event(in: record)), at: index)
+			}
+		}
 	}
 
 	/// One row per spawned session the strip has a pill for, in the server's order.
@@ -218,6 +315,12 @@ public enum ThreadLayout {
 			return "Yesterday"
 		}
 		return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+	}
+
+	/// Title for a conversation the client creates: a chat made to start a live call is a
+	/// "Live meeting"; any other new chat is named for its people.
+	public static func newChatTitle(for names: [String], startsLiveCall: Bool) -> String {
+		startsLiveCall ? LiveMeetingChrome.ownThreadTitle : defaultTitle(for: names)
 	}
 
 	/// Title for a new conversation when the user doesn't type one: "Alex, Relay".

@@ -39,7 +39,6 @@ import {
 	trackCommentPosted,
 	trackEvent,
 	trackRelationshipCreated,
-	trackSearchPerformed,
 	trackSearchResultOpened,
 } from '@/lib/analytics'
 
@@ -50,12 +49,7 @@ import { useCreateSession } from '@/hooks/use-sessions'
 import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import {
-	type SettledSearchInput,
-	countWords,
-	trackSearchRowOpened,
-	useTrackSettledSearch,
-} from '@/lib/search-telemetry'
+import { countWords, trackSearchRowOpened } from '@/lib/search-telemetry'
 
 const workspaceId = 'ws-1'
 
@@ -327,66 +321,6 @@ describe('countWords', () => {
 	})
 })
 
-describe('useTrackSettledSearch — search_performed', () => {
-	const settled: SettledSearchInput = {
-		surface: 'command_palette',
-		active: true,
-		query: 'billing catch-up',
-		isSettled: true,
-		isError: false,
-		isPartial: false,
-		total: 3,
-	}
-
-	it('fires once per settled search with counts only', () => {
-		const { rerender } = renderHook((props) => useTrackSettledSearch(props), {
-			initialProps: settled,
-		})
-		rerender({ ...settled })
-
-		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
-		const payload = vi.mocked(trackSearchPerformed).mock.calls[0]?.[0]
-		expect(payload).toEqual({
-			surface: 'command_palette',
-			search_id: expect.any(String),
-			result_count: 3,
-			is_partial: false,
-			query_length: 'billing catch-up'.length,
-			words_count: 2,
-			type_filter: null,
-			status_filter: null,
-		})
-		expect(JSON.stringify(payload)).not.toContain('billing')
-	})
-
-	it('waits for isSettled and stays quiet on a failed search', () => {
-		const { rerender } = renderHook((props) => useTrackSettledSearch(props), {
-			initialProps: { ...settled, isSettled: false },
-		})
-		expect(trackSearchPerformed).not.toHaveBeenCalled()
-
-		rerender({ ...settled, isError: true })
-		expect(trackSearchPerformed).not.toHaveBeenCalled()
-
-		rerender({ ...settled })
-		expect(trackSearchPerformed).toHaveBeenCalledTimes(1)
-	})
-
-	it('treats a different query or filter as a new search and an inactive surface as a reset', () => {
-		const { rerender } = renderHook((props) => useTrackSettledSearch(props), {
-			initialProps: settled,
-		})
-		rerender({ ...settled, query: 'billing' })
-		rerender({ ...settled, query: 'billing', type: 'bet' })
-		expect(trackSearchPerformed).toHaveBeenCalledTimes(3)
-
-		// Closing and reopening the surface with the same query is a new search.
-		rerender({ ...settled, query: 'billing', type: 'bet', active: false })
-		rerender({ ...settled, query: 'billing', type: 'bet' })
-		expect(trackSearchPerformed).toHaveBeenCalledTimes(4)
-	})
-})
-
 describe('trackSearchRowOpened', () => {
 	const row = {
 		surface: 'command_palette' as const,
@@ -396,34 +330,6 @@ describe('trackSearchRowOpened', () => {
 		position: 2,
 		listSize: 6,
 	}
-
-	it('ties an open to the last settled search on its surface', () => {
-		renderHook(() =>
-			useTrackSettledSearch({
-				surface: 'command_palette',
-				active: true,
-				query: 'billing',
-				isSettled: true,
-				isError: false,
-				isPartial: false,
-				total: 9,
-			}),
-		)
-		const searchId = vi.mocked(trackSearchPerformed).mock.calls[0]?.[0].search_id
-
-		trackSearchRowOpened({ ...row, hasQuery: true })
-
-		expect(trackSearchResultOpened).toHaveBeenCalledWith({
-			entity_id: 'chat-1',
-			entity_type: 'conversation',
-			surface: 'command_palette',
-			search_id: searchId,
-			has_query: true,
-			result_count: 9,
-			position: 2,
-			result_group: 'chats',
-		})
-	})
 
 	it('carries no search id when there is no query', () => {
 		trackSearchRowOpened({ ...row, hasQuery: false })

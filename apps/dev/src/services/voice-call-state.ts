@@ -21,6 +21,8 @@ export interface StartCard {
 	notificationId: string | null
 	source: 'curated' | 'decision'
 	rank: number
+	/** What the card is called, for receipts. Kept in memory only. */
+	title?: string | null
 }
 
 export interface PendingHoldSummary {
@@ -70,6 +72,7 @@ export function startCardsFrom(items: ForYouItem[]): StartCard[] {
 		notificationId: item.notification_id,
 		source: item.source,
 		rank: item.rank,
+		title: item.object?.title || item.headline || null,
 	}))
 }
 

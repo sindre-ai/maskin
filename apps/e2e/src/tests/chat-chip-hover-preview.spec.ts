@@ -61,6 +61,12 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		await page.mouse.move(5, 5)
 		await chip.focus()
 		await expect(preview).toBeVisible()
+		// Tab goes from the chip into Copy link and then Open, and the preview stays open.
+		await page.keyboard.press('Tab')
+		await expect(preview.getByRole('button', { name: 'Copy link' })).toBeFocused()
+		await page.keyboard.press('Tab')
+		await expect(preview.getByRole('link', { name: 'Open' })).toBeFocused()
+		await expect(preview).toBeVisible()
 		await page.keyboard.press('Tab')
 		await expect(preview).toHaveCount(0)
 	})

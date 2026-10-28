@@ -2,12 +2,10 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// The v2 search page behind the search-v2 flag (bet "Search that narrows as you
-// type"). One flow per ship-gate viewport: type a word, Tab turns it into a pill,
-// the status row narrows it, the URL carries the state and a reload restores it,
-// a result opens, and the analytics events show up. The flag is switched on with
-// the test-only localStorage override, so the old page stays covered by
-// search-cross-entity.spec.ts.
+// The search page (bet "Search that narrows as you type"). One flow per ship-gate
+// viewport: type a word, Tab turns it into a pill, the status row narrows it, the URL
+// carries the state and a reload restores it, a result opens, and the analytics events
+// show up.
 
 const TOKEN = 'quokkadrift'
 
@@ -42,9 +40,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:search-v2', 'on')
-			})
 			const events = collectAnalytics(page)
 
 			const agent = await account.api.createAgentActor(`${TOKEN} Agent`)
@@ -120,9 +115,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		})
 
 		test('Backspace at the start turns the pill back into its word', async ({ page, account }) => {
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:search-v2', 'on')
-			})
 			await page.goto(`/${account.workspaceId}/search`)
 			const field = page.getByRole('combobox', { name: 'Search' })
 			await expect(field).toBeVisible({ timeout: 15_000 })
@@ -143,9 +135,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:search-v2', 'on')
-			})
 			await page.goto(`/${account.workspaceId}/search?q=nomatchzzz%20active`)
 			await expect(page.getByText('“active” is a status.', { exact: false })).toBeVisible({
 				timeout: 20_000,
@@ -162,8 +151,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 /**
  * Opens the workspace on a page that is not Search and presses ⌘K. The key is waited
- * for: the launcher's listener exists only once the shell has read the flag, which
- * the header's one search button shows.
+ * for: the launcher's listener exists only once the shell has mounted, which the
+ * header's one search button shows.
  */
 async function openLauncher(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}/objects`)
@@ -179,12 +168,6 @@ async function openLauncher(page: Page, workspaceId: string) {
 for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search v2 launcher at ${vp.label}`, () => {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
-
-		test.beforeEach(async ({ page }) => {
-			await page.addInitScript(() => {
-				localStorage.setItem('ff:search-v2', 'on')
-			})
-		})
 
 		test('a typed type word becomes a pill in the launcher and lands on the page as the same pill', async ({
 			page,
