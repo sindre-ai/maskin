@@ -34,7 +34,11 @@ enum LinkedItemStores {
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
-			workspaceID: { [weak environment] in environment?.workspaceId })
+			workspaceID: { [weak environment] in environment?.workspaceId },
+			// The workspace switcher's list: a workspace the reader is not in has no name here.
+			workspaceName: { [weak environment] id in
+				environment?.workspaces.workspaces.first { $0.id.lowercased() == id.lowercased() }?.name
+			})
 		cache[key] = store
 		return store
 	}
@@ -57,11 +61,17 @@ extension EnvironmentValues {
 @MainActor
 struct LinkedOpener: DynamicProperty {
 	@Environment(\.linkedOpen) private var custom
+	@Environment(\.linkedItems) private var store
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	func callAsFunction(_ target: LinkedTarget) {
 		if let custom {
 			custom(target)
+			return
+		}
+		// A link into another workspace goes where a push notification would: the app's link handler.
+		if let url = store?.otherWorkspaceURL(for: target) {
+			runtime?.open(url)
 			return
 		}
 		switch target.kind {
