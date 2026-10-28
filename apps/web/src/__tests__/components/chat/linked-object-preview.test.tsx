@@ -453,7 +453,7 @@ describe('LinkedCardOrLink', () => {
 		useFiles.mockReturnValue({ data: undefined })
 	})
 
-	it('shows a skeleton while the object loads, and Deleted object when it is missing or elsewhere', () => {
+	it('shows a skeleton while the object loads, and says the object was deleted when it is missing or elsewhere', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: true })
 		const loading = renderObject()
 		expect(loading.container.querySelector('[aria-busy="true"]')).not.toBeNull()
@@ -464,7 +464,7 @@ describe('LinkedCardOrLink', () => {
 		]) {
 			useObject.mockReturnValue(result)
 			const { unmount } = renderObject()
-			expect(screen.getByText('Deleted object')).toBeInTheDocument()
+			expect(screen.getByText('This object was deleted')).toBeInTheDocument()
 			expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 			unmount()
 		}

@@ -454,8 +454,10 @@ describe('ObjectReferenceChip preview', () => {
 		const writeText = vi.fn().mockResolvedValue(undefined)
 		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
 		renderChip()
-		await user.hover(chip())
-		await user.click(screen.getByRole('button', { name: 'Copy link' }))
+		await user.tab()
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toHaveFocus()
+		await user.keyboard('{Enter}')
 		expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/${WS}/objects/${ID}`)
 		expect(toast).toHaveBeenCalledWith('Link copied', { duration: 1800 })
 	})
@@ -497,7 +499,11 @@ describe('ObjectReferenceChip sheet', () => {
 		})) as unknown as typeof window.matchMedia
 	}
 	const chip = () => screen.getByRole('link', { name: /Bet, Active: Chat preview cards/ })
-	const sheet = () => screen.queryByRole('dialog', { name: 'Object preview' })
+	// The sheet is the modal dialog; the hover preview is a non-modal one with the same name.
+	const sheet = () =>
+		Array.from(document.querySelectorAll('[role="dialog"]')).find(
+			(el) => el.getAttribute('aria-modal') === 'true',
+		) ?? null
 
 	beforeEach(() => {
 		useObject.mockReset()
