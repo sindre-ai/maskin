@@ -22,9 +22,11 @@ public final class InternalLinkDirectory {
 
 	/// The object's type and title once known. The first call for an id starts the lookup and
 	/// returns nil; reading the store here registers the caller to be told when it arrives.
-	public func object(_ id: String) -> Object? {
+	/// `workspace` is the one the link's address names: an object in another workspace is not
+	/// looked up.
+	public func object(_ id: String, workspace: String? = nil) -> Object? {
 		guard let store = store() else { return nil }
-		let target = LinkedTarget(kind: .object, uuid: id)
+		let target = LinkedTarget(kind: .object, uuid: id, workspaceID: workspace)
 		switch store.state(for: target) {
 		case nil:
 			Task { await store.resolve([target]) }
@@ -33,7 +35,7 @@ public final class InternalLinkDirectory {
 			switch item {
 			case .object(let object): return Object(type: object.type, title: object.title)
 			case .draft(let object, _): return Object(type: object.type, title: Self.title(object.title))
-			case .file, .deleted, .plain: return nil
+			case .file, .deleted, .plain, .otherWorkspace: return nil
 			}
 		case .loading?, .unavailable?:
 			return nil
