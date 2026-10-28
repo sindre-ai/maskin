@@ -31,7 +31,10 @@ import {
 } from '@/lib/constants'
 import {
 	type CardFact,
+	type GithubTarget,
 	cutLabel,
+	githubChipName,
+	githubChipText,
 	pickFacts,
 	plainSnippet,
 	shortName,
@@ -44,7 +47,9 @@ import {
 	Bot,
 	ChevronDown,
 	ChevronUp,
+	CircleDot,
 	ExternalLink,
+	GitPullRequest,
 	Link2,
 	RefreshCw,
 	Zap,
@@ -546,6 +551,36 @@ export function ObjectReferenceChip({
 				/>
 			</Link>
 		</ChipPreview>
+	)
+}
+
+/**
+ * A link to a GitHub pull request or issue: its icon, "{repo} #{n}" and a small arrow, because it
+ * leaves the app. Built from the address alone, so there is no card, no preview and no fetch. It
+ * opens GitHub in a new tab, wherever it stands (in a sentence or alone on a line).
+ */
+export function GithubReferenceChip({ target, href }: { target: GithubTarget; href: string }) {
+	const Icon = target.type === 'pull' ? GitPullRequest : CircleDot
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={githubChipName(target)}
+			className={CHIP}
+		>
+			<ChipText
+				lead={<Icon size="0.85em" aria-hidden className={CHIP_ICON} />}
+				text={githubChipText(target)}
+				trail={
+					<ArrowUpRight
+						size="0.85em"
+						aria-hidden
+						className="ml-[0.2em] inline-block align-middle text-muted-foreground"
+					/>
+				}
+			/>
+		</a>
 	)
 }
 
