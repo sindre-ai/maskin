@@ -164,7 +164,8 @@ describe('ConversationListRow', () => {
 			buildConversation({
 				snippet_actor_id: 'agent-1',
 				snippet_actor_name: 'Billing Agent',
-				snippet: '**Merged** [PR 2527](https://github.com/sindre-ai/maskin/pull/2527), see https://maskin.io/x/objects/abc',
+				snippet:
+					'**Merged** [PR 2527](https://github.com/sindre-ai/maskin/pull/2527), see https://maskin.io/x/objects/abc',
 			}),
 		)
 		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
