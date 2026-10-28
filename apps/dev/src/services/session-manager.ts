@@ -2587,6 +2587,7 @@ ${cont.continues_prompt}
 			if (credentialGap) {
 				throw new LlmCredentialsUnavailableError(credentialGap.detail, false, {
 					workspaceName: ws.name,
+					noCredentialsConfigured: true,
 				})
 			}
 		}

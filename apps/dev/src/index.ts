@@ -375,8 +375,8 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// In production the dispatch queue — not the createSession promise — is
 	// where a workspace's missing LLM credentials surface, so this is the only
 	// way the trigger runner learns to stop firing against it.
-	onPermanentFailure: ({ workspaceId, reasonCode }) =>
-		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
+	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({

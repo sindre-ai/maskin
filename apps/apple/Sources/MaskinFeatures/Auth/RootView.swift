@@ -101,7 +101,11 @@ private let onRuntimeReady: (AppRuntime) -> Void
 					onSignIn: { invites.dismiss() }, onClose: { invites.dismiss() })
 			}
 		}
-		.environment(\.markdownInternalLinkHandler, { @MainActor [runtime] url in runtime.open(url) })
+		// Only Maskin links go to the router; it flags anything else (GitHub, ...) as unopenable, so
+		// outside links must fall through to the markdown view's own confirm-and-open path.
+		.environment(
+			\.markdownInternalLinkHandler,
+			{ @MainActor [runtime] url in DeepLink(url: url) != nil && runtime.open(url) })
 		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
 		.environment(
 			\.attachmentImages,

@@ -40,6 +40,8 @@ export type DispatchResult =
 			 * better pass their own.
 			 */
 			failureReason?: SessionResultFailureReason
+			/** The workspace has no credential of any kind configured (see `LlmCredentialsUnavailableError`). */
+			noCredentialsConfigured?: boolean
 	  }
 
 /**
@@ -114,6 +116,8 @@ export interface SessionDispatchQueueOptions {
 		workspaceId: string
 		/** `undefined` when the dispatcher gave no classification. */
 		reasonCode?: string
+		/** True when `not_logged_in` means nothing is configured, not that a credential was rejected. */
+		noCredentialsConfigured?: boolean
 		error: string
 	}) => void
 }
@@ -397,7 +401,12 @@ export class SessionDispatchQueue {
 				await this.handleTransientFailure(row, result.error)
 				return true
 			case 'permanent_failure':
-				await this.handlePermanentFailure(row, result.error, result.failureReason)
+				await this.handlePermanentFailure(
+					row,
+					result.error,
+					result.failureReason,
+					result.noCredentialsConfigured,
+				)
 				return true
 		}
 	}
@@ -474,6 +483,7 @@ export class SessionDispatchQueue {
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
 		failureReason?: SessionResultFailureReason,
+		noCredentialsConfigured?: boolean,
 	): Promise<void> {
 		await this.markRowFailed(row, error)
 		const workspaceId = await this.markSessionFailed(
@@ -495,6 +505,7 @@ export class SessionDispatchQueue {
 					sessionId: row.sessionId,
 					workspaceId,
 					reasonCode: failureReason?.reason_code,
+					noCredentialsConfigured,
 					error,
 				})
 			} catch (err) {
