@@ -90,7 +90,10 @@ const BARE_URL = /https?:\/\/[^\s<>]+/gi
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
 const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
-const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' | 'settings' }>['kind']> = {
+const OWN_KIND: Record<
+	string,
+	Exclude<OwnSegment, { kind: 'text' | 'github' | 'settings' }>['kind']
+> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
