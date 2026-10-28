@@ -55,9 +55,11 @@ on:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
 
+# Superseded runs are cancelled on pull requests only. On main, back-to-back merges
+# used to cancel each other (runs 540-545 and 547), leaving main with no finished run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   apple:
