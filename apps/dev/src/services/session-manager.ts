@@ -2591,7 +2591,9 @@ ${cont.continues_prompt}
 				},
 			})
 			if (credentialGap) {
-				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+				throw new LlmCredentialsUnavailableError(credentialGap.detail, false, {
+					workspaceName: ws.name,
+				})
 			}
 		}
 
