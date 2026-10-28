@@ -207,7 +207,7 @@ describe('buildCompactUnfurl — paid tier (AC-U2)', () => {
 		const { blocks } = buildCompactUnfurl({
 			object,
 			driverName: 'Alice',
-			statuses: ['signal', 'active', 'paused', 'succeeded', 'failed'],
+			statuses: ['opportunity', 'active', 'paused', 'succeeded', 'failed'],
 			drivers: [
 				{ actorId: DRIVER_ACTOR, name: 'Alice' },
 				{ actorId: OTHER_ACTOR, name: 'Bob' },
@@ -253,7 +253,7 @@ describe('buildCompactUnfurl — paid tier (AC-U2)', () => {
 		expect(statusChip?.action_id).toBe('status_select')
 		expect(statusChip?.initial_option?.value).toBe('active')
 		expect(statusChip?.options?.map((o) => o.value)).toEqual([
-			'signal',
+			'opportunity',
 			'active',
 			'paused',
 			'succeeded',
@@ -282,7 +282,7 @@ describe('buildCompactUnfurl — paid tier (AC-U2)', () => {
 		const { blocks } = buildCompactUnfurl({
 			object: { ...object, status: 'legacy_status' },
 			driverName: 'Alice',
-			statuses: ['signal', 'active'],
+			statuses: ['opportunity', 'active'],
 			drivers: [],
 			tier: 'paid',
 			baseUrl: BASE_URL,
@@ -386,7 +386,7 @@ describe('submitLinkSharedUnfurls — end-to-end contract', () => {
 			],
 			workspaceSettings: {
 				statuses: {
-					bet: ['signal', 'active', 'succeeded', 'failed'],
+					bet: ['opportunity', 'active', 'succeeded', 'failed'],
 				},
 			},
 			workspaceMembers: [

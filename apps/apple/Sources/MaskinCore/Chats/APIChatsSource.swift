@@ -318,8 +318,12 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
 				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata),
 				threadRootID: row.threadRootId.map { Int($0) }, alsoInChannel: row.threadAlsoInChannel)
-		case .badRequest:
-			throw ChatsHTTPError(status: 400, message: "The message was rejected.")
+		case .badRequest(let bad):
+			// A pasted secret that got past the app's own check (it is refused on the server too).
+			let code = (try? bad.body.json)?.error.code
+			throw ChatsHTTPError(
+				status: 400,
+				message: code == "RAW_SECRET_DETECTED" ? ChatsHTTPError.rawSecretMessage : "The message was rejected.")
 		case .notFound:
 			throw ChatsHTTPError(
 				status: 404,

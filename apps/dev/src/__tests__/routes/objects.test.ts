@@ -416,12 +416,12 @@ describe('Objects Routes', () => {
 		})
 
 		it("emits a 'status_changed' event with data.changes = [{field: 'status', …}] on status-only edit", async () => {
-			const existing = buildObject({ status: 'signal' })
+			const existing = buildObject({ status: 'opportunity' })
 			const updated = { ...existing, status: 'active' }
 			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
 			const ws = buildWorkspace({
 				id: existing.workspaceId,
-				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+				settings: { statuses: { [existing.type]: ['opportunity', 'active'] } },
 			})
 			// First select: existing object, second: workspace membership, third:
 			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
@@ -439,17 +439,17 @@ describe('Objects Routes', () => {
 			)
 			expect(eventInsert?.action).toBe('status_changed')
 			expect(eventInsert?.data).toEqual({
-				changes: [{ field: 'status', old: 'signal', new: 'active' }],
+				changes: [{ field: 'status', old: 'opportunity', new: 'active' }],
 			})
 		})
 
 		it('emits N-element data.changes for a multi-field edit', async () => {
-			const existing = buildObject({ title: 'Old', status: 'signal' })
+			const existing = buildObject({ title: 'Old', status: 'opportunity' })
 			const updated = { ...existing, title: 'New', status: 'active' }
 			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
 			const ws = buildWorkspace({
 				id: existing.workspaceId,
-				settings: { statuses: { [existing.type]: ['signal', 'active'] } },
+				settings: { statuses: { [existing.type]: ['opportunity', 'active'] } },
 			})
 			// First select: existing object, second: workspace membership, third:
 			// workspace settings, fourth: the in-transaction FOR UPDATE re-read.
@@ -473,7 +473,7 @@ describe('Objects Routes', () => {
 			expect(eventInsert?.action).toBe('status_changed')
 			expect(eventInsert?.data.changes).toEqual(
 				expect.arrayContaining([
-					{ field: 'status', old: 'signal', new: 'active' },
+					{ field: 'status', old: 'opportunity', new: 'active' },
 					{ field: 'title', old: 'Old', new: 'New' },
 				]),
 			)
@@ -1571,7 +1571,7 @@ describe('Objects Routes', () => {
 		it('applies statusMap and falls back when target lacks the source status', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			// 'task' statuses → ['todo', 'in_progress', 'done', 'blocked']
-			// 'bet'  statuses → ['signal', 'proposed', 'active', ...] — no overlap
+			// 'bet'  statuses → ['opportunity', 'proposed', 'active', ...] — no overlap
 			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
 			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
 			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
@@ -1598,7 +1598,7 @@ describe('Objects Routes', () => {
 			// First update: 'todo' → 'active' via statusMap
 			expect(calls.updates[0]).toMatchObject({ type: 'bet', status: 'active' })
 			// Second update: 'done' isn't a valid bet status and isn't in statusMap → first bet status
-			expect(calls.updates[1]).toMatchObject({ type: 'bet', status: 'signal' })
+			expect(calls.updates[1]).toMatchObject({ type: 'bet', status: 'opportunity' })
 		})
 
 		it('returns 400 when target type has no statuses configured', async () => {
@@ -1661,7 +1661,7 @@ describe('Objects Routes', () => {
 					// `type: 'knowledge'` a valid choice without registering the module.
 					statuses: {
 						insight: ['new', 'processing'],
-						bet: ['signal', 'active'],
+						bet: ['opportunity', 'active'],
 						task: ['todo', 'done'],
 						knowledge: ['active', 'archived'],
 					},

@@ -59,6 +59,9 @@ struct ChatThreadView: View {
 	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
 	@State private var openedOnUnread = false
 	@State private var renaming = false
+	/// A secret caught in the message box before sending; the sheet offers the Keychain.
+	@State private var caughtSecret: CaughtSecret?
+	@State private var secretStore: KeychainStore?
 	@State private var newTitle = ""
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
@@ -207,6 +210,14 @@ struct ChatThreadView: View {
 					}
 				}
 				.linkedItems(runtime)
+				.sheet(item: $caughtSecret) { caught in
+					if let secretStore {
+						SecretCaughtSheet(
+							caught: caught, store: secretStore,
+							chatAgentIDs: Set(store.participants.filter { $0.kind == .agent }.map(\.id)),
+							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
+					}
+				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
 						entries: linkedEntries,
@@ -454,7 +465,7 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
 			onOpenThread: { message in
 				guard let id = message.serverID else { return }
 				threadRoute = ThreadRoute(rootID: id)
@@ -713,6 +724,13 @@ struct ChatThreadView: View {
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.
 	private func send() {
+		// The server refuses a message that holds a secret, so catch it here and offer the Keychain.
+		if let match = SecretScanner.firstSecret(in: composer.text), let runtime {
+			secretStore = SettingsServices(environment: runtime.environment).keychainStore()
+			caughtSecret = CaughtSecret(text: composer.text, match: match)
+			MaskinHaptics.play(.warning)
+			return
+		}
 		if let edit = composer.takeEdit() {
 			MaskinHaptics.play(.light)
 			Task { await store.edit(edit.messageID, to: edit.text) }
@@ -888,6 +906,8 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// An intro's fill step: put its prompt in the composer.
+	var onFillStep: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -1083,6 +1103,13 @@ struct ThreadTranscript: View {
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
+				onSendStep: { prompt, introID, index in
+					_ = store.send(
+						prompt,
+						metadata: ChatSendMetadata(fromSuggestedStep: ChatSuggestedStepRef(introMessageID: introID, index: index)))
+				},
+				onFillStep: onFillStep,
+				introStepsOpen: AgentIntroView.stepsOpen(for: message, in: store.messages),
 				cardOutcome: message.asksForAnswer
 					? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 				chatAgents: store.participants.filter { $0.kind == .agent },

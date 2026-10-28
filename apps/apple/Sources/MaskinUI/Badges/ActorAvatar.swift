@@ -31,7 +31,7 @@ public enum ActorIdentity {
 
 	/// The web's ten human-avatar identities, as `--st-*` token keys.
 	static let humanPaletteKeys = [
-		"in_progress", "active", "signal", "clustered", "in_review",
+		"in_progress", "active", "opportunity", "clustered", "in_review",
 		"validated", "qualified", "scored", "processing", "proposed",
 	]
 	static let agentPalette: [MaskinColorPair] = [

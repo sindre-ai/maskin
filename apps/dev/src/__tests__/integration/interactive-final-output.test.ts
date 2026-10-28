@@ -928,6 +928,40 @@ ${surviving}
 			expect(finalOutput?.retries).toBe(2)
 		})
 
+		it('retries a provider 403 block page, then shows a short message and logs the provider', async () => {
+			const session = await seedSession({ config: { llm_route: 'maskin_plan' } })
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+			const blockLine = (rayId: string) =>
+				resultLine({
+					is_error: true,
+					result: `Failed to authenticate. API Error: 403 Attention Required! | Cloudflare Ray ID: <strong>${rayId}</strong>`,
+				})
+
+			await feed(session.id, `${userTurnLine(13)}\n`)
+			await feed(session.id, `${blockLine('aaaaaaaaaaaaaaaa')}\n`)
+			await feed(session.id, `${blockLine('bbbbbbbbbbbbbbbb')}\n`)
+			await feed(session.id, `${blockLine('cccccccccccccccc')}\n`)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(2)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('Something went wrong. Try again in a minute.')
+			expect(rows[0]?.content).not.toContain('Failed to authenticate')
+
+			const logged = await db
+				.select({ content: sessionLogs.content })
+				.from(sessionLogs)
+				.where(and(eq(sessionLogs.sessionId, session.id), eq(sessionLogs.stream, 'system')))
+			const notes = logged.map((row) => row.content).filter((c) => c.includes('provider_block'))
+			expect(notes).toHaveLength(3)
+			expect(notes[0]).toContain('provider="OpenRouter"')
+			expect(notes[0]).toContain('status=403')
+			expect(notes[0]).toContain('cf_ray=aaaaaaaaaaaaaaaa')
+		})
+
 		it('does not replay a failure no retry could fix', async () => {
 			const session = await seedSession()
 			if (!session) throw new Error('no session')
@@ -980,11 +1014,10 @@ ${surviving}
 
 			expect(moved).toEqual([{ sessionId: session.id, reason: 'weekly_limit' }])
 			const rows = await messagesFor(conversationId)
-			// Copy names the stop explicitly — the current session is going away, so
-			// the human's next message here spawns a fresh session on the new slot.
+			// The spent session is stopped and the message is answered again on the
+			// new slot, so the copy no longer asks the human to send it again (#2601).
 			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
-			expect(rows[0]?.content).toContain('stopped this session')
-			expect(rows[0]?.content).toContain("Send your next message here and I'll pick up")
+			expect(rows[0]?.content).toContain("I'm picking your message back up on the new subscription")
 			expect(
 				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output
 					?.subscription_moved_to,

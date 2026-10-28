@@ -189,51 +189,92 @@ struct KeychainDetailView: View {
 }
 
 /// Add a key or a login. The value goes straight to the encrypted vault and is cleared from the
-/// screen as soon as it is saved.
+/// screen as soon as it is saved. Opened from a pasted secret in a chat, it arrives with the key and a
+/// name filled in and the chat's agents ticked, so one tap vaults it and shares it.
 struct AddCredentialView: View {
+	/// A secret caught in a chat: shown masked, never in full.
+	struct Prefill {
+		var name: String
+		var secret: String
+		var masked: String
+	}
+
 	@Environment(\.dismiss) private var dismiss
 	let store: KeychainStore
+	let prefill: Prefill?
+	let onSaved: ((String) -> Void)?
 	@State private var isLogin = false
-	@State private var name = ""
-	@State private var secret = ""
+	@State private var name: String
+	@State private var secret: String
 	@State private var username = ""
 	@State private var password = ""
+	@State private var sharedWith: Set<String>
+
+	init(store: KeychainStore, prefill: Prefill? = nil, shareWith: Set<String> = [], onSaved: ((String) -> Void)? = nil) {
+		self.store = store
+		self.prefill = prefill
+		self.onSaved = onSaved
+		_name = State(initialValue: prefill?.name ?? "")
+		_secret = State(initialValue: prefill?.secret ?? "")
+		_sharedWith = State(initialValue: shareWith)
+	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
 				Section {
-					Picker("Type", selection: $isLogin) {
-						Text("API key").tag(false)
-						Text("Login").tag(true)
+					if prefill == nil {
+						Picker("Type", selection: $isLogin) {
+							Text("API key").tag(false)
+							Text("Login").tag(true)
+						}
+						.pickerStyle(.segmented)
 					}
-					.pickerStyle(.segmented)
 					TextField("Name, e.g. e-conomic", text: $name)
 					if isLogin {
 						TextField("Username", text: $username).textContentType(.username)
 						SecureField("Password", text: $password).textContentType(.password)
+					} else if let prefill {
+						LabeledContent("Key", value: prefill.masked)
 					} else {
 						SecureField("Paste the key", text: $secret).textContentType(.password)
 					}
 				} footer: {
 					Text(
-						"It goes straight to your encrypted vault. After saving, choose which agents can use it from the credential's page."
-					)
+						prefill == nil
+							? "It goes straight to your encrypted vault. After saving, choose which agents can use it from the credential's page."
+							: "It goes straight to your encrypted vault and is replaced in your message by a marker, so it never appears in the chat.")
+				}
+				if !store.agents.isEmpty {
+					Section {
+						ForEach(store.agents) { agent in
+							Toggle(
+								agent.name,
+								isOn: Binding(
+									get: { sharedWith.contains(agent.id) },
+									set: { on in if on { sharedWith.insert(agent.id) } else { sharedWith.remove(agent.id) } }))
+						}
+					} header: {
+						Text("Who can use it")
+					} footer: {
+						Text(sharedWith.isEmpty ? "No agents can use it yet. You can change this later." : "")
+					}
 				}
 				if let message = nameProblem ?? store.actionError {
 					Section { FormError(message) }
 				}
 			}
-			.navigationTitle("Add credential")
+			.navigationTitle(prefill == nil ? "Add credential" : "Save to Keychain")
 			#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
 			#endif
 			.toolbar {
-				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				if prefill == nil { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") { Task { await save() } }.disabled(!canSave)
 				}
 			}
+			.task { if store.agents.isEmpty { await store.load() } }
 		}
 	}
 
@@ -249,7 +290,9 @@ struct AddCredentialView: View {
 	private func save() async {
 		let value: KeychainNewValue =
 			isLogin ? .login(username: username.trimmingCharacters(in: .whitespaces), password: password) : .apiKey(secret)
-		let outcome = await store.add(name: name.trimmingCharacters(in: .whitespacesAndNewlines), value: value)
+		let saveName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		let ids = store.agents.map(\.id).filter(sharedWith.contains)
+		let outcome = await store.add(name: saveName, value: value, agentIDs: ids)
 		// Only a saved credential clears what was typed: a refused save (name taken, offline) keeps
 		// the fields so nothing has to be typed or pasted again.
 		guard outcome.didSave else { return }
@@ -257,6 +300,7 @@ struct AddCredentialView: View {
 		secret = ""
 		password = ""
 		username = ""
+		onSaved?(saveName)
 		dismiss()
 	}
 }

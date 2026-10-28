@@ -119,6 +119,8 @@ export const actorResponseSchema = z.object({
 	// voice bet don't have to synthesise a value — the discovery surfaces
 	// treat `undefined` as "voice off" via a strict `=== true` check.
 	voice_enabled: z.boolean().optional(),
+	// Where the actor's uploaded picture is served (POST /actors/:id/avatar), null until one is set.
+	avatar_url: z.string().nullable().optional(),
 	default_workspace_id: z.string().uuid().nullable().optional(),
 })
 
@@ -147,6 +149,8 @@ export const actorListItemSchema = z.object({
 	// synthesise a value; the discovery surfaces treat `undefined` as "voice
 	// off" via a strict `=== true` check.
 	voice_enabled: z.boolean().optional(),
+	// Where the actor's uploaded picture is served (POST /actors/:id/avatar), null until one is set.
+	avatar_url: z.string().nullable().optional(),
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
 		.optional(),

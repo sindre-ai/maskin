@@ -34,6 +34,7 @@ import {
 } from './claude-oauth-slots'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
+import { Sentry } from './sentry'
 import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 
 /**
@@ -628,6 +629,53 @@ export function isAuthErrorAtAccessTokenExpiry(
 	const expiresAt = config[SESSION_OAUTH_EXPIRES_AT_KEY]
 	if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false
 	return now >= expiresAt - ACCESS_TOKEN_EXPIRY_SLACK_MS
+}
+
+/**
+ * Leave a Sentry event when a session dies because the model API answered 401
+ * and the CLI could not renew its login. Nothing else records this: it is not
+ * a token-endpoint failure (the platform never refreshed) and it is not
+ * classified for failover, so without this the loss is invisible.
+ *
+ * Tags carry the workspace and session ids so an alert rule can filter on
+ * them. refresh_withheld tells the two causes apart: true means the
+ * container never had a refresh token and outlived its access token (launch
+ * buffer too small), false means it had one and the renewal failed (the
+ * refresh token was rotated under it). Never throws.
+ */
+export function reportClaudeSessionAuthDeath(params: {
+	sessionId: string
+	workspaceId: string
+	config: Record<string, unknown> | null | undefined
+}): void {
+	const { sessionId, workspaceId } = params
+	const config = params.config ?? {}
+	try {
+		const route = typeof config.llm_route === 'string' ? config.llm_route : 'unknown'
+		const slot = typeof config.llm_oauth_slot === 'string' ? config.llm_oauth_slot : 'none'
+		const refreshWithheld = typeof config[SESSION_OAUTH_EXPIRES_AT_KEY] === 'number'
+		Sentry.captureMessage('Claude session died on a 401', {
+			level: 'error',
+			tags: {
+				workspace_id: workspaceId,
+				session_id: sessionId,
+				route,
+				slot,
+				refresh_withheld: String(refreshWithheld),
+			},
+			extra: {
+				workspaceId,
+				sessionId,
+				route,
+				slot,
+				refreshWithheld,
+				failedAt: new Date().toISOString(),
+			},
+			fingerprint: ['claude-session-auth-death', route, String(refreshWithheld)],
+		})
+	} catch (sentryErr) {
+		console.error('[sentry] captureMessage failed', sentryErr)
+	}
 }
 
 /**
