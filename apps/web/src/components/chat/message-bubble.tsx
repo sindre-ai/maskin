@@ -17,7 +17,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { splitOwnLinks } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Link2, Pencil, RotateCcw } from 'lucide-react'
+import { Bell, Box, Copy, Link2, MessageSquareReply, Pencil, RotateCcw } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
@@ -57,7 +57,14 @@ interface MessageBubbleProps {
 	shownLinkedObjectIds?: ReadonlySet<string>
 	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
 	onRetried?: (message: MessageResponse) => void
+	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
+	onReplyInThread?: () => void
 }
+
+// Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
+// coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
+const REPLY_BUTTON_CLASS =
+	'rounded p-2.5 text-muted-foreground transition-colors hover:text-foreground md:p-1 any-pointer-coarse:p-2.5'
 
 /**
  * Renders one thread message. The current actor's own messages render as a
@@ -74,6 +81,7 @@ export function MessageBubble({
 	spawnInfo,
 	shownLinkedObjectIds,
 	onRetried,
+	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -91,6 +99,7 @@ export function MessageBubble({
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
 	// Any real, persisted message with text can be copied, own or not.
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
+	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
@@ -207,7 +216,10 @@ export function MessageBubble({
 											e.preventDefault()
 											saveEdit()
 										}
-										if (e.key === 'Escape') setEditing(false)
+										if (e.key === 'Escape') {
+											e.preventDefault()
+											setEditing(false)
+										}
 									}}
 									aria-label="Edit message"
 									autoFocus
@@ -267,6 +279,16 @@ export function MessageBubble({
 							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
 						>
 							<Copy size={12} aria-hidden />
+						</button>
+					) : null}
+					{canReply && !editing ? (
+						<button
+							type="button"
+							onClick={onReplyInThread}
+							aria-label="Reply in thread"
+							className={REPLY_BUTTON_CLASS}
+						>
+							<MessageSquareReply size={12} aria-hidden />
 						</button>
 					) : null}
 					{canAct && !editing ? (
@@ -478,19 +500,31 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canCopy ? (
+				{canCopy || canReply ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
+						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100"
 						aria-label="Message actions"
 					>
-						<button
-							type="button"
-							onClick={() => copyMessage(message.content)}
-							aria-label="Copy message"
-							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-						>
-							<Copy size={12} aria-hidden />
-						</button>
+						{canCopy ? (
+							<button
+								type="button"
+								onClick={() => copyMessage(message.content)}
+								aria-label="Copy message"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<Copy size={12} aria-hidden />
+							</button>
+						) : null}
+						{canReply ? (
+							<button
+								type="button"
+								onClick={onReplyInThread}
+								aria-label="Reply in thread"
+								className={REPLY_BUTTON_CLASS}
+							>
+								<MessageSquareReply size={12} aria-hidden />
+							</button>
+						) : null}
 						{canRetryAgent ? (
 							<button
 								type="button"

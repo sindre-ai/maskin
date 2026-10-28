@@ -1315,17 +1315,23 @@ export const tools = {
 	},
 	list_conversation_messages: {
 		description:
-			'List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history.',
+			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
 			before_id: z.number().int().positive().optional(),
 			after_id: z.number().int().positive().optional(),
 			limit: z.number().int().min(1).max(200).default(50),
+			thread_root_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Return only the replies of the thread rooted at this message id.'),
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1351,7 +1357,13 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					'Reply inside the thread under this message of the chat instead of posting at the top level. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.',
+					"Reply inside the thread under this message of the chat instead of posting at the top level. The root must be a top-level message of this conversation; replying to a reply is not possible, so pass the thread's root. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
+				),
+			also_in_channel: z
+				.boolean()
+				.optional()
+				.describe(
+					'With thread_root_id: also show the reply in the main timeline. Leave off unless the whole chat should see it.',
 				),
 			wait: z
 				.boolean()

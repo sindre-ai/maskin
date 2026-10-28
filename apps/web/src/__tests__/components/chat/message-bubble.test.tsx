@@ -332,3 +332,50 @@ describe('MessageBubble — agent data-viz', () => {
 		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
 	})
 })
+
+describe('MessageBubble — Reply in thread', () => {
+	function renderWithReply(message: MessageResponse, onReplyInThread = vi.fn()) {
+		render(
+			<MessageBubble workspaceId="ws-1" message={message} onReplyInThread={onReplyInThread} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
+		return onReplyInThread
+	}
+
+	it('has no Reply action without an onReplyInThread handler', () => {
+		renderBubble(buildMessage())
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('calls the handler when Reply is clicked on an agent message', () => {
+		const onReply = renderWithReply(buildMessage())
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('offers Reply on your own message too', () => {
+		const onReply = renderWithReply(
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }),
+		)
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('has no Reply on an optimistic (unsent) message', () => {
+		renderWithReply(buildMessage({ id: -1, actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('has no Reply on a system row', () => {
+		renderWithReply(buildMessage({ kind: 'system' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('hides Reply on your own message while it is being edited', () => {
+		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+})
