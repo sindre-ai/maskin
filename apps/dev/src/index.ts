@@ -22,12 +22,12 @@ import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
-import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
