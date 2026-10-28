@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	actors,
 	events,
 	conversationParticipants,
 	conversations,
@@ -213,6 +214,28 @@ describe('Conversation auto-titler Integration', () => {
 		// A conversation that once said "New chat" now says what the first
 		// message was actually about — even though the LLM never answered.
 		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
+		expect(await readConversation()).toEqual({
+			title: 'the deploy pipeline keeps failing on migrate 0',
+			titleAutoState: 'initial',
+		})
+	})
+
+	it('replaces an agent-name title with a first-message-derived one when the LLM call fails', async () => {
+		const [agent] = await db
+			.insert(actors)
+			.values({ type: 'agent', name: 'Developer', createdBy: ownerId })
+			.returning()
+		if (!agent) throw new Error('failed to create agent')
+		await db.insert(conversationParticipants).values({ conversationId, actorId: agent.id })
+		await db
+			.update(conversations)
+			.set({ title: 'Developer' })
+			.where(eq(conversations.id, conversationId))
+		await postMessages(1, 'the deploy pipeline keeps failing on migrate')
+		chat.mockRejectedValue(new Error('provider is down'))
+
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+
 		expect(await readConversation()).toEqual({
 			title: 'the deploy pipeline keeps failing on migrate 0',
 			titleAutoState: 'initial',

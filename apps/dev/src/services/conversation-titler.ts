@@ -1,5 +1,11 @@
 import type { Database } from '@maskin/db'
-import { actors, conversations, messages, workspaces } from '@maskin/db/schema'
+import {
+	actors,
+	conversationParticipants,
+	conversations,
+	messages,
+	workspaces,
+} from '@maskin/db/schema'
 import { CONVERSATION_TITLE_MAX_LENGTH, deriveConversationTitle } from '@maskin/shared'
 import { and, asc, count, eq } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
@@ -200,7 +206,22 @@ export async function maybeGenerateConversationTitle(ctx: {
 	const applyDeterministicFallback = async (): Promise<boolean> => {
 		if (target !== 'initial') return false
 		const currentTitle = conversation.title?.trim()
-		if (currentTitle && currentTitle !== PLACEHOLDER_TITLE) return false
+		if (currentTitle && currentTitle !== PLACEHOLDER_TITLE) {
+			// A chat started with the agent's name as its title ("Developer") has
+			// no title of its own yet, so it counts as a placeholder too.
+			const [named] = await db
+				.select({ id: actors.id })
+				.from(conversationParticipants)
+				.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, conversationId),
+						eq(actors.name, currentTitle),
+					),
+				)
+				.limit(1)
+			if (!named) return false
+		}
 		const [firstMessage] = await db
 			.select({ content: messages.content })
 			.from(messages)

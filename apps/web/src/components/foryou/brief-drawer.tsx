@@ -17,6 +17,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { deriveConversationTitle } from '@maskin/shared'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Pause, Play } from 'lucide-react'
 import { useCallback, useMemo, useReducer, useState } from 'react'
@@ -183,7 +184,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 					)
 				: content
 			const conversation = await createConversation.mutateAsync({
-				title: agent.name ?? 'New chat',
+				title: deriveConversationTitle(content, agent.name ?? 'New chat'),
 				participant_actor_ids: [agent.id],
 				initial_message: initialMessage,
 			})
