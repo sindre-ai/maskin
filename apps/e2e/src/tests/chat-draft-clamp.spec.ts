@@ -136,7 +136,9 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 
 			await expect(thread.getByRole('button', { name: 'Approve draft' })).toBeEnabled()
 			await expect(thread.getByRole('button', { name: 'Show all' })).toHaveCount(0)
-			await expect(thread.getByRole('button', { name: 'Read full draft to approve' })).toHaveCount(0)
+			await expect(thread.getByRole('button', { name: 'Read full draft to approve' })).toHaveCount(
+				0,
+			)
 
 			await thread.getByRole('button', { name: 'Approve draft' }).click()
 			await expect(thread.getByText('Approved, waiting for send', { exact: true })).toBeVisible()
