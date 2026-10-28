@@ -306,7 +306,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		detail: { resultText: string | null; reason?: string; send?: ReceiptSendInfo },
 	) {
 		const readOnly = deps.isReadOnlyTool(toolName)
-		if (readOnly && (toolName !== 'get_objects' || outcome !== 'ran')) return
+		// Reads leave no line, except an opened task; a failed read always does.
+		if (readOnly && outcome !== 'failed' && (toolName !== 'get_objects' || outcome !== 'ran'))
+			return
 		let drafts: ReceiptDraft[]
 		try {
 			drafts = await describeToolCall({
@@ -316,6 +318,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				args,
 				resultText: detail.resultText,
 				state: callState,
+				outcome,
 			})
 		} catch (err) {
 			logger.warn('Voice receipt could not describe a tool call', {
@@ -409,6 +412,8 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 						...(err.detail.unresolvedIds ? { unresolved_ids: err.detail.unresolvedIds } : {}),
 						...(err.detail.say ? { say: err.detail.say } : {}),
 					})
+					receiptState = 'failed'
+					receiptReason = err.message
 				}
 			} else {
 				const review = await writeGate.review(
