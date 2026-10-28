@@ -12,6 +12,9 @@ name: Apple
 # change instead. OpenAPI snapshot drift from backend changes is caught by the
 # apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
 #
+# Pull requests into feat/** run too: stacked slices are based on a task branch, not
+# main, and without this they were never compiled until the whole stack reached main.
+#
 # What each step guards against, cheapest first so a drift failure costs seconds,
 # not a 20-minute Xcode build:
 #   1. Token drift      — Tokens.swift is generated from the design-system CSS
@@ -47,7 +50,7 @@ on:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
   pull_request:
-    branches: [main]
+    branches: [main, 'feat/**']
     paths:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
