@@ -310,9 +310,9 @@ describe('push producers', () => {
 				.values({ workspaceId, title: 'DM', createdBy: humanId })
 				.returning()
 			directId = (direct as { id: string }).id
-			await db.insert(conversationParticipants).values(
-				[humanId, secondHumanId].map((actorId) => ({ conversationId: directId, actorId })),
-			)
+			await db
+				.insert(conversationParticipants)
+				.values([humanId, secondHumanId].map((actorId) => ({ conversationId: directId, actorId })))
 		})
 
 		const say = (conversationId: string, actorId: string) =>
