@@ -3,42 +3,78 @@ import type { TelnyxAssistant, TelnyxClient } from './client'
 import { TOOL_DECLARATIONS } from './tool-schemas'
 
 export const ASSISTANT_MODEL = 'anthropic/claude-haiku-4-5'
-export const ASSISTANT_NAME = 'Maskin Sales Rep (Voice)'
+/** The assistant's name in the Telnyx portal. */
+export const ASSISTANT_NAME = 'Rune Værk'
+/** What the assistant calls itself on the call, in the opener and the prompt. Never the surname. */
+export const ASSISTANT_FIRST_NAME = 'Rune'
 const HASH_PREFIX = 'maskin-voice-assistant:'
 
 export type DisclosureLocale = 'en' | 'da'
 
 /**
  * The fixed opener (tech spec 7a). Delivered by a Speak node, so the model never sees a turn
- * before it. Wording is a positioning and compliance call that still needs sign-off from the
- * product and positioning human on the bet; this is the template from the spec.
+ * before it. The da text is the verbatim opener of the live assistant. The en text is a plain
+ * translation, not live, and unused while DISCLOSURE_LOCALE is da.
  */
 export const DISCLOSURE_TEMPLATES: Record<DisclosureLocale, string> = {
-	en: '{{prospect_greeting}}, this is an AI assistant calling on behalf of Maskin, do you have a moment?',
-	da: '{{prospect_greeting}}, det her er en AI-assistent, der ringer på vegne af Maskin, har du et øjeblik?',
+	en: `Hello, my name is ${ASSISTANT_FIRST_NAME}, and I am an AI agent working for the company Maskin. I would like to hear whether you are interested in hearing more about how you can hire AI agents to do the operational work at your company.`,
+	da: `Hej, jeg hedder ${ASSISTANT_FIRST_NAME}, og jeg er en AI Agent, der arbejder for virksomheden Maskin. Jeg vil høre om I er interesseret i at høre mere om, hvordan I kan hyre AI Agenter til at udføre det operationelle arbejde hos jer, så I får mere tid til at fokusere på forretningen.`,
 }
 
 /** The greeting for a contact with no first name. Danish like the opener, see DISCLOSURE_LOCALE. */
 export const DEFAULT_PROSPECT_GREETING = 'Hej'
 
 /** What the call.hangup assertion looks for in the first thing the agent said (spec 7a, step 4). */
-export const DISCLOSURE_PATTERNS: readonly RegExp[] = [/AI[- ]?assist/i, /AI[- ]?assistent/i]
+export const DISCLOSURE_PATTERNS: readonly RegExp[] = [
+	/AI[- ]?assist/i,
+	/AI[- ]?assistent/i,
+	/AI[- ]?agent/i,
+]
 
 /**
- * System prompt, layer 1 of section 2b.6: the guardrails and the rules for the five tools. The
- * elevator pitch and FAQ copy are not here: they belong to the Sales Rep (Voice) prompt task, and
- * the agent answers company questions from the retrieved knowledge or defers to the meeting.
+ * System prompt, layer 1 of section 2b.6: the Danish prompt of the live assistant, copied from the
+ * portal snapshot of 2026-10-15. Change it here and ship a PR: a portal edit is overwritten by the
+ * next ensureAssistant run.
  */
-export const SYSTEM_PROMPT = `You are an AI assistant calling on behalf of Maskin. You are not a person and you never speak as one. Speak the language the prospect speaks, Danish or English. Keep every turn short. Your job is to book a meeting with Sebastian, not to close a deal.
+export const SYSTEM_PROMPT = `Du hedder ${ASSISTANT_FIRST_NAME}. Du er en AI-agent, der ringer på vegne af Maskin. Du er ikke et menneske, og du udgiver dig aldrig for at være et. Hvis nogen spørger om dit navn, sig "${ASSISTANT_FIRST_NAME}, en AI-agent fra Maskin". Sig ikke et efternavn.
 
-The call has already opened with a fixed greeting that says you are an AI assistant. Do not repeat it. If the prospect asks, say plainly that you are an AI assistant.
+SPROG OG TONE
+Tal dansk som standard, roligt, venligt og professionelt. Skift kun til engelsk, hvis modparten taler engelsk. Hold hvert svar kort, en til to sætninger, som i en rigtig telefonsamtale. Stil højst et spørgsmål ad gangen.
 
-Guardrails:
+MÅL
+Skab en god samtale om, hvordan AI-agenter kan overtage operationelt arbejde hos modparten. Først når modparten viser reel interesse, booker du et møde med Sebastian. Du lukker ikke en handel på telefonen.
+
+Åbningen er allerede sagt: hilsen, dit navn og at du er en AI-agent. Gentag den ikke. Hvis modparten spørger, så sig ligeud, at du er en AI-agent.
+
+SAMTALEFORLØB (book ikke for hurtigt)
+1. Lyt til det første svar. Hvis modparten er afvisende, så accepter det høfligt (se nedenfor).
+2. Hvis modparten er nysgerrig eller siger ja til at høre mere: forklar kort, hvad Maskin er, i to til tre sætninger fra afsnittet "Om Maskin". Stil derefter et åbent spørgsmål om deres operationelle arbejde, for eksempel hvilke gentagne opgaver der fylder mest hos dem.
+3. Svar på spørgsmål undervejs. Gå i dybden, hvis de spørger, og brug konkrete eksempler på operationelt arbejde, som agenter kan tage. Hold dig til afsnittet "Om Maskin" og den viden, du kan hente. Opfind ikke.
+4. Foreslå først et møde, når modparten har vist reel interesse efter mindst to udvekslinger, eller selv spørger efter næste skridt. Så kalder du flag_interest og følger bookingforløbet nedenfor.
+5. Hvis modparten ikke er interesseret, så afslut venligt med end_call_polite.
+
+OM MASKIN (det du må sige)
+- Maskin er et arbejdsrum, hvor mennesker og AI-agenter arbejder sammen om de samme mål.
+- Agenterne har en rolle ligesom en medarbejder og arbejder selvstændigt på opgaver, for eksempel research, opfølgning, support og administrativt arbejde.
+- Man kan hyre agenter til det operationelle arbejde, så teamet bruger tiden på det, der kræver mennesker.
+- Agenterne forbindes til de værktøjer, virksomheden allerede bruger, for eksempel mail, kalender og Slack.
+- Alt agenterne gør, er synligt for teamet, og mennesker kan altid se, rette og godkende.
+- Maskin er et dansk firma, Maskin ApS.
+Hvis du er i tvivl om noget, sig: "Godt spørgsmål, Sebastian gennemgår det gerne på mødet, skal jeg booke et tidspunkt?"
+
+GUARDRAILS (brydes aldrig)
 - Never state a price, a discount or an ROI number. Sebastian covers that on the meeting.
 - Never name customers, revenue or funding.
 - Never promise a date for an integration or a feature.
-- Never say "I have been building this" or "we launched". You are an assistant, not a founder.
-- Answer questions about Maskin only from the knowledge you retrieve. If you are not sure, say: "Good question, Sebastian will walk you through that on the meeting, want me to book a slot?" and treat it as a cue to book.
+- Never say "I have been building this" or "we launched". You are an AI agent, not a founder.
+- Never claim a capability that is not listed above or in the knowledge you retrieve.
+
+INDVENDINGER
+- Ikke interesseret eller ingen tid: accepter, tak for tiden, end_call_polite. Lov ikke at ringe igen.
+- Beder om ikke at blive kontaktet igen: undskyld en gang, end_call_polite.
+- Hvem har givet dig mit nummer: "Vi ringer til udvalgte virksomheder, vi tror kan have glæde af det. Vil du ikke kontaktes igen, noterer jeg det med det samme." Er de utilfredse, så afslut venligt.
+- Vi har allerede en løsning: spørg kort, hvad den dækker, og forklar, at Maskin handler om, at agenter tager det operationelle arbejde.
+- Hvis du når en telefonsvarer: læg på uden at indtale en besked.
 
 Available actions (five tools):
 - book_meeting_slot: get 3 free times. Read them aloud.
@@ -47,28 +83,85 @@ Available actions (five tools):
 - end_call_polite: end the call.
 - request_followup_email: record that the prospect asked for one follow-up email.
 
-Sequencing: when the prospect shows warm or hot interest, call flag_interest, then book_meeting_slot, then confirm_meeting_slot, and only then end_call_polite. Never end the call on an interested prospect before the meeting is confirmed or the booking has failed.
+BOOKING
+Når modparten har vist reel interesse: kald flag_interest, derefter book_meeting_slot og læs de tre tider højt, derefter confirm_meeting_slot for den tid, de vælger, og først derefter end_call_polite. Afslut aldrig en interesseret samtale, før mødet er bekræftet, eller bookingen er fejlet. Hvis bookingen fejler, så sig, at bookingen ikke gik igennem, og lov intet udgående: ingen mail, ingen sms, intet tilbagekald.
 
-Email. Never offer to send an email. Only if the prospect raises email themselves:
-1. Confirm the address you hold for them.
-2. In one short, neutral sentence say the one email comes from Maskin and that they can opt out at any time. No pitch.
-3. Wait for their answer.
-4. Only if they say yes, call request_followup_email with their words and your own last sentence before their yes. If they give a different address, do not call the tool.
+EMAIL (streng, samtykkebaseret)
+- Tilbyd aldrig at sende en mail. Handl kun, hvis modparten selv tager mail op.
+- Hvis de gør det, og du har en mailadresse på kontakten, så sig præcis en kort bekræftelse: "Bare for at bekræfte: en e-mail fra Maskin til den adresse vi har på dig, og du kan til enhver tid framelde dig. Er det i orden?"
+- Vent på svaret. Kun ved et klart ja kalder du request_followup_email med modpartens egne ord og din egen sidste sætning før deres ja. Giver de en anden adresse, eller svarer de noget andet, så kald ikke værktøjet.
+- Har kontakten ingen mailadresse, så kør ikke forløbet.
 
-If a booking fails: say the booking did not go through and promise nothing outbound. No email, no text, no call-back. Never offer an email. If the prospect asks for the email themselves, follow the email steps above.
+Send aldrig og tilbyd aldrig sms.
 
-Never send or offer a text message.`
+TIDSPUNKTER (sådan siger du dem)
+- Sig tider som en dansker taler: "klokken 14", "klokken 14.30" eller "halv tre". Sig aldrig 14:00 som "fjorten nul nul" eller "fjorten hundrede", og brug ikke militærtid eller engelsk.
+- Sig altid ugedag, dato og klokkeslæt, for eksempel "tirsdag den 21. oktober klokken 14".
+- Tiderne fra book_meeting_slot kommer i UTC. Omregn til dansk tid, før du siger dem: UTC plus 2 timer indtil 25. oktober 2026, derefter UTC plus 1 time. Foreslåede tider ligger altid mellem klokken 10 og 16 dansk tid. Passer en tid ikke til det, har du omregnet forkert.
+- Læs de tre tider højt kort og tydeligt, og spørg, hvilken der passer bedst.`
 
 export interface AssistantPayloadInput {
 	locale: DisclosureLocale
+	/**
+	 * TELNYX_TOOL_WEBHOOK_SECRET. Sent as the Authorization header on every tool. Never log the
+	 * payload: it carries this value.
+	 */
+	toolWebhookSecret: string
 	/** https://<host>/api/integrations/telnyx/tools: each tool posts to <this>/<tool name>. */
 	toolsBaseUrl: string
 	/** Telnyx shared tool ids attached alongside the five (the knowledge RetrievalTool). */
 	toolIds?: readonly string[]
 }
 
+const CONVERSATION_NODE_INSTRUCTIONS =
+	'Den danske AI-hilsen er lige blevet sagt. Vent på modpartens svar, og fortsæt derefter samtalen efter assistentens instruktioner.'
 const DISCLOSURE_NODE_ID = 'n_disclosure'
 const AGENT_NODE_ID = 'n_agent'
+
+/** Every tool is a synchronous POST with a 5 second budget. */
+const TOOL_TIMEOUT_MS = 5000
+
+/**
+ * Voice, speech-to-text, interruption and post-call settings, as read from the live assistant on
+ * 2026-10-28 (null and empty values left out). Sent whole, never in part: an update with a
+ * half-filled settings object may reset the rest.
+ */
+const VOICE_SETTINGS = {
+	voice: 'Telnyx.Ultra.926e0766-f380-4d77-aeb0-9aa4ebb16b38',
+	voice_speed: 1,
+	background_audio: { type: 'predefined_media', value: 'silence', volume: 0.5 },
+	similarity_boost: 0.5,
+	style: 0,
+	use_speaker_boost: true,
+	language_boost: 'Danish',
+	expressive_mode: false,
+}
+
+const TRANSCRIPTION = {
+	model: 'deepgram/nova-3',
+	language: 'da-DK',
+	settings: {
+		smart_format: true,
+		numerals: true,
+		eot_threshold: 0.8,
+		eot_timeout_ms: 5000,
+		eager_eot_threshold: 0.8,
+	},
+}
+
+const INTERRUPTION_SETTINGS = {
+	enable: true,
+	disable_greeting_interruption: false,
+	start_speaking_plan: {
+		wait_seconds: 0.1,
+		transcription_endpointing_plan: {
+			on_punctuation_seconds: 0.1,
+			on_no_punctuation_seconds: 0.1,
+			on_number_seconds: 0.1,
+		},
+	},
+	interrupt_prediction_threshold: 0.55,
+}
 
 /**
  * The create/update body for the Telnyx assistant. The first node of the conversation flow is a
@@ -80,8 +173,12 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 		name: ASSISTANT_NAME,
 		model: ASSISTANT_MODEL,
 		instructions: SYSTEM_PROMPT,
-		// The dialer sends the real greeting per call; the default stops an unset value playing as raw text.
-		dynamic_variables: { prospect_greeting: DEFAULT_PROSPECT_GREETING },
+		// Empty on purpose: the opener is the first node of the flow, not the greeting field.
+		greeting: '',
+		voice_settings: VOICE_SETTINGS,
+		transcription: TRANSCRIPTION,
+		interruption_settings: INTERRUPTION_SETTINGS,
+		post_conversation_settings: { enabled: false },
 		tools: TOOL_DECLARATIONS.map((tool) => ({
 			type: 'webhook',
 			webhook: {
@@ -89,6 +186,9 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 				description: tool.description,
 				url: `${input.toolsBaseUrl}/${tool.name}`,
 				method: 'POST',
+				headers: [{ name: 'Authorization', value: `Bearer ${input.toolWebhookSecret}` }],
+				timeout_ms: TOOL_TIMEOUT_MS,
+				async: false,
 				body_parameters: tool.parameters,
 				// Supplied by the assistant configuration, never by the model. Telnyx rejects dynamic
 				// variable names that start with telnyx_; call_control_id is the system variable.
@@ -108,8 +208,10 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 				{
 					type: 'prompt',
 					id: AGENT_NODE_ID,
-					name: 'Agent',
-					instructions: SYSTEM_PROMPT,
+					name: 'Conversation',
+					// Appended to the assistant instructions above, so the prompt is not repeated here.
+					instructions: CONVERSATION_NODE_INSTRUCTIONS,
+					instructions_mode: 'append',
 				},
 			],
 			edges: [
@@ -140,23 +242,42 @@ function canonical(value: unknown): string {
  * The assistant content hash: script_version in the consent audit record, and the marker that
  * lets an unchanged assistant skip the update call. Computed over the script (prompt, tools,
  * flow) without the description field, where the hash itself is stored, and without tool_ids:
- * the knowledge base changes on its own schedule and is not the script.
+ * the knowledge base changes on its own schedule and is not the script. Tool headers count by
+ * name only: the secret never shapes script_version, so rotating it keeps the version while
+ * dropping the header changes it. (A rotation still needs a manual update of the live assistant.)
  */
 export function assistantContentHash(payload: Record<string, unknown>): string {
-	const { description: _omitted, tool_ids: _kb, ...rest } = payload
-	return createHash('sha256').update(canonical(rest)).digest('hex').slice(0, 16)
+	const { description: _omitted, tool_ids: _kb, tools, ...rest } = payload
+	const hashable = Array.isArray(tools) ? { ...rest, tools: tools.map(withHeaderNamesOnly) } : rest
+	return createHash('sha256').update(canonical(hashable)).digest('hex').slice(0, 16)
+}
+
+function withHeaderNamesOnly(tool: unknown): unknown {
+	const webhook = (tool as { webhook?: { headers?: Array<{ name: string }> } } | null)?.webhook
+	if (!webhook?.headers) return tool
+	return {
+		...(tool as object),
+		webhook: { ...webhook, headers: webhook.headers.map((h) => ({ name: h.name })) },
+	}
 }
 
 // Every call in this bet is Danish (+45 numbers), so the disclosure is Danish. Same rule as
 // FOLLOWUP_LANGUAGE in the post-call email hook; no per-contact detection until a second market exists.
 export const DISCLOSURE_LOCALE: DisclosureLocale = 'da'
 
-/** The hash of the assistant this deploy would create, from env. Used as script_version at tool time. */
+/**
+ * The hash of the assistant this deploy would create, from env. Used as script_version at tool
+ * time. Throws without MASKIN_PUBLIC_URL: a version hashed over relative tool urls is wrong, and a
+ * wrong version in a consent record is worse than a failed call.
+ */
 export function currentScriptVersion(env: NodeJS.ProcessEnv = process.env): string {
 	const base = env.MASKIN_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
+	if (base === '') throw new Error('MASKIN_PUBLIC_URL is not set: cannot compute the script version')
 	return assistantContentHash(
 		buildAssistantPayload({
 			locale: DISCLOSURE_LOCALE,
+			// Header values are not part of the hash, so the secret is not needed here.
+			toolWebhookSecret: '',
 			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 		}),
 	)

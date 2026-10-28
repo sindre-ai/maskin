@@ -1,6 +1,7 @@
 import { events, objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { DISCLOSURE_TEMPLATES } from '../../lib/integrations/providers/telnyx/assistant'
 import {
 	createDisclosureHook,
 	firstAgentUtterance,
@@ -52,10 +53,11 @@ describe('disclosure assertion hook', () => {
 		throw new Error('no fetch in tests')
 	})
 
-	it('passes when the first agent utterance names an AI assistant, in English or Danish', async () => {
+	it('passes when the first agent utterance names an AI assistant or AI agent, in English or Danish', async () => {
 		for (const line of [
 			'Hi Anna, this is an AI assistant calling on behalf of Maskin, do you have a moment?',
 			'Hej Anna, det her er en AI-assistent, der ringer på vegne af Maskin, har du et øjeblik?',
+			DISCLOSURE_TEMPLATES.da,
 		]) {
 			const t = await setup()
 			await hook.run(t.ctx({ transcript: turns(line) }))
