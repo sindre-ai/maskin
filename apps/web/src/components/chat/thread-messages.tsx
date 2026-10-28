@@ -1,5 +1,6 @@
 import { HandoffCard } from '@/components/chat/handoff-card'
 import { HelperQuestionCard } from '@/components/chat/helper-question-card'
+import { PREVIEW_BOUNDS_ATTR } from '@/components/chat/linked-object-reference'
 import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
@@ -352,6 +353,8 @@ export function ThreadMessages({
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
+			// The scroller clips a chip's hover preview, so the preview places itself inside it.
+			{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
 			className={cn(
 				// `min-w-0` caps min-content on the cross axis, so a wide descendant
 				// (markdown table, long unbroken URL) can't push the flex column past
