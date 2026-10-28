@@ -118,8 +118,7 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		// v2's palette rewrote its own prompt (components/command-palette.tsx).
-		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
 	})
 
 	// v2 gives the object page the same split New button as every other screen

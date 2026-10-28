@@ -1,6 +1,6 @@
-// Reads recent searches from localStorage. The key is the one the old search page
-// already writes (strings only), so both shapes are accepted: a plain string is a
-// text-only search, an object carries filters too. Entries that are neither are dropped.
+// Reads recent searches from localStorage. Older entries were stored as plain strings, so
+// both shapes are accepted: a plain string is a text-only search, an object carries filters
+// too. Entries that are neither are dropped.
 
 export interface RecentSearch {
 	q: string
@@ -48,8 +48,7 @@ const sameEntry = (a: RecentSearch, b: RecentSearch) =>
 
 /**
  * Remembers a search that ended in an opened result: words and pills. The same
- * search moves to the front instead of repeating. The old page reads this key as
- * strings only and skips objects, so switching the flag off again is safe.
+ * search moves to the front instead of repeating.
  */
 export function pushRecentSearchEntry(workspaceId: string, entry: RecentSearch): void {
 	const next = normalizeRecentSearch(entry)

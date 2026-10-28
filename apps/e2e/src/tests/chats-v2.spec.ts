@@ -178,7 +178,7 @@ test.describe('Chats v2 — layout', () => {
 
 		const heights = await Promise.all(
 			[
-				page.getByRole('button', { name: 'Search the workspace' }),
+				page.getByRole('button', { name: 'Search or run a command' }),
 				page.getByRole('button', { name: /^Filter conversations/ }),
 				page.getByRole('button', { name: 'New chat' }).first(),
 			].map(async (l) => (await l.boundingBox())?.height ?? 0),
