@@ -21,6 +21,8 @@ struct LinkedTargetCard: View {
 			LinkedObjectCard(object: object)
 		case .deleted?:
 			LinkedDeletedCard()
+		case .otherWorkspace(let link)?:
+			LinkedOtherWorkspaceCard(link: link)
 		default:
 			if target.kind == .object, store?.showsCard(target) == true { LinkedCardSkeleton() }
 		}
