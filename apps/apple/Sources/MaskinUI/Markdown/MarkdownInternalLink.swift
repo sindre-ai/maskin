@@ -131,7 +131,6 @@ public struct MarkdownLinkCard: View {
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.maskinPressed(.shrink))
-		.frame(maxWidth: .infinity, alignment: .leading)
 		.accessibilityLabel("\(info.kindLabel): \(name)")
 		.accessibilityHint("Opens outside Maskin")
 	}
