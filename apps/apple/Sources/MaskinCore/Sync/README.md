@@ -42,10 +42,11 @@ Chats are intentionally not here (`chat-final` owns them and follows this README
 
 ## Threading: writes are asynchronous
 
-`DiskCache.write` returns at once; the encode, the atomic file write and eviction run on a serial
-utility queue, so a store's `@MainActor` code never waits on the disk. From a caller's side the
-guarantees stay the same: a `read`, `remove` or `clear` of the same cache is ordered after earlier
-writes (a read of a key with a write still queued waits for it), and a value that is too large or
+`DiskCache.write` returns at once; the encode and the atomic file write run on a serial utility
+queue, and eviction (the directory scans) on a second one, so a store's `@MainActor` code never waits
+on a scan. From a caller's side the guarantees stay the same: a `remove` or `clear` is ordered after
+earlier writes, a `read` of a key with a write still queued waits for the writes to that one file
+(not for other files' writes, never for eviction), and a value that is too large or
 fails to encode still reads back as a miss. What is NOT immediate is eviction and file visibility:
 use `flush()` (tests, code inspecting the files) to wait. Sign-out's static `clearAll()` drains
 queued writes first, so a late write cannot put a signed-out account's data back.

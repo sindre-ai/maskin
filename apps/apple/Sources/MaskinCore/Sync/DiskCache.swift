@@ -94,14 +94,21 @@ public final class DiskCache: @unchecked Sendable {
 	private let fileManager: FileManager
 	private let limits: Limits
 	private let now: @Sendable () -> Date
-	/// Guards the small in-memory state below. Never held across file I/O.
-	private let lock = NSLock()
-	/// All writes, evictions and removals run here, in order, off the caller's thread. Stores are
-	/// `@MainActor`, so doing the encode and the atomic file write inline cost a frame per cache write.
+	/// Guards the small in-memory state below. Never held across file I/O. A condition so that a
+	/// read can wait for the queued writes to its own file and be woken when they land.
+	private let lock = NSCondition()
+	/// Writes (encode plus atomic file write), removals and clears run here, in order, off the caller's
+	/// thread. Stores are `@MainActor`, so doing this inline cost a frame per cache write. Nothing
+	/// slow but a write sits on this queue: eviction has its own, so a clear or a discard never
+	/// waits behind a directory scan.
 	private let ioQueue = DispatchQueue(label: "io.maskin.diskcache", qos: .utility)
+	/// Eviction (the directory scans) and LRU write-backs. Kept apart from `ioQueue` so a scan can
+	/// never sit in front of a write, and reads never wait for it at all.
+	private let evictionQueue = DispatchQueue(label: "io.maskin.diskcache.eviction", qos: .utility)
 	private var directoryPrepared = false
-	/// File path -> number of writes queued but not yet on disk. A read of such a path waits for the
-	/// queue first, so a write is always visible to the next read of the same key.
+	/// File path -> number of writes queued but not yet on disk. A read of such a path waits until
+	/// they land (and only those: not other files' writes, not eviction), so a write is always
+	/// visible to the next read of the same key.
 	private var pendingWrites: [String: Int] = [:]
 	/// When each file was last read this process. Eviction orders by this (or the file's own
 	/// modification date, whichever is later), so a read counts as a use without a `setAttributes`
@@ -113,6 +120,13 @@ public final class DiskCache: @unchecked Sendable {
 	/// skip the directory scan unless the bound is actually in danger.
 	private var knownTotal: Int?
 	private var lastAgeSweep: Date?
+	/// Bumped whenever `knownTotal` is invalidated (a clear, a removal). A scan that started before
+	/// the bump must not publish its result.
+	private var generation = 0
+	/// True while a scan runs. Writes that land meanwhile add their size change to `deltaDuringScan`,
+	/// which the scan folds into the total it publishes.
+	private var scanning = false
+	private var deltaDuringScan = 0
 
 	public init(
 		directory: URL? = nil, fileManager: FileManager = .default, limits: Limits = .default,
@@ -133,7 +147,7 @@ public final class DiskCache: @unchecked Sendable {
 	) -> Entry<Value>? {
 		let url = fileURL(for: key)
 		// A write to this very file is still queued: let it land so the read sees it.
-		if hasPendingWrite(at: url.path) { ioQueue.sync {} }
+		awaitPendingWrites(at: url.path)
 		guard let data = try? Data(contentsOf: url) else {
 			SyncLog.cache.debug("miss name=\(key.name, privacy: .public) reason=absent")
 			return nil
@@ -201,8 +215,9 @@ public final class DiskCache: @unchecked Sendable {
 			lastUsed[url.path] = nil
 			lastPersistedUse[url.path] = nil
 			if let total = knownTotal { knownTotal = total - previous + data.count }
+			if scanning { deltaDuringScan += data.count - previous }
 			lock.unlock()
-			evictIfNeeded()
+			evictionQueue.async { [self] in evictIfNeeded() }
 		}
 	}
 
@@ -214,9 +229,13 @@ public final class DiskCache: @unchecked Sendable {
 		}
 	}
 
-	/// Blocks until every write queued so far is on disk. Reads, removals and clears already order
-	/// themselves after queued writes; this is for tests and for code that inspects the files.
-	public func flush() { ioQueue.sync {} }
+	/// Blocks until every write queued so far is on disk and the eviction it triggered has run.
+	/// Reads, removals and clears already order themselves after queued writes; this is for tests and
+	/// for code that inspects the files.
+	public func flush() {
+		ioQueue.sync {}
+		evictionQueue.sync {}
+	}
 
 	// MARK: Clearing
 
@@ -268,7 +287,8 @@ public final class DiskCache: @unchecked Sendable {
 
 	/// Total bytes on disk.
 	public var totalBytes: Int {
-		ioQueue.sync { allFiles().reduce(0) { $0 + size(of: $1) } }
+		flush()
+		return evictionQueue.sync { allFiles().reduce(0) { $0 + size(of: $1) } }
 	}
 
 	// MARK: Internals
@@ -323,10 +343,11 @@ public final class DiskCache: @unchecked Sendable {
 		lock.unlock()
 	}
 
-	private func hasPendingWrite(at path: String) -> Bool {
+	/// Blocks until no write to `path` is queued or running. Writes to other files do not matter.
+	private func awaitPendingWrites(at path: String) {
 		lock.lock()
-		defer { lock.unlock() }
-		return (pendingWrites[path] ?? 0) > 0
+		while (pendingWrites[path] ?? 0) > 0 { lock.wait() }
+		lock.unlock()
 	}
 
 	private func writeFinished(at path: String) {
@@ -334,6 +355,7 @@ public final class DiskCache: @unchecked Sendable {
 		defer { lock.unlock() }
 		let left = (pendingWrites[path] ?? 1) - 1
 		pendingWrites[path] = left > 0 ? left : nil
+		lock.broadcast()
 	}
 
 	private func resetKnownState() {
@@ -342,6 +364,7 @@ public final class DiskCache: @unchecked Sendable {
 		lastAgeSweep = nil
 		lastUsed = [:]
 		lastPersistedUse = [:]
+		generation += 1
 		lock.unlock()
 	}
 
@@ -350,6 +373,7 @@ public final class DiskCache: @unchecked Sendable {
 		lastUsed[path] = nil
 		lastPersistedUse[path] = nil
 		knownTotal = nil
+		generation += 1
 		lock.unlock()
 	}
 
@@ -383,7 +407,7 @@ public final class DiskCache: @unchecked Sendable {
 		if due { lastPersistedUse[url.path] = stamp }
 		lock.unlock()
 		guard due else { return }
-		ioQueue.async { [self] in
+		evictionQueue.async { [self] in
 			try? fileManager.setAttributes([.modificationDate: stamp], ofItemAtPath: url.path)
 		}
 	}
@@ -411,19 +435,24 @@ public final class DiskCache: @unchecked Sendable {
 			?? .distantPast
 	}
 
-	/// Keeps the cache inside its bounds. Runs on `ioQueue`. A full scan is a syscall pair per file, so
-	/// it only happens when it can matter: the first time (to learn the total), when the tracked total
+	/// Keeps the cache inside its bounds. Runs on `evictionQueue`, so it is one scan at a time and
+	/// never in front of a read or a write. A full scan is a syscall pair per file, so it only
+	/// happens when it can matter: the first time (to learn the total), when the tracked total
 	/// passes the bound, or hourly to expire old entries.
 	private func evictIfNeeded() {
 		let stamp = now()
 		lock.lock()
-		let total = knownTotal
-		let swept = lastAgeSweep
+		let sweepDue = lastAgeSweep.map { stamp.timeIntervalSince($0) >= 3600 } ?? true
+		if let total = knownTotal, total <= limits.maxTotalBytes, !sweepDue {
+			lock.unlock()
+			return
+		}
+		scanning = true
+		deltaDuringScan = 0
+		let startedAt = generation
+		let used = lastUsed
 		lock.unlock()
-		let sweepDue = swept.map { stamp.timeIntervalSince($0) >= 3600 } ?? true
-		if let total, total <= limits.maxTotalBytes, !sweepDue { return }
 
-		let used = lastUsedSnapshot()
 		var files = allFiles().map { url in
 			(url: url, bytes: size(of: url), used: max(modified(url), used[url.path] ?? .distantPast))
 		}
@@ -443,14 +472,12 @@ public final class DiskCache: @unchecked Sendable {
 			}
 		}
 		lock.lock()
-		knownTotal = sum
-		lastAgeSweep = stamp
+		scanning = false
+		// A clear or removal during the scan makes its count stale: leave the total unknown.
+		if generation == startedAt {
+			knownTotal = max(0, sum + deltaDuringScan)
+			lastAgeSweep = stamp
+		}
 		lock.unlock()
-	}
-
-	private func lastUsedSnapshot() -> [String: Date] {
-		lock.lock()
-		defer { lock.unlock() }
-		return lastUsed
 	}
 }

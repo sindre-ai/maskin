@@ -216,6 +216,22 @@ struct DiskCacheTests {
 		#expect(cache.read([Row].self, key: key, version: 1)?.value == [Row(id: "49", title: "v49")])
 	}
 
+	@Test func eachKeyReadsBackItsOwnLatestWriteWhileOtherKeysAreStillQueued() {
+		let dir = tempDirectory()
+		defer { try? FileManager.default.removeItem(at: dir) }
+		let cache = makeCache(dir)
+		let keys = (0..<30).map { DiskCache.Key(actorId: "a", name: "k\($0)") }
+		for round in 0..<3 {
+			for (i, k) in keys.enumerated() {
+				cache.write([Row(id: "\(i)", title: "r\(round)")], key: k, version: 1)
+			}
+		}
+		// No flush: every read waits only for its own key's queued writes and sees the last one.
+		for (i, k) in keys.enumerated().reversed() {
+			#expect(cache.read([Row].self, key: k, version: 1)?.value == [Row(id: "\(i)", title: "r2")])
+		}
+	}
+
 	@Test func theSizeBoundHoldsAcrossManyWritesWithoutRescanningEachOne() {
 		let dir = tempDirectory()
 		defer { try? FileManager.default.removeItem(at: dir) }
