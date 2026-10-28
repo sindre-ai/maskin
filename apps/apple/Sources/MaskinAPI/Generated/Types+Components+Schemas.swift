@@ -249,5 +249,47 @@ extension Components {
                 case output_audio_seconds
             }
         }
+        /// - Remark: Generated from `#/components/schemas/TranscribeResponse`.
+        public struct TranscribeResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/TranscribeResponse/text`.
+            public var text: Swift.String
+            /// Creates a new `TranscribeResponse`.
+            ///
+            /// - Parameters:
+            ///   - text:
+            public init(text: Swift.String) {
+                self.text = text
+            }
+            public enum CodingKeys: String, CodingKey {
+                case text
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscribeBody`.
+        public struct TranscribeBody: Codable, Hashable, Sendable {
+            /// Base64 of a WAV file (16 kHz mono recommended).
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/audio`.
+            public var audio: Swift.String
+            /// Optional language hint, e.g. "en" or "nb-NO".
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/language`.
+            public var language: Swift.String?
+            /// Creates a new `TranscribeBody`.
+            ///
+            /// - Parameters:
+            ///   - audio: Base64 of a WAV file (16 kHz mono recommended).
+            ///   - language: Optional language hint, e.g. "en" or "nb-NO".
+            public init(
+                audio: Swift.String,
+                language: Swift.String? = nil
+            ) {
+                self.audio = audio
+                self.language = language
+            }
+            public enum CodingKeys: String, CodingKey {
+                case audio
+                case language
+            }
+        }
     }
 }
