@@ -1014,10 +1014,9 @@ ${surviving}
 
 			expect(moved).toEqual([{ sessionId: session.id, reason: 'weekly_limit' }])
 			const rows = await messagesFor(conversationId)
-			// Copy names the stop explicitly — the current session is going away, so
-			// the human's next message here spawns a fresh session on the new slot.
+			// The spent session is stopped and the message is answered again on the
+			// new slot, so the copy no longer asks the human to send it again (#2601).
 			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
-			expect(rows[0]?.content).toContain('stopped this session')
 			expect(rows[0]?.content).toContain("I'm picking your message back up on the new subscription")
 			expect(
 				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output

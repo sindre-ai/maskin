@@ -472,7 +472,7 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 		workspaceId: f.ws.id,
 		commenterId: f.agent.id,
 		commenterType: 'agent',
-		sessionId: f.helperSession.id as string | undefined,
+		sessionId: f.chatSession.id as string | undefined,
 		mentions: [f.human.id] as string[] | undefined,
 		hasDecision: false,
 		attention: undefined as number | undefined,
@@ -485,7 +485,7 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 		expect(plan.delivery).toEqual({
 			humanId: f.human.id,
 			conversationId: f.chat.id,
-			ownChat: false,
+			ownChat: true,
 		})
 		expect(plan.storedMentions).toEqual([f.other.id])
 		expect(plan.routedTo).toBe('chat')
@@ -593,9 +593,12 @@ describe('planCommentRouting: each rule flips the result on its own', () => {
 			{ conversationId: foreignChat.id, actorId: f.human.id, addedBy: f.human.id },
 			{ conversationId: foreignChat.id, actorId: f.agent.id, addedBy: f.human.id },
 		])
-		const foreignChatSession = await insertSession(db, f.ws.id, f.agent.id, f.agent.id, {
+		// The agent's own chat session (not a helper, which is kept before the chat is
+		// looked at), pointing at a chat in another workspace.
+		const foreignChatSession = await insertSession(db, f.ws.id, f.agent.id, f.human.id, {
 			status: 'running',
-			config: { origin_conversation_id: foreignChat.id },
+			conversationId: foreignChat.id,
+			interactive: true,
 		})
 		const fx: KeepCtx = {
 			...f,
@@ -687,7 +690,7 @@ describe('POST /api/events from a chat-started helper', () => {
 		const f = await seed()
 		await postComment(f, { session: f.chatSession.id, content: 'Long update. '.repeat(50) })
 		const [msg] = await chatMessages(f.chat.id)
-		expect(msg?.content).toMatch(/^I posted an update on [Backfill report](.+).$/)
+		expect(msg?.content).toMatch(/^I posted an update on \[Backfill report\]\(.+\)\.$/)
 	})
 
 	it('keeps the For You card and the notification for a decision block (zero-miss guard)', async () => {
