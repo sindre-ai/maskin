@@ -2490,6 +2490,40 @@ describe('tool handlers', () => {
 			)
 		})
 
+		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'queued' })
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.id).toBe('session-1')
+			expect(parsed.handoff).toContain('session session-1 is queued')
+			expect(parsed.handoff).toContain('quote this session id')
+		})
+
+		it('without wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Not started')
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
+		it('with wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				wait: true,
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
 		it('forwards spawned_by_message_id to the create route', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			const fetchSpy = vi.mocked(fetch)
@@ -8033,6 +8067,64 @@ describe('X-Maskin-Session-Id source', () => {
 		vi.stubEnv('SESSION_ID', hostSession)
 		build({})
 		expect((await postMessageBody()).session_id).toBe(hostSession)
+	})
+
+	// Threads: the handlers bypass the SDK's zod layer, so the schema assertion is
+	// what proves a real client's `thread_root_id` is not stripped before it gets here.
+	it('post_conversation_message accepts thread_root_id and also_in_channel in its schema', () => {
+		const parsed = tools.post_conversation_message.inputSchema.parse({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		expect(parsed.thread_root_id).toBe(42)
+		expect(parsed.also_in_channel).toBe(true)
+	})
+
+	it('post_conversation_message sends thread_root_id and also_in_channel to the API', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.thread_root_id).toBe(42)
+		expect(sent.also_in_channel).toBe(true)
+	})
+
+	it('list_conversation_messages passes thread_root_id as a query param', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([]),
+		} as Response)
+		const handler = handlers.get('list_conversation_messages')
+		if (!handler) throw new Error('list_conversation_messages handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			thread_root_id: 42,
+			limit: 50,
+		})
+		const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]))
+		expect(url.searchParams.get('thread_root_id')).toBe('42')
+		expect(
+			tools.list_conversation_messages.inputSchema.parse({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				thread_root_id: 42,
+			}).thread_root_id,
+		).toBe(42)
 	})
 
 	// POST /api/actors reads this header to find the person behind the creating

@@ -1438,7 +1438,8 @@ export const files = pgTable(
 		name: text('name').notNull(),
 		description: text('description'),
 		mimeType: text('mime_type').notNull(),
-		sizeBytes: integer('size_bytes').notNull(),
+		// bigint: files can exceed the 2 GiB an integer holds. mode 'number' is exact up to 2^53.
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 		storageKey: text('storage_key').notNull(),
 		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
 		// only for rows that predate the column, which are hashed from storage
@@ -1468,6 +1469,55 @@ export const files = pgTable(
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── File Uploads ────────────────────────────────────────────────────────────
+// An in-flight direct-to-storage upload of a large file. The browser PUTs parts
+// straight to S3 (multipart); this row remembers what the caller declared so
+// that completing the upload can check the stored object against it and only
+// then create the `files` row. `file_id` is the id the file will have.
+export const fileUploads = pgTable(
+	'file_uploads',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		fileId: uuid('file_id').notNull().unique(),
+		name: text('name').notNull(),
+		description: text('description'),
+		kind: text('kind'),
+		mimeType: text('mime_type').notNull(),
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+		storageKey: text('storage_key').notNull(),
+		s3UploadId: text('s3_upload_id').notNull(),
+		partSize: integer('part_size').notNull(),
+		partCount: integer('part_count').notNull(),
+		// pending → completing → completed, or → aborted. Only pending uploads can be
+		// completed; completing means one request is stitching it right now.
+		status: text('status').notNull().default('pending'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// When a complete request took the upload. A completing row older than a
+		// complete can take belongs to a request that died.
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('file_uploads_ws_status_idx').on(t.workspaceId, t.status),
+		index('file_uploads_open_idx')
+			.on(t.expiresAt)
+			.where(sql`${t.status} IN ('pending', 'completing')`),
+		check(
+			'file_uploads_status_check',
+			sql`${t.status} IN ('pending', 'completing', 'completed', 'aborted')`,
+		),
+	],
+)
+
+export type FileUpload = typeof fileUploads.$inferSelect
+export type NewFileUpload = typeof fileUploads.$inferInsert
 
 // ── Extensions ──────────────────────────────────────────────────────────────
 // Workspace-owned custom (bring-your-own) integrations. One row can carry an
