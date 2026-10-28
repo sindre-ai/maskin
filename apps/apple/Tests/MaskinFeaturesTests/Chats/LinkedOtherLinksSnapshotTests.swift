@@ -76,28 +76,28 @@ struct LinkedOtherLinksSnapshotTests {
 	}
 
 	/// A store for `here` whose switcher list holds only Acme Studio.
-	private func store() -> LinkedItemStore {
+	private func makeStore() -> LinkedItemStore {
 		LinkedItemStore(
 			objects: NoObjects(), files: NoFiles(), workspaceID: { here },
 			workspaceName: { $0.lowercased() == acme ? "Acme Studio" : nil })
 	}
 
-	private func link(in workspace: String, kind: LinkedTarget.Kind = .object) -> LinkedOtherWorkspace {
+	private func otherLink(in workspace: String, kind: LinkedTarget.Kind = .object) -> LinkedOtherWorkspace {
 		LinkedOtherWorkspace(
 			target: LinkedTarget(kind: kind, uuid: kind == .object ? noteID : pageID, workspaceID: workspace),
 			workspaceID: workspace)
 	}
 
-	private func linkInfo() -> @MainActor (URL) -> MarkdownLinkInfo? {
+	private func makeLinkInfo() -> @MainActor (URL) -> MarkdownLinkInfo? {
 		let directory = InternalLinkDirectory(store: { nil })
 		return { directory.info(for: $0) }
 	}
 
 	@Test("the other-workspace card, named and unnamed, at 390 wide, light and dark, default and largest text")
 	func placeholders() async throws {
-		let store = store()
-		let member = link(in: acme)
-		let outsider = link(in: stranger)
+		let store = makeStore()
+		let member = otherLink(in: acme)
+		let outsider = otherLink(in: stranger)
 		#expect(member.title(workspaceName: store.workspaceName(for: acme)) == "Object in Acme Studio")
 		#expect(outsider.title(workspaceName: store.workspaceName(for: stranger)) == "Object in another workspace")
 		for dark in [false, true] {
@@ -105,7 +105,7 @@ struct LinkedOtherLinksSnapshotTests {
 				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 					LinkedOtherWorkspaceCard(link: member)
 					LinkedOtherWorkspaceCard(link: outsider)
-					LinkedOtherWorkspaceCard(link: link(in: acme, kind: .file))
+					LinkedOtherWorkspaceCard(link: otherLink(in: acme, kind: .file))
 				}
 				.environment(\.linkedItems, store)
 				try await render(content, width: 390, dark: dark, name: "linked-other-workspace", largest: largest)
@@ -117,7 +117,7 @@ struct LinkedOtherLinksSnapshotTests {
 	func gitHubChips() async throws {
 		let pr = URL(string: "https://github.com/sindre-ai/maskin/pull/2653")!
 		let issue = URL(string: "https://github.com/sindre-ai/maskin/issues/12")!
-		let info = linkInfo()
+		let info = makeLinkInfo()
 		#expect(info(pr)?.leavesApp == true)
 		#expect(info(pr)?.title == "maskin #2653")
 		#expect(info(issue)?.symbol == "smallcircle.filled.circle")
@@ -138,7 +138,7 @@ struct LinkedOtherLinksSnapshotTests {
 
 	@Test("a message with an other-workspace link and a GitHub link draws the card and the chip")
 	func inMessage() async throws {
-		let store = store()
+		let store = makeStore()
 		let message = ChatMessage(
 			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
 			content:
@@ -148,7 +148,7 @@ struct LinkedOtherLinksSnapshotTests {
 		for dark in [false, true] {
 			let row = MessageRow(message: message, isOwn: false, showsAuthor: true)
 				.environment(\.linkedItems, store)
-				.environment(\.markdownInternalLinkInfo, linkInfo())
+				.environment(\.markdownInternalLinkInfo, makeLinkInfo())
 			try await render(row, width: 390, dark: dark, name: "linked-other-links-message")
 		}
 	}
