@@ -71,9 +71,7 @@ test.describe('Chat — a linked agent draws like an object and a loop', () => {
 			await expect(loopCard).toContainText('Loop')
 
 			// The agent linked inside the sentence is a chip, with the state in its name.
-			const chip = thread
-				.getByRole('link', { name: `Agent, Working now: ${agentName}` })
-				.first()
+			const chip = thread.getByRole('link', { name: `Agent, Working now: ${agentName}` }).first()
 			await expect(chip).toBeVisible()
 			// The object linked inside the sentence is a chip too.
 			await expect(
