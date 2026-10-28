@@ -584,6 +584,47 @@ describe('Loops read API integration', () => {
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
 	})
 
+	it('still answers when a loop has more closed members than one events lookup batch', async () => {
+		// The close-time lookup reads `events` in batches of 200 ids. 450 closed
+		// members forces three batches, so this fails if batching drops, repeats or
+		// mis-orders a batch — and none of these members has an event, so each one
+		// must take the updated_at fallback (a constant 2s here).
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Many closed members',
+		})
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+		const memberCount = 450
+		for (let i = 0; i < memberCount; i++) {
+			const member = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'done',
+				title: `Closed member ${i}`,
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 2000),
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: member.id,
+				type: 'in_loop',
+				createdAt,
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.closedCount).toBe(memberCount)
+		expect(row?.medianTimeToCloseMs).toBe(2000)
+	}, 60_000)
+
 	describe('metadata.closed_when', () => {
 		async function setup(loopMetadata: Record<string, unknown>) {
 			const loop = await insertObject(db, workspaceId, actorId, {
