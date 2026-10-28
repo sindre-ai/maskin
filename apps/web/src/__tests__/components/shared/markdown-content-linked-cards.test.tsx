@@ -81,6 +81,7 @@ function renderMessage(
 	skipIds?: ReadonlySet<string>,
 	updatedIds?: ReadonlySet<string>,
 	withSettingsChip = true,
+	enterprise = false,
 ) {
 	return render(
 		<MarkdownContent
@@ -90,6 +91,7 @@ function renderMessage(
 				withCards
 					? {
 							workspaceId: WS,
+							enterprise,
 							renderCard,
 							renderChip,
 							skipIds,
@@ -177,9 +179,9 @@ describe('MarkdownContent linkedCards', () => {
 	})
 
 	it('draws a settings link in a sentence as a chip, whatever its link text', () => {
-		renderMessage(`Set it up under [the keys page](${settingsUrl('/keys')}) first.`)
-		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Keys')
-		expect(screen.queryByText('the keys page')).not.toBeInTheDocument()
+		renderMessage(`Set it up under [the billing page](${settingsUrl('/billing')}) first.`)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Billing')
+		expect(screen.queryByText('the billing page')).not.toBeInTheDocument()
 		expect(screen.getByText(/Set it up under/)).toBeInTheDocument()
 	})
 
@@ -217,6 +219,25 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.getByRole('link', { name: 'nope' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'deep' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'other' })).toBeInTheDocument()
+	})
+
+	it('draws a Keys link as a chip in an enterprise workspace', () => {
+		renderMessage(
+			`[the keys page](${settingsUrl('/keys')})`,
+			true,
+			undefined,
+			undefined,
+			true,
+			true,
+		)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Keys')
+		expect(screen.queryByText('the keys page')).not.toBeInTheDocument()
+	})
+
+	it('leaves a Keys link a plain link when the workspace is not enterprise', () => {
+		renderMessage(`[the keys page](${settingsUrl('/keys')})`)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the keys page' })).toBeInTheDocument()
 	})
 
 	it('leaves a settings link as it was when no settings chip renderer is given', () => {

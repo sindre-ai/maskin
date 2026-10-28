@@ -153,6 +153,8 @@ function renderChartBlock({ language, source }: RenderCodeBlockArgs) {
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
+	/** Whether the workspace is enterprise: only then is a link to the Keys settings page a chip. */
+	enterprise?: boolean
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
@@ -268,6 +270,7 @@ function RenderedMarkdownContent({
 	// Keyed on the values, not the object: a caller passing a fresh literal each render must not
 	// change the component map, or every card in the message would remount.
 	const cardsWorkspaceId = linkedCardsOption?.workspaceId
+	const cardsEnterprise = linkedCardsOption?.enterprise
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
@@ -284,6 +287,7 @@ function RenderedMarkdownContent({
 			cardsWorkspaceId && cardsRenderer
 				? {
 						workspaceId: cardsWorkspaceId,
+						enterprise: cardsEnterprise,
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
@@ -295,6 +299,7 @@ function RenderedMarkdownContent({
 				: undefined,
 		[
 			cardsWorkspaceId,
+			cardsEnterprise,
 			cardsConversationId,
 			cardsAgentId,
 			cardsRenderer,
@@ -337,7 +342,7 @@ function RenderedMarkdownContent({
 						return linkedCards.renderGithubChip(github, href)
 					}
 					const settings = linkedCards.renderSettingsChip
-						? settingsTargetOf(href, linkedCards.workspaceId)
+						? settingsTargetOf(href, linkedCards.workspaceId, linkedCards.enterprise)
 						: null
 					if (settings && linkedCards.renderSettingsChip) {
 						return linkedCards.renderSettingsChip(settings, linkedCards)

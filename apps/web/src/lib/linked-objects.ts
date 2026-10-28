@@ -117,7 +117,8 @@ const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
 
 /**
  * The settings sections a link can name, as the settings menu lists them. `path` is the segment
- * after `/settings` (empty for General, the page the bare settings address opens).
+ * after `/settings` (empty for General, the page the bare settings address opens). `enterpriseOnly`
+ * sections are in the settings menu only for enterprise workspaces, so elsewhere they stay plain links.
  */
 export const SETTINGS_SECTIONS = [
 	{ path: '', label: 'General' },
@@ -129,11 +130,15 @@ export const SETTINGS_SECTIONS = [
 	{ path: 'mcp', label: 'MCP' },
 	{ path: 'billing', label: 'Billing' },
 	{ path: 'keychain', label: 'Keychain' },
-	{ path: 'keys', label: 'Keys' },
+	{ path: 'keys', label: 'Keys', enterpriseOnly: true },
 ] as const
 
 /** A link to a settings page of this workspace, read from its address alone. Nothing is fetched. */
 export type SettingsTarget = (typeof SETTINGS_SECTIONS)[number]
+
+function isEnterpriseOnly(section: SettingsTarget): boolean {
+	return 'enterpriseOnly' in section
+}
 
 const SETTINGS_PATH = /^\/([^/]+)\/settings(?:\/([^/]+))?\/?$/i
 // Stands in for the host of an address that has none, so `new URL` accepts it.
@@ -142,10 +147,14 @@ const NO_HOST = 'no-host.invalid'
 /**
  * The settings page an address in this workspace points at: `/{workspaceId}/settings` or
  * `/{workspaceId}/settings/{section}` for a section of the settings menu, on this app's host or
- * with no host. An unknown section, a deeper path, another workspace and any other site is null
- * and stays a plain link.
+ * with no host. An unknown section, a deeper path, another workspace, any other site and an
+ * enterprise-only section (Keys) in a workspace that is not enterprise is null and stays a plain link.
  */
-export function settingsTargetOf(href: unknown, workspaceId: string): SettingsTarget | null {
+export function settingsTargetOf(
+	href: unknown,
+	workspaceId: string,
+	enterprise = false,
+): SettingsTarget | null {
 	if (typeof href !== 'string') return null
 	let url: URL
 	try {
@@ -157,7 +166,8 @@ export function settingsTargetOf(href: unknown, workspaceId: string): SettingsTa
 	const match = SETTINGS_PATH.exec(url.pathname)
 	if (!match || match[1].toLowerCase() !== workspaceId.toLowerCase()) return null
 	const path = (match[2] ?? '').toLowerCase()
-	return SETTINGS_SECTIONS.find((section) => section.path === path) ?? null
+	const section = SETTINGS_SECTIONS.find((s) => s.path === path)
+	return section && (enterprise || !isEnterpriseOnly(section)) ? section : null
 }
 
 /** What a settings chip reads, and its accessible name. */
@@ -203,7 +213,11 @@ export type OwnSegment =
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
  */
-export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[] {
+export function splitOwnLinks(
+	content: string,
+	workspaceId: string,
+	enterprise = false,
+): OwnSegment[] {
 	const segments: OwnSegment[] = []
 	let cursor = 0
 	const pushText = (text: string) => {
@@ -229,7 +243,7 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 			cursor = (m.index ?? 0) + address.length
 			continue
 		}
-		const settings = settingsTargetOf(address, workspaceId)
+		const settings = settingsTargetOf(address, workspaceId, enterprise)
 		if (settings) {
 			pushText(content.slice(cursor, m.index ?? 0))
 			segments.push({ kind: 'settings', target: settings })

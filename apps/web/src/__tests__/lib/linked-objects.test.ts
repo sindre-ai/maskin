@@ -229,6 +229,15 @@ describe('splitOwnLinks', () => {
 		])
 	})
 
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const keys = `https://maskin.io/${WS}/settings/keys`
+		expect(splitOwnLinks(keys, WS, true)).toEqual([
+			{ kind: 'settings', target: { path: 'keys', label: 'Keys', enterpriseOnly: true } },
+		])
+		expect(splitOwnLinks(keys, WS, false)).toEqual([{ kind: 'text', text: keys }])
+		expect(splitOwnLinks(keys, WS)).toEqual([{ kind: 'text', text: keys }])
+	})
+
 	it('leaves an unknown settings section, a deeper one and another workspace as words', () => {
 		for (const text of [
 			`https://maskin.io/${WS}/settings/nope`,
@@ -361,12 +370,26 @@ describe('settingsTargetOf', () => {
 			['mcp', 'MCP'],
 			['billing', 'Billing'],
 			['keychain', 'Keychain'],
-			['keys', 'Keys'],
 		]
 		for (const [path, label] of sections) {
 			expect(settingsTargetOf(at(`/${path}`), WS)).toEqual({ path, label })
 		}
 		expect(settingsTargetOf(at('/mcp?tab=x#top'), WS)?.label).toBe('MCP')
+	})
+
+	it('reads Keys only in an enterprise workspace, as the settings menu shows it', () => {
+		expect(settingsTargetOf(at('/keys'), WS, true)).toEqual({
+			path: 'keys',
+			label: 'Keys',
+			enterpriseOnly: true,
+		})
+		expect(settingsTargetOf(at('/keys'), WS, false)).toBeNull()
+		expect(settingsTargetOf(at('/keys'), WS)).toBeNull()
+		// Every other section is the same either way.
+		expect(settingsTargetOf(at('/billing'), WS, true)).toEqual({
+			path: 'billing',
+			label: 'Billing',
+		})
 	})
 
 	it('leaves an unknown section, a deeper path and another page as plain links', () => {

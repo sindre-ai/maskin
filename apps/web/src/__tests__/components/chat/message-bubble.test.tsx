@@ -8,8 +8,15 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const workspaceState = vi.hoisted(() => ({ enterprise: false }))
+
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspace: { settings: { statuses: { bet: ['active', 'done'] } } } }),
+	useWorkspace: () => ({
+		workspace: {
+			enterprise: workspaceState.enterprise,
+			settings: { statuses: { bet: ['active', 'done'] } },
+		},
+	}),
 }))
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
@@ -186,6 +193,31 @@ describe('MessageBubble', () => {
 		expect(chip).toHaveAttribute('href', '/ws-1/settings/billing')
 		expect(chip).toHaveAttribute('target', '_blank')
 		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const address = 'https://maskin.io/ws-1/settings/keys'
+		const own = buildMessage({
+			actorId: 'me',
+			actorName: 'Me',
+			actorType: 'human',
+			content: `keys live here ${address}`,
+		})
+		workspaceState.enterprise = true
+		try {
+			const { unmount } = renderBubble(own)
+			expect(screen.getByRole('link', { name: 'Settings: Keys' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/keys',
+			)
+			unmount()
+			workspaceState.enterprise = false
+			renderBubble(own)
+			expect(screen.queryByRole('link', { name: 'Settings: Keys' })).not.toBeInTheDocument()
+			expect(screen.getByText(address, { exact: false })).toBeInTheDocument()
+		} finally {
+			workspaceState.enterprise = false
+		}
 	})
 
 	it('cuts the title in a chip at 30 characters', () => {

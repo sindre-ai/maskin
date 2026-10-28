@@ -28,6 +28,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -112,6 +113,7 @@ export function MessageBubble({
 	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
+	const enterprise = useWorkspace().workspace.enterprise
 	const isOwn = message.actorId === actor?.id
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
@@ -161,8 +163,8 @@ export function MessageBubble({
 					.join('\n')
 			: message.content
 	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId) : []),
-		[isOwn, shownContent, workspaceId],
+		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
+		[isOwn, shownContent, workspaceId, enterprise],
 	)
 
 	if (message.kind === 'system') {
@@ -399,6 +401,7 @@ export function MessageBubble({
 							renderVisuals
 							linkedCards={{
 								workspaceId,
+								enterprise,
 								conversationId: message.conversationId,
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
