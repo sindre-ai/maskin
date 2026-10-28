@@ -26,6 +26,8 @@ public final class ConversationsStore {
 	public private(set) var conversations: [ConversationSummary] = []
 	/// Archived conversations, for the Archived row at the bottom of Team.
 	public private(set) var archivedConversations: [ConversationSummary] = []
+	/// More archived pages exist on the server than are loaded in `archivedConversations`.
+	public private(set) var archivedHasMore = false
 	/// Flow rooms for the FLOWS section; empty with no `FlowRoomsSource`.
 	public private(set) var flowRooms: [TeamFlowRoom] = []
 	public private(set) var phase: Phase = .idle
@@ -88,6 +90,7 @@ public final class ConversationsStore {
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
+	@ObservationIgnored private var loadingArchived = false
 	@ObservationIgnored private var generation = 0
 	/// Rows deleted here while the API has no delete: hidden from every later page.
 	@ObservationIgnored private var locallyDeleted: Set<String> = []
@@ -342,8 +345,30 @@ public final class ConversationsStore {
 		guard scope == .active else { return }
 		if let page = try? await api.list(archived: true, limit: pageSize, offset: 0) {
 			archivedConversations = page.conversations.filter { !locallyDeleted.contains($0.id) }
+			archivedHasMore = page.hasMore
 		}
 	}
+
+	/// Pages in the rest of the archived list so a search covers all of it, not just the first
+	/// page. Stops at the end, at `archivedPageCap` pages, or when a page adds nothing new.
+	public func loadMoreArchived() async {
+		guard scope == .active, archivedHasMore, !loadingArchived else { return }
+		loadingArchived = true
+		defer { loadingArchived = false }
+		for _ in 0..<Self.archivedPageCap {
+			guard archivedHasMore,
+				let page = try? await api.list(archived: true, limit: pageSize, offset: archivedConversations.count)
+			else { return }
+			let known = Set(archivedConversations.map(\.id))
+			let fresh = page.conversations.filter { !known.contains($0.id) && !locallyDeleted.contains($0.id) }
+			archivedConversations += fresh
+			archivedHasMore = page.hasMore
+			if fresh.isEmpty { return }
+		}
+	}
+
+	/// How many extra archived pages one search will fetch (30 each).
+	static let archivedPageCap = 20
 
 	public func refreshFlowRooms() async {
 		guard let flowSource else { return }

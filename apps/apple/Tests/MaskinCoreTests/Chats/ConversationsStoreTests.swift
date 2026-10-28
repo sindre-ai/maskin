@@ -380,7 +380,7 @@ private actor TeamFakeAPI: ConversationsAPI, ConversationDeleting {
 
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		let rows = archived ? self.archived : active
-		return ConversationPage(conversations: Array(rows.dropFirst(offset).prefix(limit)), hasMore: false)
+		return ConversationPage(conversations: Array(rows.dropFirst(offset).prefix(limit)), hasMore: rows.count > offset + limit)
 	}
 
 	func create(title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String) async throws -> ConversationSummary {
@@ -445,6 +445,21 @@ struct ConversationsStoreTeamTests {
 		#expect(store.conversations.map(\.id) == ["z", "b"])
 		#expect(store.archivedConversations.map(\.id) == ["a"])
 		#expect(await api.stateCalls == ["a pinned=- archived=true read=- unread=false", "z pinned=- archived=false read=- unread=false"])
+	}
+
+	@Test("loadMoreArchived pages in the rest of the archive so a search covers all of it")
+	func archivedPaging() async {
+		let archived = (1...70).map { chatConvo("z\($0)") }
+		let api = TeamFakeAPI(active: [chatConvo("a")], archived: archived)
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		#expect(store.archivedConversations.count == 30)
+		#expect(store.archivedHasMore)
+		await store.loadMoreArchived()
+		#expect(store.archivedConversations.map(\.id) == archived.map(\.id))
+		#expect(!store.archivedHasMore)
+		await store.loadMoreArchived()
+		#expect(store.archivedConversations.count == 70, "nothing left to fetch")
 	}
 
 	@Test("a refused archive puts both lists back the way they were")
