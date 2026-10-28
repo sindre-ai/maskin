@@ -824,6 +824,18 @@
 		}
 	}
 
+	/* The hover preview of a chat chip: it fades in and rises 2px over 180ms.
+	   The global reduced-motion rule above zeros it. */
+	.chip-preview-rise {
+		animation: chip-preview-rise var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-preview-rise {
+		from {
+			opacity: 0;
+			transform: translateY(2px);
+		}
+	}
+
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
 	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
 	   The compound selector (.agent-output p/li) has higher specificity than the

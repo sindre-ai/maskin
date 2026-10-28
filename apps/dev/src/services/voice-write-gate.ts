@@ -413,6 +413,8 @@ export type WriteReview =
 			kind: 'hold'
 			id: string
 			risky: boolean
+			/** True when the hold is a decision on a card, held only because a filler sound must not decide. */
+			decision: boolean
 			preview: HoldPreview | null
 			/** True when the person had been asked about other text, so their yes was thrown away. */
 			changed: boolean
@@ -437,8 +439,14 @@ export function createWriteGate(deps: {
 	previewFor?: (tool: string, args: unknown) => Promise<HoldPreview>
 	/** Told once for every hold that ends without running: turned down, timed out or replaced. */
 	onHoldEnded?: (end: HoldEnd) => void
+	/**
+	 * True when this call would record the person's decision on a card (a comment or status change on
+	 * a decision card). Such a call is held like a risky one, so it only runs after the person has
+	 * said a clear yes to a read-back: "mm" or "go on" is never a decision.
+	 */
+	isDecisionWrite?: (tool: string, args: unknown) => boolean
 }): WriteGate {
-	const { voiceSessionId, isReadOnlyTool, previewFor, onHoldEnded } = deps
+	const { voiceSessionId, isReadOnlyTool, previewFor, onHoldEnded, isDecisionWrite } = deps
 	let pending: PendingAction | null = null
 	// Ids of holds the person turned down, so a model that repeats one is told no, not asked to ask again.
 	const declinedIds = new Set<string>()
@@ -547,7 +555,14 @@ export function createWriteGate(deps: {
 			preview?.summary ?? tool.replace(/_/g, ' '),
 			yesCarried,
 		)
-		return { kind: 'hold', id: action.id, risky: isRiskyTool(tool), preview, changed }
+		return {
+			kind: 'hold',
+			id: action.id,
+			risky: isRiskyTool(tool),
+			decision: isDecisionWrite?.(tool, args) ?? false,
+			preview,
+			changed,
+		}
 	}
 
 	/** Resolves when the person has answered the hold, it was closed, or the wait ran out. */
@@ -595,7 +610,8 @@ export function createWriteGate(deps: {
 		},
 
 		async review(tool, args, confirmationId) {
-			if (isReadOnlyTool(tool) || !isRiskyTool(tool)) return { kind: 'run' }
+			if (isReadOnlyTool(tool)) return { kind: 'run' }
+			if (!isRiskyTool(tool) && !isDecisionWrite?.(tool, args)) return { kind: 'run' }
 			if (confirmationId !== null && declinedIds.has(confirmationId)) {
 				return { kind: 'refuse', reason: 'declined' }
 			}

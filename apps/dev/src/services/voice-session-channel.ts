@@ -34,6 +34,7 @@ import {
 } from './voice-receipt'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
+import { recordVoiceToolCallLog } from './voice-tool-call-log'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -169,6 +170,27 @@ function cap(text: string): string {
 		: text
 }
 
+/** Tools that write something the person decided: a comment or a change on a card. */
+const DECISION_WRITE_TOOLS: ReadonlySet<string> = new Set(['create_comment', 'update_objects'])
+
+/**
+ * True when the call would record an answer on a decision card the call started with. Such a write
+ * is held until the person has said a clear yes to a read-back (voice-write-gate.ts), so a filler
+ * sound can never be recorded as a go or a stop. A comment that itself carries a decision is the
+ * agent asking, not answering, so it is not counted.
+ */
+export function isDecisionCardWrite(
+	state: Pick<VoiceCallState, 'startCards'>,
+	tool: string,
+	args: unknown,
+): boolean {
+	if (!DECISION_WRITE_TOOLS.has(tool)) return false
+	if (tool === 'create_comment' && (args as { decision?: unknown } | null)?.decision != null)
+		return false
+	const card = matchStartCard(state, targetIdsOf(args))
+	return card?.source === 'decision'
+}
+
 function heldMessage(
 	tool: string,
 	review: Exclude<WriteReview, { kind: 'run' }>,
@@ -178,6 +200,12 @@ function heldMessage(
 		return review.reason === 'declined'
 			? `The person said no, so ${tool} was not run. Do not call it again unless they ask for it.`
 			: `${tool} was not run: no yes from the person was heard after you asked. Ask them again, wait for their answer, then repeat the same call.`
+	}
+	if (review.decision) {
+		const preview = review.preview
+			? `\n\n${formatHoldPreviewForModel(review.preview)}\n\n`
+			: '\n\nNo preview could be made for this call.\n\n'
+		return `Not done yet. This would record the person's decision on a card, and a decision is only recorded after they have clearly answered a specific question. Nothing has been written. Mm, mhm, okay, yeah or go on said while listening is not an answer. Do not call it again until you have: (1) asked the person the actual question (for example approve or reject, go or stop), and heard a clear answer; (2) read the decision back in one short sentence ("So that's a go on the Unipile bet, right?") and heard a clear yes after it. If they said no or something else, do not record it. Then call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}".${review.changed ? ' The earlier yes does not count for the changed text.' : ''} A yes only counts if the person says it out loud after your read-back.${preview}`
 	}
 	const target = review.risky
 		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
@@ -195,12 +223,14 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const { db, session, agentName, invokeTool, send } = deps
 	const now = deps.now ?? Date.now
 	const callState: VoiceCallState = voiceCallState(session.id)
+	const toolCallLogWrites = new Set<Promise<void>>()
 	const writeGate = createWriteGate({
 		voiceSessionId: session.id,
 		isReadOnlyTool: deps.isReadOnlyTool,
 		previewFor: (tool, args) =>
 			buildHoldPreview({ db, workspaceId: session.workspaceId, tool, args }),
 		onHoldEnded: (end) => noteHoldEnded(end),
+		isDecisionWrite: (tool, args) => isDecisionCardWrite(callState, tool, args),
 	})
 	callState.pendingHold = () => writeGate.pendingHold()
 	let knownConversationId = session.conversationId
@@ -306,7 +336,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		detail: { resultText: string | null; reason?: string; send?: ReceiptSendInfo },
 	) {
 		const readOnly = deps.isReadOnlyTool(toolName)
-		if (readOnly && (toolName !== 'get_objects' || outcome !== 'ran')) return
+		// Reads leave no line, except an opened task; a failed read always does.
+		if (readOnly && outcome !== 'failed' && (toolName !== 'get_objects' || outcome !== 'ran'))
+			return
 		let drafts: ReceiptDraft[]
 		try {
 			drafts = await describeToolCall({
@@ -316,6 +348,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				args,
 				resultText: detail.resultText,
 				state: callState,
+				outcome,
 			})
 		} catch (err) {
 			logger.warn('Voice receipt could not describe a tool call', {
@@ -363,6 +396,11 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		let receiptReason: string | undefined
 		let receiptSend: ReceiptSendInfo | undefined
 		let receiptState: 'ran' | 'failed' | 'skip' = 'skip'
+		// What the tool call log keeps: the arguments as the model sent them, the length of what the
+		// tool returned before the cap, and the error text.
+		let loggedArgs: unknown = null
+		let rawOutputChars: number | null = null
+		let logError: string | null = null
 		try {
 			let rawArgs: unknown
 			try {
@@ -371,6 +409,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			} catch {
 				rawArgs = null
 			}
+			loggedArgs = rawArgs
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
@@ -402,6 +441,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				} catch (err) {
 					if (!(err instanceof VoiceShowInChatError)) throw err
 					errorCode = 'voice_tool_failed'
+					logError = err.message
 					output = JSON.stringify({
 						error: err.message,
 						error_code: errorCode,
@@ -409,6 +449,8 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 						...(err.detail.unresolvedIds ? { unresolved_ids: err.detail.unresolvedIds } : {}),
 						...(err.detail.say ? { say: err.detail.say } : {}),
 					})
+					receiptState = 'failed'
+					receiptReason = err.message
 				}
 			} else {
 				const review = await writeGate.review(
@@ -419,6 +461,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				if (review.kind !== 'run') {
 					errorCode =
 						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					logError = `${msg.name} held: ${errorCode}`
 					const inChat =
 						review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
 					output = JSON.stringify({
@@ -431,6 +474,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 						workspaceId: session.workspaceId,
 					})
 					const { text, isError } = toolResultText(result)
+					rawOutputChars = text.length
 					if (review.confirmed) {
 						receiptSend = {
 							yesCount: review.confirmed.yesCount,
@@ -439,6 +483,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					}
 					if (isError) {
 						errorCode = 'voice_tool_failed'
+						logError = text
 						output = JSON.stringify({ error: cap(text), error_code: errorCode })
 						receiptState = 'failed'
 						receiptReason = text
@@ -452,6 +497,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		} catch (err) {
 			errorCode = 'voice_tool_failed'
+			logError = err instanceof Error ? err.message : String(err)
 			if (receiptArgs && msg.name !== VOICE_SHOW_IN_CHAT_TOOL) {
 				receiptState = 'failed'
 				receiptReason = err instanceof Error ? err.message : String(err)
@@ -508,6 +554,26 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				tool_name: msg.name,
 			})
 		}
+		// Fire and forget: the call is over and the model has its answer. recordVoiceToolCallLog
+		// never throws; idle() waits for it so tests can read the row back.
+		const logged = (async () =>
+			recordVoiceToolCallLog(db, {
+				voiceSessionId: session.id,
+				workspaceId: session.workspaceId,
+				callId: msg.call_id,
+				startedAt: new Date(startedAt),
+				toolName: msg.name,
+				args: loggedArgs ?? msg.arguments,
+				success: ok,
+				errorCode,
+				errorMessage: logError,
+				outputChars: rawOutputChars ?? output.length,
+				outputTruncated: rawOutputChars !== null && rawOutputChars > VOICE_MAX_TOOL_OUTPUT_CHARS,
+				latencyMs,
+				output,
+			}))().catch(() => {})
+		toolCallLogWrites.add(logged)
+		void logged.finally(() => toolCallLogWrites.delete(logged))
 		await recordCounter(session.id, () => recordVoiceToolCall(db, session.id))
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
@@ -611,6 +677,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		},
 
-		idle: () => transcriptQueue,
+		idle: async () => {
+			await transcriptQueue
+			await Promise.all([...toolCallLogWrites])
+		},
 	}
 }

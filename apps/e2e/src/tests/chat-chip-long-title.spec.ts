@@ -147,7 +147,7 @@ test.describe('Chat — a chip is a plate of text that wraps with the sentence',
 					}
 
 					// The status dot: 0.4em wide, in the status colour, hidden from assistive tech.
-					expect(m.dotCount).toBe(2)
+					expect(m.dotCount).toBe(1)
 					expect(m.dotHidden).toBe('true')
 					expect(m.dotBackground).toBe(m.dotColor)
 					expect(m.dotBackground).not.toBe('rgba(0, 0, 0, 0)')

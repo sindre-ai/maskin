@@ -9,8 +9,9 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, asc, desc, eq, gt, inArray, ne } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { runCapabilityDigest } from '../../services/capability-digest'
 import { CapabilityScanner } from '../../services/capability-scanner'
 import { buildIntegration, insertActor, insertConversation, insertWorkspace } from '../factories'
@@ -30,6 +31,7 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 
 const BUILTIN = 'maskin:builtin'
 const DAY_MS = 24 * 60 * 60 * 1000
+const FLAG = 'agent-proactive-1-1'
 
 describe('capability digest (integration)', () => {
 	let workspaceId: string
@@ -42,6 +44,7 @@ describe('capability digest (integration)', () => {
 	let slackId: string
 	let answers: Map<string, ProbeResult>
 	let probe: ProbeFn
+	let previousWorkspaceFeatures: string | undefined
 
 	const slackKey = () => `integration:slack:${slackId}`
 
@@ -184,13 +187,21 @@ describe('capability digest (integration)', () => {
 		})
 	}
 
+	/** The notes are behind agent-proactive-1-1, so every test but the flag ones turns it on here. */
+	function setWorkspaceFlags(entries: string[]) {
+		process.env.FF_WORKSPACE_FEATURES = entries.join(',')
+		_resetFeatureFlagConfig()
+	}
+
 	beforeEach(async () => {
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
+		previousWorkspaceFeatures = process.env.FF_WORKSPACE_FEATURES
 
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
+		setWorkspaceFlags([`${workspaceId}:${FLAG}`])
 		cosId = (await insertActor(db, { type: 'agent', name: 'Chief of Staff' })).id
 		salesRepId = (await insertActor(db, { type: 'agent', name: 'Sales Rep' })).id
 		researcherId = (await insertActor(db, { type: 'agent', name: 'Researcher' })).id
@@ -221,6 +232,73 @@ describe('capability digest (integration)', () => {
 			const answer = answers.get(source.key)
 			if (!answer) throw new Error(`no stub for ${source.key}`)
 			return answer
+		})
+	})
+
+	afterEach(() => {
+		if (previousWorkspaceFeatures === undefined) {
+			Reflect.deleteProperty(process.env, 'FF_WORKSPACE_FEATURES')
+		} else {
+			process.env.FF_WORKSPACE_FEATURES = previousWorkspaceFeatures
+		}
+		_resetFeatureFlagConfig()
+	})
+
+	describe('agent-proactive-1-1 flag', () => {
+		async function newToolFound() {
+			await scanner().tick() // baseline
+			answers.set(
+				BUILTIN,
+				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
+			)
+			await scanner().tick()
+		}
+
+		it('with no entry for the flag, nothing is sent; the finding waits and goes out once it is on', async () => {
+			setWorkspaceFlags([])
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await eventsFor('capability_changed')).toHaveLength(1)
+			expect(await notesIn(chatId)).toHaveLength(0)
+			expect(await eventsFor('capability_digest_sent')).toHaveLength(0)
+			expect(await eventsFor('capability_note_skipped')).toHaveLength(0)
+			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
+
+			setWorkspaceFlags([`${workspaceId}:${FLAG}`])
+			const summary = await runCapabilityDigest(db, workspaceId)
+			expect(summary.sent).toBe(1)
+			const notes = await notesIn(chatId)
+			expect(notes).toHaveLength(1)
+			expect(notes[0]?.content).toContain('send_chat')
+		})
+
+		it('an entry for another workspace does not turn it on here', async () => {
+			const other = await insertWorkspace(db, ownerId)
+			setWorkspaceFlags([`${other.id}:${FLAG}`])
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await notesIn(chatId)).toHaveLength(0)
+			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
+		})
+
+		it('an entry for this workspace sends here and leaves a neighbour without the entry off', async () => {
+			const neighbour = await insertWorkspace(db, ownerId)
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await notesIn(chatId)).toHaveLength(1)
+			expect(await runCapabilityDigest(db, neighbour.id)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
 		})
 	})
 

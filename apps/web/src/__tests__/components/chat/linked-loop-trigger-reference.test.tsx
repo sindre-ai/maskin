@@ -87,16 +87,28 @@ describe('LoopReferenceCard', () => {
 	const renderCard = (preview = false) =>
 		render(<LoopReferenceCard workspaceId={WS} loopId={LOOP_ID} preview={preview} />)
 
-	it('shows tag, state, name, description and the footer', () => {
+	it('shows tile, eyebrow, state, name, description, facts and the footer', () => {
 		useLoop.mockReturnValue(found(loopRow()))
 		renderCard()
-		expect(screen.getByText('Loop')).toBeInTheDocument()
+		const eyebrow = screen.getByText('Loop')
+		expect(eyebrow).toHaveClass('eyebrow')
+		expect(eyebrow.previousElementSibling?.className).toContain('bg-secondary')
 		expect(screen.getByText('Supervised')).toBeInTheDocument()
 		expect(screen.getByText('Nightly triage')).toBeInTheDocument()
 		expect(screen.getByText('Sorts new insights into bets.')).toBeInTheDocument()
+		expect(screen.getByText('Agents')).toBeInTheDocument()
+		expect(screen.getByText('Developer, Strategist')).toBeInTheDocument()
+		expect(screen.getByText('Activity')).toBeInTheDocument()
 		expect(screen.getByText('3 items in progress')).toBeInTheDocument()
 		expect(screen.getByText(/Updated/)).toBeInTheDocument()
 		expect(document.querySelector('[data-linked-card]')).not.toBeNull()
+	})
+
+	it('puts the first agent, not all of them, in the footer', () => {
+		useLoop.mockReturnValue(found(loopRow()))
+		renderCard()
+		expect(screen.getByText('Developer')).toBeInTheDocument()
+		expect(screen.queryByText('Strategist')).not.toBeInTheDocument()
 	})
 
 	it('falls back to completed items, and says nothing for a live loop without items', () => {
@@ -107,6 +119,7 @@ describe('LoopReferenceCard', () => {
 		useLoop.mockReturnValue(found(loopRow({ inProgressCount: 0, closedCount: 0 })))
 		renderCard()
 		expect(screen.queryByText(/items/)).not.toBeInTheDocument()
+		expect(screen.queryByText('Activity')).not.toBeInTheDocument()
 	})
 
 	it('uses the Loops page line for paused, draft and waiting loops', () => {
@@ -128,6 +141,7 @@ describe('LoopReferenceCard', () => {
 		renderCard()
 		expect(screen.queryByText('Sorts new insights into bets.')).not.toBeInTheDocument()
 		expect(screen.queryByText('Developer')).not.toBeInTheDocument()
+		expect(screen.queryByText('Agents')).not.toBeInTheDocument()
 	})
 
 	it('shows the skeleton while loops load', () => {
@@ -136,31 +150,38 @@ describe('LoopReferenceCard', () => {
 		expect(document.querySelector('[aria-busy="true"]')).not.toBeNull()
 	})
 
-	it('says Deleted loop when the loop is not in the list', () => {
+	it('says the loop was deleted, in the dashed look', () => {
 		useLoop.mockReturnValue(found(undefined))
 		renderCard()
-		expect(screen.getByText('Deleted loop')).toHaveClass('italic')
+		const card = screen.getByText('This loop was deleted')
+		expect(card).toHaveClass('italic', 'border-dashed')
+		expect(card.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
 	})
 
-	it('is a preview that is not a tab stop and not counted as a card', () => {
+	it('is a preview that is a plain box and not counted as a card', () => {
 		useLoop.mockReturnValue(found(loopRow()))
 		renderCard(true)
 		expect(document.querySelector('[data-linked-card]')).toBeNull()
-		expect(screen.getByRole('link', { hidden: true })).toHaveAttribute('tabindex', '-1')
+		expect(screen.queryByRole('link')).toBeNull()
 	})
 })
 
 describe('TriggerReferenceCard', () => {
 	const renderCard = () => render(<TriggerReferenceCard workspaceId={WS} triggerId={TRIGGER_ID} />)
 
-	it('shows tag, state, name, when it fires and the agent it wakes', () => {
+	it('shows tile, eyebrow, state, name, when it fires, the agent it wakes and the footer', () => {
 		useTrigger.mockReturnValue(found(triggerRow()))
 		renderCard()
-		expect(screen.getByText('Trigger')).toBeInTheDocument()
+		const eyebrow = screen.getByText('Trigger')
+		expect(eyebrow).toHaveClass('eyebrow')
+		expect(eyebrow.previousElementSibling?.className).toContain('bg-secondary')
 		expect(screen.getByText('On')).toHaveClass('text-success')
 		expect(screen.getByText('Morning sweep')).toBeInTheDocument()
 		expect(screen.getByText(/^Runs /)).toBeInTheDocument()
-		expect(screen.getByText('Developer')).toBeInTheDocument()
+		expect(screen.getByText('Wakes')).toBeInTheDocument()
+		// The agent is a fact row and the footer.
+		expect(screen.getAllByText('Developer')).toHaveLength(2)
+		expect(screen.queryByText(/Updated/)).not.toBeInTheDocument()
 	})
 
 	it('never shows the instruction text or the raw schedule', () => {
@@ -187,7 +208,7 @@ describe('TriggerReferenceCard', () => {
 	it('says Unknown when the agent is no longer in the actor list', () => {
 		useTrigger.mockReturnValue(found(triggerRow({ targetActorId: 'gone' })))
 		renderCard()
-		expect(screen.getByText('Unknown')).toBeInTheDocument()
+		expect(screen.getAllByText('Unknown')).toHaveLength(2)
 	})
 
 	it('shows the skeleton while triggers load, and Deleted trigger when it is missing', () => {
@@ -197,7 +218,7 @@ describe('TriggerReferenceCard', () => {
 		unmount()
 		useTrigger.mockReturnValue(found(undefined))
 		renderCard()
-		expect(screen.getByText('Deleted trigger')).toBeInTheDocument()
+		expect(screen.getByText('This trigger was deleted')).toBeInTheDocument()
 	})
 })
 
@@ -286,6 +307,9 @@ describe('loop and trigger chip preview', () => {
 		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
 		await user.hover(screen.getByRole('link', { name: /^Loop, supervised/ }))
 		expect(preview()?.textContent).toContain('Sorts new insights into bets.')
+		expect(screen.getByRole('dialog', { name: 'Object preview' })).toBe(preview())
+		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
 		await user.keyboard('{Escape}')
 		expect(preview()).toBeNull()
 	})
@@ -296,6 +320,10 @@ describe('loop and trigger chip preview', () => {
 		await user.tab()
 		expect(preview()?.textContent).toContain('Morning sweep')
 		expect(preview()?.textContent).not.toContain('SECRET INSTRUCTION TEXT')
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Copy link' })).toHaveFocus()
+		await user.tab()
+		expect(screen.getByRole('link', { name: 'Open' })).toHaveFocus()
 	})
 
 	it('has no preview for a deleted loop', () => {

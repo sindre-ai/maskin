@@ -79,6 +79,12 @@ export interface LinkedTarget {
 	id: string
 }
 
+/** A {@link LinkedTarget} read from an address, with the workspace that address names. */
+export interface HrefTarget extends LinkedTarget {
+	/** The segment before the kind, or null when the address has none. */
+	workspaceId: string | null
+}
+
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
@@ -150,22 +156,29 @@ export interface HastNode {
 }
 
 const UUID = UUID_SRC
-const OBJECT_HREF = new RegExp(`/objects/(${UUID})(?:[/?#]|$)`, 'i')
-const FILE_HREF = new RegExp(`/files/(${UUID})(?:[/?#]|$)`, 'i')
-const LOOP_HREF = new RegExp(`/loops/(${UUID})(?:[/?#]|$)`, 'i')
-const TRIGGER_HREF = new RegExp(`/triggers/(${UUID})(?:[/?#]|$)`, 'i')
+// Each kind's address: an optional workspace segment, then the kind and the id.
+const hrefOf = (segment: string) =>
+	new RegExp(`(?:/([^/?#]+))?/${segment}/(${UUID})(?:[/?#]|$)`, 'i')
+// In the order they are tried when an address holds more than one.
+const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
+	['object', hrefOf('objects')],
+	['file', hrefOf('files')],
+	['loop', hrefOf('loops')],
+	['trigger', hrefOf('triggers')],
+]
 
-/** The object, file, loop or trigger a link's address points at, if it points at one. */
-export function targetOfHref(href: unknown): LinkedTarget | null {
+/**
+ * The object, file, loop or trigger a link's address points at, if it points at one, with the
+ * workspace the address names (null when it names none). Later kinds are added to the list above.
+ */
+export function targetOfHref(href: unknown): HrefTarget | null {
 	if (typeof href !== 'string') return null
-	const object = OBJECT_HREF.exec(href)
-	if (object) return { kind: 'object', id: object[1].toLowerCase() }
-	const file = FILE_HREF.exec(href)
-	if (file) return { kind: 'file', id: file[1].toLowerCase() }
-	const loop = LOOP_HREF.exec(href)
-	if (loop) return { kind: 'loop', id: loop[1].toLowerCase() }
-	const trigger = TRIGGER_HREF.exec(href)
-	if (trigger) return { kind: 'trigger', id: trigger[1].toLowerCase() }
+	for (const [kind, pattern] of HREF_KINDS) {
+		const match = pattern.exec(href)
+		if (match) {
+			return { kind, id: match[2].toLowerCase(), workspaceId: match[1]?.toLowerCase() ?? null }
+		}
+	}
 	return null
 }
 
@@ -551,4 +564,66 @@ export function cutLabel(name: string): string {
 	const head = name.slice(0, CHIP_MAX_LENGTH)
 	const space = head.lastIndexOf(' ')
 	return `${head.slice(0, space > CHIP_MIN_WORD_CUT ? space : CHIP_MAX_LENGTH).trimEnd()}…`
+}
+
+/** A labelled row on a card: a field the record really holds. */
+export interface CardFact {
+	label: string
+	value: string
+}
+
+/** The most fact rows a card shows. */
+export const MAX_CARD_FACTS = 3
+// Fields the card already shows elsewhere, so they are never a fact row.
+const FACT_SKIPPED = new Set(['title', 'status', 'text', 'driver'])
+
+function factText(value: unknown): string {
+	if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim()
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+	if (Array.isArray(value)) return value.map(factText).filter(Boolean).join(', ')
+	return ''
+}
+
+/** A field name or enum value as plain words with a capital: "moves_the_bar" is "Moves the bar". */
+export function plainWords(raw: string): string {
+	const words = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+	return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// A link or a git ref is not a fact to read at a glance, the card itself is the way in.
+const LINK_FIELD_NAME = /(^|[\s_-])(url|link|branch)$/i
+const LINK_VALUE = /^https?:\/\//i
+
+/**
+ * The fact rows of an object card: up to three fields of the type's field list that the record
+ * has filled in, in the list's order, leaving out title, status, text and driver. Label is the
+ * field's name in plain words and value its text on one line (an enum value in plain words too).
+ * A link field, by its name or by a value that is a web address, is left out. An empty field is
+ * left out, so a record with none filled gets no rows.
+ */
+export function pickFacts(
+	fields: ReadonlyArray<{ name: string; type?: string }> | null | undefined,
+	metadata: Record<string, unknown> | null | undefined,
+): CardFact[] {
+	const facts: CardFact[] = []
+	for (const field of fields ?? []) {
+		if (facts.length >= MAX_CARD_FACTS) break
+		if (FACT_SKIPPED.has(field.name.toLowerCase()) || LINK_FIELD_NAME.test(field.name)) continue
+		const text = factText(metadata?.[field.name])
+		if (!text || LINK_VALUE.test(text)) continue
+		facts.push({
+			label: plainWords(field.name),
+			value: field.type === 'enum' ? plainWords(text) : text,
+		})
+	}
+	return facts
+}
+
+/**
+ * The words for something that cannot be drawn, on a card and on a chip. `kind` is the noun
+ * ("object"). The lookup cannot tell a deleted thing from one you may not see, so it is always
+ * "deleted".
+ */
+export function unavailableCopy(kind: string): { card: string; chip: string } {
+	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
 }

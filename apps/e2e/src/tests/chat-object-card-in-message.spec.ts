@@ -64,10 +64,10 @@ test.describe('Chat — a link to an object is a card or a chip with type, statu
 			await expect(cards.filter({ hasText: 'How cards work' })).toHaveCount(1)
 			await expect(cards).toHaveCount(3)
 
-			// What the card shows: type, status, priority, text and owner, from the object itself.
+			// What the card shows: type, status, text and owner, from the object itself. Priority is a
+			// fact row only when the type's field list in the workspace schema defines it.
 			const betCard = cards.filter({ hasText: 'Chat preview cards' })
 			await expect(betCard).toContainText('Bet')
-			await expect(betCard).toContainText('P2')
 			await expect(betCard).toContainText('explains what this bet is about')
 			await expect(betCard).toContainText('Card QA Agent')
 			await expect(cards.filter({ hasText: 'How cards work' })).toContainText('Unassigned')
