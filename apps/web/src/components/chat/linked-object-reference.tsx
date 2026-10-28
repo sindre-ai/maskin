@@ -687,7 +687,9 @@ export function ObjectReferenceCard({
 	const title = object.title?.trim() || 'Untitled'
 	const snippet = plainSnippet(object.content)
 	const fieldDefs = (
-		workspace.settings as { field_definitions?: Record<string, { name: string; type?: string }[]> } | undefined
+		workspace.settings as
+			| { field_definitions?: Record<string, { name: string; type?: string }[]> }
+			| undefined
 	)?.field_definitions?.[object.type]
 	const facts = pickFacts(fieldDefs, object.metadata)
 	const TypeIcon = typeIconOf(object.type)
