@@ -47076,6 +47076,132 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request`.
                         public var integration_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request`.
+                        public struct mcp_server_requestPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/name`.
+                            public var name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/hint`.
+                            public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/type`.
+                            @frozen public enum _typePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case stdio = "stdio"
+                                case http = "http"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/type`.
+                            public var _type: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload._typePayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/command`.
+                            public var command: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/args`.
+                            public var args: [Swift.String]?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/url`.
+                            public var url: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/env`.
+                            public struct envPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.String]
+                                /// Creates a new `envPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.String] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/env`.
+                            public var env: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload.envPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/headers`.
+                            public struct headersPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.String]
+                                /// Creates a new `headersPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.String] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/headers`.
+                            public var headers: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload.headersPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/secret_env`.
+                            public var secret_env: [Swift.String]?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request/secret_headers`.
+                            public var secret_headers: [Swift.String]?
+                            /// Creates a new `mcp_server_requestPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - reply_to_session:
+                            ///   - name:
+                            ///   - hint:
+                            ///   - _type:
+                            ///   - command:
+                            ///   - args:
+                            ///   - url:
+                            ///   - env:
+                            ///   - headers:
+                            ///   - secret_env:
+                            ///   - secret_headers:
+                            public init(
+                                session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
+                                name: Swift.String,
+                                hint: Swift.String? = nil,
+                                _type: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload._typePayload? = nil,
+                                command: Swift.String? = nil,
+                                args: [Swift.String]? = nil,
+                                url: Swift.String? = nil,
+                                env: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload.envPayload? = nil,
+                                headers: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload.headersPayload? = nil,
+                                secret_env: [Swift.String]? = nil,
+                                secret_headers: [Swift.String]? = nil
+                            ) {
+                                self.session_id = session_id
+                                self.reply_to_session = reply_to_session
+                                self.name = name
+                                self.hint = hint
+                                self._type = _type
+                                self.command = command
+                                self.args = args
+                                self.url = url
+                                self.env = env
+                                self.headers = headers
+                                self.secret_env = secret_env
+                                self.secret_headers = secret_headers
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case reply_to_session
+                                case name
+                                case hint
+                                case _type = "type"
+                                case command
+                                case args
+                                case url
+                                case env
+                                case headers
+                                case secret_env
+                                case secret_headers
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/mcp_server_request`.
+                        public var mcp_server_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request`.
                         public struct computer_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request/session_id`.
@@ -47293,6 +47419,7 @@ public enum Operations {
                         ///   - keychain_request:
                         ///   - keychain_access_request:
                         ///   - integration_access_request:
+                        ///   - mcp_server_request:
                         ///   - computer_request:
                         ///   - card_answer:
                         ///   - helper_return:
@@ -47318,6 +47445,7 @@ public enum Operations {
                             keychain_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_access_requestPayload? = nil,
                             integration_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload? = nil,
+                            mcp_server_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
@@ -47343,6 +47471,7 @@ public enum Operations {
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
                             self.integration_access_request = integration_access_request
+                            self.mcp_server_request = mcp_server_request
                             self.computer_request = computer_request
                             self.card_answer = card_answer
                             self.helper_return = helper_return
@@ -47369,6 +47498,7 @@ public enum Operations {
                             case keychain_request
                             case keychain_access_request
                             case integration_access_request
+                            case mcp_server_request
                             case computer_request
                             case card_answer
                             case helper_return
@@ -51880,6 +52010,132 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request`.
                         public var integration_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request`.
+                        public struct mcp_server_requestPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/session_id`.
+                            public var session_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/reply_to_session`.
+                            public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/name`.
+                            public var name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/hint`.
+                            public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/type`.
+                            @frozen public enum _typePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case stdio = "stdio"
+                                case http = "http"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/type`.
+                            public var _type: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload._typePayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/command`.
+                            public var command: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/args`.
+                            public var args: [Swift.String]?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/url`.
+                            public var url: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/env`.
+                            public struct envPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.String]
+                                /// Creates a new `envPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.String] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/env`.
+                            public var env: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload.envPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/headers`.
+                            public struct headersPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.String]
+                                /// Creates a new `headersPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.String] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/headers`.
+                            public var headers: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload.headersPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/secret_env`.
+                            public var secret_env: [Swift.String]?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request/secret_headers`.
+                            public var secret_headers: [Swift.String]?
+                            /// Creates a new `mcp_server_requestPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - session_id:
+                            ///   - reply_to_session:
+                            ///   - name:
+                            ///   - hint:
+                            ///   - _type:
+                            ///   - command:
+                            ///   - args:
+                            ///   - url:
+                            ///   - env:
+                            ///   - headers:
+                            ///   - secret_env:
+                            ///   - secret_headers:
+                            public init(
+                                session_id: Swift.String,
+                                reply_to_session: Swift.Bool? = nil,
+                                name: Swift.String,
+                                hint: Swift.String? = nil,
+                                _type: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload._typePayload? = nil,
+                                command: Swift.String? = nil,
+                                args: [Swift.String]? = nil,
+                                url: Swift.String? = nil,
+                                env: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload.envPayload? = nil,
+                                headers: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload.headersPayload? = nil,
+                                secret_env: [Swift.String]? = nil,
+                                secret_headers: [Swift.String]? = nil
+                            ) {
+                                self.session_id = session_id
+                                self.reply_to_session = reply_to_session
+                                self.name = name
+                                self.hint = hint
+                                self._type = _type
+                                self.command = command
+                                self.args = args
+                                self.url = url
+                                self.env = env
+                                self.headers = headers
+                                self.secret_env = secret_env
+                                self.secret_headers = secret_headers
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case session_id
+                                case reply_to_session
+                                case name
+                                case hint
+                                case _type = "type"
+                                case command
+                                case args
+                                case url
+                                case env
+                                case headers
+                                case secret_env
+                                case secret_headers
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/mcp_server_request`.
+                        public var mcp_server_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request`.
                         public struct computer_requestPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request/session_id`.
@@ -52097,6 +52353,7 @@ public enum Operations {
                         ///   - keychain_request:
                         ///   - keychain_access_request:
                         ///   - integration_access_request:
+                        ///   - mcp_server_request:
                         ///   - computer_request:
                         ///   - card_answer:
                         ///   - helper_return:
@@ -52122,6 +52379,7 @@ public enum Operations {
                             keychain_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload? = nil,
                             keychain_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_access_requestPayload? = nil,
                             integration_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload? = nil,
+                            mcp_server_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
@@ -52147,6 +52405,7 @@ public enum Operations {
                             self.keychain_request = keychain_request
                             self.keychain_access_request = keychain_access_request
                             self.integration_access_request = integration_access_request
+                            self.mcp_server_request = mcp_server_request
                             self.computer_request = computer_request
                             self.card_answer = card_answer
                             self.helper_return = helper_return
@@ -52173,6 +52432,7 @@ public enum Operations {
                             case keychain_request
                             case keychain_access_request
                             case integration_access_request
+                            case mcp_server_request
                             case computer_request
                             case card_answer
                             case helper_return

@@ -291,6 +291,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'update_integration_access',
 	'request_keychain_access',
 	'request_integration_access',
+	'add_mcp_server',
 	'request_keychain_credential',
 	'create_actor',
 	'update_actor',

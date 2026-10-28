@@ -285,6 +285,7 @@ const BACKEND_OWNED_KEYS = [
 	'keychain_request',
 	'keychain_access_request',
 	'integration_access_request',
+	'mcp_server_request',
 	'computer_request',
 	'helper_return',
 	'delivery',

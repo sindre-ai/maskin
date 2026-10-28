@@ -27,6 +27,7 @@ import { IntegrationAccessRequestCard } from './integration-access-request-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
+import { McpServerRequestCard } from './mcp-server-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -434,6 +435,18 @@ export function MessageBubble({
 						messageId={message.id}
 						askingAgentId={message.actorId}
 						request={message.metadata.integration_access_request}
+					/>
+				) : null}
+				{/* An agent's add_mcp_server call: the server's details ready to Add, with an input for
+				    each secret. Adding it saves the server and gives it to the agent on the server. */}
+				{message.metadata?.mcp_server_request ? (
+					<McpServerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageId={message.id}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.mcp_server_request}
 					/>
 				) : null}
 				{/* An agent's show_computer call: a card that opens the agent's own computer so
