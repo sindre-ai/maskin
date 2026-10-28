@@ -327,11 +327,11 @@ describe('placePreview', () => {
 	// A chat pane beside the list at a 1024 screen: the pane starts at x=482.
 	const pane = { left: 482, right: 1024 }
 
-	it('opens from the chip''s left edge when the card fits in the pane', () => {
+	it("opens from the chip's left edge when the card fits in the pane", () => {
 		expect(placePreview({ left: 500, right: 560 }, pane, 1024)).toEqual({ side: 'start' })
 	})
 
-	it('opens from the chip''s right edge when only that fits in the pane', () => {
+	it("opens from the chip's right edge when only that fits in the pane", () => {
 		expect(placePreview({ left: 900, right: 980 }, pane, 1024)).toEqual({ side: 'end' })
 	})
 
