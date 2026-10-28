@@ -10,11 +10,15 @@ public struct MarkdownLinkInfo: Equatable, Sendable {
 	public var kindLabel: String
 	/// The thing's own name once it has been looked up; nil while unresolved.
 	public var title: String?
+	/// The link leaves the app (a GitHub pull request): drawn as a chip with a small arrow, and a tap
+	/// asks "Open this link?" first.
+	public var leavesApp: Bool
 
-	public init(symbol: String, kindLabel: String, title: String? = nil) {
+	public init(symbol: String, kindLabel: String, title: String? = nil, leavesApp: Bool = false) {
 		self.symbol = symbol
 		self.kindLabel = kindLabel
 		self.title = title
+		self.leavesApp = leavesApp
 	}
 }
 
@@ -76,7 +80,7 @@ public enum MarkdownStandaloneLink {
 /// An internal link shown as a thin card: a tinted symbol, the thing's name, and what kind of thing
 /// it is. Objects and files have the fuller card face instead (see `markdownStandaloneLink`); this
 /// stays for chats, agents and the other links. Tapping opens it in the app through the same
-/// handler as any other internal link.
+/// handler as any other internal link. A link that leaves the app is a chip instead.
 public struct MarkdownLinkCard: View {
 	private let url: URL
 	private let title: String?
@@ -92,38 +96,76 @@ public struct MarkdownLinkCard: View {
 	public var body: some View {
 		if let info = linkInfo?(url) {
 			let name = title ?? info.title ?? info.kindLabel
-			Button {
-				if internalHandler?(url) != true { openURL(url) }
-			} label: {
-				HStack(spacing: MaskinSpace.s6) {
-					Image(systemName: info.symbol)
-						.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
-						.foregroundStyle(MaskinColor.ink)
-						.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
-						.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
-						.accessibilityHidden(true)
-					VStack(alignment: .leading, spacing: 0) {
-						Text(name).maskinText(.subhead).fontWeight(.semibold)
-							.foregroundStyle(MaskinColor.ink).lineLimit(2).multilineTextAlignment(.leading)
-						if name != info.kindLabel {
-							Text(info.kindLabel).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-						}
-					}
-					Spacer(minLength: 0)
-					Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-						.foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
-				}
-				.padding(.horizontal, MaskinSpace.s6)
-				.padding(.vertical, MaskinSpace.s5)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
-				.overlay(
-					RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
-						.strokeBorder(MaskinSurface.line, lineWidth: 1))
-				.contentShape(Rectangle())
+			if info.leavesApp {
+				outsideChip(info, name: name)
+			} else {
+				card(info, name: name)
 			}
-			.buttonStyle(.maskinPressed(.shrink))
-			.accessibilityLabel(name == info.kindLabel ? name : "\(name), \(info.kindLabel)")
-			.accessibilityHint("Opens in Maskin")
 		}
+	}
+
+	private func open() {
+		if internalHandler?(url) != true { openURL(url) }
+	}
+
+	/// A link that leaves the app: the kind's symbol, the name and a small arrow, in a capsule. The
+	/// tap goes to the outside-link path, which asks before it opens anything.
+	private func outsideChip(_ info: MarkdownLinkInfo, name: String) -> some View {
+		Button(action: open) {
+			HStack(spacing: MaskinSpace.s3) {
+				Image(systemName: info.symbol)
+					.maskinSymbol(MaskinFontSize.t14, weight: .semibold)
+					.accessibilityHidden(true)
+				Text(name).maskinText(.subhead).fontWeight(.semibold).lineLimit(1)
+				Image(systemName: "arrow.up.right")
+					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink4)
+					.accessibilityHidden(true)
+			}
+			.foregroundStyle(MaskinColor.ink)
+			.padding(.horizontal, MaskinSpace.s5)
+			.padding(.vertical, MaskinSpace.s3)
+			.background(MaskinSurface.fill, in: Capsule())
+			// The capsule is smaller than a finger; the tap area is not.
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.accessibilityLabel("\(info.kindLabel): \(name)")
+		.accessibilityHint("Opens outside Maskin")
+	}
+
+	private func card(_ info: MarkdownLinkInfo, name: String) -> some View {
+		Button(action: open) {
+			HStack(spacing: MaskinSpace.s6) {
+				Image(systemName: info.symbol)
+					.maskinSymbol(MaskinFontSize.t15, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+					.accessibilityHidden(true)
+				VStack(alignment: .leading, spacing: 0) {
+					Text(name).maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink).lineLimit(2).multilineTextAlignment(.leading)
+					if name != info.kindLabel {
+						Text(info.kindLabel).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					}
+				}
+				Spacer(minLength: 0)
+				Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+					.foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+			}
+			.padding(.horizontal, MaskinSpace.s6)
+			.padding(.vertical, MaskinSpace.s5)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+			.overlay(
+				RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+					.strokeBorder(MaskinSurface.line, lineWidth: 1))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(name == info.kindLabel ? name : "\(name), \(info.kindLabel)")
+		.accessibilityHint("Opens in Maskin")
 	}
 }
