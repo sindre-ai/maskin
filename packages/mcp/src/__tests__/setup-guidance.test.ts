@@ -260,12 +260,12 @@ describe('checkBet', () => {
 	describe('status_progression', () => {
 		it('flags the entry status as an FYI without telling the agent to ask or progress', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			const c = checks.find((c) => c.name === 'status_progression')
 			expect(c?.status).toBe('warn')
-			expect(c?.message).toContain('signal')
+			expect(c?.message).toContain('opportunity')
 			expect(c?.message).toContain('qualified')
 			expect(c?.message).not.toMatch(/ask the user/i)
 			expect(c?.fix).toBeUndefined()
@@ -274,14 +274,14 @@ describe('checkBet', () => {
 		it('does not fire once the object is past the entry status', () => {
 			const checks = checkBet(
 				{ id: 'b1', type: 'bet', status: 'active', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
 		})
 
 		it('does not fire when there is no status order to progress along', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
 				{ workspace: readyWorkspace, statusOrder: [] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()

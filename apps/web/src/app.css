@@ -144,8 +144,8 @@
 	--color-status-in_progress-text: var(--st-in_progress-text);
 	--color-status-active-bg: var(--st-active-bg);
 	--color-status-active-text: var(--st-active-text);
-	--color-status-signal-bg: var(--st-signal-bg);
-	--color-status-signal-text: var(--st-signal-text);
+	--color-status-opportunity-bg: var(--st-opportunity-bg);
+	--color-status-opportunity-text: var(--st-opportunity-text);
 	--color-status-proposed-bg: var(--st-proposed-bg);
 	--color-status-proposed-text: var(--st-proposed-text);
 	--color-status-clustered-bg: var(--st-clustered-bg);
@@ -377,8 +377,8 @@
 	--st-in_progress-text: #1d4ed8;
 	--st-active-bg: #dcfce7;
 	--st-active-text: #15803d;
-	--st-signal-bg: #ede9fe;
-	--st-signal-text: #6d28d9;
+	--st-opportunity-bg: #ede9fe;
+	--st-opportunity-text: #6d28d9;
 	--st-proposed-bg: #e0e7ff;
 	--st-proposed-text: #4338ca;
 	--st-clustered-bg: #ccfbf1;
@@ -525,8 +525,8 @@
 	--st-in_progress-text: #93c5fd;
 	--st-active-bg: #052e16;
 	--st-active-text: #86efac;
-	--st-signal-bg: #2e1065;
-	--st-signal-text: #c4b5fd;
+	--st-opportunity-bg: #2e1065;
+	--st-opportunity-text: #c4b5fd;
 	--st-proposed-bg: #1e1b4b;
 	--st-proposed-text: #a5b4fc;
 	--st-clustered-bg: #042f2e;
@@ -802,6 +802,25 @@
 	@keyframes actor-avatar-ring-spin {
 		to {
 			transform: rotate(360deg);
+		}
+	}
+
+	/* The phone sheet of a chat chip: it rises over --duration-slide, the backdrop fades in over 180ms.
+	   The global reduced-motion rule above zeros both. */
+	.chip-sheet-rise {
+		animation: chip-sheet-rise var(--duration-slide) var(--ease-emphasized);
+	}
+	.chip-sheet-fade {
+		animation: chip-sheet-fade var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-sheet-rise {
+		from {
+			transform: translateY(100%);
+		}
+	}
+	@keyframes chip-sheet-fade {
+		from {
+			opacity: 0;
 		}
 	}
 

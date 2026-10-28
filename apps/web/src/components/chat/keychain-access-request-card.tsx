@@ -1,4 +1,4 @@
-import { keychainEnvNames } from '@/components/chat/keychain-request-card'
+import { keychainUseHint } from '@/components/chat/keychain-request-card'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
@@ -27,7 +27,8 @@ interface KeychainAccessRequestCardProps {
  * The card an agent puts in chat via `request_keychain_access` to use a credential that
  * is already in the Keychain. It names the credential and holds no secret. Allow grants
  * the agent access on the server, stops its idle session and posts a short message, which
- * starts a fresh session with the credential in its environment. Not now only tells the
+ * starts a fresh session with the credential (an API key in its environment; a login to
+ * type with desktop_type, never to read). Not now only tells the
  * agent, so it does not wait.
  *
  * Whether it was allowed is read from the integration list, so a card scrolled back to
@@ -97,8 +98,7 @@ export function KeychainAccessRequestCard({
 				setAgentStillRunning(true)
 				return
 			}
-			const vars = keychainEnvNames(request.kind, request.credential_name)
-			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
+			const where = keychainUseHint(request.kind, request.credential_name)
 			if (helper) {
 				continueSession.mutate({
 					id: request.session_id,

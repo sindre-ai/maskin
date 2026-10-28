@@ -7886,6 +7886,12 @@
 											"voice_enabled": {
 												"type": "boolean"
 											},
+											"avatar_url": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -11964,6 +11970,439 @@
 				}
 			}
 		},
+		"/api/actors/{id}/avatar": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Actors"
+				],
+				"summary": "Upload an actor avatar (PNG or JPG, up to 2 MB)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"multipart/form-data": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"file": {
+										"type": "string",
+										"format": "binary"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Avatar stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"avatar_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"avatar_url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No file",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is neither the actor itself nor a workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"413": {
+						"description": "Over 2 MB",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"415": {
+						"description": "Not PNG/JPG",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "Get an actor's avatar image",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Image bytes (PNG or JPEG)"
+					},
+					"404": {
+						"description": "No avatar",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/actors/{actorId}/skills": {
 			"get": {
 				"tags": [
@@ -13587,7 +14026,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -14599,7 +15038,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -37833,6 +38272,10 @@
 												"type": "string",
 												"format": "uuid"
 											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
+											},
 											"final_output": {
 												"type": "object",
 												"properties": {
@@ -40778,6 +41221,10 @@
 											"voice_session_id": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
 											},
 											"final_output": {
 												"type": "object",
@@ -59789,6 +60236,968 @@
 					},
 					"404": {
 						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Start a direct-to-storage upload of a large file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 255
+									},
+									"description": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
+									},
+									"mime_type": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 255,
+										"pattern": "^[a-z0-9!#$&^_.+-]+\\/[a-z0-9!#$&^_.+-]+$"
+									},
+									"size_bytes": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 1073741824
+									}
+								},
+								"required": [
+									"name",
+									"mime_type",
+									"size_bytes"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Upload started; PUT each part to its URL, then complete the upload",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"upload_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"file_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"part_size": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										},
+										"parts": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"part_number": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"url": {
+														"type": "string",
+														"format": "uri"
+													}
+												},
+												"required": [
+													"part_number",
+													"url"
+												]
+											}
+										},
+										"expires_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"upload_id",
+										"file_id",
+										"part_size",
+										"parts",
+										"expires_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}/complete": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Finish a direct-to-storage upload and create the file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"parts": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"part_number": {
+													"type": "integer",
+													"minimum": 1,
+													"maximum": 10000
+												},
+												"etag": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200
+												}
+											},
+											"required": [
+												"part_number",
+												"etag"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 10000
+									}
+								},
+								"required": [
+									"parts"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "File created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"description": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
+										"mimeType": {
+											"type": "string"
+										},
+										"sizeBytes": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"storageKey": {
+											"type": "string"
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"content": {
+											"type": "string"
+										},
+										"encoding": {
+											"type": "string",
+											"enum": [
+												"base64",
+												"utf8"
+											]
+										},
+										"url": {
+											"type": "string",
+											"format": "uri"
+										},
+										"annotations": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"maxLength": 100
+													},
+													"pinNumber": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"selector": {
+														"type": "string",
+														"maxLength": 1000,
+														"default": ""
+													},
+													"bounds": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															},
+															"w": {
+																"type": "number"
+															},
+															"h": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y",
+															"w",
+															"h"
+														]
+													},
+													"comment": {
+														"type": "string",
+														"maxLength": 500
+													},
+													"position": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"bounds",
+													"comment"
+												]
+											},
+											"maxItems": 200,
+											"default": []
+										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
+										"warning": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"description",
+										"kind",
+										"mimeType",
+										"sizeBytes",
+										"storageKey",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"content",
+										"encoding",
+										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The uploaded parts do not match what was declared",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished, abandoned or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Storage is unavailable; the upload is intact and can be completed again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Abandon a direct-to-storage upload",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Upload abandoned; its stored parts are discarded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"aborted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"aborted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished or being finished",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Storage could not discard the parts; the upload stays open to be reclaimed",
 						"content": {
 							"application/json": {
 								"schema": {

@@ -92,6 +92,9 @@ export const config: ProviderConfig = {
 					maxLength: 998,
 					slot: 'subject',
 				},
+				// The message being answered, shown above the draft so it is read in context.
+				// Not sent and not part of the approval.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
 			],
 		},
 	],

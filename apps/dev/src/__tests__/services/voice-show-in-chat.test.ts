@@ -102,7 +102,7 @@ describe('showInChat', () => {
 			conversationId: 'conv-1',
 			workspaceId: WORKSPACE,
 			actorId: session.agentActorId,
-			metadata: { source: 'voice', voice_session_id: session.id },
+			metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 			sessionId: null,
 		})
 		expect(args.content).toBe(

@@ -169,7 +169,7 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 								type: 'bet',
 								title: d.title ?? undefined,
 								content: d.content ?? undefined,
-								status: 'signal',
+								status: 'opportunity',
 							}),
 						),
 				),

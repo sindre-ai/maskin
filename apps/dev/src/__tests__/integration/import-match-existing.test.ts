@@ -10,7 +10,7 @@ const SETTINGS = {
 	display_names: { insight: 'Insight', bet: 'Bet', task: 'Task' },
 	statuses: {
 		insight: ['new', 'processing'],
-		bet: ['signal', 'proposed'],
+		bet: ['opportunity', 'proposed'],
 		task: ['todo', 'in_progress', 'done'],
 	},
 	field_definitions: {},

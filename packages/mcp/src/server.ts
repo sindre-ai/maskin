@@ -1270,6 +1270,35 @@ function waitPollDelayMs(attempt: number): number {
 const MAX_POLL_FAILURES = 5
 
 /**
+ * What the caller reads when a handover did not start. A chat agent that only sees a
+ * bare API error tends to tell the person it handed the work over anyway.
+ */
+function sessionNotStartedResult(
+	config: McpConfig,
+	toolName: 'create_session' | 'create_sub_chat',
+	workspaceId: string | undefined,
+	err: unknown,
+) {
+	const reason = err instanceof Error ? err.message : String(err)
+	console.error(`${toolName}: could not start the session`, err)
+	return {
+		_meta: meta(toolName, config, workspaceId),
+		isError: true,
+		content: [
+			{
+				type: 'text' as const,
+				text: `Not started: ${reason}. Nothing was handed over. Tell the person in the same reply that the handover failed and why. Do not say the work was handed over or is in progress.`,
+			},
+		],
+	}
+}
+
+/** Added to a started session so the caller has something real to quote to the person. */
+function handoffNote(session: { id: string; status?: string }) {
+	return `Started: session ${session.id} is ${session.status ?? 'pending'}. When you tell the person you handed this over, quote this session id or its url, and say it is queued if it has not started running yet. Without one of them, do not say it was handed over.`
+}
+
+/**
  * The `wait: true` path of `create_session`: start the session, then wait for it to
  * reach a terminal state and return `{ session, logs }`.
  */
@@ -1292,15 +1321,17 @@ async function createSessionAndWait(
 	// returns the result inline, so it is only registered (below) if the wait runs
 	// out. False, not omitted, because an omitted value defaults on for a helper
 	// started from a chat, and the waiting caller would get the result twice.
-	const session = (await apiCall(
-		config,
-		'POST',
-		'/api/sessions',
-		{ ...createBody, notify_on_complete: false },
-		wsOpts,
-	)) as {
-		id: string
-		status: string
+	let session: { id: string; status: string }
+	try {
+		session = (await apiCall(
+			config,
+			'POST',
+			'/api/sessions',
+			{ ...createBody, notify_on_complete: false },
+			wsOpts,
+		)) as { id: string; status: string }
+	} catch (err) {
+		return sessionNotStartedResult(config, toolName, workspace_id, err)
 	}
 
 	return waitForSessionResult(config, {
@@ -7146,9 +7177,14 @@ export function createMcpServer(config: McpConfig) {
 				const { workspace_id, wait, ...rest } = args
 				const createBody = { ...rest, notify_on_complete: true }
 
-				const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-					workspaceId: workspace_id,
-				})) as SessionRow
+				let result: SessionRow
+				try {
+					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
+						workspaceId: workspace_id,
+					})) as SessionRow
+				} catch (err) {
+					return sessionNotStartedResult(config, toolName, workspace_id, err)
+				}
 				const wsId = workspace_id ?? config.defaultWorkspaceId
 				const enriched = await enrichSessionActorName(config, wsId, result)
 				const withUrl = wsId
@@ -7160,7 +7196,12 @@ export function createMcpServer(config: McpConfig) {
 					: enriched
 				return {
 					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ ...withUrl, handoff: handoffNote(enriched) }),
+						},
+					],
 				}
 			},
 		)
@@ -7877,7 +7918,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -7968,7 +8009,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -7992,7 +8033,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
 					},
 				],
 			}

@@ -1115,7 +1115,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding. Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -1176,7 +1176,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user. The response also carries `contentHash` — pass it as `if_match` to update_file so your write is refused if someone saved the file in between.',
+			'Get a single file with its content and a viewer URL. Files larger than 50 MB come back with `content` empty, `contentOmitted: true` and a short-lived `downloadUrl` to fetch the bytes from instead. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user. The response also carries `contentHash` — pass it as `if_match` to update_file so your write is refused if someone saved the file in between.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1451,7 +1451,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1468,7 +1468,7 @@ export const tools = {
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state.',
+			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2170,7 +2170,7 @@ export const tools = {
 	},
 	request_keychain_credential: {
 		description:
-			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with the credential in your environment: an API key is the env var `KEYCHAIN_BYO_APIKEY_<NAME>`, a login is `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `KEYCHAIN_BYO_LOGIN_<NAME>_PASSWORD`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with it: an API key is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). A login is never in your environment and you never see it: to log in on your computer, type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
@@ -2198,14 +2198,14 @@ export const tools = {
 	},
 	list_keychain_credentials: {
 		description:
-			'List the credentials in the workspace Keychain by name, with their kind (api_key or login) and whether you already have access to each. Never returns a value. Use it before asking for a credential: if one with the right name exists, ask to use it with `request_keychain_access` instead of asking the user to add it again with `request_keychain_credential`. A credential you have access to is already in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, or `KEYCHAIN_BYO_LOGIN_<NAME>_USERNAME` and `_PASSWORD`, where <NAME> is the name in capitals with other characters as underscores. Only works inside an agent session.',
+			'List the credentials in the workspace Keychain by name, with their kind (api_key or login) and whether you already have access to each. Never returns a value. Use it before asking for a credential: if one with the right name exists, ask to use it with `request_keychain_access` instead of asking the user to add it again with `request_keychain_credential`. An API key you have access to is already in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the name in capitals with other characters as underscores. A login you have access to is never in your environment: type it on your computer with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works inside an agent session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	request_keychain_access: {
 		description:
-			'Ask the user to let you use a credential that already exists in their Keychain, by showing an Allow / Not now card in the chat. Use it when `list_keychain_credentials` shows one you need and `has_access` is false. Use `request_keychain_credential` only when no such credential exists yet. You never see the value. The user chooses how long it lasts: for this chat only, or always. If they allow it you are restarted with it in your environment; if you are asked again in another chat, ask again with this tool. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user to let you use a credential that already exists in their Keychain, by showing an Allow / Not now card in the chat. Use it when `list_keychain_credentials` shows one you need and `has_access` is false. Use `request_keychain_credential` only when no such credential exists yet. You never see the value. The user chooses how long it lasts: for this chat only, or always. If they allow it you are restarted with it (an API key in your environment; a login to type with `desktop_type` as `{{keychain:<Name>.password}}`); if you are asked again in another chat, ask again with this tool. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			credential_name: z
@@ -2476,7 +2476,7 @@ export const tools = {
 	},
 	desktop_type: {
 		description:
-			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type secrets you would not show them.',
+			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type a secret yourself. To log in with a saved login from the Keychain, pass the reference as the whole text: `{{keychain:<Name>.username}}` or `{{keychain:<Name>.password}}` (the name exactly as `list_keychain_credentials` shows it, e.g. `{{keychain:Facebook.password}}`). Maskin types the real value for you and you never see it. Type the username, press Tab or click the password field, then type the password reference, then press Enter with desktop_key. The reference must be the entire text, with nothing before or after it. If you are not allowed to use that login, call `request_keychain_access` and end your turn. The login is not in your environment, so do not look for it there or type it any other way.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
