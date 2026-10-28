@@ -12,13 +12,15 @@ let qualifying = new Set<string>()
 const renderCard = (
 	target: { kind: string; id: string },
 	fallback: ReactNode,
-	context: { label?: string; inList?: boolean; after?: boolean },
+	context: { label?: string; inList?: boolean; after?: boolean; updated?: boolean },
 ) => {
 	if (qualifying.has(target.id)) {
 		return (
 			<>
 				{context.label && context.inList ? <p>{context.label}</p> : null}
-				<div data-testid="card">{`${target.kind}:${target.id}`}</div>
+				<div data-testid="card" data-updated={context.updated ? '' : undefined}>
+					{`${target.kind}:${target.id}`}
+				</div>
 			</>
 		)
 	}
@@ -32,8 +34,12 @@ const renderCard = (
 	}
 	return context.after ? null : <>{fallback}</>
 }
-const renderChip = (target: { kind: string; id: string }, fallback: ReactNode) =>
-	qualifying.has(target.id) ? (
+const renderChip = (
+	target: { kind: string; id: string },
+	fallback: ReactNode,
+	context: { cardFollows?: boolean },
+) =>
+	qualifying.has(target.id) && context.cardFollows !== false ? (
 		fallback
 	) : (
 		<span data-testid="chip" data-id={target.id}>
@@ -63,12 +69,19 @@ const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
 
-function renderMessage(content: string, withCards = true, skipIds?: ReadonlySet<string>) {
+function renderMessage(
+	content: string,
+	withCards = true,
+	skipIds?: ReadonlySet<string>,
+	updatedIds?: ReadonlySet<string>,
+) {
 	return render(
 		<MarkdownContent
 			content={content}
 			size="sm"
-			linkedCards={withCards ? { workspaceId: WS, renderCard, renderChip, skipIds } : undefined}
+			linkedCards={
+				withCards ? { workspaceId: WS, renderCard, renderChip, skipIds, updatedIds } : undefined
+			}
 		/>,
 		{ wrapper: TestWrapper },
 	)
@@ -223,6 +236,28 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'the email' })).toBeInTheDocument()
 		expect(screen.getByTestId('card')).toBeInTheDocument()
+	})
+
+	it('draws a draft linked in a sentence as a chip when no card follows it', () => {
+		const D = '9d3c9f10-1111-4222-8333-444455556666'
+		const E = '1e2d3c4b-5555-4666-8777-888899990000'
+		qualifying = new Set([A, B, D, E])
+		renderMessage([A, B, D, E].map((id) => `See [n](${objectUrl(id)}) here.`).join('\n\n'))
+		// Three drafts get their card under the sentence; the fourth has none and is a chip.
+		expect(screen.getAllByTestId('card')).toHaveLength(3)
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', E)
+	})
+
+	it('draws a draft an earlier message holds, and a draft linked twice, as a chip', () => {
+		renderMessage(`See [it](${objectUrl(A)}) now.`, true, new Set([A]))
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', A)
+	})
+
+	it('keeps the first link to a draft plain and makes the repeat a chip', () => {
+		renderMessage(`See [it](${objectUrl(B)}) now.\n\nAgain [it](${objectUrl(B)}) later.`)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+		expect(screen.getAllByTestId('chip')).toHaveLength(1)
 	})
 
 	it('keeps the order of a sentence, a link on its own line, and a sentence', () => {
@@ -404,6 +439,23 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.getAllByTestId('card')).toHaveLength(1)
 		expect(screen.getByTestId('card')).toHaveTextContent(`object:${B}`)
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
+	})
+
+	it('tells the card of a revised draft it is updated, in place and under a sentence', () => {
+		renderMessage(
+			`[Email](${objectUrl(A)})\n\nSee [b](${objectUrl(B)}) for the other one.`,
+			true,
+			undefined,
+			new Set([A, B]),
+		)
+		const cards = screen.getAllByTestId('card')
+		expect(cards).toHaveLength(2)
+		for (const card of cards) expect(card).toHaveAttribute('data-updated')
+	})
+
+	it('does not tag a card whose id is not in the updated set', () => {
+		renderMessage(`[Email](${objectUrl(A)})`, true, undefined, new Set([B]))
+		expect(screen.getByTestId('card')).not.toHaveAttribute('data-updated')
 	})
 
 	it('draws a draft once, where it stands alone, even when a sentence mentioned it before', () => {

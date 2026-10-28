@@ -14,6 +14,7 @@ import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
@@ -26,7 +27,7 @@ import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 
 interface PreviewProps {
 	workspaceId: string
@@ -38,6 +39,8 @@ interface PreviewProps {
 	 *  or a status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
+	/** A draft edited since an earlier message showed it: the header says Updated. */
+	updated?: boolean
 }
 
 /** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
@@ -46,6 +49,7 @@ export function LinkedObjectCard({
 	objectId,
 	conversationId,
 	agentId,
+	updated = false,
 	defaultExpanded = false,
 	className,
 }: PreviewProps) {
@@ -55,9 +59,33 @@ export function LinkedObjectCard({
 	const update = useUpdateObject(workspaceId)
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
-	// Contracted shows the header and title; the text and the next-phase button
-	// appear once the top of the card is clicked.
-	const [expanded, setExpanded] = useState(defaultExpanded)
+	// A draft is always a full card (its text and Approve are what the person came for), so it
+	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
+	// own choice and wins once made.
+	const [toggled, setToggled] = useState<boolean | null>(null)
+	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
+	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
+	// text they opened in full, so a draft that changes underneath them is clamped again.
+	const [revealedHash, setRevealedHash] = useState<string | null>(null)
+	const textRef = useRef<HTMLDivElement>(null)
+	const [overflowing, setOverflowing] = useState(false)
+	const draftHash = object?.preview?.content_hash
+	const clamped = Boolean(draftHash) && draftHash !== revealedHash
+
+	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
+	// paragraph is as many lines as it looks. Only meaningful while the clamp is on.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
+	useLayoutEffect(() => {
+		const el = textRef.current
+		if (!el || !clamped) return
+		const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [clamped, expanded, object?.content])
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -97,6 +125,10 @@ export function LinkedObjectCard({
 	// what the card shows. Such a text is edited on the object page, where the header is.
 	const shown = preview ? preview.body : body
 	const editable = canAct && (!preview || preview.body.trim() === body)
+	// A draft that does not fit the clamp cannot be approved until its full text has been opened.
+	// Its button stays enabled and reads "Read full draft to approve": the first tap opens the
+	// text and sends nothing. Checked in the handler too, so no path approves clamped text.
+	const gated = clamped && overflowing
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
@@ -108,9 +140,14 @@ export function LinkedObjectCard({
 	}
 
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
-	// so it does not have to guess what was approved.
+	// so it does not have to guess what was approved. On a clamped draft the first tap only opens
+	// the full text.
 	const approveDraft = () => {
 		if (!preview) return
+		if (gated) {
+			setRevealedHash(draftHash ?? null)
+			return
+		}
 		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
@@ -126,7 +163,7 @@ export function LinkedObjectCard({
 			    Open stop the click so they keep doing their own job; the status menu's
 			    dropdown is portalled but still bubbles through React, so it is covered too. */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the chevron button inside is the keyboard path; its click bubbles here */}
-			<div className="cursor-pointer" onClick={() => setExpanded((open) => !open)}>
+			<div className="cursor-pointer" onClick={() => setToggled(!expanded)}>
 				<div
 					className={cn(
 						'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2',
@@ -138,21 +175,34 @@ export function LinkedObjectCard({
 						<span className="inline-block max-w-full truncate rounded-md bg-secondary px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
 							{preview?.label ?? typeLabel(object.type)}
 						</span>
+						{updated ? (
+							<span
+								data-linked-card-updated=""
+								className="ml-1.5 inline-block rounded-md bg-brand-subtle px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-subtle-foreground"
+							>
+								Updated
+							</span>
+						) : null}
 					</span>
 					{canAct && statuses.length > 0 ? (
-						// On a narrow card the status menu takes a row of its own instead of being cut off.
-						<span
-							className="order-last w-full @sm:order-none @sm:w-auto"
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => e.stopPropagation()}
-						>
-							<StatusSelect
-								current={object.status}
-								options={statuses}
-								onChange={moveTo}
-								variant="chip"
-							/>
-						</span>
+						expanded ? (
+							// On a narrow card the status menu takes a row of its own instead of being cut off.
+							<span
+								className="order-last w-full @sm:order-none @sm:w-auto"
+								onClick={(e) => e.stopPropagation()}
+								onKeyDown={(e) => e.stopPropagation()}
+							>
+								<StatusSelect
+									current={object.status}
+									options={statuses}
+									onChange={moveTo}
+									variant="chip"
+								/>
+							</span>
+						) : (
+							// Contracted, the status is a plain chip: the control lives in the full card.
+							<StatusBadge status={object.status} className="shrink-0" />
+						)
 					) : null}
 					{linkedPanel ? (
 						<button
@@ -219,8 +269,11 @@ export function LinkedObjectCard({
 						</div>
 					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
-					    A very long text scrolls inside the card instead of being cut off. */}
-					<div className="max-h-50 overflow-y-auto px-3 pt-2 text-[13.5px]">
+					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
+					<div
+						ref={textRef}
+						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
+					>
 						<MarkdownContent
 							content={shown}
 							size="sm"
@@ -231,8 +284,22 @@ export function LinkedObjectCard({
 							}}
 						/>
 					</div>
+					{preview && (gated || (overflowing && !clamped)) ? (
+						<div className="px-3 pt-1">
+							<Button
+								type="button"
+								variant="link"
+								size="sm"
+								className="h-auto px-0 py-1 text-xs"
+								aria-expanded={!gated}
+								onClick={() => setRevealedHash(gated ? (draftHash ?? null) : null)}
+							>
+								{gated ? 'Show all' : 'Show less'}
+							</Button>
+						</div>
+					) : null}
 					{preview ? (
-						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
@@ -241,7 +308,7 @@ export function LinkedObjectCard({
 							) : delivery === 'approved' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
-									Approved, sending
+									Approved, waiting for send
 								</span>
 							) : (
 								<Button
@@ -252,7 +319,7 @@ export function LinkedObjectCard({
 									}
 									onClick={approveDraft}
 								>
-									Approve and send
+									{gated ? 'Read full draft to approve' : 'Approve draft'}
 									<ArrowRight size={14} aria-hidden />
 								</Button>
 							)}
@@ -305,6 +372,7 @@ export function LinkedCardOrLink({
 	label,
 	inList = false,
 	after = false,
+	updated = false,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -317,6 +385,8 @@ export function LinkedCardOrLink({
 	inList?: boolean
 	/** The card goes under the sentence that links it: only a draft is drawn. */
 	after?: boolean
+	/** A draft edited since an earlier message showed it. */
+	updated?: boolean
 }) {
 	if (target.kind === 'agent') {
 		if (after) return null
@@ -352,6 +422,7 @@ export function LinkedCardOrLink({
 			label={label}
 			inList={inList}
 			after={after}
+			updated={updated}
 		/>
 	) : (
 		<FileCardOrLink
@@ -402,6 +473,7 @@ export function renderLinkedCard(
 		label?: string
 		inList?: boolean
 		after?: boolean
+		updated?: boolean
 	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
@@ -416,7 +488,7 @@ export function renderLinkedGithubChip(target: GithubTarget, href: string): Reac
 export function renderLinkedChip(
 	target: LinkedTarget,
 	fallback: ReactNode,
-	context: { workspaceId: string },
+	context: { workspaceId: string; cardFollows?: boolean },
 ): ReactNode {
 	switch (target.kind) {
 		case 'object':
@@ -425,6 +497,7 @@ export function renderLinkedChip(
 					workspaceId={context.workspaceId}
 					objectId={target.id}
 					fallback={fallback}
+					cardFollows={context.cardFollows}
 				/>
 			)
 		case 'loop':
@@ -465,6 +538,7 @@ function ObjectCardOrLink({
 	label,
 	inList,
 	after,
+	updated,
 }: {
 	workspaceId: string
 	objectId: string
@@ -474,6 +548,7 @@ function ObjectCardOrLink({
 	label?: string
 	inList: boolean
 	after: boolean
+	updated: boolean
 }) {
 	const { data: object } = useObject(objectId)
 	// A draft keeps today's card, and its lead-in only in a list.
@@ -485,6 +560,7 @@ function ObjectCardOrLink({
 				objectId={objectId}
 				conversationId={conversationId}
 				agentId={agentId}
+				updated={updated}
 			/>,
 		)
 	}

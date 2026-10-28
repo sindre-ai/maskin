@@ -17,6 +17,7 @@ import {
 	useConversationActivity,
 } from '@/hooks/use-conversation-activity'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
+import { useLinkedCardPlacements } from '@/hooks/use-linked-card-placements'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { dropPlainTail, parseIntroView } from '@/lib/agent-intro'
 import type { MessageMetadata, MessageResponse, SessionResponse } from '@/lib/api'
@@ -217,21 +218,23 @@ export function ThreadMessages({
 		}
 	}
 
-	// A linked object's card shows once, on the first message that links it; later
-	// messages keep the link but not another copy of the card. Only messages that
-	// draw cards count: your own bubble draws none, so a link you posted first must
-	// not hide the card from the agent's reply.
+	// A linked object's card shows once, on the first message that links it; later messages keep
+	// the link as a chip. A draft edited since is the exception: the newest message that links it
+	// holds the card, with an Updated tag. Only messages that draw cards count: your own bubble
+	// draws none, so a link you posted first must not hide the card from the agent's reply.
 	const ownActorId = getStoredActor()?.id
-	const shownLinkedObjectIdsByMessage = useMemo(() => {
-		const seen = new Set<string>()
-		const byMessage = new Map<number, ReadonlySet<string>>()
-		for (const m of visibleMessages) {
-			byMessage.set(m.id, new Set(seen))
-			if (m.kind !== 'message' || m.actorId === ownActorId) continue
-			for (const id of extractLinkedObjectIds(m.content)) seen.add(id)
-		}
-		return byMessage
-	}, [visibleMessages, ownActorId])
+	const cardMessages = useMemo(
+		() =>
+			visibleMessages
+				.filter((m) => m.kind === 'message' && m.actorId !== ownActorId)
+				.map((m) => ({
+					id: m.id,
+					createdAt: m.createdAt,
+					linkedIds: extractLinkedObjectIds(m.content),
+				})),
+		[visibleMessages, ownActorId],
+	)
+	const linkedPlacements = useLinkedCardPlacements(workspaceId, cardMessages)
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -558,7 +561,8 @@ export function ThreadMessages({
 												? () => onOpenReplies(message.threadRootId ?? message.id)
 												: undefined
 										}
-										shownLinkedObjectIds={shownLinkedObjectIdsByMessage.get(message.id)}
+										shownLinkedObjectIds={linkedPlacements.get(message.id)?.skipIds}
+										updatedLinkedObjectIds={linkedPlacements.get(message.id)?.updatedIds}
 										// Keyed by index as well as session: one session can put two
 										// turns under the same message (a result segment plus the
 										// live turn that follows it), so `sessionId` alone is not
