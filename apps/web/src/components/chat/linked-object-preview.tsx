@@ -23,7 +23,7 @@ import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 
 interface PreviewProps {
 	workspaceId: string
@@ -65,7 +65,6 @@ export function LinkedObjectCard({
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
-	const hintId = useId()
 	const [overflowing, setOverflowing] = useState(false)
 	const draftHash = object?.preview?.content_hash
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
@@ -113,7 +112,8 @@ export function LinkedObjectCard({
 	const shown = preview ? preview.body : body
 	const editable = canAct && (!preview || preview.body.trim() === body)
 	// A draft that does not fit the clamp cannot be approved until its full text has been opened.
-	// Checked in the handler too, so no path (button, keyboard, repeat click) approves clamped text.
+	// Its button stays enabled and reads "Read full draft to approve": the first tap opens the
+	// text and sends nothing. Checked in the handler too, so no path approves clamped text.
 	const gated = clamped && overflowing
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
@@ -126,9 +126,14 @@ export function LinkedObjectCard({
 	}
 
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
-	// so it does not have to guess what was approved.
+	// so it does not have to guess what was approved. On a clamped draft the first tap only opens
+	// the full text.
 	const approveDraft = () => {
-		if (!preview || gated) return
+		if (!preview) return
+		if (gated) {
+			setRevealedHash(draftHash ?? null)
+			return
+		}
 		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
@@ -292,29 +297,20 @@ export function LinkedObjectCard({
 									Approved, waiting for send
 								</span>
 							) : (
-								<>
-									{gated ? (
-										<span id={hintId} className="text-xs text-muted-foreground">
-											Read the full draft first
-										</span>
-									) : null}
-									<Button
-										type="button"
-										size="sm"
-										aria-describedby={gated ? hintId : undefined}
-										disabled={
-											gated ||
-											!canAct ||
-											approve.isPending ||
-											update.isPending ||
-											preview.missing.length > 0
-										}
-										onClick={approveDraft}
-									>
-										Approve draft
-										<ArrowRight size={14} aria-hidden />
-									</Button>
-								</>
+								<Button
+									type="button"
+									size="sm"
+									disabled={
+										!canAct ||
+										approve.isPending ||
+										update.isPending ||
+										preview.missing.length > 0
+									}
+									onClick={approveDraft}
+								>
+									{gated ? 'Read full draft to approve' : 'Approve draft'}
+									<ArrowRight size={14} aria-hidden />
+								</Button>
 							)}
 						</div>
 					) : canAct && nextStatus ? (

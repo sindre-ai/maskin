@@ -4,8 +4,9 @@ import { TestAPI } from '../helpers/api.helper'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
- * A draft in chat is cut at about 12 lines, and Approve draft stays off until Show all has been
- * used. A draft that fits has no gate. After the click the card reads Approved, waiting for send,
+ * A draft in chat is cut at about 12 lines, and its button reads Read full draft to approve: the
+ * first tap opens the full text and approves nothing, then it reads Approve draft. A draft that
+ * fits has no gate. After the click the card reads Approved, waiting for send,
  * and Sent once the send is recorded. Real API for the objects; only the Sent state is faked, by
  * answering the object read with a recorded send, because no send tool runs in this stack.
  */
@@ -70,7 +71,7 @@ async function chatWithAgentMessage(
 
 test.describe('Chat — a long draft is clamped and gated', () => {
 	for (const vp of WIDTHS) {
-		test(`a draft over 12 lines is approvable only after Show all @ ${vp.label}`, async ({
+		test(`a draft over 12 lines is approved only on the second tap @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -86,8 +87,9 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await expect(thread).toBeVisible({ timeout: 10_000 })
 
 			const approve = thread.getByRole('button', { name: 'Approve draft' })
-			await expect(approve).toBeDisabled()
-			await expect(thread.getByText('Read the full draft first')).toBeVisible()
+			const read = thread.getByRole('button', { name: 'Read full draft to approve' })
+			await expect(read).toBeEnabled()
+			await expect(approve).toHaveCount(0)
 			await expect(thread.getByText('Line 1 of the long draft.')).toBeVisible()
 			// Cut off: the last line is not inside the card's visible box.
 			const card = thread.locator('[data-linked-card]')
@@ -97,18 +99,17 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			expect(cutBox && cardBox && cutBox.y > cardBox.y + cardBox.height).toBe(true)
 			expect(await hasNoInnerScroll(card)).toBe(true)
 
-			// A click on a disabled button does nothing.
-			await approve.click({ force: true })
+			// The first tap opens the full text and approves nothing.
+			await read.click()
 			await expect(thread.getByText('Approved, waiting for send')).toHaveCount(0)
-
-			await thread.getByRole('button', { name: 'Show all' }).click()
-			await expect(approve).toBeEnabled()
-			await expect(thread.getByText('Read the full draft first')).toHaveCount(0)
 			await expect(last).toBeVisible()
 			expect(await hasNoInnerScroll(card)).toBe(true)
+			await expect(approve).toBeEnabled()
+			await expect(read).toHaveCount(0)
 
+			// Folding the text asks for the full read again.
 			await thread.getByRole('button', { name: 'Show less' }).click()
-			await expect(approve).toBeDisabled()
+			await expect(read).toBeEnabled()
 			await thread.getByRole('button', { name: 'Show all' }).click()
 
 			await approve.click()
@@ -135,7 +136,7 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 
 			await expect(thread.getByRole('button', { name: 'Approve draft' })).toBeEnabled()
 			await expect(thread.getByRole('button', { name: 'Show all' })).toHaveCount(0)
-			await expect(thread.getByText('Read the full draft first')).toHaveCount(0)
+			await expect(thread.getByRole('button', { name: 'Read full draft to approve' })).toHaveCount(0)
 
 			await thread.getByRole('button', { name: 'Approve draft' }).click()
 			await expect(thread.getByText('Approved, waiting for send', { exact: true })).toBeVisible()

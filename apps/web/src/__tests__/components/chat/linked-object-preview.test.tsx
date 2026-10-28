@@ -473,6 +473,7 @@ describe('LinkedObjectCard', () => {
 			}
 		}
 		const approveButton = () => screen.getByRole('button', { name: 'Approve draft' })
+		const readButton = () => screen.getByRole('button', { name: 'Read full draft to approve' })
 
 		// jsdom has no layout: say how tall the text is against the clamp.
 		beforeEach(() => {
@@ -484,32 +485,48 @@ describe('LinkedObjectCard', () => {
 		})
 		afterEach(() => vi.restoreAllMocks())
 
-		it('disables Approve draft with a hint until Show all is used, then approves', async () => {
+		it('makes no approve call on the first tap, which opens the full text, and approves on the second', async () => {
 			useObject.mockReturnValue({ data: longDraft() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
-			expect(approveButton()).toBeDisabled()
-			expect(screen.getByText('Read the full draft first')).toBeInTheDocument()
-			await userEvent.click(approveButton())
-			expect(approveMutate).not.toHaveBeenCalled()
-
-			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
-			expect(approveButton()).toBeEnabled()
+			expect(readButton()).toBeEnabled()
+			expect(screen.queryByRole('button', { name: 'Approve draft' })).not.toBeInTheDocument()
 			expect(screen.queryByText('Read the full draft first')).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Show all' })).toBeInTheDocument()
+
+			await userEvent.click(readButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+			expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Read full draft to approve' })).toBeNull()
+
+			expect(approveButton()).toBeEnabled()
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		})
+
+		it('reads Approve draft after Show all is used, and approves on that tap', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(approveMutate).not.toHaveBeenCalled()
 			await userEvent.click(approveButton())
 			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 		})
 
-		it('gates again after Show less', async () => {
+		it('asks to read the full draft again after Show less', async () => {
 			useObject.mockReturnValue({ data: longDraft() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
 			await userEvent.click(screen.getByRole('button', { name: 'Show less' }))
-			expect(approveButton()).toBeDisabled()
+			expect(readButton()).toBeEnabled()
+			await userEvent.click(readButton())
+			expect(approveMutate).not.toHaveBeenCalled()
 		})
 
-		it('gates again when the text changes after it was opened in full', async () => {
+		it('asks to read the full draft again when the text changes after it was opened in full', async () => {
 			useObject.mockReturnValue({ data: longDraft('hash-1') })
 			const { rerender } = renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
@@ -519,7 +536,8 @@ describe('LinkedObjectCard', () => {
 			rerender(
 				<LinkedObjectCard workspaceId={WS} objectId={ID} conversationId={CHAT} agentId={AGENT} />,
 			)
-			expect(approveButton()).toBeDisabled()
+			expect(readButton()).toBeEnabled()
+			expect(approveMutate).not.toHaveBeenCalled()
 		})
 
 		it('has no gate and no Show all when the draft fits', async () => {
@@ -529,7 +547,9 @@ describe('LinkedObjectCard', () => {
 			await expandDraft()
 			expect(approveButton()).toBeEnabled()
 			expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
-			expect(screen.queryByText('Read the full draft first')).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Read full draft to approve' })).toBeNull()
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
 		})
 
 		it('keeps no scroll box around the text', async () => {
