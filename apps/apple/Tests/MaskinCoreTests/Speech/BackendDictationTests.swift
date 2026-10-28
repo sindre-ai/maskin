@@ -100,15 +100,18 @@ private final class ScriptedTranscriber: SpeechTranscribing, @unchecked Sendable
 	}
 
 	private let lock = NSLock()
-	private var replies: [Reply]
+	private let replies: [Reply]
 	private(set) var calls: [String?] = []
 
 	init(_ replies: [Reply]) { self.replies = replies }
 
 	func transcribe(wav: Data, language: String?) async throws -> String {
+		// The reply belongs to the phrase (its first byte, 1 for the first one submitted), not to the order
+		// the calls happen to start in: the queue starts each request as its own concurrent task.
+		let index = Int(wav.first ?? 1) - 1
 		let reply: Reply = lock.withLock {
 			calls.append(language)
-			return replies.isEmpty ? Reply(text: "") : replies.removeFirst()
+			return replies.indices.contains(index) ? replies[index] : Reply(text: "")
 		}
 		if reply.delay > .zero { try await Task.sleep(for: reply.delay) }
 		if reply.fails { throw BackendDictationError() }
