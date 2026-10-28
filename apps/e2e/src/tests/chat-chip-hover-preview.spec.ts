@@ -99,6 +99,35 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		}
 	})
 
+	for (const width of [640, 1024, 1440]) {
+		test(`${width} wide: a chip at the right edge of the thread opens a preview that stays inside the thread pane`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width, height: 900 })
+			const { thread, chip } = await openChatWithChip(account, page)
+			const preview = page.locator('[data-linked-preview]')
+
+			// Push the chip to the end of a line, as it would sit in a long sentence.
+			await chip.evaluate((el) => {
+				const holder = el.parentElement as HTMLElement
+				const pane = holder.closest('[data-testid="thread-messages"]') as HTMLElement
+				const room = pane.getBoundingClientRect().right - holder.getBoundingClientRect().right
+				holder.style.marginLeft = `${Math.max(0, room - 48)}px`
+			})
+
+			await chip.hover()
+			await expect(preview).toBeVisible()
+			const paneBox = await thread.boundingBox()
+			const previewBox = await preview.boundingBox()
+			const left = previewBox?.x ?? 0
+			const right = left + (previewBox?.width ?? 0)
+			expect(left).toBeGreaterThanOrEqual((paneBox?.x ?? 0) + 8 - 1)
+			expect(right).toBeLessThanOrEqual((paneBox?.x ?? 0) + (paneBox?.width ?? 0) - 8 + 1)
+			await page.screenshot({ path: `test-results/chip-preview-pane-${width}.png` })
+		})
+	}
+
 	test('mobile 375: no hover preview, and a tap opens the sheet instead of the object', async ({
 		page,
 		account,

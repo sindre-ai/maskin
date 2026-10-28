@@ -78,10 +78,40 @@ function priorityOf(object: ObjectResponse): string | null {
 const PREVIEW_WIDTH = 380
 const PREVIEW_EDGE = 8
 
-/** True when a preview anchored to the chip's left edge would run off the right of the screen. */
-function previewOverflows(chip: DOMRect, viewportWidth: number): boolean {
+/** Marks the box a chip's preview must stay inside: the chat thread's scroller, which clips it. */
+export const PREVIEW_BOUNDS_ATTR = 'data-chip-preview-bounds'
+
+/** Where a preview opens: from the chip's left edge, from its right edge, or pinned to the pane. */
+export type PreviewPlace =
+	| { side: 'start' | 'end' }
+	| { side: 'pinned'; left: number; width: number }
+
+/**
+ * Picks the first placement that keeps the card inside `bounds` with `PREVIEW_EDGE` to spare:
+ * left-aligned to the chip, then right-aligned, and when neither fits the card is pinned to the
+ * left of the bounds and shrunk to their width. `bounds` is the pane that holds the chip, or the
+ * screen where there is no such pane.
+ */
+export function placePreview(
+	chip: { left: number; right: number },
+	bounds: { left: number; right: number },
+	viewportWidth: number,
+): PreviewPlace {
 	const width = Math.min(PREVIEW_WIDTH, viewportWidth * 0.78)
-	return chip.left + width > viewportWidth - PREVIEW_EDGE
+	if (chip.left + width <= bounds.right - PREVIEW_EDGE) return { side: 'start' }
+	if (chip.right - width >= bounds.left + PREVIEW_EDGE) return { side: 'end' }
+	const room = bounds.right - bounds.left - 2 * PREVIEW_EDGE
+	return { side: 'pinned', left: bounds.left + PREVIEW_EDGE, width: Math.min(width, room) }
+}
+
+/** The pane that clips a chip's preview, clamped to the screen; the whole screen without one. */
+function previewBounds(chip: Element) {
+	const screen = document.documentElement.clientWidth
+	const pane = chip.closest(`[${PREVIEW_BOUNDS_ATTR}]`)
+	if (!pane) return { left: 0, right: screen }
+	const rect = pane.getBoundingClientRect()
+	const left = rect.left + pane.clientLeft
+	return { left: Math.max(0, left), right: Math.min(screen, left + pane.clientWidth) }
 }
 
 const PREVIEW_QUERY = '(min-width: 640px) and (hover: hover) and (pointer: fine)'
@@ -113,7 +143,8 @@ type ChipSheetContent = {
  * Opens the card under its child while the pointer is over it or focus is inside it. The chip
  * wraps with the sentence, so this wrapper is inline too: the card opens under the chip's last
  * line, at the left edge of the chip's bounding box (the right edge when that would run off the
- * screen). The
+ * pane that holds the chat thread, or the screen; pinned to the pane and narrowed when neither
+ * fits, see `placePreview`). The
  * card is the one the chip stands for, read from the same cache entry, so nothing is fetched
  * here; while that entry loads the card shows its skeleton. The preview is for the eye only:
  * hidden from the accessibility tree and not a tab stop, since the chip is already the link and
@@ -144,7 +175,7 @@ function ChipPreview({
 	const tapped = useRef<HTMLElement | null>(null)
 	// The card is placed against the first and last line piece of the chip; `shift` moves it to the
 	// bounding box of all of them (nothing for a chip on one line).
-	const [place, setPlace] = useState({ alignEnd: false, shift: 0 })
+	const [place, setPlace] = useState({ alignEnd: false, shift: 0, width: 0 })
 
 	useLayoutEffect(() => {
 		if (shown && root.current) {
@@ -152,10 +183,23 @@ function ChipPreview({
 			const pieces = root.current.getClientRects()
 			const first = pieces[0]
 			const last = pieces[pieces.length - 1]
-			const alignEnd = previewOverflows(box, document.documentElement.clientWidth)
+			const where = placePreview(
+				box,
+				previewBounds(root.current),
+				document.documentElement.clientWidth,
+			)
+			const alignEnd = where.side === 'end'
 			setPlace({
 				alignEnd,
-				shift: first && last ? (alignEnd ? last.right - box.right : box.left - first.left) : 0,
+				shift:
+					first && last
+						? where.side === 'pinned'
+							? where.left - first.left
+							: alignEnd
+								? last.right - box.right
+								: box.left - first.left
+						: 0,
+				width: where.side === 'pinned' ? where.width : 0,
 			})
 		}
 	}, [shown])
@@ -199,7 +243,10 @@ function ChipPreview({
 					<span
 						aria-hidden="true"
 						data-linked-preview=""
-						style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
+						style={{
+							...(place.alignEnd ? { right: place.shift } : { left: place.shift }),
+							...(place.width ? { width: place.width } : null),
+						}}
 						className="absolute top-full z-50 block pt-1 duration-180 ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5"
 					>
 						{card}
@@ -450,7 +497,7 @@ const CARD_SHELL =
 	'not-prose @container my-2 flex w-full max-w-[460px] flex-col rounded-xl border bg-card'
 // The same card as a hover preview: no outer margin, a fixed width, lifted off the page.
 const PREVIEW_SHELL =
-	'not-prose @container flex w-[min(380px,78vw)] flex-col rounded-xl border bg-card shadow-md'
+	'not-prose @container flex w-[min(380px,78vw)] max-w-full flex-col rounded-xl border bg-card shadow-md'
 // The same card as the face of the phone sheet: the width of the sheet, no margin, no shadow.
 const SHEET_SHELL = 'not-prose @container flex w-full flex-col rounded-xl border bg-card'
 
