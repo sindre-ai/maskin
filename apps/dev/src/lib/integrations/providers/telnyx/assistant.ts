@@ -21,9 +21,6 @@ export const DISCLOSURE_TEMPLATES: Record<DisclosureLocale, string> = {
 	da: `Hej, jeg hedder ${ASSISTANT_FIRST_NAME}, og jeg er en AI Agent, der arbejder for virksomheden Maskin. Jeg vil høre om I er interesseret i at høre mere om, hvordan I kan hyre AI Agenter til at udføre det operationelle arbejde hos jer, så I får mere tid til at fokusere på forretningen.`,
 }
 
-/** The greeting for a contact with no first name. Danish like the opener, see DISCLOSURE_LOCALE. */
-export const DEFAULT_PROSPECT_GREETING = 'Hej'
-
 /** What the call.hangup assertion looks for in the first thing the agent said (spec 7a, step 4). */
 export const DISCLOSURE_PATTERNS: readonly RegExp[] = [
 	/AI[- ]?assist/i,

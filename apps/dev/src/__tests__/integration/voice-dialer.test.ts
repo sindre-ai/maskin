@@ -752,7 +752,7 @@ describe('voice dialer against real Postgres', () => {
 			expect(req.body).toMatchObject({
 				to: '+4520123456',
 				from: '+4570000000',
-				assistant: { id: 'assistant-1', dynamic_variables: { prospect_greeting: 'Hej' } },
+				assistant: { id: 'assistant-1' },
 				connection_id: 'app-1',
 				answering_machine_detection: 'premium',
 			})
