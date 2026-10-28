@@ -14,6 +14,29 @@ public struct LiveCallLine: Codable, Equatable, Sendable {
 	}
 }
 
+/// One answer tapped in the call's "Deciding now" card, kept with the call so the thread can draw its
+/// DECIDED row until the server's own row arrives.
+public struct LiveCallDecision: Codable, Equatable, Sendable, Identifiable {
+	public var id: String
+	public var at: Date
+	public var question: String
+	public var choice: String
+
+	public init(id: String = UUID().uuidString, at: Date, question: String, choice: String) {
+		self.id = id
+		self.at = at
+		self.question = question
+		self.choice = choice
+	}
+
+	/// The thread row for this answer, timed from the start of the call it was given in.
+	func event(in record: LiveCallRecord) -> LiveReceiptEvent {
+		.decided(
+			id: "decided-\(id)", callID: record.id, seconds: Int(at.timeIntervalSince(record.startedAt)), at: at,
+			question: question, choice: choice)
+	}
+}
+
 /// One live call, remembered on this device so the thread can show it: where it was, who it was
 /// with, when it started and ended, and which of your lines were spoken rather than typed.
 ///
@@ -35,11 +58,13 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 	/// Whether the person left the call's card open or closed; nil takes the default (open while
 	/// the call runs, closed once it has ended).
 	public var expanded: Bool?
+	/// Answers given from the dock's "Deciding now" card, in order.
+	public var decisions: [LiveCallDecision]
 
 	public init(
 		id: String = UUID().uuidString, conversationID: String, leadName: String, guests: [String] = [],
 		startedAt: Date, endedAt: Date? = nil, spoken: [String] = [], lines: [LiveCallLine] = [],
-		expanded: Bool? = nil
+		expanded: Bool? = nil, decisions: [LiveCallDecision] = []
 	) {
 		self.id = id
 		self.conversationID = conversationID
@@ -50,9 +75,11 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		self.spoken = spoken
 		self.lines = lines
 		self.expanded = expanded
+		self.decisions = decisions
 	}
 
-	/// Calls saved before voice calls kept their lines have no `lines` key.
+	/// Calls saved before voice calls kept their lines have no `lines` key (nor `decisions`, before
+	/// dock answers were kept).
 	public init(from decoder: Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
 		id = try c.decode(String.self, forKey: .id)
@@ -64,6 +91,7 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		spoken = try c.decode([String].self, forKey: .spoken)
 		lines = try c.decodeIfPresent([LiveCallLine].self, forKey: .lines) ?? []
 		expanded = try c.decodeIfPresent(Bool.self, forKey: .expanded)
+		decisions = try c.decodeIfPresent([LiveCallDecision].self, forKey: .decisions) ?? []
 	}
 
 	/// The thread shows a card for a call once it has ended or has something in it; a running call

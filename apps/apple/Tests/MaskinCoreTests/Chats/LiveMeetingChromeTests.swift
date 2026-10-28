@@ -107,4 +107,99 @@ import Testing
 		#expect(ThreadLayout.newChatTitle(for: ["Chief of Staff"], startsLiveCall: true) == "Live meeting")
 		#expect(ThreadLayout.newChatTitle(for: ["Alex", "Relay"], startsLiveCall: false) == "Alex, Relay")
 	}
+
+	// MARK: Receipt rows, the summary and the DECIDED row among the dividers
+
+	private func receipt(_ id: Int, _ event: String, at seconds: TimeInterval) -> ChatMessage {
+		var m = ChatMessage.confirmed(
+			serverID: id, conversationID: "c", actorID: "a", actorName: "A", author: .agent, content: "did \(id)",
+			metadata: .object(["source": .string("voice"), "kind": .string("receipt"), "event": .string(event)]))
+		m.createdAt = start.addingTimeInterval(seconds)
+		return m
+	}
+
+	private func receiptSummary(_ id: Int, at seconds: TimeInterval) -> ChatMessage {
+		var m = ChatMessage.confirmed(
+			serverID: id, conversationID: "c", actorID: "a", actorName: "A", author: .agent, content: "Summary",
+			metadata: .object(["source": .string("voice"), "kind": .string("receipt_summary")]))
+		m.createdAt = start.addingTimeInterval(seconds)
+		return m
+	}
+
+	private func hourCall(decisions: [LiveCallDecision] = []) -> LiveCallRecord {
+		LiveCallRecord(
+			id: "r", conversationID: "c", leadName: "Relay", startedAt: start, endedAt: start.addingTimeInterval(3600),
+			decisions: decisions)
+	}
+
+	private func layout(_ messages: [ChatMessage], _ record: LiveCallRecord) -> [String] {
+		ThreadLayout.items(
+			for: messages, calls: [record], callSummaries: true, inlineTranscript: false, calendar: calendar,
+			now: start.addingTimeInterval(4000)
+		).compactMap { item -> String? in
+			switch item {
+			case .callDivider(let d): d.edge == .started ? "start" : "end"
+			case .receipt(let e): e.id.hasPrefix("decided-") ? "local \(e.label)" : e.label
+			case .callSummary: "summary"
+			default: nil
+			}
+		}
+	}
+
+	@Test func aCallOfOnlyReceiptsAndASummaryIsFramedStartRowsEndSummary() {
+		let messages = [
+			receipt(1, "created_bet", at: 14), receipt(2, "moved_to_review", at: 31), receiptSummary(3, at: 3605),
+		]
+		#expect(layout(messages, hourCall()) == ["start", "CREATED BET", "MOVED TO REVIEW", "end", "summary"])
+	}
+
+	@Test func theAppsOwnSummaryComesAfterTheCallsRowsNotBeforeThem() {
+		let messages = [voice(1, session: "s", at: 5), receipt(2, "created_bet", at: 14), receipt(3, "created_task", at: 19)]
+		#expect(layout(messages, hourCall()) == ["start", "CREATED BET", "CREATED TASK", "end", "summary"])
+	}
+
+	@Test func aDockAnswerDrawsADecidedRowAtItsTime() {
+		let answer = LiveCallDecision(at: start.addingTimeInterval(31), question: "Lift the cap", choice: "approved")
+		let messages = [
+			receipt(1, "created_bet", at: 14), receipt(2, "moved_to_review", at: 40), receiptSummary(3, at: 3605),
+		]
+		#expect(
+			layout(messages, hourCall(decisions: [answer]))
+				== ["start", "CREATED BET", "local DECIDED", "MOVED TO REVIEW", "end", "summary"])
+	}
+
+	@Test func aDockAnswerAfterTheLastRowStillSitsBeforeTheEndAndTheSummary() {
+		let answer = LiveCallDecision(at: start.addingTimeInterval(3590), question: "Lift the cap", choice: "approved")
+		let messages = [receipt(1, "created_bet", at: 14), receiptSummary(2, at: 3605)]
+		#expect(
+			layout(messages, hourCall(decisions: [answer])) == ["start", "CREATED BET", "local DECIDED", "end", "summary"])
+	}
+
+	@Test func theServersDecidedRowReplacesTheDockAnswerItMatches() {
+		let first = LiveCallDecision(at: start.addingTimeInterval(31), question: "Lift the cap", choice: "approved")
+		let second = LiveCallDecision(at: start.addingTimeInterval(200), question: "Ship it", choice: "yes")
+		let messages = [receipt(1, "decided", at: 33)]
+		// One server row stands in for one answer: the first goes, the second stays.
+		#expect(
+			layout(messages, hourCall(decisions: [first, second])) == ["start", "DECIDED", "local DECIDED", "end"])
+		#expect(layout(messages, hourCall(decisions: [first])) == ["start", "DECIDED", "end"])
+	}
+
+	@Test func theDecidedRowReadsQuestionColonChoiceWithTheCallClock() {
+		let answer = LiveCallDecision(at: start.addingTimeInterval(31), question: "Lift the cap", choice: "approved")
+		let items = ThreadLayout.items(
+			for: [], calls: [hourCall(decisions: [answer])], calendar: calendar, now: start.addingTimeInterval(4000))
+		let rows = items.compactMap { if case .receipt(let e) = $0 { e } else { nil } }
+		#expect(rows.map(\.text) == ["Lift the cap: approved"])
+		#expect(rows.first?.timeLabel == "0:31")
+	}
+
+	@Test func aRecordKeepsItsDockAnswersAndOldRecordsHaveNone() throws {
+		let answer = LiveCallDecision(id: "d", at: start, question: "Q", choice: "A")
+		let kept = try JSONDecoder().decode(
+			LiveCallRecord.self, from: JSONEncoder().encode(hourCall(decisions: [answer])))
+		#expect(kept.decisions == [answer])
+		let old = #"{"id":"r","conversationID":"c","leadName":"R","guests":[],"startedAt":0,"spoken":[]}"#
+		#expect(try JSONDecoder().decode(LiveCallRecord.self, from: Data(old.utf8)).decisions.isEmpty)
+	}
 }

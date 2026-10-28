@@ -113,7 +113,8 @@ extension ThreadItem {
 		case .message(let m, _), .system(let m): m.createdAt
 		case .liveCall(let card): card.record.startedAt
 		case .callDivider(let divider): divider.at
-		case .daySeparator, .unreadDivider, .handoff, .receipt, .callSummary: nil
+		case .receipt(let event): event.at
+		case .daySeparator, .unreadDivider, .handoff, .callSummary: nil
 		}
 	}
 

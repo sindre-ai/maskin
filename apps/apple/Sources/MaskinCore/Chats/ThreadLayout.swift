@@ -100,6 +100,8 @@ public enum ThreadLayout {
 			}
 		}
 		var emitted: Set<Int> = []
+		// The app-built summaries wait until every row is down, then go where their call ended.
+		var fallbackSummaries: [(call: Int, item: ThreadItem)] = []
 		func card(_ index: Int) -> ThreadItem {
 			.liveCall(LiveCallCard(record: calls[index], messages: members[index], currentActorID: currentActorID))
 		}
@@ -112,11 +114,13 @@ public enum ThreadLayout {
 			guard callSummaries, !receiptSummaryCalls.contains(index), let fallback = LiveCallWindow.fallbackSummary(
 				for: calls[index], messages: members[index], currentActorID: currentActorID)
 			else { return }
-			items.append(
-				.callSummary(
-					fallback,
-					transcript: LiveTranscript(
-						record: calls[index], messages: members[index], currentActorID: currentActorID)))
+			fallbackSummaries.append(
+				(
+					call: index,
+					item: .callSummary(
+						fallback,
+						transcript: LiveTranscript(
+							record: calls[index], messages: members[index], currentActorID: currentActorID))))
 		}
 		var lastDay: Date?
 		var previous: ChatMessage?
@@ -203,9 +207,45 @@ public enum ThreadLayout {
 		for index in calls.indices where !emitted.contains(index) && calls[index].showsCard {
 			appendCard(index)
 		}
+		for (call, summary) in fallbackSummaries {
+			let limit = (calls[call].endedAt ?? .distantFuture).addingTimeInterval(LiveCallWindow.grace)
+			items.insert(summary, at: items.firstIndex { $0.time.map { $0 > limit } ?? false } ?? items.count)
+		}
+		insertLocalDecisions(calls: calls, messages: messages, into: &items)
 		LiveMeetingChrome.insertDividers(
 			LiveMeetingChrome.spans(messages: messages, records: calls, now: now), into: &items, calendar: calendar)
 		return items
+	}
+
+	/// A server DECIDED row this close after a dock answer (or just before it, for clock skew) is that
+	/// answer's own row.
+	private static let decisionMatchWindow: TimeInterval = 60
+
+	/// Draws the answers tapped in a call's dock as DECIDED rows, each at its own time in the call and
+	/// before the call's summary, until the server's own DECIDED row for it is in `messages`. Each
+	/// server row stands in for at most one answer.
+	private static func insertLocalDecisions(
+		calls: [LiveCallRecord], messages: [ChatMessage], into items: inout [ThreadItem]
+	) {
+		var server: [Date] = messages.compactMap { message -> Date? in
+			guard case .event(let event)? = LiveReceipt.parse(message), event.kind == .decided else { return nil }
+			return event.at
+		}
+		for record in calls {
+			for decision in record.decisions.sorted(by: { $0.at < $1.at }) {
+				let near = decision.at.addingTimeInterval(-LiveCallWindow.skew)...decision.at.addingTimeInterval(decisionMatchWindow)
+				if let match = server.firstIndex(where: { near.contains($0) }) {
+					server.remove(at: match)
+					continue
+				}
+				let next = items.firstIndex { $0.time.map { $0 > decision.at } ?? false }
+				let summary = items.firstIndex {
+					if case .callSummary(_, let transcript) = $0 { transcript?.recordID == record.id } else { false }
+				}
+				let index = min(next ?? items.count, summary ?? items.count)
+				items.insert(.receipt(decision.event(in: record)), at: index)
+			}
+		}
 	}
 
 	/// One row per spawned session the strip has a pill for, in the server's order.

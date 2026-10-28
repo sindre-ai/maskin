@@ -54,11 +54,13 @@ public struct LiveReceiptEvent: Equatable, Sendable, Identifiable {
 	public var text: String
 	/// Seconds since the call started.
 	public var seconds: Int?
+	/// When the row happened (its message's time), so the thread can place it among the call's other rows.
+	public var at: Date?
 	public var outcome: LiveReceiptOutcome
 
 	public init(
 		id: String, callID: String? = nil, kind: LiveReceiptKind = .other, objectID: String? = nil,
-		text: String, seconds: Int? = nil, outcome: LiveReceiptOutcome = .ran
+		text: String, seconds: Int? = nil, at: Date? = nil, outcome: LiveReceiptOutcome = .ran
 	) {
 		self.id = id
 		self.callID = callID
@@ -66,13 +68,17 @@ public struct LiveReceiptEvent: Equatable, Sendable, Identifiable {
 		self.objectID = objectID
 		self.text = text
 		self.seconds = seconds
+		self.at = at
 		self.outcome = outcome
 	}
 
 	/// A decision answered in the call's dock: "Lift the PostHog event cap: approved". The same row
 	/// the server's receipt gives, made on this device without waiting for it.
-	public static func decided(id: String, seconds: Int, question: String, choice: String) -> LiveReceiptEvent {
-		LiveReceiptEvent(id: id, kind: .decided, text: "\(question): \(choice)", seconds: max(0, seconds))
+	public static func decided(
+		id: String, callID: String? = nil, seconds: Int, at: Date? = nil, question: String, choice: String
+	) -> LiveReceiptEvent {
+		LiveReceiptEvent(
+			id: id, callID: callID, kind: .decided, text: "\(question): \(choice)", seconds: max(0, seconds), at: at)
 	}
 
 	/// "0:14", "1:02:03"; empty when the server sent no time.
@@ -181,7 +187,7 @@ public enum LiveReceipt {
 					id: message.id, callID: callID,
 					kind: meta["event"]?.stringValue.flatMap(LiveReceiptKind.init(rawValue:)) ?? .other,
 					objectID: meta["object_id"]?.stringValue.flatMap(nonEmpty), text: text,
-					seconds: meta["t"]?.intValue.map { max(0, $0) },
+					seconds: meta["t"]?.intValue.map { max(0, $0) }, at: message.createdAt,
 					outcome: meta["outcome"]?.stringValue.flatMap(LiveReceiptOutcome.init(rawValue:)) ?? .ran))
 		case "receipt_summary":
 			return .summary(

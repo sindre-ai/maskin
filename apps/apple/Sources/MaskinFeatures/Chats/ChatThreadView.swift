@@ -965,6 +965,8 @@ struct ThreadTranscript: View {
 		// A voice call keeps its lines in the call log, which is not observable: reading the running
 		// call's lines here is what redraws the card as each one is transcribed.
 		let _ = call?.lines.count
+		// The same for answers tapped in the dock: their DECIDED rows come from that log too.
+		let _ = call?.decisions.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
