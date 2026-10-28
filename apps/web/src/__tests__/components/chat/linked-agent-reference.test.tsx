@@ -91,7 +91,8 @@ describe('AgentReferenceCard', () => {
 		expect(screen.queryByText('Idle')).not.toBeInTheDocument()
 		expect(screen.getAllByText('Developer').length).toBeGreaterThan(0)
 		expect(screen.getByText('Builds and ships the code.')).toBeInTheDocument()
-		expect(screen.getByText('Last active')).toBeInTheDocument()
+		// Once as the property row and once in the footer, as the Idle case below counts the time twice.
+		expect(screen.getAllByText('Last active')).toHaveLength(2)
 		expect(document.querySelector('[data-linked-card]')).not.toBeNull()
 	})
 
