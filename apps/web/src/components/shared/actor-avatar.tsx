@@ -1,7 +1,7 @@
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
-import { WorkspaceContext } from '@/lib/workspace-context'
+import { useWorkspace } from '@/lib/workspace-context'
 import { QueryClientContext, useQuery } from '@tanstack/react-query'
 import { useContext, useState } from 'react'
 
@@ -79,6 +79,15 @@ export function getActorAvatarPaletteClass(
 	return palette[idx] ?? palette[0]
 }
 
+// The workspace the avatar sits in, or undefined outside one (isolated renders, stories).
+function useOptionalWorkspaceId(): string | undefined {
+	try {
+		return useWorkspace().workspaceId
+	} catch {
+		return undefined
+	}
+}
+
 type ActorAvatarProps = {
 	name: string
 	type: string
@@ -109,9 +118,9 @@ type ActorAvatarProps = {
  */
 export function ActorAvatar(props: ActorAvatarProps) {
 	const queryClient = useContext(QueryClientContext)
-	const workspace = useContext(WorkspaceContext)
-	if (props.imageUrl === undefined && props.id && queryClient && workspace) {
-		return <ActorAvatarWithLookup {...props} id={props.id} workspaceId={workspace.workspaceId} />
+	const workspaceId = useOptionalWorkspaceId()
+	if (props.imageUrl === undefined && props.id && queryClient && workspaceId) {
+		return <ActorAvatarWithLookup {...props} id={props.id} workspaceId={workspaceId} />
 	}
 	return <ActorAvatarView {...props} />
 }
@@ -250,9 +259,9 @@ function WorkingRing({
  */
 export function ActorPictureOverlay({ id }: { id: string }) {
 	const queryClient = useContext(QueryClientContext)
-	const workspace = useContext(WorkspaceContext)
-	if (!queryClient || !workspace) return null
-	return <ActorPictureOverlayWithLookup id={id} workspaceId={workspace.workspaceId} />
+	const workspaceId = useOptionalWorkspaceId()
+	if (!queryClient || !workspaceId) return null
+	return <ActorPictureOverlayWithLookup id={id} workspaceId={workspaceId} />
 }
 
 function ActorPictureOverlayWithLookup({ id, workspaceId }: { id: string; workspaceId: string }) {
