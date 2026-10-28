@@ -13,7 +13,7 @@ import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
 import { encrypt } from '../../lib/crypto'
 import { getProvider } from '../../lib/integrations/registry'
 import { integrationScopeGaps } from '../../lib/integrations/scope-drift'
-import { CapabilityScanner } from '../../services/capability-scanner'
+import { CapabilityScanner, KILLSWITCH_ENV_VAR } from '../../services/capability-scanner'
 import { buildIntegration, insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -537,5 +537,29 @@ describe('CapabilityScanner (integration)', () => {
 		await scanner().scanWorkspace(workspaceId)
 		const [scan] = await eventsFor('capability_scan_completed')
 		expect(scan.data).toMatchObject({ unscanned_servers: 1 })
+	})
+
+	describe('kill switch', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('FEATURE_CAPABILITY_SCAN=0 means start() sets no timers and nothing ticks', async () => {
+			vi.useFakeTimers()
+			const killed = new CapabilityScanner(db, { probe, env: { [KILLSWITCH_ENV_VAR]: '0' } })
+			killed.start()
+			expect(vi.getTimerCount()).toBe(0)
+			await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000)
+			expect(probe).not.toHaveBeenCalled()
+		})
+
+		it('without the env var start() sets the daily and boot timers, and stop() clears them', () => {
+			vi.useFakeTimers()
+			const running = new CapabilityScanner(db, { probe, env: {} })
+			running.start()
+			expect(vi.getTimerCount()).toBe(2)
+			running.stop()
+			expect(vi.getTimerCount()).toBe(0)
+		})
 	})
 })
