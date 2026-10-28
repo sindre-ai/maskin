@@ -20,6 +20,12 @@ export interface OAuthStatePayload {
 	 * callback ends by redirecting to it with an outcome instead of to the web UI.
 	 */
 	nativeReturn?: string
+	/**
+	 * Symbolic key (see `origins.ts`) of the page that started the flow, validated
+	 * against the origin table when the state is minted and sealed here. When it
+	 * resolves, a cancel on the consent screen redirects back to that page.
+	 */
+	origin?: string
 }
 
 /**
