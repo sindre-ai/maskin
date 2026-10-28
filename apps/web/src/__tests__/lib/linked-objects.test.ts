@@ -272,6 +272,8 @@ describe('githubTargetOf', () => {
 			'https://www.github.com/a/b/pull/1',
 			'https://github.com@evil.com/a/b/pull/1',
 			'https://github.com:8443/a/b/pull/1',
+			'https://user@github.com/a/b/pull/1',
+			'https://user:secret@github.com/a/b/pull/1',
 			'https://gitlab.com/a/b/pull/1',
 			'ftp://github.com/a/b/pull/1',
 			'/a/b/pull/1',

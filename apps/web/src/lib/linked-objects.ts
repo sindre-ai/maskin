@@ -128,6 +128,7 @@ export function githubTargetOf(href: unknown): GithubTarget | null {
 	if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.host !== 'github.com') {
 		return null
 	}
+	if (url.username || url.password) return null
 	const match = GITHUB_PATH.exec(url.pathname)
 	if (!match) return null
 	return { type: match[2] === 'pull' ? 'pull' : 'issue', repo: match[1], number: Number(match[3]) }

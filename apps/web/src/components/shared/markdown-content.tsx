@@ -4,13 +4,13 @@ import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
+	type GithubTarget,
 	type HastNode,
 	LINKED_CARDS_TAG,
-	type GithubTarget,
 	type LinkedTarget,
 	type StandaloneCard,
-	placeLinkedCards,
 	githubTargetOf,
+	placeLinkedCards,
 	targetOfHref,
 } from '@/lib/linked-objects'
 import {
