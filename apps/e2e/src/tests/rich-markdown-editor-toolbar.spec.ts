@@ -4,10 +4,8 @@ import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Floating selection toolbar + keyboard shortcuts for
-// `<MarkdownEditor variant='document'>`. The flag `rich-markdown-editor` is
-// off by default; every test in this file boots with it on so the Tiptap
-// surface mounts. "Mod" is Ctrl on Linux CI and Cmd on a Mac, so every chord
-// uses Playwright's ControlOrMeta.
+// `<MarkdownEditor variant='document'>`. "Mod" is Ctrl on Linux CI and Cmd on a Mac,
+// so every chord uses Playwright's ControlOrMeta.
 
 // The command palette's placeholder (see command-palette.tsx).
 const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
@@ -19,10 +17,9 @@ interface Account {
 
 const SAMPLE = 'The quick brown fox jumps over the lazy dog.'
 
-test.describe('rich-markdown-editor — floating toolbar & shortcuts', () => {
-	test.beforeEach(async ({ page, account }) => {
+test.describe('rich markdown editor — floating toolbar & shortcuts', () => {
+	test.beforeEach(async ({ account }) => {
 		expect(account.workspaceId).toBeTruthy()
-		await page.addInitScript(() => localStorage.setItem('ff:rich-markdown-editor', 'on'))
 	})
 
 	async function openEditor(page: Page, account: Account, content = SAMPLE) {

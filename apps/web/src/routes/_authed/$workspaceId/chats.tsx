@@ -20,7 +20,7 @@ interface ChatsSearch {
 	produced?: boolean
 }
 
-const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived']
+const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived', 'threads']
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 	component: ChatsLayout,

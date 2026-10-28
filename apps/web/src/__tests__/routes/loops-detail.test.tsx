@@ -55,11 +55,6 @@ vi.mock('@/hooks/use-objects', () => ({
 	useDeleteObject: () => ({ mutate: mockDeleteObject, isPending: false }),
 }))
 
-const mockUseFeatureFlag = vi.fn()
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => mockUseFeatureFlag(id),
-}))
-
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { settings: {} } }),
 }))
@@ -128,7 +123,6 @@ beforeEach(() => {
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
 	mockUseRelationships.mockReturnValue({ data: [] })
-	mockUseFeatureFlag.mockReturnValue(false)
 })
 
 describe('LoopDetailRoute — AskBanner wiring', () => {

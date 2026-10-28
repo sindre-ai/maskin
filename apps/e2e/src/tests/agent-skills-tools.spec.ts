@@ -37,7 +37,7 @@ test.describe('Agent detail — Skills and Access sections', () => {
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
 			// Skills section — labelled region, count, both origin groups and the seeded name.
-			const skills = page.getByRole('region', { name: 'Skills' })
+			const skills = page.getByRole('region', { name: 'Skills', exact: true })
 			await expect(skills).toBeVisible({ timeout: 10_000 })
 			await expect(skills.getByLabel(/skills? attached/i)).toBeVisible()
 			// `exact` matters: with no seeded skill the section renders "No personal
@@ -65,13 +65,13 @@ test.describe('Agent detail — Skills and Access sections', () => {
 
 			// Reload preserves the surface — proves this isn't a mount-only render.
 			await page.reload()
-			await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
+			await expect(page.getByRole('region', { name: 'Skills', exact: true })).toBeVisible()
 			await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 
 			// Both light and dark schemes render both sections.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
-				await expect(page.getByRole('region', { name: 'Skills' })).toBeVisible()
+				await expect(page.getByRole('region', { name: 'Skills', exact: true })).toBeVisible()
 				await expect(page.getByRole('region', { name: 'Access' })).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })

@@ -2,7 +2,12 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { consumeDesktopTicket } from '../../lib/desktop-ticket'
+import { resolveKeychainTyping } from '../../lib/integrations/keychain-typing'
 import desktopRoutes from '../../routes/desktop'
+
+vi.mock('../../lib/integrations/keychain-typing', () => ({
+	resolveKeychainTyping: vi.fn(async () => ({ kind: 'plain' })),
+}))
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const ACTOR = 'test-actor-id'
@@ -237,6 +242,62 @@ describe('agent control routes', () => {
 			data: { agent_id: AGENT, control: 'input', input_action: 'type' },
 		})
 		expect(JSON.stringify(inserts[0])).not.toContain('hunter2')
+	})
+
+	it('never returns the reply of the desktop to the agent when a typed saved login fails', async () => {
+		const SECRET = 'fake-pass-abcdefghij'
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: SECRET,
+			credentialName: 'Facebook',
+			field: 'password',
+		})
+		// A desktop that echoes the text it was asked to type.
+		const controlFn = vi.fn(async (_ws, _agent, _action, sent: { text: string }) => ({
+			status: 422,
+			body: { error: `cannot type ${sent.text}` },
+		}))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'type',
+			text: '{{keychain:Facebook.password}}',
+		})
+
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: SECRET })
+		expect(res.status).toBe(502)
+		expect(await res.text()).not.toContain(SECRET)
+		expect(inserts).toHaveLength(0)
+	})
+
+	it('never returns the reply of the desktop to the agent when a typed saved login succeeds', async () => {
+		const SECRET = 'fake-pass-abcdefghij'
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: SECRET,
+			credentialName: 'Facebook',
+			field: 'password',
+		})
+		// A desktop that echoes the text it typed, even on success.
+		const controlFn = vi.fn(async (_ws, _agent, _action, sent: { text: string }) => ({
+			status: 200,
+			body: { ok: true, typed: sent.text },
+		}))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'type',
+			text: '{{keychain:Facebook.password}}',
+		})
+
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: SECRET })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(inserts).toHaveLength(1)
+		expect(inserts[0]).toMatchObject({
+			data: { keychain_credential: 'Facebook', keychain_field: 'password' },
+		})
+		expect(JSON.stringify(inserts[0])).not.toContain(SECRET)
 	})
 
 	it.each([

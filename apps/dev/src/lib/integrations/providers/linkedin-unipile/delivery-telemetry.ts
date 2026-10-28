@@ -20,7 +20,7 @@ import { resourceId } from './event-map'
 export type DeliveryOutcome = 'emitted' | 'duplicate' | 'dropped' | 'failed'
 
 /** Dropped for a reason that is routine, so it logs at info rather than warn. */
-const QUIET_DROP_REASONS = new Set(['own_message', 'flag_off', 'no_active_integration'])
+const QUIET_DROP_REASONS = new Set(['own_message', 'no_active_integration'])
 
 export interface DeliveryReport {
 	outcome: DeliveryOutcome

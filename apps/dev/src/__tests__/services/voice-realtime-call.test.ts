@@ -315,7 +315,12 @@ describe('attachVoiceCall', () => {
 		})
 		socket.emit({
 			type: 'response.output_audio_transcript.done',
+			response_id: 'r1',
 			transcript: 'Loops v4 is active.',
+		})
+		socket.emit({
+			type: 'response.done',
+			response: { id: 'r1', status: 'completed', output: [{ type: 'message' }] },
 		})
 		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledTimes(2))
 
@@ -323,6 +328,93 @@ describe('attachVoiceCall', () => {
 			['user', 'search for the loops v4 bet'],
 			['assistant', 'Loops v4 is active.'],
 		])
+	})
+
+	describe('what the agent said, as chat lines', () => {
+		async function setup() {
+			writeLine.mockClear()
+			const socket = fakeSocket()
+			const attached = attach(socket)
+			socket.open()
+			await attached
+			const said = (id: string, text: string) =>
+				socket.emit({
+					type: 'response.output_audio_transcript.done',
+					response_id: id,
+					transcript: text,
+				})
+			const done = (id: string, status: string, kind: 'message' | 'function_call' = 'message') =>
+				socket.emit({ type: 'response.done', response: { id, status, output: [{ type: kind }] } })
+			const heard = (text: string) =>
+				socket.emit({
+					type: 'conversation.item.input_audio_transcription.completed',
+					transcript: text,
+				})
+			const lines = () => writeLine.mock.calls.map(([, args]) => [args.role, args.text])
+			return { said, done, heard, lines }
+		}
+
+		it('keeps a heads-up spoken before a tool call out of the chat', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'Let me pull that up.')
+			done('r1', 'completed', 'function_call')
+			said('r2', 'You have three cards waiting.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([['assistant', 'You have three cards waiting.']])
+		})
+
+		it('does not post a line cut off by the caller when the answer repeats it', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			said('r2', 'The top card is a draft to Anna about the invoice.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([['assistant', 'The top card is a draft to Anna about the invoice.']])
+		})
+
+		it('posts a cut-off line when what follows is something else, before it', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			said('r2', 'Sure, moving on to the next one.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'The top card is a draft to Anna about the'],
+				['assistant', 'Sure, moving on to the next one.'],
+			])
+		})
+
+		it('posts a cut-off line once the caller speaks', async () => {
+			const { said, done, heard, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			heard('stop')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'The top card is a draft to Anna about the'],
+				['user', 'stop'],
+			])
+		})
+
+		it('drops an identical line said twice in a row, and keeps it after the caller spoke', async () => {
+			const { said, done, heard, lines } = await setup()
+			said('r1', 'Done.')
+			done('r1', 'completed')
+			said('r2', 'Done.')
+			done('r2', 'completed')
+			heard('ok')
+			said('r3', 'Done.')
+			done('r3', 'completed')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'Done.'],
+				['user', 'ok'],
+				['assistant', 'Done.'],
+			])
+		})
 	})
 
 	it('records a completed turn on response.done, but not for a response that only asked for a tool', async () => {

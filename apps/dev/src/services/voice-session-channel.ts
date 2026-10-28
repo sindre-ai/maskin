@@ -22,6 +22,7 @@ import {
 	postHoldPreview,
 	readAloudInstruction,
 } from './voice-hold-preview'
+import { repairToolIdArgs } from './voice-id-resolution'
 import {
 	type ReceiptDraft,
 	type ReceiptOutcome,
@@ -33,6 +34,7 @@ import {
 } from './voice-receipt'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
+import { recordVoiceToolCallLog } from './voice-tool-call-log'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -194,6 +196,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const { db, session, agentName, invokeTool, send } = deps
 	const now = deps.now ?? Date.now
 	const callState: VoiceCallState = voiceCallState(session.id)
+	const toolCallLogWrites = new Set<Promise<void>>()
 	const writeGate = createWriteGate({
 		voiceSessionId: session.id,
 		isReadOnlyTool: deps.isReadOnlyTool,
@@ -305,7 +308,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		detail: { resultText: string | null; reason?: string; send?: ReceiptSendInfo },
 	) {
 		const readOnly = deps.isReadOnlyTool(toolName)
-		if (readOnly && (toolName !== 'get_objects' || outcome !== 'ran')) return
+		// Reads leave no line, except an opened task; a failed read always does.
+		if (readOnly && outcome !== 'failed' && (toolName !== 'get_objects' || outcome !== 'ran'))
+			return
 		let drafts: ReceiptDraft[]
 		try {
 			drafts = await describeToolCall({
@@ -315,6 +320,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				args,
 				resultText: detail.resultText,
 				state: callState,
+				outcome,
 			})
 		} catch (err) {
 			logger.warn('Voice receipt could not describe a tool call', {
@@ -362,6 +368,11 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		let receiptReason: string | undefined
 		let receiptSend: ReceiptSendInfo | undefined
 		let receiptState: 'ran' | 'failed' | 'skip' = 'skip'
+		// What the tool call log keeps: the arguments as the model sent them, the length of what the
+		// tool returned before the cap, and the error text.
+		let loggedArgs: unknown = null
+		let rawOutputChars: number | null = null
+		let logError: string | null = null
 		try {
 			let rawArgs: unknown
 			try {
@@ -370,34 +381,48 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			} catch {
 				rawArgs = null
 			}
+			loggedArgs = rawArgs
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
 			// Same call a chat agent makes. The call's workspace is applied last, so a
 			// workspace_id the model passes can never point a tool at another workspace.
 			const { [VOICE_CONFIRM_ARG]: confirmation, ...toolArgs } = rawArgs as Record<string, unknown>
-			const args = { ...toolArgs, workspace_id: session.workspaceId }
+			const startCards = callState.startCards
+			// A garbled or shortened id is repaired when exactly one object fits; otherwise untouched.
+			const repaired =
+				msg.name === VOICE_SHOW_IN_CHAT_TOOL
+					? toolArgs
+					: await repairToolIdArgs(db, session.workspaceId, toolArgs, startCards).catch(
+							() => toolArgs,
+						)
+			const args = { ...repaired, workspace_id: session.workspaceId }
 			receiptArgs = args
 			if (msg.name === VOICE_SHOW_IN_CHAT_TOOL) {
 				// Handled here, not by the MCP server: it only ever writes into this call's own chat.
 				try {
-					const shown = await showInChat({ db, session, agentName, args: toolArgs })
+					const shown = await showInChat({ db, session, agentName, args: toolArgs, startCards })
 					if (shown.conversationId !== knownConversationId) {
 						knownConversationId = shown.conversationId
 						send({ type: 'conversation', conversation_id: shown.conversationId })
 					}
 					ok = true
 					output = JSON.stringify({ shown: true })
-					if (Array.isArray(toolArgs.object_ids)) {
-						noteCardNamed(
-							callState,
-							toolArgs.object_ids.filter((id): id is string => typeof id === 'string'),
-						)
-					}
+					// The resolved ids, not what the model typed, so a repaired id still counts as the card.
+					noteCardNamed(callState, shown.objectIds)
 				} catch (err) {
 					if (!(err instanceof VoiceShowInChatError)) throw err
 					errorCode = 'voice_tool_failed'
-					output = JSON.stringify({ error: err.message, error_code: errorCode })
+					logError = err.message
+					output = JSON.stringify({
+						error: err.message,
+						error_code: errorCode,
+						shown: false,
+						...(err.detail.unresolvedIds ? { unresolved_ids: err.detail.unresolvedIds } : {}),
+						...(err.detail.say ? { say: err.detail.say } : {}),
+					})
+					receiptState = 'failed'
+					receiptReason = err.message
 				}
 			} else {
 				const review = await writeGate.review(
@@ -408,6 +433,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				if (review.kind !== 'run') {
 					errorCode =
 						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					logError = `${msg.name} held: ${errorCode}`
 					const inChat =
 						review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
 					output = JSON.stringify({
@@ -420,6 +446,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 						workspaceId: session.workspaceId,
 					})
 					const { text, isError } = toolResultText(result)
+					rawOutputChars = text.length
 					if (review.confirmed) {
 						receiptSend = {
 							yesCount: review.confirmed.yesCount,
@@ -428,6 +455,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					}
 					if (isError) {
 						errorCode = 'voice_tool_failed'
+						logError = text
 						output = JSON.stringify({ error: cap(text), error_code: errorCode })
 						receiptState = 'failed'
 						receiptReason = text
@@ -441,6 +469,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		} catch (err) {
 			errorCode = 'voice_tool_failed'
+			logError = err instanceof Error ? err.message : String(err)
 			if (receiptArgs && msg.name !== VOICE_SHOW_IN_CHAT_TOOL) {
 				receiptState = 'failed'
 				receiptReason = err instanceof Error ? err.message : String(err)
@@ -497,6 +526,26 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				tool_name: msg.name,
 			})
 		}
+		// Fire and forget: the call is over and the model has its answer. recordVoiceToolCallLog
+		// never throws; idle() waits for it so tests can read the row back.
+		const logged = (async () =>
+			recordVoiceToolCallLog(db, {
+				voiceSessionId: session.id,
+				workspaceId: session.workspaceId,
+				callId: msg.call_id,
+				startedAt: new Date(startedAt),
+				toolName: msg.name,
+				args: loggedArgs ?? msg.arguments,
+				success: ok,
+				errorCode,
+				errorMessage: logError,
+				outputChars: rawOutputChars ?? output.length,
+				outputTruncated: rawOutputChars !== null && rawOutputChars > VOICE_MAX_TOOL_OUTPUT_CHARS,
+				latencyMs,
+				output,
+			}))().catch(() => {})
+		toolCallLogWrites.add(logged)
+		void logged.finally(() => toolCallLogWrites.delete(logged))
 		await recordCounter(session.id, () => recordVoiceToolCall(db, session.id))
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
@@ -600,6 +649,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		},
 
-		idle: () => transcriptQueue,
+		idle: async () => {
+			await transcriptQueue
+			await Promise.all([...toolCallLogWrites])
+		},
 	}
 }
