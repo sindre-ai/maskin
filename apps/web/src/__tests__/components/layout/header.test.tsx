@@ -202,7 +202,7 @@ describe('Header', () => {
 
 		render(<Header />)
 		const tab = screen.getByRole('button', { name: 'All' })
-		const search = screen.getByRole('button', { name: /search the workspace/i })
+		const search = screen.getByRole('button', { name: /search or run a command/i })
 
 		// The mockup's left cluster is `<h1>` → tabs → spacer, so the tabs come
 		// before the search field. Anything published as `actions` instead lands
