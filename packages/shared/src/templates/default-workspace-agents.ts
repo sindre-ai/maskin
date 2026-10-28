@@ -77,8 +77,7 @@ If the call is whether to send something, or to look at a file, load the \`draft
 /**
  * How an agent attaches a draft to a For You card. The card, approval and send
  * mechanics are platform code; this is the instruction that makes agents use
- * them. Seeded on every default agent, and backfilled into existing workspaces
- * by `backfillDraftApprovalSkill`. Mirrors the `draft-approval-tasks` skill in
+ * them. Seeded on every default agent. Mirrors the `draft-approval-tasks` skill in
  * the Vaerksted workspace, minus its agent and voice-skill names.
  */
 export const DRAFT_APPROVAL_TASKS_SKILL: SeedSkill = {
