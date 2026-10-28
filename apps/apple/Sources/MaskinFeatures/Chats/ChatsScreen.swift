@@ -390,7 +390,7 @@ private struct ChatThreadHost: View {
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
 				topic: conversations.conversation(id: conversationID)?.title, now: Date())
 			Task {
-				await coordinator.reconcile(turns)
+				await coordinator.reconcile(turns, conversationId: conversationID)
 				await coordinator.sweep()
 			}
 		}
