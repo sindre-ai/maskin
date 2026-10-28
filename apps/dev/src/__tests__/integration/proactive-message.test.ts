@@ -7,8 +7,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { isOptedOut, sendProactiveMessage } from '../../services/proactive-message'
 import { insertActor, insertConversation, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -26,19 +25,12 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 
 const HOUR_MS = 60 * 60 * 1000
 
-function restoreEnv(name: string, value: string | undefined) {
-	if (value === undefined) delete process.env[name]
-	else process.env[name] = value
-}
-
 describe('sendProactiveMessage (integration)', () => {
 	let workspaceId: string
 	let cosId: string
 	let otherAgentId: string
 	let humanId: string
 	let chatId: string
-	let previousTesters: string | undefined
-	let previousFeatures: string | undefined
 	let keyCount = 0
 
 	function args(overrides: Record<string, unknown> = {}) {
@@ -52,12 +44,6 @@ describe('sendProactiveMessage (integration)', () => {
 			dedupeKey: `key-${keyCount}`,
 			...overrides,
 		} as Parameters<typeof sendProactiveMessage>[1]
-	}
-
-	function flagOnFor(...ids: string[]) {
-		process.env.FF_TESTER_ACTOR_IDS = ids.join(',')
-		process.env.FF_TESTER_FEATURES = 'agent-proactive-1-1'
-		_resetFeatureFlagConfig()
 	}
 
 	async function join(actorId: string, role = 'member') {
@@ -117,8 +103,6 @@ describe('sendProactiveMessage (integration)', () => {
 	}
 
 	beforeEach(async () => {
-		previousTesters = process.env.FF_TESTER_ACTOR_IDS
-		previousFeatures = process.env.FF_TESTER_FEATURES
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
 		const ws = await insertWorkspace(db, getTestActorId())
@@ -130,13 +114,6 @@ describe('sendProactiveMessage (integration)', () => {
 		await join(otherAgentId)
 		await join(humanId)
 		chatId = await makeChat([humanId, cosId])
-		flagOnFor(humanId)
-	})
-
-	afterEach(() => {
-		restoreEnv('FF_TESTER_ACTOR_IDS', previousTesters)
-		restoreEnv('FF_TESTER_FEATURES', previousFeatures)
-		_resetFeatureFlagConfig()
 	})
 
 	it('sends one message as Chief of Staff, marked proactive, unread, with no mentions', async () => {
@@ -178,12 +155,6 @@ describe('sendProactiveMessage (integration)', () => {
 		expect(spies.createLLMAdapter).not.toHaveBeenCalled()
 	})
 
-	it('refuses with flag_off when the recipient is not a tester', async () => {
-		flagOnFor(otherAgentId)
-		expect(await sendProactiveMessage(db, args())).toEqual({ sent: false, reason: 'flag_off' })
-		expect(await messagesIn(chatId)).toHaveLength(0)
-	})
-
 	it('refuses a sender that is not the Chief of Staff', async () => {
 		const agentChat = await makeChat([humanId, otherAgentId])
 		const result = await sendProactiveMessage(db, args({ senderAgentId: otherAgentId }))
@@ -199,14 +170,12 @@ describe('sendProactiveMessage (integration)', () => {
 
 	it('refuses a recipient who is not a member of the workspace', async () => {
 		const stranger = await insertActor(db, { type: 'human', name: 'Stranger' })
-		flagOnFor(stranger.id)
 		await makeChat([stranger.id, cosId])
 		const result = await sendProactiveMessage(db, args({ recipientHumanId: stranger.id }))
 		expect(result).toEqual({ sent: false, reason: 'recipient_not_member' })
 	})
 
 	it('refuses an agent as recipient', async () => {
-		flagOnFor(otherAgentId)
 		const result = await sendProactiveMessage(db, args({ recipientHumanId: otherAgentId }))
 		expect(result).toEqual({ sent: false, reason: 'recipient_not_member' })
 	})
@@ -214,7 +183,6 @@ describe('sendProactiveMessage (integration)', () => {
 	it('never creates a chat: a person with no 1-1 gets no_direct_chat', async () => {
 		const lonely = await insertActor(db, { type: 'human', name: 'Lonely Person' })
 		await join(lonely.id)
-		flagOnFor(lonely.id)
 		const result = await sendProactiveMessage(db, args({ recipientHumanId: lonely.id }))
 		expect(result).toEqual({ sent: false, reason: 'no_direct_chat' })
 		const created = await db
@@ -376,7 +344,6 @@ describe('sendProactiveMessage (integration)', () => {
 		it('opts out only that person; another person still gets their note', async () => {
 			const other = await insertActor(db, { type: 'human', name: 'Other Person' })
 			await join(other.id)
-			flagOnFor(humanId, other.id)
 			const otherChat = await makeChat([other.id, cosId])
 			await oldReadNote()
 			await say('stop')

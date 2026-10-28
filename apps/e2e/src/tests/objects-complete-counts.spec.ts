@@ -18,7 +18,7 @@ test.describe('Objects page shows complete counts', () => {
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await account.api.updateWorkspace(account.workspaceId, {
-				settings: { statuses: { bet: ['signal', 'active'] } },
+				settings: { statuses: { bet: ['opportunity', 'active'] } },
 			})
 
 			for (let i = 0; i < ACTIVE_BETS; i++) {
@@ -32,7 +32,7 @@ test.describe('Objects page shows complete counts', () => {
 				await account.api.createObject(account.workspaceId, {
 					type: 'bet',
 					title: `Counts signal ${i}`,
-					status: 'signal',
+					status: 'opportunity',
 				})
 			}
 
@@ -50,7 +50,7 @@ test.describe('Objects page shows complete counts', () => {
 			await expect(activeHeader).toContainText(String(ACTIVE_BETS))
 			const signalHeader = page
 				.getByRole('button', { expanded: true })
-				.filter({ hasText: 'signal' })
+				.filter({ hasText: 'opportunity' })
 			await expect(signalHeader).toContainText(String(SIGNAL_BETS))
 
 			// ...and the oldest rows are there, though they sit past the first page.
@@ -71,7 +71,7 @@ test.describe('Objects page shows complete counts', () => {
 		account,
 	}) => {
 		await account.api.updateWorkspace(account.workspaceId, {
-			settings: { statuses: { bet: ['signal', 'active'] } },
+			settings: { statuses: { bet: ['opportunity', 'active'] } },
 		})
 		for (let i = 0; i < ACTIVE_BETS; i++) {
 			await account.api.createObject(account.workspaceId, {
@@ -84,7 +84,7 @@ test.describe('Objects page shows complete counts', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: `Filtered signal ${i}`,
-				status: 'signal',
+				status: 'opportunity',
 			})
 		}
 

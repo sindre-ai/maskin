@@ -278,6 +278,7 @@ describe('sessionIntegrationAccessCardSchema', () => {
 const BACKEND_OWNED_KEYS = [
 	'source',
 	'voice_session_id',
+	'kind',
 	'final_output',
 	'question',
 	'integration_connect',

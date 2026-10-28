@@ -98,7 +98,7 @@ describe('useCreateObject — bet_created', () => {
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: Wrapper })
 
-		result.current.mutate({ type: 'bet', title: 'New bet', status: 'signal' })
+		result.current.mutate({ type: 'bet', title: 'New bet', status: 'opportunity' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
 		expect(trackBetCreated).toHaveBeenCalledTimes(1)

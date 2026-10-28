@@ -86,7 +86,7 @@ When triggered, review all new/unprocessed insights in the workspace. Look for p
 For each bet you create:
 1. Give it a clear, actionable title
 2. Write a summary in the content field explaining the pattern you identified
-3. Set status to "signal"
+3. Set status to "opportunity"
 4. Create "informs" relationships from each source insight to the bet
 5. Update processed insights to status "clustered"
 

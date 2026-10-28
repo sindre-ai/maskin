@@ -17,6 +17,28 @@
 export type TurnErrorKind = 'transient' | 'permanent'
 
 /**
+ * A 403 whose body is a Cloudflare block page ("Attention Required!
+ * | Cloudflare"), i.e. the provider's edge refused the request before it ever
+ * reached the model API. The CLI words every 403 as "Failed to authenticate",
+ * which is wrong here: the key is fine and the block usually lifts on its own,
+ * so it is retried rather than reported as a credential problem. A real bad key
+ * is a 401 with a JSON body and never matches.
+ */
+export function isProviderBlockPage(text: string): boolean {
+	return /\b403\b/.test(text) && /Attention Required|Cloudflare/i.test(text)
+}
+
+/**
+ * The Cloudflare Ray ID, when the block page's text carries one. Support can
+ * trace a block to the rule that fired from this id alone. The CLI usually
+ * keeps only the page title, so null is common.
+ */
+export function extractCloudflareRayId(text: string): string | null {
+	const match = /Ray ID:?\s*(?:<[^>]*>\s*)*([0-9a-f]{16})\b/i.exec(text)
+	return match?.[1] ?? null
+}
+
+/**
  * Checked FIRST, so an auth/quota failure can never be read as transient just
  * because its body happens to mention a 5xx. These mirror the banner strings
  * in `credit-classifier.ts` — that classifier owns the session-exit path, this
@@ -73,6 +95,7 @@ const TRANSIENT_MARKERS: readonly string[] = [
  * the default.
  */
 export function classifyTurnError(text: string): TurnErrorKind {
+	if (isProviderBlockPage(text)) return 'transient'
 	if (PERMANENT_MARKERS.some((marker) => text.includes(marker))) return 'permanent'
 	if (TRANSIENT_MARKERS.some((marker) => text.includes(marker))) return 'transient'
 	return 'permanent'

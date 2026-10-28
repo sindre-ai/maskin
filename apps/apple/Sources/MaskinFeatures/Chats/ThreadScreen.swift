@@ -140,7 +140,7 @@ struct ThreadScreen: View {
 					text, in: rootID, to: message.author == .agent ? store.participant(for: message.actorID) : nil,
 					alsoInChannel: false, metadata: metadata)
 			},
-			cardOutcome: message.serverID.flatMap { store.cardAnswerIndex[$0] },
+			cardOutcome: message.asksForAnswer ? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 			chatAgents: store.participants.filter { $0.kind == .agent },
 			onApprovedDraft: { title, body in
 				// The yes goes back into this thread, to the agent that wrote the draft.

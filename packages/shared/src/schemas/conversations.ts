@@ -374,6 +374,12 @@ export const messageMetadataSchema = z.object({
 	source: z.enum(['final_output', 'voice']).optional(),
 	/** Backend-owned: the voice_sessions row a 'voice' message was transcribed from. */
 	voice_session_id: z.string().uuid().optional(),
+	/**
+	 * Backend-owned: what a 'voice' message is when it is not a spoken transcript line. 'show' is
+	 * a draft, object or link the agent put on screen (show_in_chat); 'receipt' and
+	 * 'receipt_summary' record what a call did. A spoken line has no kind.
+	 */
+	kind: z.string().max(40).optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
@@ -431,6 +437,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		final_output: _finalOutput,
 		question: _question,
 		voice_session_id: _voiceSessionId,
+		kind: _kind,
 		integration_connect: _integrationConnect,
 		helper_return: _helperReturn,
 		delivery: _delivery,

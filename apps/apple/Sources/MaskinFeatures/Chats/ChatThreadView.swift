@@ -59,6 +59,9 @@ struct ChatThreadView: View {
 	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
 	@State private var openedOnUnread = false
 	@State private var renaming = false
+	/// A secret caught in the message box before sending; the sheet offers the Keychain.
+	@State private var caughtSecret: CaughtSecret?
+	@State private var secretStore: KeychainStore?
 	@State private var newTitle = ""
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
@@ -125,6 +128,11 @@ struct ChatThreadView: View {
 
 	/// The live state if any; otherwise the person's name under a topic title.
 	private var navStatus: ThreadNavStatus? {
+		if let call, let startedAt = call.startedAt {
+			return .quiet(
+				LiveMeetingChrome.subline(
+					origin: call.origin, threadTitle: topic ?? store.title, leadName: call.lead.name, startedAt: startedAt))
+		}
 		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
 		guard topic != nil, let name = counterpart?.name else { return nil }
 		return .quiet(name)
@@ -201,12 +209,21 @@ struct ChatThreadView: View {
 				} message: {
 					Text(store.notice ?? "")
 				}
+				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
 					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
 						ThreadScreen(store: store, root: root)
 					}
 				}
 				.linkedItems(runtime)
+				.sheet(item: $caughtSecret) { caught in
+					if let secretStore {
+						SecretCaughtSheet(
+							caught: caught, store: secretStore,
+							chatAgentIDs: Set(store.participants.filter { $0.kind == .agent }.map(\.id)),
+							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
+					}
+				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
 						entries: linkedEntries,
@@ -241,6 +258,7 @@ struct ChatThreadView: View {
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
 			if !linkedEntries.isEmpty {
 				Button { showingLinked = true } label: {
 					HStack(spacing: MaskinSpace.s1) {
@@ -328,6 +346,19 @@ struct ChatThreadView: View {
 				.buttonStyle(.maskinPressed)
 			}
 		}
+	}
+
+	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
+	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
+	/// request, and an unreachable root leaves the chat open on its own.
+	private func openRequestedThread() async {
+		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
+			return
+		}
+		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
+		if !held() { await store.loadThread(request.rootId) }
+		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
 	// MARK: Linked
@@ -454,7 +485,7 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
 			onOpenThread: { message in
 				guard let id = message.serverID else { return }
 				threadRoute = ThreadRoute(rootID: id)
@@ -687,6 +718,8 @@ struct ChatThreadView: View {
 			onInvite: onInvite,
 			onOpenObject: { runtime?.openObject($0.id) },
 			onEnd: { liveCalls?.end() })
+		.onAppear { liveCalls?.panelAppeared(for: call.chat.conversationID) }
+		.onDisappear { liveCalls?.panelDisappeared(for: call.chat.conversationID) }
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -713,6 +746,13 @@ struct ChatThreadView: View {
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.
 	private func send() {
+		// The server refuses a message that holds a secret, so catch it here and offer the Keychain.
+		if let match = SecretScanner.firstSecret(in: composer.text), let runtime {
+			secretStore = SettingsServices(environment: runtime.environment).keychainStore()
+			caughtSecret = CaughtSecret(text: composer.text, match: match)
+			MaskinHaptics.play(.warning)
+			return
+		}
 		if let edit = composer.takeEdit() {
 			MaskinHaptics.play(.light)
 			Task { await store.edit(edit.messageID, to: edit.text) }
@@ -888,6 +928,8 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// An intro's fill step: put its prompt in the composer.
+	var onFillStep: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -937,9 +979,12 @@ struct ThreadTranscript: View {
 		// A voice call keeps its lines in the call log, which is not observable: reading the running
 		// call's lines here is what redraws the card as each one is transcribed.
 		let _ = call?.lines.count
+		// The same for answers tapped in the dock: their DECIDED rows come from that log too.
+		let _ = call?.decisions.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
-			calls: LiveCallLog.shared.records(for: store.conversationID))
+			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
+			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
 			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
@@ -1053,8 +1098,14 @@ struct ThreadTranscript: View {
 			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .callDivider(let divider):
+			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
+		case .receipt(let event):
+			LiveReceiptRow(event: event)
+		case .callSummary(let summary, let transcript):
+			LiveCallSummaryCard(summary: summary, transcript: transcript)
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
@@ -1083,9 +1134,15 @@ struct ThreadTranscript: View {
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
-				cardOutcome: message.metadata?["keychain_access_request"] == nil
-					&& message.metadata?["mcp_server_request"] == nil
-					? nil : message.serverID.flatMap { store.cardAnswerIndex[$0] },
+				onSendStep: { prompt, introID, index in
+					_ = store.send(
+						prompt,
+						metadata: ChatSendMetadata(fromSuggestedStep: ChatSuggestedStepRef(introMessageID: introID, index: index)))
+				},
+				onFillStep: onFillStep,
+				introStepsOpen: AgentIntroView.stepsOpen(for: message, in: store.messages),
+				cardOutcome: message.asksForAnswer
+					? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 				chatAgents: store.participants.filter { $0.kind == .agent },
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in

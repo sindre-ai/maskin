@@ -33,7 +33,7 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 	return trigger.type
 }
 
-const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
+export const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
 	event: Zap,
 	cron: Clock,
 	reminder: Bell,

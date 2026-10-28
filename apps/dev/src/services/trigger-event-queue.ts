@@ -180,8 +180,6 @@ export type DrainScope = { triggerId: string } | { workspaceId: string }
 export interface DrainHandlers {
 	/** Why this drain is running; a retry_at_x row reports retry_at_x_arrival on the sweep. */
 	source: TriggerQueueDrainSource
-	/** False when the flag is off for the workspace: rows stay pending for the retention sweep. */
-	canReplay: (workspaceId: string) => boolean
 	/** True while the trigger / workspace is back inside a window: stop and leave the rest pending. */
 	isHeld: (workspaceId: string) => boolean
 	/** Re-runs the matcher (or the one trigger) against the stored event. Throws to leave the row pending. */
@@ -251,7 +249,7 @@ export async function drainQueue(
 
 			let count = 0
 			for (const row of rows) {
-				if (!handlers.canReplay(row.workspaceId) || handlers.isHeld(row.workspaceId)) {
+				if (handlers.isHeld(row.workspaceId)) {
 					return { done: true, count }
 				}
 				if (isPgEventSnapshot(row.eventSnapshot)) {

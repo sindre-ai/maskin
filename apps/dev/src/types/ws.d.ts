@@ -7,6 +7,7 @@ declare module 'ws' {
 		constructor(url: string, options?: { headers?: Record<string, string> })
 		readonly readyState: number
 		send(data: string): void
+		ping(): void
 		close(code?: number): void
 		terminate(): void
 	}
