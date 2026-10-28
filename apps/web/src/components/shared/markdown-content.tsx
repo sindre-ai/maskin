@@ -367,7 +367,7 @@ function RenderedMarkdownContent({
 export function MarkdownContent({
 	editable,
 	onChange,
-	editorLabel: _editorLabel,
+	editorLabel,
 	preserveSource,
 	surface,
 	objectId,
@@ -379,6 +379,7 @@ export function MarkdownContent({
 				content={renderProps.content}
 				onChange={onChange}
 				className={renderProps.className}
+				editorLabel={editorLabel}
 				disallowedElements={renderProps.disallowedElements}
 				preserveSource={preserveSource}
 				surface={surface}
@@ -405,6 +406,7 @@ function EditorAdapter({
 	content,
 	onChange,
 	className,
+	editorLabel,
 	disallowedElements,
 	preserveSource,
 	surface,
@@ -413,6 +415,7 @@ function EditorAdapter({
 	content: string
 	onChange?: (value: string) => unknown
 	className?: string
+	editorLabel?: string
 	disallowedElements?: string[]
 	preserveSource?: boolean
 	surface?: string
@@ -507,6 +510,7 @@ function EditorAdapter({
 					onEdit={handleEdit}
 					variant="document"
 					className={className}
+					ariaLabel={editorLabel}
 					disallowedNodes={disallowedNodes}
 					onParseError={handleParseError}
 					onToolbarAction={handleToolbarAction}
