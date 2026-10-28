@@ -12,12 +12,21 @@ import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { defaultTypeColor, statusLabel, typeColors } from '@/lib/constants'
-import { plainSnippet, showsObjectCard } from '@/lib/linked-objects'
-import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, RefreshCw, Zap } from 'lucide-react'
 import {
+	defaultStatusColor,
+	defaultTypeColor,
+	statusColors,
+	statusLabel,
+	typeColors,
+} from '@/lib/constants'
+import { cutLabel, plainSnippet, shortName, showsObjectCard } from '@/lib/linked-objects'
+import { Link } from '@tanstack/react-router'
+import { ArrowUpRight, ChevronDown, ChevronUp, RefreshCw, Zap } from 'lucide-react'
+import {
+	type ReactElement,
 	type ReactNode,
+	cloneElement,
+	isValidElement,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -80,7 +89,10 @@ function usePreviewCapable() {
 }
 
 /**
- * Opens the card under its child while the pointer is over it or focus is inside it. The
+ * Opens the card under its child while the pointer is over it or focus is inside it. The chip
+ * wraps with the sentence, so this wrapper is inline too: the card opens under the chip's last
+ * line, at the left edge of the chip's bounding box (the right edge when that would run off the
+ * screen). The
  * card is the one the chip stands for, read from the same cache entry, so nothing is fetched
  * here; while that entry loads the card shows its skeleton. The preview is for the eye only:
  * hidden from the accessibility tree and not a tab stop, since the chip is already the link and
@@ -100,16 +112,21 @@ function ChipPreview({
 	const [open, setOpen] = useState(false)
 	const shown = open && enabled && capable
 	const root = useRef<HTMLSpanElement>(null)
-	const [alignEnd, setAlignEnd] = useState(false)
+	// The card is placed against the first and last line piece of the chip; `shift` moves it to the
+	// bounding box of all of them (nothing for a chip on one line).
+	const [place, setPlace] = useState({ alignEnd: false, shift: 0 })
 
 	useLayoutEffect(() => {
 		if (shown && root.current) {
-			setAlignEnd(
-				previewOverflows(
-					root.current.getBoundingClientRect(),
-					document.documentElement.clientWidth,
-				),
-			)
+			const box = root.current.getBoundingClientRect()
+			const pieces = root.current.getClientRects()
+			const first = pieces[0]
+			const last = pieces[pieces.length - 1]
+			const alignEnd = previewOverflows(box, document.documentElement.clientWidth)
+			setPlace({
+				alignEnd,
+				shift: first && last ? (alignEnd ? last.right - box.right : box.left - first.left) : 0,
+			})
 		}
 	}, [shown])
 
@@ -125,7 +142,7 @@ function ChipPreview({
 	return (
 		<span
 			ref={root}
-			className="relative inline-block max-w-full align-middle"
+			className="relative"
 			onMouseEnter={() => setOpen(true)}
 			onMouseLeave={() => setOpen(false)}
 			onFocus={() => setOpen(true)}
@@ -139,11 +156,8 @@ function ChipPreview({
 				<span
 					aria-hidden="true"
 					data-linked-preview=""
-					className={cn(
-						'absolute top-full z-50 block pt-1 duration-180',
-						alignEnd ? 'right-0' : 'left-0',
-						'ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5',
-					)}
+					style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
+					className="absolute top-full z-50 block pt-1 duration-180 ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5"
 				>
 					{card}
 				</span>
@@ -152,10 +166,77 @@ function ChipPreview({
 	)
 }
 
+// The chip is text: the size and line height of the sentence it sits in, a tinted plate that wraps
+// with it (box-decoration-clone draws the plate on every line piece) and no vertical padding.
+const CHIP =
+	'not-prose rounded-md bg-muted px-[0.4em] font-medium text-foreground no-underline box-decoration-clone transition-colors duration-180 ease-standard hover:bg-brand-subtle hover:text-brand-subtle-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+const DELETED_CHIP =
+	'rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground'
+const CHIP_DOT = 'inline-block rounded-full bg-current align-middle'
+const CHIP_ICON = 'mr-[0.4em] inline-block align-middle text-muted-foreground'
+// A word joiner, for the dot of a chip that is still loading.
+const JOIN = '\u2060'
+
 /**
- * A link to an object inside a sentence: type dot, title, status word and the owner's avatar. The
- * whole chip is one link to the object, in the same tab. While the object loads the original link
- * stays; an object that is gone, or in another workspace, reads "Deleted object".
+ * The text of a chip with its marks: `lead` stays on the first character and `trail` on the last,
+ * so a dot never wraps onto a line of its own. Everything between breaks like words in a sentence.
+ */
+function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail?: ReactNode }) {
+	const chars = Array.from(text)
+	if (chars.length < 2) {
+		return (
+			<span className="whitespace-nowrap">
+				{lead}
+				{text}
+				{trail}
+			</span>
+		)
+	}
+	return (
+		<span>
+			<span className="whitespace-nowrap">
+				{lead}
+				{chars[0]}
+			</span>
+			{chars.slice(1, -1).join('')}
+			<span className="whitespace-nowrap">
+				{chars[chars.length - 1]}
+				{trail}
+			</span>
+		</span>
+	)
+}
+
+/**
+ * The chip of a link whose target is still loading: the author's own link, in the same plate and
+ * at the sentence size, with a neutral dot that pulses (it holds still under reduced motion).
+ */
+function loadingChip(fallback: ReactNode, dot = true): ReactNode {
+	if (!isValidElement(fallback)) return fallback
+	const link = fallback as ReactElement<{ className?: string; children?: ReactNode }>
+	return cloneElement(
+		link,
+		{ className: cn(link.props.className, CHIP) },
+		dot ? (
+			<span
+				aria-hidden="true"
+				className={cn(
+					CHIP_DOT,
+					'mr-[0.4em] size-[0.5em] text-muted-foreground motion-safe:animate-pulse',
+				)}
+			/>
+		) : null,
+		dot ? JOIN : null,
+		<span>{link.props.children}</span>,
+	)
+}
+
+/**
+ * A link to an object inside a sentence: the type dot, the short name of its title and a dot in the
+ * status colour, on a plate the size of the sentence. The status word and the owner are in the
+ * preview and the accessible name. The whole chip is one link to the object, in the same tab. While
+ * the object loads the original link stays; an object that is gone, or in another workspace, reads
+ * "Deleted object".
  */
 export function ObjectReferenceChip({
 	workspaceId,
@@ -172,11 +253,7 @@ export function ObjectReferenceChip({
 
 	// A draft keeps its plain link: its approval card sits under the text.
 	if (object === null) {
-		return (
-			<span className="inline-flex items-center rounded-[9px] border border-dashed border-border px-2 py-0.5 align-baseline text-[11.5px] italic text-muted-foreground">
-				Deleted object
-			</span>
-		)
+		return <span className={DELETED_CHIP}>Deleted object</span>
 	}
 	// While the object loads the original link stays and still previews (the card shows its
 	// skeleton); a draft has no preview.
@@ -186,7 +263,7 @@ export function ObjectReferenceChip({
 				card={<ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} preview />}
 				enabled={object === undefined}
 			>
-				{fallback}
+				{object === undefined ? loadingChip(fallback) : fallback}
 			</ChipPreview>
 		)
 	}
@@ -206,27 +283,30 @@ export function ObjectReferenceChip({
 				to="/$workspaceId/objects/$objectId"
 				params={{ workspaceId, objectId: object.id }}
 				aria-label={name}
-				className={cn(
-					'not-prose inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-0.5 pr-2 pl-2 align-middle text-[11.5px] no-underline',
-					HOVER,
-				)}
+				className={CHIP}
 			>
-				<TypeBadge type={object.type} variant="dot" />
-				<span className="min-w-0 truncate font-semibold text-foreground">{title}</span>
-				<StatusBadge
-					status={object.status}
-					variant="word"
-					className="text-[10.5px] font-semibold"
+				<ChipText
+					lead={
+						<TypeBadge
+							type={object.type}
+							variant="dot"
+							className={cn(CHIP_DOT, 'mr-[0.4em] size-[0.5em]')}
+						/>
+					}
+					text={cutLabel(shortName(title))}
+					trail={
+						object.status ? (
+							<span
+								aria-hidden="true"
+								className={cn(
+									CHIP_DOT,
+									'ml-[0.4em] size-[0.4em]',
+									(statusColors[object.status] ?? defaultStatusColor).text,
+								)}
+							/>
+						) : null
+					}
 				/>
-				{owner ? (
-					<ActorAvatar
-						id={owner.id}
-						name={owner.name}
-						type={owner.type}
-						size="sm"
-						className="size-4 shrink-0 text-[8px]"
-					/>
-				) : null}
 			</Link>
 		</ChipPreview>
 	)
@@ -242,6 +322,107 @@ const PREVIEW_SHELL =
 function Bar({ className }: { className: string }) {
 	return (
 		<span aria-hidden="true" className={cn('block animate-pulse rounded bg-muted', className)} />
+	)
+}
+
+// An open card is the link and, beside it, a fold button: a button inside a link is invalid HTML, so
+// the shell (border, background, width) is this wrapper and the link inside it has none.
+const OPEN_CARD_LINK = 'group flex flex-col rounded-xl p-3 no-underline focus-visible:outline-none'
+// Room at the end of the first row for the fold button, which sits over it.
+const FOLD_ROOM = 'mr-7'
+const FOLD_BUTTON =
+	'absolute top-2.5 right-3 grid size-6 place-items-center rounded-md text-muted-foreground transition-colors duration-180 ease-standard hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/**
+ * A card on its own line that can be folded to one row: its type (or kind), title and state. The
+ * state is in this page only and every card starts open. No motion, so the thread does not jump.
+ * The fold button is a second tab stop after the card's link; focus stays on it as it swaps.
+ */
+function FoldableCard({
+	title,
+	head,
+	state,
+	children,
+}: {
+	title: string
+	/** The type badge or kind tag. */
+	head: ReactNode
+	/** The status badge or state. */
+	state: ReactNode
+	/** The card's link, drawn without a shell of its own. */
+	children: ReactNode
+}) {
+	const [folded, setFolded] = useState(false)
+	const root = useRef<HTMLSpanElement>(null)
+	const toggled = useRef(false)
+
+	useEffect(() => {
+		if (!toggled.current) return
+		toggled.current = false
+		root.current?.querySelector('button')?.focus()
+	}, [folded])
+
+	const toggle = () => {
+		toggled.current = true
+		setFolded((value) => !value)
+	}
+
+	return (
+		<span
+			ref={root}
+			data-linked-card=""
+			className={cn(
+				CARD_SHELL,
+				'relative border-border transition-colors duration-180 ease-standard hover:border-border-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring',
+				folded && 'h-10',
+			)}
+		>
+			{folded ? (
+				<button
+					type="button"
+					aria-expanded={false}
+					aria-label={`Unfold card: ${title}`}
+					onClick={toggle}
+					className="flex size-full items-center gap-1.5 rounded-xl px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					<span className="shrink-0">{head}</span>
+					<span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+						{title}
+					</span>
+					<span className="shrink-0">{state}</span>
+					<ChevronDown size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+				</button>
+			) : (
+				<>
+					{children}
+					<button
+						type="button"
+						aria-expanded
+						aria-label="Fold card"
+						onClick={toggle}
+						className={FOLD_BUTTON}
+					>
+						<ChevronUp size={14} aria-hidden />
+					</button>
+				</>
+			)}
+		</span>
+	)
+}
+
+/** The workspace's own name for a type, on the type's own colours. */
+function TypeTag({ type, label }: { type: string; label: string }) {
+	const colors = typeColors[type] ?? defaultTypeColor
+	return (
+		<span
+			className={cn(
+				'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium',
+				colors.bg,
+				colors.text,
+			)}
+		>
+			{label}
+		</span>
 	)
 }
 
@@ -297,32 +478,31 @@ export function ObjectReferenceCard({
 	const snippet = plainSnippet(object.content)
 	const priority = priorityOf(object)
 	const working = object.active_session_state === 'running'
-	return (
+	const head = <TypeTag type={object.type} label={typeLabel(object.type)} />
+	const state = <StatusBadge status={object.status} />
+	const link = (
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: object.id }}
-			data-linked-card={marker}
 			tabIndex={preview ? -1 : undefined}
-			className={cn(shell, 'group border-border p-3 no-underline', HOVER)}
+			className={
+				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
+			}
 		>
 			<span className="flex items-center gap-1.5">
-				{/* The workspace's own name for the type, on the type's own colours. */}
-				<span
-					className={cn(
-						'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium',
-						(typeColors[object.type] ?? defaultTypeColor).bg,
-						(typeColors[object.type] ?? defaultTypeColor).text,
-					)}
-				>
-					{typeLabel(object.type)}
-				</span>
-				<StatusBadge status={object.status} />
+				{head}
+				{state}
 				{priority ? (
 					<span className="font-mono text-[10.5px] font-semibold text-muted-foreground">
 						{priority}
 					</span>
 				) : null}
-				<span className="ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground">
+				<span
+					className={cn(
+						'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground',
+						!preview && FOLD_ROOM,
+					)}
+				>
 					<span className="sr-only">Open</span>
 					<ArrowUpRight size={14} aria-hidden />
 				</span>
@@ -373,6 +553,13 @@ export function ObjectReferenceCard({
 			</span>
 		</Link>
 	)
+	return preview ? (
+		link
+	) : (
+		<FoldableCard title={title} head={head} state={state}>
+			{link}
+		</FoldableCard>
+	)
 }
 
 /** The loop in this workspace's list, or null while it loads (`undefined`) or when it is not in it (`null`). */
@@ -395,9 +582,6 @@ const KIND_TAG =
 const OPEN_ARROW =
 	'ml-auto inline-flex shrink-0 items-center text-muted-foreground transition-colors duration-180 ease-standard group-hover:text-foreground'
 const AVATAR = 'size-4 shrink-0 text-[8px]'
-
-const DELETED_CHIP =
-	'inline-flex items-center rounded-[9px] border border-dashed border-border px-2 py-0.5 align-baseline text-[11.5px] italic text-muted-foreground'
 
 /** The loading card of a loop or trigger. */
 function LinkedCardSkeleton({ shell, marker }: { shell: string; marker: string | undefined }) {
@@ -463,9 +647,10 @@ function useTriggerAgent(workspaceId: string, trigger: TriggerResponse | null | 
 }
 
 /**
- * A link to a loop inside a sentence: refresh icon, name, state word and the first agent's avatar.
- * The whole chip is one link to the loop, in the same tab. While the loops load the original link
- * stays; a loop that is not in this workspace's list reads "Deleted loop".
+ * A link to a loop inside a sentence: refresh icon and name, on the same plate as the object chip.
+ * The state word and the agents are in the preview and the accessible name. The whole chip is one
+ * link to the loop, in the same tab. While the loops load the original link stays; a loop that is
+ * not in this workspace's list reads "Deleted loop".
  */
 export function LoopReferenceChip({
 	workspaceId,
@@ -477,48 +662,31 @@ export function LoopReferenceChip({
 	fallback: ReactNode
 }) {
 	const loop = useLinkedLoop(workspaceId, loopId)
-	const agents = useLoopAgents(workspaceId, loop)
 	const card = <LoopReferenceCard workspaceId={workspaceId} loopId={loopId} preview />
 
 	if (loop === null) return <span className={DELETED_CHIP}>Deleted loop</span>
 	if (loop === undefined) {
 		return (
 			<ChipPreview card={card} enabled>
-				{fallback}
+				{loadingChip(fallback, false)}
 			</ChipPreview>
 		)
 	}
 
 	const name = loop.name?.trim() || 'Untitled loop'
 	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
-	const first = agents[0]
 	return (
 		<ChipPreview card={card} enabled>
 			<Link
 				to="/$workspaceId/loops/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
 				aria-label={`Loop, ${state}: ${name}`}
-				className={cn(
-					'not-prose inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-0.5 pr-2 pl-2 align-middle text-[11.5px] no-underline',
-					HOVER,
-				)}
+				className={CHIP}
 			>
-				<RefreshCw size={11} aria-hidden className="shrink-0 text-muted-foreground" />
-				<span className="min-w-0 truncate font-semibold text-foreground">{name}</span>
-				<span
-					className={cn('shrink-0 text-[10.5px] font-semibold', LOOP_PILL_STYLES[loop.pill].text)}
-				>
-					{state}
-				</span>
-				{first ? (
-					<ActorAvatar
-						id={first.id}
-						name={first.name}
-						type={first.type}
-						size="sm"
-						className={AVATAR}
-					/>
-				) : null}
+				<ChipText
+					lead={<RefreshCw size="0.95em" aria-hidden className={CHIP_ICON} />}
+					text={name}
+				/>
 			</Link>
 		</ChipPreview>
 	)
@@ -552,32 +720,38 @@ export function LoopReferenceCard({
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const snippet = plainSnippet(loop.content)
 	const activity = loopActivityLine(loop)
-	return (
+	const name = loop.name?.trim() || 'Untitled loop'
+	const head = (
+		<span className={KIND_TAG}>
+			<RefreshCw size={11} aria-hidden />
+			Loop
+		</span>
+	)
+	const state = (
+		<span className={cn('inline-flex items-center gap-1.5 text-[11px] font-semibold', pill.text)}>
+			<span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', pill.dot)} />
+			{pill.label}
+		</span>
+	)
+	const link = (
 		<Link
 			to="/$workspaceId/loops/$loopId"
 			params={{ workspaceId, loopId: loop.id }}
-			data-linked-card={marker}
 			tabIndex={preview ? -1 : undefined}
-			className={cn(shell, 'group border-border p-3 no-underline', HOVER)}
+			className={
+				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
+			}
 		>
 			<span className="flex items-center gap-1.5">
-				<span className={KIND_TAG}>
-					<RefreshCw size={11} aria-hidden />
-					Loop
-				</span>
-				<span
-					className={cn('inline-flex items-center gap-1.5 text-[11px] font-semibold', pill.text)}
-				>
-					<span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', pill.dot)} />
-					{pill.label}
-				</span>
-				<span className={OPEN_ARROW}>
+				{head}
+				{state}
+				<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
 					<span className="sr-only">Open</span>
 					<ArrowUpRight size={14} aria-hidden />
 				</span>
 			</span>
 			<span className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-				{loop.name?.trim() || 'Untitled loop'}
+				{name}
 			</span>
 			{snippet ? (
 				<span className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
@@ -609,13 +783,20 @@ export function LoopReferenceCard({
 			</span>
 		</Link>
 	)
+	return preview ? (
+		link
+	) : (
+		<FoldableCard title={name} head={head} state={state}>
+			{link}
+		</FoldableCard>
+	)
 }
 
 /**
- * A link to a trigger inside a sentence: the icon of its kind, name, On or Off in lower case and
- * the avatar of the agent it wakes. The whole chip is one link to the trigger, in the same tab.
- * While the triggers load the original link stays; one not in this workspace's list reads
- * "Deleted trigger".
+ * A link to a trigger inside a sentence: the icon of its kind and name, on the same plate as the
+ * object chip. On or Off and the agent it wakes are in the preview and the accessible name. The
+ * whole chip is one link to the trigger, in the same tab. While the triggers load the original link
+ * stays; one not in this workspace's list reads "Deleted trigger".
  */
 export function TriggerReferenceChip({
 	workspaceId,
@@ -627,14 +808,13 @@ export function TriggerReferenceChip({
 	fallback: ReactNode
 }) {
 	const trigger = useLinkedTrigger(workspaceId, triggerId)
-	const agent = useTriggerAgent(workspaceId, trigger)
 	const card = <TriggerReferenceCard workspaceId={workspaceId} triggerId={triggerId} preview />
 
 	if (trigger === null) return <span className={DELETED_CHIP}>Deleted trigger</span>
 	if (trigger === undefined) {
 		return (
 			<ChipPreview card={card} enabled>
-				{fallback}
+				{loadingChip(fallback, false)}
 			</ChipPreview>
 		)
 	}
@@ -647,30 +827,12 @@ export function TriggerReferenceChip({
 				to="/$workspaceId/triggers/$triggerId"
 				params={{ workspaceId, triggerId: trigger.id }}
 				aria-label={`Trigger, ${state}: ${trigger.name}`}
-				className={cn(
-					'not-prose inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-0.5 pr-2 pl-2 align-middle text-[11.5px] no-underline',
-					HOVER,
-				)}
+				className={CHIP}
 			>
-				<Icon size={11} aria-hidden className="shrink-0 text-muted-foreground" />
-				<span className="min-w-0 truncate font-semibold text-foreground">{trigger.name}</span>
-				<span
-					className={cn(
-						'shrink-0 text-[10.5px] font-semibold',
-						trigger.enabled ? 'text-success' : 'text-muted-foreground',
-					)}
-				>
-					{state}
-				</span>
-				{agent.state === 'known' ? (
-					<ActorAvatar
-						id={agent.actor.id}
-						name={agent.actor.name}
-						type={agent.actor.type}
-						size="sm"
-						className={AVATAR}
-					/>
-				) : null}
+				<ChipText
+					lead={<Icon size="0.95em" aria-hidden className={CHIP_ICON} />}
+					text={trigger.name}
+				/>
 			</Link>
 		</ChipPreview>
 	)
@@ -702,28 +864,35 @@ export function TriggerReferenceCard({
 	}
 
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
-	return (
+	const head = (
+		<span className={KIND_TAG}>
+			<Icon size={11} aria-hidden />
+			Trigger
+		</span>
+	)
+	const state = (
+		<span
+			className={cn(
+				'text-[11px] font-semibold',
+				trigger.enabled ? 'text-success' : 'text-muted-foreground',
+			)}
+		>
+			{trigger.enabled ? 'On' : 'Off'}
+		</span>
+	)
+	const link = (
 		<Link
 			to="/$workspaceId/triggers/$triggerId"
 			params={{ workspaceId, triggerId: trigger.id }}
-			data-linked-card={marker}
 			tabIndex={preview ? -1 : undefined}
-			className={cn(shell, 'group border-border p-3 no-underline', HOVER)}
+			className={
+				preview ? cn(shell, 'group border-border p-3 no-underline', HOVER) : OPEN_CARD_LINK
+			}
 		>
 			<span className="flex items-center gap-1.5">
-				<span className={KIND_TAG}>
-					<Icon size={11} aria-hidden />
-					Trigger
-				</span>
-				<span
-					className={cn(
-						'text-[11px] font-semibold',
-						trigger.enabled ? 'text-success' : 'text-muted-foreground',
-					)}
-				>
-					{trigger.enabled ? 'On' : 'Off'}
-				</span>
-				<span className={OPEN_ARROW}>
+				{head}
+				{state}
+				<span className={cn(OPEN_ARROW, !preview && FOLD_ROOM)}>
 					<span className="sr-only">Open</span>
 					<ArrowUpRight size={14} aria-hidden />
 				</span>
@@ -755,5 +924,12 @@ export function TriggerReferenceCard({
 				</span>
 			</span>
 		</Link>
+	)
+	return preview ? (
+		link
+	) : (
+		<FoldableCard title={trigger.name} head={head} state={state}>
+			{link}
+		</FoldableCard>
 	)
 }

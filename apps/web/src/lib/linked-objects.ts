@@ -526,3 +526,29 @@ export function plainSnippet(content: string | null | undefined): string {
 		.trim()
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
 }
+
+/** The longest a name on an inline chip runs before it is cut with an ellipsis. */
+export const CHIP_MAX_LENGTH = 90
+// A cut that falls on a word keeps the word whole only when it leaves most of the name.
+const CHIP_MIN_WORD_CUT = 60
+
+/**
+ * The part of a title a chip shows: the text before the first space, long dash and space ("David
+ * Harboe — Norlix (CTO)" reads "David Harboe"). A title without that shows whole. Only the chip
+ * uses it; the card, the preview and the accessible name carry the full title.
+ */
+export function shortName(title: string): string {
+	const dash = title.indexOf(' — ')
+	return dash > 0 ? title.slice(0, dash).trimEnd() : title
+}
+
+/**
+ * A name longer than `CHIP_MAX_LENGTH` cut at the last space before that length when the space is
+ * past character 60, else at the length itself, and ended with an ellipsis.
+ */
+export function cutLabel(name: string): string {
+	if (name.length <= CHIP_MAX_LENGTH) return name
+	const head = name.slice(0, CHIP_MAX_LENGTH)
+	const space = head.lastIndexOf(' ')
+	return `${head.slice(0, space > CHIP_MIN_WORD_CUT ? space : CHIP_MAX_LENGTH).trimEnd()}…`
+}

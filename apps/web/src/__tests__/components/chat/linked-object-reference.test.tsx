@@ -28,7 +28,7 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { ObjectReferenceChip } from '@/components/chat/linked-object-reference'
+import { ObjectReferenceCard, ObjectReferenceChip } from '@/components/chat/linked-object-reference'
 
 const WS = 'ws-1'
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -49,6 +49,10 @@ function objectRow(overrides: Record<string, unknown> = {}) {
 
 const renderChip = () =>
 	render(<ObjectReferenceChip workspaceId={WS} objectId={ID} fallback={fallback} />)
+
+// The round marks inside the chip's link: the type dot, then the status dot when there is one.
+const chipDots = () =>
+	Array.from(screen.getByRole('link').querySelectorAll<HTMLElement>('span.rounded-full'))
 
 describe('ObjectReferenceChip', () => {
 	beforeEach(() => useObject.mockReset())
@@ -83,6 +87,145 @@ describe('ObjectReferenceChip', () => {
 			expect(screen.getByText('Deleted object')).toBeInTheDocument()
 			unmount()
 		}
+	})
+})
+
+describe('ObjectReferenceChip plate', () => {
+	beforeEach(() => useObject.mockReset())
+
+	it('shows the part of the title before a long dash and keeps the full title in the name', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ title: 'David Harboe \u2014 Norlix (CTO & Co-founder)' }),
+			isLoading: false,
+		})
+		renderChip()
+		const link = screen.getByRole('link', { name: /^Bet, Active: David Harboe \u2014 Norlix/ })
+		expect(link).toHaveTextContent('David Harboe')
+		expect(link).not.toHaveTextContent('Norlix')
+	})
+
+	it('cuts a title over 90 characters with an ellipsis and keeps the full title in the name', () => {
+		const title = `${'word '.repeat(30)}end`
+		useObject.mockReturnValue({ data: objectRow({ title }), isLoading: false })
+		renderChip()
+		const link = screen.getByRole('link', { name: `Bet, Active: ${title}, Developer` })
+		expect(link.textContent).toMatch(/word…$/)
+		expect(link.textContent?.length).toBeLessThan(95)
+	})
+
+	it('ends with a status dot in the status colour that assistive tech skips', () => {
+		useObject.mockReturnValue({ data: objectRow({ status: 'blocked' }), isLoading: false })
+		renderChip()
+		const dots = chipDots()
+		expect(dots).toHaveLength(2)
+		expect(dots[1]).toHaveAttribute('aria-hidden', 'true')
+		expect(dots[1].className).toContain('text-status-blocked-text')
+	})
+
+	it('draws no status dot for an object with no status', () => {
+		useObject.mockReturnValue({ data: objectRow({ status: '' }), isLoading: false })
+		renderChip()
+		expect(chipDots()).toHaveLength(1)
+	})
+
+	it('has no status word and no owner avatar', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderChip()
+		const link = screen.getByRole('link', { name: /Bet, Active/ })
+		expect(link).toHaveTextContent(/^\u2060?Chat preview cards\u2060?$/)
+		expect(link.querySelector('img, [data-slot="avatar"]')).toBeNull()
+	})
+
+	it('draws the loading chip in the same plate with the original link text and a pulsing dot', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: true })
+		renderChip()
+		const link = screen.getByText('the original link').closest('a')
+		expect(link).toHaveAttribute('href', '/original')
+		expect(link?.className).toContain('bg-muted')
+		expect(link?.querySelector('[aria-hidden="true"]')?.className).toContain('animate-pulse')
+	})
+
+	it('draws the deleted chip with a dashed border at the sentence size', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: false })
+		renderChip()
+		const chip = screen.getByText('Deleted object')
+		expect(chip.className).toContain('border-dashed')
+		expect(chip.className).not.toMatch(/text-\[/)
+	})
+})
+
+describe('ObjectReferenceCard fold', () => {
+	beforeEach(() => useObject.mockReset())
+	const renderCard = () => render(<ObjectReferenceCard workspaceId={WS} objectId={ID} />)
+	const card = () => document.querySelector('[data-linked-card]') as HTMLElement
+
+	it('starts open, with the fold button beside the link and not inside it', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		const button = screen.getByRole('button', { name: 'Fold card' })
+		expect(button).toHaveAttribute('aria-expanded', 'true')
+		expect(button.closest('a')).toBeNull()
+		expect(card().contains(screen.getByRole('link'))).toBe(true)
+		expect(screen.getAllByRole('link')).toHaveLength(1)
+	})
+
+	it('folds to one row that unfolds again, and keeps focus on its button', async () => {
+		const user = userEvent.setup()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		await user.click(screen.getByRole('button', { name: 'Fold card' }))
+		const row = screen.getByRole('button', { name: 'Unfold card: Chat preview cards' })
+		expect(row).toHaveAttribute('aria-expanded', 'false')
+		expect(screen.queryByRole('link')).toBeNull()
+		expect(row).toHaveTextContent('Chat preview cards')
+		expect(row).toHaveFocus()
+		await user.click(row)
+		expect(screen.getByRole('button', { name: 'Fold card' })).toHaveFocus()
+		expect(screen.getByRole('link')).toBeInTheDocument()
+	})
+
+	it('folds and unfolds from the keyboard with Enter and Space', async () => {
+		const user = userEvent.setup()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		await user.tab()
+		expect(screen.getByRole('link')).toHaveFocus()
+		await user.tab()
+		expect(screen.getByRole('button', { name: 'Fold card' })).toHaveFocus()
+		await user.keyboard('{Enter}')
+		expect(screen.getByRole('button', { name: /^Unfold card/ })).toHaveFocus()
+		await user.keyboard(' ')
+		expect(screen.getByRole('button', { name: 'Fold card' })).toHaveFocus()
+	})
+
+	it('does not navigate or open the card when the fold button is clicked', async () => {
+		const user = userEvent.setup()
+		const onClick = vi.fn()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		const link = screen.getByRole('link')
+		link.addEventListener('click', onClick)
+		await user.click(screen.getByRole('button', { name: 'Fold card' }))
+		expect(onClick).not.toHaveBeenCalled()
+	})
+
+	it('keeps one marker on the card for every state of it', async () => {
+		const user = userEvent.setup()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderCard()
+		expect(document.querySelectorAll('[data-linked-card]')).toHaveLength(1)
+		await user.click(screen.getByRole('button', { name: 'Fold card' }))
+		expect(document.querySelectorAll('[data-linked-card]')).toHaveLength(1)
+	})
+
+	it('has no fold button on the loading card or the deleted card', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: true })
+		const { unmount } = renderCard()
+		expect(screen.queryByRole('button')).toBeNull()
+		unmount()
+		useObject.mockReturnValue({ data: undefined, isLoading: false })
+		renderCard()
+		expect(screen.queryByRole('button')).toBeNull()
 	})
 })
 

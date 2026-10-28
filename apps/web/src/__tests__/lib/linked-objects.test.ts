@@ -1,7 +1,10 @@
 import {
+	CHIP_MAX_LENGTH,
+	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
 	plainSnippet,
+	shortName,
 	showsObjectCard,
 	splitOwnLinks,
 	targetOfHref,
@@ -186,5 +189,45 @@ describe('plainSnippet', () => {
 		const out = plainSnippet('word '.repeat(200))
 		expect(out.length).toBeLessThanOrEqual(281)
 		expect(out.endsWith('…')).toBe(true)
+	})
+})
+
+describe('shortName', () => {
+	it('keeps a title whole when it has no long dash', () => {
+		expect(shortName('Audit open bet PRs for work merged into a bet branch')).toBe(
+			'Audit open bet PRs for work merged into a bet branch',
+		)
+	})
+
+	it('keeps the text before the first space, long dash and space', () => {
+		expect(shortName('David Harboe \u2014 Norlix (CTO & Co-founder)')).toBe('David Harboe')
+		expect(shortName('A \u2014 B \u2014 C')).toBe('A')
+	})
+
+	it('keeps a title whole when the long dash has no space around it', () => {
+		expect(shortName('Norlix\u2014CTO')).toBe('Norlix\u2014CTO')
+		expect(shortName('Norlix \u2014CTO')).toBe('Norlix \u2014CTO')
+	})
+
+	it('is empty for an empty title', () => {
+		expect(shortName('')).toBe('')
+	})
+})
+
+describe('cutLabel', () => {
+	it('leaves a name of 90 characters or fewer alone', () => {
+		const name = 'a'.repeat(CHIP_MAX_LENGTH)
+		expect(cutLabel(name)).toBe(name)
+		expect(cutLabel('')).toBe('')
+	})
+
+	it('cuts at the last space before character 90 when that space is past character 60', () => {
+		const name = `${'word '.repeat(17)}${'x'.repeat(40)}`
+		expect(cutLabel(name)).toBe(`${'word '.repeat(16)}word…`)
+	})
+
+	it('cuts at character 90 when there is no space past character 60', () => {
+		const name = `short words ${'x'.repeat(120)}`
+		expect(cutLabel(name)).toBe(`${name.slice(0, CHIP_MAX_LENGTH)}…`)
 	})
 })
