@@ -211,13 +211,14 @@ describe('LoopReferenceChip', () => {
 		expect(screen.getByText('the original link')).toBeInTheDocument()
 	})
 
-	it('reads kind, state and name as one link, with the first agent', () => {
+	it('reads kind, state and name as one link, with only the icon and name on the plate', () => {
 		useLoop.mockReturnValue(found(loopRow({ pill: 'fully_autonomous' })))
 		renderChip()
-		expect(
-			screen.getByRole('link', { name: 'Loop, fully autonomous: Nightly triage' }),
-		).toBeInTheDocument()
-		expect(screen.getByText('fully autonomous')).toBeInTheDocument()
+		const link = screen.getByRole('link', { name: 'Loop, fully autonomous: Nightly triage' })
+		expect(link).toHaveTextContent(/^\u2060?Nightly triage$/)
+		expect(link.className).toContain('bg-muted')
+		expect(link.querySelector('svg')).not.toBeNull()
+		expect(screen.queryByText('fully autonomous')).not.toBeInTheDocument()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 	})
 
@@ -236,6 +237,14 @@ describe('TriggerReferenceChip', () => {
 		useTrigger.mockReturnValue(found(triggerRow()))
 		renderChip()
 		expect(screen.getByRole('link', { name: 'Trigger, on: Morning sweep' })).toBeInTheDocument()
+	})
+
+	it('shows only the icon and name on the plate, no state word and no agent', () => {
+		useTrigger.mockReturnValue(found(triggerRow()))
+		renderChip()
+		const link = screen.getByRole('link', { name: 'Trigger, on: Morning sweep' })
+		expect(link).toHaveTextContent(/^\u2060?Morning sweep$/)
+		expect(link.querySelector('svg')).not.toBeNull()
 	})
 
 	it('reads off for a trigger that is off', () => {
@@ -296,5 +305,41 @@ describe('loop and trigger chip preview', () => {
 			fireEvent.mouseEnter(screen.getByText('Deleted loop'))
 		})
 		expect(preview()).toBeNull()
+	})
+})
+
+describe('loop and trigger card fold', () => {
+	it('folds a loop card to one row and unfolds it', async () => {
+		const user = userEvent.setup()
+		useLoop.mockReturnValue(found(loopRow()))
+		render(<LoopReferenceCard workspaceId={WS} loopId={LOOP_ID} />)
+		expect(screen.getByRole('button', { name: 'Fold card' })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		)
+		expect(screen.getByRole('button', { name: 'Fold card' }).closest('a')).toBeNull()
+		await user.click(screen.getByRole('button', { name: 'Fold card' }))
+		const row = screen.getByRole('button', { name: 'Unfold card: Nightly triage' })
+		expect(row).toHaveTextContent('Supervised')
+		expect(screen.queryByRole('link')).toBeNull()
+		await user.click(row)
+		expect(screen.getByRole('link')).toBeInTheDocument()
+	})
+
+	it('folds a trigger card to one row and unfolds it', async () => {
+		const user = userEvent.setup()
+		useTrigger.mockReturnValue(found(triggerRow()))
+		render(<TriggerReferenceCard workspaceId={WS} triggerId={TRIGGER_ID} />)
+		await user.click(screen.getByRole('button', { name: 'Fold card' }))
+		const row = screen.getByRole('button', { name: 'Unfold card: Morning sweep' })
+		expect(row).toHaveTextContent('On')
+		await user.click(row)
+		expect(screen.getByRole('link')).toBeInTheDocument()
+	})
+
+	it('has no fold button on the hover preview', () => {
+		useLoop.mockReturnValue(found(loopRow()))
+		render(<LoopReferenceCard workspaceId={WS} loopId={LOOP_ID} preview />)
+		expect(screen.queryByRole('button', { hidden: true })).toBeNull()
 	})
 })
