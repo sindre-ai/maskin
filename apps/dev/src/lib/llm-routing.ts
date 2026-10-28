@@ -873,10 +873,22 @@ export class LlmCredentialsUnavailableError extends Error {
 	/** Name of the workspace that has no working credentials, so the message can say which one. */
 	readonly workspaceName: string | null
 
+	/**
+	 * True when the workspace has nothing configured at all (no subscription,
+	 * endpoint or key), as opposed to a credential that exists but was rejected.
+	 * Only this case has no retry worth making: nothing changes until someone
+	 * connects a credential, so the trigger runner pauses it for longer.
+	 */
+	readonly noCredentialsConfigured: boolean
+
 	constructor(
 		detail: string,
 		transient = false,
-		options?: { storedKeyUnreadable?: boolean; workspaceName?: string | null },
+		options?: {
+			storedKeyUnreadable?: boolean
+			workspaceName?: string | null
+			noCredentialsConfigured?: boolean
+		},
 	) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
@@ -884,6 +896,7 @@ export class LlmCredentialsUnavailableError extends Error {
 		this.transient = transient
 		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
 		this.workspaceName = options?.workspaceName?.trim() || null
+		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
