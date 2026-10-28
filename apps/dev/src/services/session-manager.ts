@@ -105,6 +105,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { HANDOFF_PROOF_BLOCK } from '../lib/handoff-rule'
 import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
@@ -2358,6 +2359,7 @@ export class SessionManager extends EventEmitter {
 					typeof sessionConfig.origin_conversation_id === 'string'))
 		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
 		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2366,7 +2368,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are

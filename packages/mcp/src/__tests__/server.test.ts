@@ -2490,6 +2490,40 @@ describe('tool handlers', () => {
 			)
 		})
 
+		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'queued' })
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.id).toBe('session-1')
+			expect(parsed.handoff).toContain('session session-1 is queued')
+			expect(parsed.handoff).toContain('quote this session id')
+		})
+
+		it('without wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Not started')
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
+		it('with wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				wait: true,
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
 		it('forwards spawned_by_message_id to the create route', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			const fetchSpy = vi.mocked(fetch)
