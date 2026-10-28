@@ -184,7 +184,7 @@ test.describe('Chat — a chip is a plate of text that wraps with the sentence',
 	}) => {
 		await page.setViewportSize({ width: VIEWPORTS.desktop.width, height: VIEWPORTS.desktop.height })
 		const chips = await openChatWithChips(account, page)
-		await expect(chips.dashed).toHaveAttribute('aria-label', new RegExp('Norlix \\(CTO'))
+		await expect(chips.dashed).toHaveAttribute('aria-label', /Norlix \(CTO/)
 		await expect(chips.dashed).not.toContainText('Norlix')
 		const piece = await chips.dashed.evaluate((el) => {
 			const r = el.getClientRects()[0]

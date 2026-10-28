@@ -356,6 +356,7 @@ function FoldableCard({
 	const root = useRef<HTMLSpanElement>(null)
 	const toggled = useRef(false)
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: folded is the trigger (the button swaps), its value is not read inside
 	useEffect(() => {
 		if (!toggled.current) return
 		toggled.current = false
