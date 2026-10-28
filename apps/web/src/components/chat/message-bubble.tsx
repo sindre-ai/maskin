@@ -2,6 +2,7 @@ import {
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
+	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
@@ -21,8 +22,10 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
@@ -37,6 +40,7 @@ import {
 	MessageSquareReply,
 	Pencil,
 	RotateCcw,
+	Settings as SettingsIcon,
 } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -402,6 +406,7 @@ export function MessageBubble({
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
 								renderGithubChip: renderLinkedGithubChip,
+								renderSettingsChip: renderLinkedSettingsChip,
 							}}
 						/>
 					</div>
@@ -614,9 +619,13 @@ function OwnLinkChip({
 		| { kind: 'agent'; id: string }
 		| { kind: 'object' | 'file'; id: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
+		| { kind: 'settings'; target: SettingsTarget }
 }) {
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
+	}
+	if (segment.kind === 'settings') {
+		return <OwnSettingsChip workspaceId={workspaceId} target={segment.target} />
 	}
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
@@ -639,6 +648,29 @@ function OwnGithubChip({ href, target }: { href: string; target: GithubTarget })
 			<Icon size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{githubChipText(target)}</span>
 			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
+		</a>
+	)
+}
+
+/** A settings page in your own message: a gear and "Settings: {section}", opening the page in a new tab. Nothing is fetched. */
+function OwnSettingsChip({
+	workspaceId,
+	target,
+}: {
+	workspaceId: string
+	target: SettingsTarget
+}) {
+	const text = settingsChipText(target)
+	return (
+		<a
+			href={`/${workspaceId}/settings${target.path ? `/${target.path}` : ''}`}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={text}
+			className={OWN_CHIP_CLASS}
+		>
+			<SettingsIcon size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{text}</span>
 		</a>
 	)
 }

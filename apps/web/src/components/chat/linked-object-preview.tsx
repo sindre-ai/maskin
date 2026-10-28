@@ -6,6 +6,7 @@ import {
 	LoopReferenceChip,
 	ObjectReferenceCard,
 	ObjectReferenceChip,
+	SettingsReferenceChip,
 	TriggerReferenceCard,
 	TriggerReferenceChip,
 } from '@/components/chat/linked-object-reference'
@@ -22,7 +23,12 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { type GithubTarget, type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	type LinkedTarget,
+	type SettingsTarget,
+	showsObjectCard,
+} from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
@@ -482,6 +488,14 @@ export function renderLinkedCard(
 /** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
 export function renderLinkedGithubChip(target: GithubTarget, href: string): ReactNode {
 	return <GithubReferenceChip target={target} href={href} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderSettingsChip`: a link to a settings page, as a chip wherever it stands. */
+export function renderLinkedSettingsChip(
+	target: SettingsTarget,
+	context: { workspaceId: string },
+): ReactNode {
+	return <SettingsReferenceChip workspaceId={context.workspaceId} target={target} />
 }
 
 /** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop or trigger inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */

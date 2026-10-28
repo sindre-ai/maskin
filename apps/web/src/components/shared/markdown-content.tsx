@@ -8,9 +8,11 @@ import {
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
+	type SettingsTarget,
 	type StandaloneCard,
 	githubTargetOf,
 	placeLinkedCards,
+	settingsTargetOf,
 	targetOfHref,
 } from '@/lib/linked-objects'
 import {
@@ -195,6 +197,11 @@ export interface LinkedCardsOptions {
 	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
 	 */
 	renderGithubChip?: (target: GithubTarget, href: string) => ReactNode
+	/**
+	 * Draws a link to a settings page of this workspace as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderSettingsChip?: (target: SettingsTarget, context: { workspaceId: string }) => ReactNode
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
@@ -266,6 +273,7 @@ function RenderedMarkdownContent({
 	const cardsRenderer = linkedCardsOption?.renderCard
 	const chipRenderer = linkedCardsOption?.renderChip
 	const githubChipRenderer = linkedCardsOption?.renderGithubChip
+	const settingsChipRenderer = linkedCardsOption?.renderSettingsChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
 	// By value, like the rest: a fresh set with the same ids must not remount the cards.
 	const cardsUpdatedKey = linkedCardsOption?.updatedIds
@@ -282,6 +290,7 @@ function RenderedMarkdownContent({
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
 						renderGithubChip: githubChipRenderer,
+						renderSettingsChip: settingsChipRenderer,
 					}
 				: undefined,
 		[
@@ -292,6 +301,7 @@ function RenderedMarkdownContent({
 			chipRenderer,
 			cardsUpdatedKey,
 			githubChipRenderer,
+			settingsChipRenderer,
 		],
 	)
 	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
@@ -325,6 +335,12 @@ function RenderedMarkdownContent({
 					const github = githubTargetOf(href)
 					if (github && linkedCards.renderGithubChip && href) {
 						return linkedCards.renderGithubChip(github, href)
+					}
+					const settings = linkedCards.renderSettingsChip
+						? settingsTargetOf(href, linkedCards.workspaceId)
+						: null
+					if (settings && linkedCards.renderSettingsChip) {
+						return linkedCards.renderSettingsChip(settings, linkedCards)
 					}
 					// Same as the renderer's own link: an address on the web opens in a new tab.
 					const external = typeof href === 'string' && /^https?:\/\//.test(href)

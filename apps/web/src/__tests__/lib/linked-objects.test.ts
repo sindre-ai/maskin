@@ -8,6 +8,8 @@ import {
 	githubTargetOf,
 	pickFacts,
 	plainSnippet,
+	settingsChipText,
+	settingsTargetOf,
 	shortName,
 	showsObjectCard,
 	splitOwnLinks,
@@ -215,6 +217,28 @@ describe('splitOwnLinks', () => {
 		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
 	})
 
+	it('finds a settings address in your own message, alone or in a sentence', () => {
+		const settings = `https://maskin.io/${WS}/settings/billing`
+		expect(splitOwnLinks(settings, WS)).toEqual([
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+		])
+		expect(splitOwnLinks(`open ${settings}, then pay`, WS)).toEqual([
+			{ kind: 'text', text: 'open ' },
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+			{ kind: 'text', text: ', then pay' },
+		])
+	})
+
+	it('leaves an unknown settings section, a deeper one and another workspace as words', () => {
+		for (const text of [
+			`https://maskin.io/${WS}/settings/nope`,
+			`https://maskin.io/${WS}/settings/keychain/new`,
+			`https://maskin.io/${A}/settings/mcp`,
+		]) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
+	})
+
 	it('leaves links to another workspace, another site or a non-object page as words', () => {
 		const other = `https://maskin.io/${A}/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
@@ -315,6 +339,63 @@ describe('splitOwnLinks with GitHub addresses', () => {
 		for (const text of [`${pr}/files`, 'https://github.com.evil.com/a/b/pull/1']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
+	})
+})
+
+describe('settingsTargetOf', () => {
+	const at = (path: string, host = 'https://maskin.io') => `${host}/${WS}/settings${path}`
+
+	it('reads the bare settings address as General', () => {
+		for (const href of [at(''), at('/'), `/${WS}/settings`]) {
+			expect(settingsTargetOf(href, WS)).toEqual({ path: '', label: 'General' })
+		}
+	})
+
+	it('reads each section of the settings menu', () => {
+		const sections = [
+			['objects', 'Objects'],
+			['members', 'Members'],
+			['integrations', 'Integrations'],
+			['extensions', 'Extensions'],
+			['skills', 'Skills'],
+			['mcp', 'MCP'],
+			['billing', 'Billing'],
+			['keychain', 'Keychain'],
+			['keys', 'Keys'],
+		]
+		for (const [path, label] of sections) {
+			expect(settingsTargetOf(at(`/${path}`), WS)).toEqual({ path, label })
+		}
+		expect(settingsTargetOf(at('/mcp?tab=x#top'), WS)?.label).toBe('MCP')
+	})
+
+	it('leaves an unknown section, a deeper path and another page as plain links', () => {
+		for (const href of [
+			at('/nope'),
+			at('/general'),
+			at('/billing/invoices'),
+			at('/keychain/new'),
+			at('/objects/priority'),
+			`https://maskin.io/${WS}/agents`,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('leaves another workspace, another site and a non-address as plain links', () => {
+		for (const href of [
+			at('/mcp', 'https://example.com'),
+			at('/mcp', 'https://maskin.io.evil.com'),
+			`https://maskin.io/${A}/settings/mcp`,
+			undefined,
+			42,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('words the chip as Settings and the section', () => {
+		expect(settingsChipText({ path: 'mcp', label: 'MCP' })).toBe('Settings: MCP')
 	})
 })
 

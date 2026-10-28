@@ -90,7 +90,7 @@ const BARE_URL = /https?:\/\/[^\s<>]+/gi
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
 const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
-const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
+const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' | 'settings' }>['kind']> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
@@ -111,6 +111,56 @@ export interface GithubTarget {
 }
 
 const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
+
+/**
+ * The settings sections a link can name, as the settings menu lists them. `path` is the segment
+ * after `/settings` (empty for General, the page the bare settings address opens).
+ */
+export const SETTINGS_SECTIONS = [
+	{ path: '', label: 'General' },
+	{ path: 'objects', label: 'Objects' },
+	{ path: 'members', label: 'Members' },
+	{ path: 'integrations', label: 'Integrations' },
+	{ path: 'extensions', label: 'Extensions' },
+	{ path: 'skills', label: 'Skills' },
+	{ path: 'mcp', label: 'MCP' },
+	{ path: 'billing', label: 'Billing' },
+	{ path: 'keychain', label: 'Keychain' },
+	{ path: 'keys', label: 'Keys' },
+] as const
+
+/** A link to a settings page of this workspace, read from its address alone. Nothing is fetched. */
+export type SettingsTarget = (typeof SETTINGS_SECTIONS)[number]
+
+const SETTINGS_PATH = /^\/([^/]+)\/settings(?:\/([^/]+))?\/?$/i
+// Stands in for the host of an address that has none, so `new URL` accepts it.
+const NO_HOST = 'no-host.invalid'
+
+/**
+ * The settings page an address in this workspace points at: `/{workspaceId}/settings` or
+ * `/{workspaceId}/settings/{section}` for a section of the settings menu, on this app's host or
+ * with no host. An unknown section, a deeper path, another workspace and any other site is null
+ * and stays a plain link.
+ */
+export function settingsTargetOf(href: unknown, workspaceId: string): SettingsTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href, `http://${NO_HOST}`)
+	} catch {
+		return null
+	}
+	if (url.host !== NO_HOST && !isAppHost(url.host)) return null
+	const match = SETTINGS_PATH.exec(url.pathname)
+	if (!match || match[1].toLowerCase() !== workspaceId.toLowerCase()) return null
+	const path = (match[2] ?? '').toLowerCase()
+	return SETTINGS_SECTIONS.find((section) => section.path === path) ?? null
+}
+
+/** What a settings chip reads, and its accessible name. */
+export function settingsChipText(target: SettingsTarget): string {
+	return `Settings: ${target.label}`
+}
 
 /**
  * The pull request or issue an address points at: exactly github.com (not a lookalike or a
@@ -136,12 +186,13 @@ export function githubTargetOf(href: unknown): GithubTarget | null {
 
 /**
  * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
- * workspace, or a GitHub pull request or issue.
+ * workspace, a settings page, or a GitHub pull request or issue.
  */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
 	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
 	| { kind: 'github'; href: string; target: GithubTarget }
+	| { kind: 'settings'; target: SettingsTarget }
 
 /**
  * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
@@ -172,6 +223,13 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		if (github) {
 			pushText(content.slice(cursor, m.index ?? 0))
 			segments.push({ kind: 'github', href: address, target: github })
+			cursor = (m.index ?? 0) + address.length
+			continue
+		}
+		const settings = settingsTargetOf(address, workspaceId)
+		if (settings) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'settings', target: settings })
 			cursor = (m.index ?? 0) + address.length
 			continue
 		}

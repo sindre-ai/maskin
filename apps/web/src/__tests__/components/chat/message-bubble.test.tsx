@@ -171,6 +171,23 @@ describe('MessageBubble', () => {
 		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
 	})
 
+	it('draws a settings address in your own message as a settings chip that opens in a new tab', () => {
+		const address = 'https://maskin.io/ws-1/settings/billing'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `pay here ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Settings: Billing' })
+		expect(chip).toHaveAttribute('href', '/ws-1/settings/billing')
+		expect(chip).toHaveAttribute('target', '_blank')
+		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
 	it('cuts the title in a chip at 30 characters', () => {
 		objectState.title = 'A very long title for an object that goes on and on'
 		try {

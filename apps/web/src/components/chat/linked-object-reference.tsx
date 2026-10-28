@@ -32,11 +32,13 @@ import {
 import {
 	type CardFact,
 	type GithubTarget,
+	type SettingsTarget,
 	cutLabel,
 	githubChipName,
 	githubChipText,
 	pickFacts,
 	plainSnippet,
+	settingsChipText,
 	shortName,
 	showsObjectCard,
 } from '@/lib/linked-objects'
@@ -52,6 +54,7 @@ import {
 	GitPullRequest,
 	Link2,
 	RefreshCw,
+	Settings as SettingsIcon,
 	Zap,
 } from 'lucide-react'
 import {
@@ -585,6 +588,48 @@ export function GithubReferenceChip({ target, href }: { target: GithubTarget; hr
 				}
 			/>
 		</a>
+	)
+}
+
+// The page each settings section opens: the same routes as the settings menu.
+const SETTINGS_ROUTES = {
+	'': '/$workspaceId/settings',
+	objects: '/$workspaceId/settings/objects',
+	members: '/$workspaceId/settings/members',
+	integrations: '/$workspaceId/settings/integrations',
+	extensions: '/$workspaceId/settings/extensions',
+	skills: '/$workspaceId/settings/skills',
+	mcp: '/$workspaceId/settings/mcp',
+	billing: '/$workspaceId/settings/billing',
+	keychain: '/$workspaceId/settings/keychain',
+	keys: '/$workspaceId/settings/keys',
+} as const satisfies Record<SettingsTarget['path'], string>
+
+/**
+ * A link to a settings page: a gear and "Settings: {section}". Built from the address alone, so
+ * there is no card, no preview and no fetch, wherever it stands (in a sentence or alone on a
+ * line). One link to the page, in the same tab.
+ */
+export function SettingsReferenceChip({
+	workspaceId,
+	target,
+}: {
+	workspaceId: string
+	target: SettingsTarget
+}) {
+	const text = settingsChipText(target)
+	return (
+		<Link
+			to={SETTINGS_ROUTES[target.path]}
+			params={{ workspaceId }}
+			aria-label={text}
+			className={CHIP}
+		>
+			<ChipText
+				lead={<SettingsIcon size="0.85em" aria-hidden className={CHIP_ICON} />}
+				text={text}
+			/>
+		</Link>
 	)
 }
 
