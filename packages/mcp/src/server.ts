@@ -31,7 +31,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
-import { TOOL_ANNOTATIONS } from './annotations.js'
+import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -1924,6 +1924,40 @@ function extractWorkspaceId(args: unknown): string | undefined {
 }
 
 /**
+ * Refuses a write that names a workspace other than the one the agent session
+ * is running in. The model's own workspace_id wins over the session's default
+ * in every handler, so without this an agent whose key reaches several
+ * workspaces can write to any of them by passing the id.
+ *
+ * Applies only when the call belongs to a session (over HTTP the
+ * X-Maskin-Session-Id header, on stdio the container's SESSION_ID) and a
+ * default workspace is known, so human-driven use outside a session is
+ * untouched. A write is anything not in READ_ONLY_TOOLS, so a new tool is
+ * covered until someone marks it read-only; reads keep taking any workspace
+ * the key reaches. create_workspace is exempt: it has no session workspace to
+ * stay inside. Throws rather than rewriting the id so the model sees its error.
+ */
+function assertWriteStaysInSessionWorkspace(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+): void {
+	if (READ_ONLY_TOOLS.has(toolName) || toolName === 'create_workspace') return
+	const sessionWorkspaceId = config.defaultWorkspaceId
+	if (!sessionWorkspaceId) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	const requested = extractWorkspaceId(args)
+	if (requested === undefined || requested === sessionWorkspaceId) return
+	throw new Error(
+		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
+	)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -2892,6 +2926,7 @@ export function createMcpServer(config: McpConfig) {
 			const start = Date.now()
 			let response: unknown
 			try {
+				assertWriteStaysInSessionWorkspace(config, name, args)
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
