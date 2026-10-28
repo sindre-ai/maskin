@@ -35,7 +35,7 @@ const CASES: Expected[] = [
 	{ message: LONG_AGENT_MESSAGES[0], cards: 0, chips: 6 },
 	{ message: LONG_AGENT_MESSAGES[1], cards: 1, chips: 6 },
 	{ message: LONG_AGENT_MESSAGES[2], cards: 3, chips: 7 },
-	{ message: PROTOTYPE_LONG_MESSAGE, cards: 3, chips: 3 },
+	{ message: PROTOTYPE_LONG_MESSAGE, cards: 3, chips: 4 },
 ]
 
 type Account = { api: TestAPI; workspaceId: string }
