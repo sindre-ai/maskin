@@ -241,6 +241,20 @@ struct ConversationsStoreTests {
 		#expect(call?.2 == nil)
 	}
 
+	@Test("the first message's attachments ride along when the conversation is created")
+	func createWithAttachments() async throws {
+		let api = FakeListAPI([])
+		let store = ConversationsStore(api: api, events: nil)
+		let metadata = ChatSendMetadata(attachments: [ChatAttachmentRef(fileID: "f1", name: "a.jpg")])
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: "see this", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata == [metadata])
+		// With no message there is nothing for the attachments to belong to.
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: " ", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata.last == .some(nil))
+	}
+
 	@Test("loadMore appends the next page without duplicates")
 	func loadMore() async {
 		let api = FakeListAPI((1...40).map { chatConvo("c\($0)") })

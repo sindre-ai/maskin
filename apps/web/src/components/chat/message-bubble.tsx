@@ -1,4 +1,8 @@
-import { renderLinkedCard, renderLinkedChip } from '@/components/chat/linked-object-preview'
+import {
+	renderLinkedCard,
+	renderLinkedChip,
+	renderLinkedGithubChip,
+} from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -15,9 +19,25 @@ import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { splitOwnLinks } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	githubChipName,
+	githubChipText,
+	splitOwnLinks,
+} from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Link2, MessageSquareReply, Pencil, RotateCcw } from 'lucide-react'
+import {
+	ArrowUpRight,
+	Bell,
+	Box,
+	CircleDot,
+	Copy,
+	GitPullRequest,
+	Link2,
+	MessageSquareReply,
+	Pencil,
+	RotateCcw,
+} from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
@@ -27,6 +47,7 @@ import { IntegrationAccessRequestCard } from './integration-access-request-card'
 import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
+import { McpServerRequestCard } from './mcp-server-request-card'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -376,6 +397,7 @@ export function MessageBubble({
 								skipIds: shownLinkedObjectIds,
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
+								renderGithubChip: renderLinkedGithubChip,
 							}}
 						/>
 					</div>
@@ -434,6 +456,18 @@ export function MessageBubble({
 						messageId={message.id}
 						askingAgentId={message.actorId}
 						request={message.metadata.integration_access_request}
+					/>
+				) : null}
+				{/* An agent's add_mcp_server call: the server's details ready to Add, with an input for
+				    each secret. Adding it saves the server and gives it to the agent on the server. */}
+				{message.metadata?.mcp_server_request ? (
+					<McpServerRequestCard
+						workspaceId={workspaceId}
+						conversationId={message.conversationId}
+						messageId={message.id}
+						messageCreatedAt={message.createdAt}
+						askingAgentId={message.actorId}
+						request={message.metadata.mcp_server_request}
 					/>
 				) : null}
 				{/* An agent's show_computer call: a card that opens the agent's own computer so
@@ -573,12 +607,36 @@ function OwnLinkChip({
 	segment:
 		| { kind: 'loop'; id: string }
 		| { kind: 'trigger'; id: string }
+		| { kind: 'agent'; id: string }
 		| { kind: 'object' | 'file'; id: string }
+		| { kind: 'github'; href: string; target: GithubTarget }
 }) {
+	if (segment.kind === 'github') {
+		return <OwnGithubChip href={segment.href} target={segment.target} />
+	}
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
+}
+
+/** A GitHub pull request or issue in your own message: icon, "{repo} #{n}" and an arrow, opening GitHub in a new tab. Nothing is fetched. */
+function OwnGithubChip({ href, target }: { href: string; target: GithubTarget }) {
+	const Icon = target.type === 'pull' ? GitPullRequest : CircleDot
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={githubChipName(target)}
+			className={OWN_CHIP_CLASS}
+		>
+			<Icon size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{githubChipText(target)}</span>
+			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
+		</a>
+	)
 }
 
 function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {
@@ -613,6 +671,34 @@ function OwnTriggerChip({ workspaceId, id }: { workspaceId: string; id: string }
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Trigger'}</span>
+		</Link>
+	)
+}
+
+function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	const actor = actors?.find((a) => a.id === id)
+	const name = actor?.name?.trim()
+	// An address that points at a person is not an agent link: it stays a plain link.
+	if (actor?.type === 'human') {
+		const address = `${window.location.origin}/${workspaceId}/agents/${id}`
+		return (
+			<a href={address} target="_blank" rel="noopener noreferrer" className="underline">
+				{address}
+			</a>
+		)
+	}
+	return (
+		<Link
+			to="/$workspaceId/agents/$agentId"
+			params={{ workspaceId, agentId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
 		</Link>
 	)
 }

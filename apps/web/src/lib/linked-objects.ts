@@ -75,7 +75,7 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file' | 'loop' | 'trigger'
+	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
 	id: string
 }
 
@@ -88,13 +88,14 @@ export interface HrefTarget extends LinkedTarget {
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers)/(${UUID_SRC})/?$`, 'i')
+const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
-const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' }>['kind']> = {
+const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
 	triggers: 'trigger',
+	agents: 'agent',
 }
 
 function isAppHost(host: string): boolean {
@@ -102,13 +103,48 @@ function isAppHost(host: string): boolean {
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object, file, loop or trigger in this workspace. */
-export type OwnSegment =
-	| { kind: 'text'; text: string }
-	| { kind: 'object' | 'file' | 'loop' | 'trigger'; id: string }
+/** A GitHub pull request or issue, read from its address alone. Nothing is fetched. */
+export interface GithubTarget {
+	type: 'pull' | 'issue'
+	repo: string
+	number: number
+}
+
+const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
 
 /**
- * Your own message as an ordered run of words and links to this workspace's objects, files, loops and triggers,
+ * The pull request or issue an address points at: exactly github.com (not a lookalike or a
+ * subdomain), then `/{owner}/{repo}/pull/{n}` or `/{owner}/{repo}/issues/{n}`. A sub-path (files,
+ * commits, checks), any other github.com address and any other site is null and stays a plain link.
+ */
+export function githubTargetOf(href: unknown): GithubTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href)
+	} catch {
+		return null
+	}
+	if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.host !== 'github.com') {
+		return null
+	}
+	if (url.username || url.password) return null
+	const match = GITHUB_PATH.exec(url.pathname)
+	if (!match) return null
+	return { type: match[2] === 'pull' ? 'pull' : 'issue', repo: match[1], number: Number(match[3]) }
+}
+
+/**
+ * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
+ * workspace, or a GitHub pull request or issue.
+ */
+export type OwnSegment =
+	| { kind: 'text'; text: string }
+	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| { kind: 'github'; href: string; target: GithubTarget }
+
+/**
+ * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
  * so each link can be drawn inline as a chip with the thing's name instead of a long address.
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
@@ -130,6 +166,13 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		try {
 			url = new URL(address)
 		} catch {
+			continue
+		}
+		const github = githubTargetOf(address)
+		if (github) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'github', href: address, target: github })
+			cursor = (m.index ?? 0) + address.length
 			continue
 		}
 		const match = APP_PATH.exec(url.pathname)
@@ -165,10 +208,11 @@ const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
 	['file', hrefOf('files')],
 	['loop', hrefOf('loops')],
 	['trigger', hrefOf('triggers')],
+	['agent', hrefOf('agents')],
 ]
 
 /**
- * The object, file, loop or trigger a link's address points at, if it points at one, with the
+ * The object, file, loop, trigger or agent a link's address points at, if it points at one, with the
  * workspace the address names (null when it names none). Later kinds are added to the list above.
  */
 export function targetOfHref(href: unknown): HrefTarget | null {
@@ -310,7 +354,7 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
-/** Objects, loops and triggers: what the app looks up for a link, as against a file. */
+/** Objects, loops, triggers and agents: what the app looks up for a link, as against a file. */
 const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
 
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */
@@ -626,4 +670,14 @@ export function pickFacts(
  */
 export function unavailableCopy(kind: string): { card: string; chip: string } {
 	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
+}
+
+/** What a GitHub chip reads: the repository's name (not its owner) and the number. */
+export function githubChipText(target: GithubTarget): string {
+	return `${target.repo} #${target.number}`
+}
+
+/** The accessible name of a GitHub chip: it says it leaves the app. */
+export function githubChipName(target: GithubTarget): string {
+	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
 }

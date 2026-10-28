@@ -3,6 +3,9 @@ import {
 	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
+	githubChipName,
+	githubChipText,
+	githubTargetOf,
 	pickFacts,
 	plainSnippet,
 	shortName,
@@ -104,10 +107,18 @@ describe('targetOfHref', () => {
 		})
 	})
 
+	it('reads an agent id from an address, in any case and with a query', () => {
+		expect(targetOfHref(`https://x.io/ws/agents/${id.toUpperCase()}?tab=x`)).toEqual({
+			kind: 'agent',
+			id,
+			workspaceId: 'ws',
+		})
+	})
+
 	it('returns the workspace the address names, for this workspace and for another', () => {
 		const here = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 		const other = '11111111-2222-4333-8444-555555555555'
-		for (const kind of ['objects', 'files', 'loops', 'triggers']) {
+		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents']) {
 			const inHere = targetOfHref(`https://maskin.io/${here}/${kind}/${id}`)
 			const inOther = targetOfHref(`https://maskin.io/${other.toUpperCase()}/${kind}/${id}#x`)
 			expect(inHere?.workspaceId).toBe(here)
@@ -122,6 +133,10 @@ describe('targetOfHref', () => {
 	it('ignores a loop or trigger address with more id characters after the id', () => {
 		expect(targetOfHref(`/ws/loops/${id}x`)).toBeNull()
 		expect(targetOfHref('/ws/loops')).toBeNull()
+	})
+
+	it('ignores an agents address without an id, or with more id characters after it', () => {
+		expect(targetOfHref(`/ws/agents/${id}x`)).toBeNull()
 	})
 
 	it('ignores any other address', () => {
@@ -182,6 +197,19 @@ describe('splitOwnLinks', () => {
 		])
 	})
 
+	it('finds a bare address of an agent', () => {
+		expect(splitOwnLinks(`ask ${url('agents', A)} to look`, WS)).toEqual([
+			{ kind: 'text', text: 'ask ' },
+			{ kind: 'agent', id: A },
+			{ kind: 'text', text: ' to look' },
+		])
+	})
+
+	it('leaves an agent address of another workspace as words', () => {
+		const other = `https://maskin.io/${A}/agents/${B}`
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	})
+
 	it('leaves a loop address of another workspace as words', () => {
 		const other = `https://maskin.io/${A}/loops/${B}`
 		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
@@ -190,8 +218,101 @@ describe('splitOwnLinks', () => {
 	it('leaves links to another workspace, another site or a non-object page as words', () => {
 		const other = `https://maskin.io/${A}/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
-		const page = url('agents', A)
+		const page = url('chats', A)
 		for (const text of [other, elsewhere, page, 'no links here']) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
+	})
+})
+
+describe('githubTargetOf', () => {
+	it('reads a pull request and an issue from the address alone', () => {
+		expect(githubTargetOf('https://github.com/sindre-ai/maskin/pull/2637')).toEqual({
+			type: 'pull',
+			repo: 'maskin',
+			number: 2637,
+		})
+		expect(githubTargetOf('https://github.com/sindre-ai/maskin/issues/12')).toEqual({
+			type: 'issue',
+			repo: 'maskin',
+			number: 12,
+		})
+	})
+
+	it('reads another owner and repo, a trailing slash, a query and a fragment', () => {
+		expect(githubTargetOf('https://github.com/vaerksted-ai/skjald.app/pull/7/')).toEqual({
+			type: 'pull',
+			repo: 'skjald.app',
+			number: 7,
+		})
+		expect(githubTargetOf('https://github.com/a/b/issues/3?x=1#issuecomment-9')?.number).toBe(3)
+	})
+
+	it('leaves a sub-path and any other github.com address as a plain link', () => {
+		for (const href of [
+			'https://github.com/sindre-ai/maskin/pull/2637/files',
+			'https://github.com/sindre-ai/maskin/pull/2637/commits',
+			'https://github.com/sindre-ai/maskin/issues/12/checks',
+			'https://github.com/sindre-ai/maskin/commit/5d8bd50',
+			'https://github.com/sindre-ai/maskin/tree/main',
+			'https://github.com/sindre-ai/maskin/pulls',
+			'https://github.com/sindre-ai/maskin/pull/abc',
+			'https://github.com/sindre-ai/maskin',
+			'https://github.com/sindre-ai',
+		]) {
+			expect(githubTargetOf(href)).toBeNull()
+		}
+	})
+
+	it('only counts the exact host github.com', () => {
+		for (const href of [
+			'https://github.com.evil.com/a/b/pull/1',
+			'https://evilgithub.com/a/b/pull/1',
+			'https://gist.github.com/a/b/pull/1',
+			'https://www.github.com/a/b/pull/1',
+			'https://github.com@evil.com/a/b/pull/1',
+			'https://github.com:8443/a/b/pull/1',
+			'https://user@github.com/a/b/pull/1',
+			'https://user:secret@github.com/a/b/pull/1',
+			'https://gitlab.com/a/b/pull/1',
+			'ftp://github.com/a/b/pull/1',
+			'/a/b/pull/1',
+			'not an address',
+		]) {
+			expect(githubTargetOf(href)).toBeNull()
+		}
+		expect(githubTargetOf(undefined)).toBeNull()
+	})
+
+	it('names the chip by repository and number, and says it opens GitHub', () => {
+		const pull = githubTargetOf('https://github.com/sindre-ai/maskin/pull/2637')
+		const issue = githubTargetOf('https://github.com/sindre-ai/maskin/issues/12')
+		if (!pull || !issue) throw new Error('expected both to read')
+		expect(githubChipText(pull)).toBe('maskin #2637')
+		expect(githubChipName(pull)).toBe('Pull request maskin #2637, opens GitHub')
+		expect(githubChipName(issue)).toBe('Issue maskin #12, opens GitHub')
+	})
+})
+
+describe('splitOwnLinks with GitHub addresses', () => {
+	const pr = 'https://github.com/sindre-ai/maskin/pull/2637'
+
+	it('makes a bare pull request or issue address a segment, keeping the words around it', () => {
+		expect(splitOwnLinks(`review ${pr}, then https://github.com/a/b/issues/4.`, WS)).toEqual([
+			{ kind: 'text', text: 'review ' },
+			{ kind: 'github', href: pr, target: { type: 'pull', repo: 'maskin', number: 2637 } },
+			{ kind: 'text', text: ', then ' },
+			{
+				kind: 'github',
+				href: 'https://github.com/a/b/issues/4',
+				target: { type: 'issue', repo: 'b', number: 4 },
+			},
+			{ kind: 'text', text: '.' },
+		])
+	})
+
+	it('leaves a sub-path and a lookalike host as words', () => {
+		for (const text of [`${pr}/files`, 'https://github.com.evil.com/a/b/pull/1']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
 	})

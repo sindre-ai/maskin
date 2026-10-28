@@ -494,7 +494,7 @@ struct TeamConversationRow: View {
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(1)
-				Text(preview).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				preview.maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
@@ -511,11 +511,11 @@ struct TeamConversationRow: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private var preview: String {
-		if let draft, !draft.isEmpty { return "Draft: \(draft)" }
-		let text = conversation.snippet.map(ChatPreviewText.plain) ?? ""
-		guard !text.isEmpty else { return ConversationRowStatus.noMessages }
-		if let who = conversation.snippetActorName, !who.isEmpty { return "\(who): \(text)" }
-		return text
+	private var preview: Text {
+		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
+		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
+		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
+		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }

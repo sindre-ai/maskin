@@ -1,4 +1,7 @@
 import {
+	AgentReferenceCard,
+	AgentReferenceChip,
+	GithubReferenceChip,
 	LoopReferenceCard,
 	LoopReferenceChip,
 	ObjectReferenceCard,
@@ -12,12 +15,13 @@ import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { Button } from '@/components/ui/button'
+import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import { type GithubTarget, type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
@@ -70,13 +74,23 @@ export function LinkedObjectCard({
 	// Nothing is posted in the chat: the person did not write a message.
 	const chat =
 		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
-	const properties = describeObjectProperties(object.metadata)
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
 	// instead of the next phase: the person's yes to this exact text, after which the agent is
 	// told to send it. Which objects qualify, and how they are sent, is the integration's own
 	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
+	// Open, the preview block shows who it goes to and what kind of message it is; the line under
+	// the title then leaves those out. Contracted, that block is hidden and the line keeps them.
+	const properties = describeObjectProperties(
+		object.metadata,
+		expanded && preview
+			? {
+					recipients: preview.recipients.flatMap((r) => [r.name, r.address]),
+					label: preview.label,
+				}
+			: undefined,
+	)
 	const delivery = preview?.delivery?.state
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
@@ -304,6 +318,18 @@ export function LinkedCardOrLink({
 	/** The card goes under the sentence that links it: only a draft is drawn. */
 	after?: boolean
 }) {
+	if (target.kind === 'agent') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return (
+			<AgentCardOrLink
+				workspaceId={workspaceId}
+				agentId={target.id}
+				fallback={fallback}
+				label={label}
+			/>
+		)
+	}
 	if (target.kind === 'loop' || target.kind === 'trigger') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
@@ -337,6 +363,23 @@ export function LinkedCardOrLink({
 	)
 }
 
+/** An agent's card on its own line; an address that points at a person keeps the original link. */
+function AgentCardOrLink({
+	workspaceId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	agentId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	if (actors?.find((a) => a.id === agentId)?.type === 'human') return <>{fallback}</>
+	return withLabel(label, <AgentReferenceCard workspaceId={workspaceId} agentId={agentId} />)
+}
+
 function withLabel(label: string | undefined, card: ReactNode): ReactNode {
 	return label ? (
 		<>
@@ -362,6 +405,11 @@ export function renderLinkedCard(
 	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
+export function renderLinkedGithubChip(target: GithubTarget, href: string): ReactNode {
+	return <GithubReferenceChip target={target} href={href} />
 }
 
 /** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop or trigger inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
@@ -392,6 +440,14 @@ export function renderLinkedChip(
 				<TriggerReferenceChip
 					workspaceId={context.workspaceId}
 					triggerId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'agent':
+			return (
+				<AgentReferenceChip
+					workspaceId={context.workspaceId}
+					agentId={target.id}
 					fallback={fallback}
 				/>
 			)

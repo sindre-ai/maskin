@@ -41,6 +41,12 @@ const renderChip = (target: { kind: string; id: string }, fallback: ReactNode) =
 		</span>
 	)
 
+const renderGithubChip = (target: { type: string; repo: string; number: number }, href: string) => (
+	<a data-testid="github-chip" href={href}>
+		{`${target.type}:${target.repo}#${target.number}`}
+	</a>
+)
+
 const WS = 'ws-1'
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const B = 'b8278eef-4a95-43df-911e-3cb3473a55fb'
@@ -51,6 +57,8 @@ const LOOP = 'c9389ff0-5ba6-4eae-a49c-4d4c4e84e6c0'
 const TRIGGER = 'd0490aa1-6cb7-4faf-b5ad-5e5d5f95f7d1'
 const loopUrl = (id: string) => `https://maskin.io/${WS}/loops/${id}`
 const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
+const AGENT = 'dc2ee1b4-5659-4038-be88-0a1b298ba373'
+const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
@@ -65,6 +73,74 @@ function renderMessage(content: string, withCards = true, skipIds?: ReadonlySet<
 		{ wrapper: TestWrapper },
 	)
 }
+
+describe('MarkdownContent linkedCards, GitHub links', () => {
+	const PR = 'https://github.com/sindre-ai/maskin/pull/2637'
+	const ISSUE = 'https://github.com/sindre-ai/maskin/issues/12'
+	const draw = (content: string) =>
+		render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{ workspaceId: WS, renderCard, renderChip, renderGithubChip }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+	it('draws a pull request and an issue in a sentence as chips, whatever the link text', () => {
+		draw(`See [the fix](${PR}) and ${ISSUE} for context.`)
+		const chips = screen.getAllByTestId('github-chip')
+		expect(chips.map((c) => c.textContent)).toEqual(['pull:maskin#2637', 'issue:maskin#12'])
+		expect(chips[0]).toHaveAttribute('href', PR)
+		expect(screen.queryByText('the fix')).not.toBeInTheDocument()
+	})
+
+	it('keeps a link alone on a line a chip in the text flow, not a card', () => {
+		draw(`Here you go.\n\n[Review this](${PR})`)
+		expect(screen.getByTestId('github-chip')).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.getByTestId('github-chip').closest('p')).not.toBeNull()
+	})
+
+	it('does not count toward the three-card cap', () => {
+		qualifying = new Set()
+		draw(
+			[
+				`[a](${PR})`,
+				'[b](https://github.com/a/b/pull/2)',
+				'[c](https://github.com/a/b/pull/3)',
+				'[d](https://github.com/a/b/pull/4)',
+				`[o](${objectUrl(A)})`,
+			].join('\n\n'),
+		)
+		expect(screen.getAllByTestId('github-chip')).toHaveLength(4)
+		expect(screen.getByTestId('reference')).toHaveTextContent(A)
+	})
+
+	it('leaves a sub-path, another github.com address and another site as plain links', () => {
+		draw(
+			[
+				`[files](${PR}/files)`,
+				'[repo](https://github.com/sindre-ai/maskin)',
+				'[lookalike](https://github.com.evil.com/a/b/pull/1)',
+				'[elsewhere](https://example.com/a/b/pull/1)',
+			].join('\n\n'),
+		)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+		for (const text of ['files', 'repo', 'lookalike', 'elsewhere']) {
+			expect(screen.getByRole('link', { name: text })).toBeInTheDocument()
+		}
+	})
+
+	it('stays a plain link when nothing draws GitHub chips, and without the prop', () => {
+		renderMessage(`See [the fix](${PR}).`)
+		expect(screen.getByRole('link', { name: 'the fix' })).toHaveAttribute('href', PR)
+		renderMessage(`See [the other fix](${PR}).`, false)
+		expect(screen.getByRole('link', { name: 'the other fix' })).toHaveAttribute('href', PR)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+	})
+})
 
 describe('MarkdownContent linkedCards', () => {
 	beforeEach(() => {
@@ -407,6 +483,37 @@ describe('MarkdownContent linkedCards', () => {
 			renderMessage(`Use \`${loopUrl(LOOP)}\` as the address.`)
 			expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
 			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+	})
+
+	describe('agents', () => {
+		it('draws an agent link alone on its line as a card, whatever the link text says', () => {
+			renderMessage(`[the developer](${agentUrl(AGENT)})`)
+			expect(screen.getByTestId('reference')).toHaveTextContent(AGENT)
+			expect(screen.queryByText('the developer')).not.toBeInTheDocument()
+		})
+
+		it('draws an agent in a sentence as a chip where it stands', () => {
+			renderMessage(`Ask [the developer](${agentUrl(AGENT)}) today.`)
+			expect(screen.getByTestId('chip')).toHaveAttribute('data-id', AGENT)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+
+		it('shares the three-card limit and the never-twice rule with the other kinds', () => {
+			renderMessage(
+				[objectUrl(A), loopUrl(LOOP), agentUrl(AGENT), agentUrl(AGENT)]
+					.map((url) => `[x](${url})`)
+					.join('\n\n'),
+			)
+			expect(screen.getAllByTestId('card')).toHaveLength(1)
+			expect(screen.getAllByTestId('reference')).toHaveLength(2)
+			expect(screen.getAllByTestId('chip')).toHaveLength(1)
+		})
+
+		it('keeps an agent in a list a chip', () => {
+			renderMessage(`- [One](${agentUrl(AGENT)})`)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+			expect(screen.getByTestId('chip')).toBeInTheDocument()
 		})
 	})
 })

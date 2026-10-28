@@ -35,7 +35,13 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { ObjectReferenceCard, ObjectReferenceChip } from '@/components/chat/linked-object-reference'
+import {
+	GithubReferenceChip,
+	ObjectReferenceCard,
+	ObjectReferenceChip,
+	PREVIEW_BOUNDS_ATTR,
+	placePreview,
+} from '@/components/chat/linked-object-reference'
 
 const WS = 'ws-1'
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -94,6 +100,40 @@ describe('ObjectReferenceChip', () => {
 			expect(screen.getByText('Deleted object')).toBeInTheDocument()
 			unmount()
 		}
+	})
+})
+
+describe('GithubReferenceChip', () => {
+	const pull = { type: 'pull', repo: 'maskin', number: 2637 } as const
+	const issue = { type: 'issue', repo: 'maskin', number: 12 } as const
+
+	it('draws a pull request as an icon, repo and number, and opens GitHub in a new tab', () => {
+		const href = 'https://github.com/sindre-ai/maskin/pull/2637'
+		render(<GithubReferenceChip target={pull} href={href} />)
+		const chip = screen.getByRole('link', { name: 'Pull request maskin #2637, opens GitHub' })
+		expect(chip).toHaveAttribute('href', href)
+		expect(chip).toHaveAttribute('target', '_blank')
+		expect(chip).toHaveAttribute('rel', 'noopener noreferrer')
+		expect(chip).toHaveTextContent('maskin #2637')
+		// The pull-request icon and the arrow out of the app, nothing else: no status dot.
+		expect(chip.querySelectorAll('svg')).toHaveLength(2)
+		expect(chip.querySelector('svg.lucide-git-pull-request')).not.toBeNull()
+		expect(chip.querySelector('svg.lucide-arrow-up-right')).not.toBeNull()
+		expect(chip.querySelector('span.rounded-full')).toBeNull()
+	})
+
+	it('draws an issue with the circle-dot icon', () => {
+		render(
+			<GithubReferenceChip target={issue} href="https://github.com/sindre-ai/maskin/issues/12" />,
+		)
+		const chip = screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })
+		expect(chip.querySelector('svg.lucide-circle-dot')).not.toBeNull()
+		expect(chip).toHaveTextContent('maskin #12')
+	})
+
+	it('wears the same plate as every other chip', () => {
+		render(<GithubReferenceChip target={pull} href="https://github.com/a/maskin/pull/2637" />)
+		expect(screen.getByRole('link')).toHaveClass('bg-muted', 'rounded-md', 'box-decoration-clone')
 	})
 })
 
@@ -485,6 +525,116 @@ describe('ObjectReferenceChip preview', () => {
 			fireEvent.mouseEnter(screen.getByText('Deleted object'))
 		})
 		expect(preview()).toBeNull()
+	})
+})
+
+describe('placePreview', () => {
+	// A chat pane beside the list at a 1024 screen: the pane starts at x=482.
+	const pane = { left: 482, right: 1024 }
+
+	it("opens from the chip's left edge when the card fits in the pane", () => {
+		expect(placePreview({ left: 500, right: 560 }, pane, 1024)).toEqual({ side: 'start' })
+	})
+
+	it("opens from the chip's right edge when only that fits in the pane", () => {
+		expect(placePreview({ left: 900, right: 980 }, pane, 1024)).toEqual({ side: 'end' })
+	})
+
+	it('pins to the pane and shrinks to it when neither edge fits', () => {
+		const narrow = { left: 482, right: 700 }
+		expect(placePreview({ left: 520, right: 600 }, narrow, 1024)).toEqual({
+			side: 'pinned',
+			left: 490,
+			width: 202,
+		})
+	})
+
+	it('keeps the screen rule when the bounds are the whole screen', () => {
+		const screen = { left: 0, right: 1024 }
+		expect(placePreview({ left: 100, right: 160 }, screen, 1024)).toEqual({ side: 'start' })
+		expect(placePreview({ left: 900, right: 980 }, screen, 1024)).toEqual({ side: 'end' })
+	})
+})
+
+describe('ObjectReferenceChip preview in a pane', () => {
+	const realMatchMedia = window.matchMedia
+	const realClientWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth')
+	const rect = (left: number, right: number) =>
+		({ left, right, top: 0, bottom: 20, width: right - left, height: 20, x: left, y: 0 }) as DOMRect
+	let boundsRect = rect(0, 0)
+	let chipRect = rect(0, 0)
+
+	beforeEach(() => {
+		useObject.mockReset()
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		window.matchMedia = ((query: string) => ({
+			matches: true,
+			media: query,
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		})) as unknown as typeof window.matchMedia
+		Object.defineProperty(document.documentElement, 'clientWidth', {
+			configurable: true,
+			value: 1024,
+		})
+		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: Element,
+		) {
+			return this.hasAttribute(PREVIEW_BOUNDS_ATTR) ? boundsRect : chipRect
+		})
+		vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(
+			() => [chipRect] as unknown as DOMRectList,
+		)
+	})
+	afterEach(() => {
+		vi.restoreAllMocks()
+		window.matchMedia = realMatchMedia
+		if (realClientWidth)
+			Object.defineProperty(document.documentElement, 'clientWidth', realClientWidth)
+		else Reflect.deleteProperty(document.documentElement, 'clientWidth')
+	})
+
+	const hoverInPane = async (pane: { left: number; right: number } | null) => {
+		const user = userEvent.setup()
+		const { container } = render(
+			<div {...(pane ? { [PREVIEW_BOUNDS_ATTR]: '' } : {})}>
+				<ObjectReferenceChip workspaceId={WS} objectId={ID} fallback={fallback} />
+			</div>,
+		)
+		if (pane) {
+			boundsRect = rect(pane.left, pane.right)
+			const el = container.firstElementChild as HTMLElement
+			Object.defineProperty(el, 'clientWidth', { value: pane.right - pane.left })
+		}
+		await user.hover(screen.getByRole('link', { name: /Bet, Active: Chat preview cards/ }))
+		return document.querySelector<HTMLElement>('[data-linked-preview]')
+	}
+
+	it('opens from the left edge inside the pane', async () => {
+		chipRect = rect(500, 560)
+		const card = await hoverInPane({ left: 482, right: 1024 })
+		expect(card?.style.left).toBe('0px')
+		expect(card?.style.width).toBe('')
+	})
+
+	it('right-aligns to the chip when the left-aligned card would run past the pane', async () => {
+		chipRect = rect(900, 980)
+		const card = await hoverInPane({ left: 482, right: 1024 })
+		expect(card?.style.right).toBe('0px')
+	})
+
+	it('pins to the pane and narrows when neither edge fits', async () => {
+		chipRect = rect(520, 600)
+		const card = await hoverInPane({ left: 482, right: 700 })
+		expect(card?.style.left).toBe('-30px')
+		expect(card?.style.width).toBe('202px')
+	})
+
+	it('keeps the screen rule with no pane', async () => {
+		chipRect = rect(900, 980)
+		const card = await hoverInPane(null)
+		expect(card?.style.right).toBe('0px')
+		expect(card?.style.width).toBe('')
 	})
 })
 

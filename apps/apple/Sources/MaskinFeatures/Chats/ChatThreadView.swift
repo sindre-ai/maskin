@@ -94,6 +94,8 @@ struct ChatThreadView: View {
 	private static let revealDelay = 120
 	/// Pauses before each re-anchor of a thread opened on its NEW divider; it stays hidden until the last.
 	private static let reanchorDelays = [200, 300]
+	/// The longest (ms) a thread stays hidden for the finished turns' traces to arrive.
+	private static let traceWait = 800
 	/// How long the thread waits for its read cursor before opening at the bottom (offline).
 	private static let openTimeout: Duration = .milliseconds(1500)
 
@@ -862,6 +864,9 @@ struct ChatThreadView: View {
 					if userScrolled { break }
 					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				}
+				if await waitForTraces(), !userScrolled {
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
 				revealed = true
 				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
 				// callback never fires and it would stay unread however far it is read. Checked at
@@ -880,8 +885,21 @@ struct ChatThreadView: View {
 		Task {
 			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+			if await waitForTraces(), followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
+	}
+
+	/// Holds the opening for the finished turns' one-line traces, which are read after the messages
+	/// and would otherwise appear under the reader one by one. Gives up after `traceWait`, so a slow
+	/// network never keeps the thread hidden. True when it had to wait, so the caller re-pins.
+	private func waitForTraces() async -> Bool {
+		var waited = 0
+		while store.isLoadingTrace, waited < Self.traceWait, !userScrolled {
+			try? await Task.sleep(for: .milliseconds(50))
+			waited += 50
+		}
+		return waited > 0
 	}
 
 	/// Pin to the newest message without animating, then once more after the rows have measured.
@@ -987,8 +1005,11 @@ struct ThreadTranscript: View {
 			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
+		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn, cardOwners: cardOwners)
+			row(
+				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				cardOwners: cardOwners)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1091,7 +1112,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
-		cardOwners: [String: String]
+		statusIDs: Set<String>, cardOwners: [String: String]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1124,7 +1145,7 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
-				sendStatus: isLatestOwn ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
+				sendStatus: statusIDs.contains(message.id) ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
