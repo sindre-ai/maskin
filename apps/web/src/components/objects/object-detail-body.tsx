@@ -40,7 +40,8 @@ export function ObjectDetailBody({
 				<MarkdownContent
 					content={object.content ?? ''}
 					size="doc"
-					className="max-w-[75ch]"
+					// Trailing ! so the cap beats the editor prose class, which sets max-w-none.
+					className="max-w-[75ch]!"
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
 					editorLabel="Description"

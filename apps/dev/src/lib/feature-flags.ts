@@ -27,14 +27,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
-	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
-	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it
-	 * once the editor has been through tester validation across
-	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
-	 */
-	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
-	/**
 	 * Gates the redesigned search page (bet
 	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
 	 * Frontend only, read once in the search route component, which swaps the
