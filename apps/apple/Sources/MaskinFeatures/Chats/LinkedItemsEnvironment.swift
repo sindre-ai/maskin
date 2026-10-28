@@ -30,10 +30,15 @@ enum LinkedItemStores {
 		let remote = APIObjectsRemote(
 			client: environment.client, credentials: credentials, baseURL: environment.baseURL,
 			clientSource: environment.clientSource)
+		// Loops and triggers come from the same lists the Flows and Triggers screens read.
+		let loops = APILoopsSource(client: environment.client, workspaceID: workspaceId)
+		let triggers = APITriggersSource(client: environment.client, workspaceID: workspaceId)
 		let store = LinkedItemStore(
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
+			loops: { try await loops.loops() },
+			triggers: { try await triggers.listPage() },
 			workspaceID: { [weak environment] in environment?.workspaceId })
 		cache[key] = store
 		return store
@@ -67,6 +72,8 @@ struct LinkedOpener: DynamicProperty {
 		switch target.kind {
 		case .object: runtime?.openObject(target.uuid)
 		case .file: runtime?.openFile(target.uuid)
+		case .loop: runtime?.openLoop(target.uuid)
+		case .trigger: runtime?.openTrigger(target.uuid)
 		}
 	}
 }

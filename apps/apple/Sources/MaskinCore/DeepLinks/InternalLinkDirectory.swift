@@ -33,7 +33,36 @@ public final class InternalLinkDirectory {
 			switch item {
 			case .object(let object): return Object(type: object.type, title: object.title)
 			case .draft(let object, _): return Object(type: object.type, title: Self.title(object.title))
-			case .file, .deleted, .plain: return nil
+			case .file, .deleted, .plain, .loop, .trigger: return nil
+			}
+		case .loading?, .unavailable?:
+			return nil
+		}
+	}
+
+	/// What a link to a loop or a trigger turned out to be.
+	public struct Named: Equatable, Sendable {
+		/// The loop's or trigger's own name; nil for a deleted one.
+		public var title: String?
+		public var isDeleted: Bool
+	}
+
+	/// The name of a loop or trigger once known, or that it was deleted. The first call for an id
+	/// starts the lookup and returns nil; while it loads, or if it can't be read (offline, a trigger
+	/// the triggers list does not hold), callers fall back to the kind alone.
+	public func named(_ kind: LinkedTarget.Kind, id: String) -> Named? {
+		guard kind == .loop || kind == .trigger, let store = store() else { return nil }
+		let target = LinkedTarget(kind: kind, uuid: id)
+		switch store.state(for: target) {
+		case nil:
+			Task { await store.resolve([target]) }
+			return nil
+		case .ready(let item)?:
+			switch item {
+			case .loop(let loop): return Named(title: loop.displayName, isDeleted: false)
+			case .trigger(let trigger): return Named(title: trigger.displayName, isDeleted: false)
+			case .deleted: return Named(title: nil, isDeleted: true)
+			case .draft, .file, .object, .plain: return nil
 			}
 		case .loading?, .unavailable?:
 			return nil

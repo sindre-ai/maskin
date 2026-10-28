@@ -253,7 +253,8 @@ struct MessageRow: View {
 	/// only. At most ten objects are looked up; the links past that stay plain.
 	private var linkedTargets: [LinkedTarget] {
 		guard linked != nil, message.kind == "message", !message.isEmojiOnly,
-			bodyText.contains("/objects/") || bodyText.contains("/files/")
+			bodyText.contains("/objects/") || bodyText.contains("/files/") || bodyText.contains("/loops/")
+				|| bodyText.contains("/triggers/")
 		else { return [] }
 		let found = LinkedTarget.extract(from: bodyText)
 		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)

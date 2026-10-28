@@ -14,11 +14,15 @@ public enum LinkedItem: Equatable, Sendable {
 	case deleted(LinkedTarget)
 	/// Something that stays a link in the chat (a PDF): the drawer lists it as a compact row.
 	case plain(LinkedReference)
+	/// A loop in this workspace.
+	case loop(LinkedLoop)
+	/// A trigger in this workspace, found in the triggers list.
+	case trigger(LinkedTrigger)
 
 	/// Whether it is drawn as a card in the message.
 	public var isCard: Bool {
 		switch self {
-		case .draft, .file, .object, .deleted: true
+		case .draft, .file, .object, .deleted, .loop, .trigger: true
 		case .plain: false
 		}
 	}
@@ -83,6 +87,20 @@ public final class LinkedItemStore {
 	@ObservationIgnored private let files: any FilesRemote
 	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
 	@ObservationIgnored private var actorsTask: Task<Void, Never>?
+	@ObservationIgnored private let loadLoops: (@Sendable () async throws -> [LoopSummary])?
+	@ObservationIgnored private let loadTriggers: (@Sendable () async throws -> TriggerListing)?
+	/// The loops list and the triggers list, each read once and shared by every link that needs it
+	/// (a message with five loops asks once). A copy older than `retryAfter` is read again, so a loop
+	/// or trigger made a minute ago is found.
+	@ObservationIgnored private var loopsHeld: Held<[String: LoopSummary]>?
+	@ObservationIgnored private var loopsRead: Task<[LoopSummary], Error>?
+	@ObservationIgnored private var triggersHeld: Held<TriggerListing>?
+	@ObservationIgnored private var triggersRead: Task<TriggerListing, Error>?
+
+	private struct Held<Value> {
+		var value: Value
+		var readAt: Date
+	}
 	@ObservationIgnored private let workspaceID: @MainActor () -> String?
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
@@ -108,12 +126,16 @@ public final class LinkedItemStore {
 
 	public init(
 		objects: any ObjectDraftsRemote, files: any FilesRemote,
-		actors: (@Sendable () async throws -> [ActorRef])? = nil, workspaceID: @escaping @MainActor () -> String?,
+		actors: (@Sendable () async throws -> [ActorRef])? = nil,
+		loops: (@Sendable () async throws -> [LoopSummary])? = nil,
+		triggers: (@Sendable () async throws -> TriggerListing)? = nil, workspaceID: @escaping @MainActor () -> String?,
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
 		self.files = files
 		self.loadActors = actors
+		self.loadLoops = loops
+		self.loadTriggers = triggers
 		self.workspaceID = workspaceID
 		self.retryAfter = retryAfter
 		self.now = now
@@ -186,7 +208,7 @@ public final class LinkedItemStore {
 			}
 		}
 		entries[target.key] = Entry(state: .loading)
-		if target.kind == .object { loadActorsOnce() }
+		if target.kind != .file { loadActorsOnce() }
 		let task = Task { [weak self] in
 			guard let self else { return }
 			await self.lookup(target)
@@ -218,7 +240,71 @@ public final class LinkedItemStore {
 			let found = try await files.summaries(ids: [target.uuid]).first { $0.id.lowercased() == target.uuid }
 			guard let found else { return nil }
 			return classify(found)
+		case .loop:
+			return try await fetchLoop(target, workspace: workspace)
+		case .trigger:
+			return try await fetchTrigger(target)
 		}
+	}
+
+	/// A loop is a card when it is in this workspace. The loops list has the counts; a loop the list
+	/// does not hold (made since it was read) is read as an object, which has no counts, so the
+	/// card leaves those facts out.
+	private func fetchLoop(_ target: LinkedTarget, workspace: String?) async throws -> LinkedItem? {
+		if loadLoops != nil, let found = try await loopSummaries()[target.uuid] {
+			return .loop(LinkedLoop(target: target, summary: found))
+		}
+		let detail = try await objects.detail(objectId: target.uuid)
+		if let current = workspace, detail.workspaceId.lowercased() != current.lowercased() { return nil }
+		guard detail.object.type == "loop" else { return nil }
+		return .loop(LinkedLoop(target: target, object: detail.object))
+	}
+
+	/// A trigger is read from the triggers list: there is no read of one trigger. One missing from a
+	/// list that is known to be whole is gone. One missing from a list cut short, or no list at all,
+	/// stays a link.
+	private func fetchTrigger(_ target: LinkedTarget) async throws -> LinkedItem? {
+		guard loadTriggers != nil else { return nil }
+		let listing = try await triggerListing()
+		if let found = listing.triggers.first(where: { $0.id.lowercased() == target.uuid }) {
+			return .trigger(LinkedTrigger(target: target, trigger: found))
+		}
+		return listing.isComplete ? .deleted(target) : nil
+	}
+
+	private func loopSummaries() async throws -> [String: LoopSummary] {
+		if let held = loopsHeld, now().timeIntervalSince(held.readAt) < retryAfter { return held.value }
+		guard let loadLoops else { return [:] }
+		let started = loopsRead == nil
+		let task: Task<[LoopSummary], Error>
+		if let running = loopsRead {
+			task = running
+		} else {
+			task = Task { try await loadLoops() }
+			loopsRead = task
+		}
+		defer { if started { loopsRead = nil } }
+		let list = try await task.value
+		let byID = Dictionary(list.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+		loopsHeld = Held(value: byID, readAt: now())
+		return byID
+	}
+
+	private func triggerListing() async throws -> TriggerListing {
+		if let held = triggersHeld, now().timeIntervalSince(held.readAt) < retryAfter { return held.value }
+		guard let loadTriggers else { return TriggerListing(triggers: [], isComplete: false) }
+		let started = triggersRead == nil
+		let task: Task<TriggerListing, Error>
+		if let running = triggersRead {
+			task = running
+		} else {
+			task = Task { try await loadTriggers() }
+			triggersRead = task
+		}
+		defer { if started { triggersRead = nil } }
+		let listing = try await task.value
+		triggersHeld = Held(value: listing, readAt: now())
+		return listing
 	}
 
 	private func lookup(_ target: LinkedTarget) async {
@@ -234,7 +320,7 @@ public final class LinkedItemStore {
 			}
 			settle(target, with: item)
 		} catch {
-			if target.kind == .object, Self.isGone(error) {
+			if target.kind != .file, Self.isGone(error) {
 				// Gone is final, and it is an answer: the card says so.
 				entries[target.key] =
 					workspaceID() == workspace ? Entry(state: .ready(.deleted(target)), failedAt: nil) : nil

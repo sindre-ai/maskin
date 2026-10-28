@@ -60,6 +60,8 @@ struct LinkedSheet: View {
 			switch target.kind {
 			case .object: runtime?.openObject(target.uuid)
 			case .file: runtime?.openFile(target.uuid)
+			case .loop: runtime?.openLoop(target.uuid)
+			case .trigger: runtime?.openTrigger(target.uuid)
 			}
 		}
 	}

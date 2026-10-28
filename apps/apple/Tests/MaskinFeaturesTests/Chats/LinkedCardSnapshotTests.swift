@@ -215,4 +215,80 @@ struct LinkedCardSnapshotTests {
 			try await render(column, width: 390, dark: dark, name: "linked-object-message")
 		}
 	}
+
+	// MARK: Loops and triggers
+
+	private let loopID = "77777777-2222-3333-4444-555555555555"
+	private let onTriggerID = "88888888-2222-3333-4444-555555555555"
+	private let offTriggerID = "99999999-2222-3333-4444-555555555555"
+	private let goneTriggerID = "aaaaaaaa-2222-3333-4444-555555555555"
+
+	private func loopTriggerStore() async -> LinkedItemStore {
+		let loop = LoopSummary(
+			id: loopID, name: "Weekly review", content: "Look at last week, then plan the next one with the team.",
+			status: .supervised, inProgressCount: 3, closedCount: 12, agentIDs: ["agent-1", "agent-2"],
+			updatedAt: Date(timeIntervalSinceNow: -3600))
+		let on = Trigger(
+			id: onTriggerID, name: "Close done tasks", kind: .event,
+			config: .object(["entity_type": .string("task"), "action": .string("status_changed"), "to_status": .string("done")]),
+			actionPrompt: "Close it.", targetActorID: "agent-1", enabled: true)
+		let off = Trigger(
+			id: offTriggerID, name: "Monday digest", kind: .cron, config: .object(["expression": .string("0 9 * * 1")]),
+			actionPrompt: "Send the digest.", targetActorID: "agent-1", enabled: false)
+		let store = LinkedItemStore(
+			objects: StubTasks(), files: StubFiles(),
+			actors: { [ActorRef(id: "agent-1", name: "Developer", isAgent: true)] },
+			loops: { [loop] }, triggers: { TriggerListing(triggers: [on, off]) }, workspaceID: { ws })
+		await store.resolve([
+			LinkedTarget(kind: .loop, uuid: loopID), LinkedTarget(kind: .trigger, uuid: onTriggerID),
+			LinkedTarget(kind: .trigger, uuid: offTriggerID), LinkedTarget(kind: .loop, uuid: goneID),
+			LinkedTarget(kind: .trigger, uuid: goneTriggerID),
+		])
+		for _ in 0..<40 where store.owner(for: "agent-1") == nil { try? await Task.sleep(for: .milliseconds(50)) }
+		return store
+	}
+
+	@Test("a loop card, a trigger card on and off, and deleted ones, at 390 wide, light and dark, default and largest text")
+	func loopAndTriggerCards() async throws {
+		let store = await loopTriggerStore()
+		guard case .loop(let loop)? = store.item(for: LinkedTarget(kind: .loop, uuid: loopID)),
+			case .trigger(let on)? = store.item(for: LinkedTarget(kind: .trigger, uuid: onTriggerID)),
+			case .trigger(let off)? = store.item(for: LinkedTarget(kind: .trigger, uuid: offTriggerID))
+		else {
+			Issue.record("the loop or the triggers did not resolve")
+			return
+		}
+		let goneLoop = LinkedTarget(kind: .loop, uuid: goneID)
+		let goneTrigger = LinkedTarget(kind: .trigger, uuid: goneTriggerID)
+		#expect(store.item(for: goneLoop) == .deleted(goneLoop))
+		#expect(store.item(for: goneTrigger) == .deleted(goneTrigger))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					LinkedLoopCard(loop: loop)
+					LinkedTriggerCard(trigger: on)
+					LinkedTriggerCard(trigger: off)
+					LinkedTargetCard(target: goneLoop)
+					LinkedTargetCard(target: goneTrigger)
+				}
+				.environment(\.linkedItems, store)
+				try await render(content, width: 390, dark: dark, name: "linked-loop-trigger-cards", largest: largest)
+			}
+		}
+	}
+
+	@Test("loop and trigger links alone on their line are cards in the message")
+	func loopAndTriggerInMessage() async throws {
+		let store = await loopTriggerStore()
+		let message = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content:
+				"The review runs here:\n\n[Weekly review](https://maskin.io/\(ws)/loops/\(loopID))\n\nAnd this wakes me:\n\n[Close done tasks](https://maskin.io/\(ws)/triggers/\(onTriggerID))",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		for dark in [false, true] {
+			let row = MessageRow(message: message, isOwn: false, showsAuthor: true)
+				.environment(\.linkedItems, store)
+			try await render(row, width: 390, dark: dark, name: "linked-loop-trigger-message")
+		}
+	}
 }

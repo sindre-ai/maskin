@@ -23,7 +23,21 @@ extension InternalLinkDirectory {
 			return MarkdownLinkInfo(symbol: "person.2", kindLabel: "Agents")
 		case .agent:
 			return MarkdownLinkInfo(symbol: "person", kindLabel: "Agent")
+		case .loop(_, let id):
+			return namedInfo(.loop, id: id, symbol: LinkedKindSymbol.loop, kindLabel: "Loop")
+		case .trigger(_, let id):
+			// A trigger that is not in the loaded list stays the kind word alone.
+			return namedInfo(.trigger, id: id, symbol: "bolt", kindLabel: "Trigger")
 		}
+	}
+
+	/// A loop's or trigger's chip: its name, "Deleted loop" if it is gone, else the kind word.
+	private func namedInfo(_ kind: LinkedTarget.Kind, id: String, symbol: String, kindLabel: String) -> MarkdownLinkInfo {
+		var title: String?
+		if let found = named(kind, id: id) {
+			title = found.isDeleted ? "Deleted \(kindLabel.lowercased())" : found.title
+		}
+		return MarkdownLinkInfo(symbol: symbol, kindLabel: kindLabel, title: title)
 	}
 
 	/// "bet" → "Bet", "customer_note" → "Customer note".
