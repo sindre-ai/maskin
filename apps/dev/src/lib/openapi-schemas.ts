@@ -444,6 +444,22 @@ export const threadListItemSchema = z.object({
 // message still posts, but nobody was pulled in or woken for those ids.
 export const postMessageResponseSchema = messageResponseSchema.extend({
 	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	// A thread reply that reached the sub-chat the thread holds: how it got there.
+	delivered_to_session: z
+		.discriminatedUnion('mode', [
+			z.object({ mode: z.literal('live'), session_id: z.string().uuid() }),
+			z.object({
+				mode: z.literal('continued'),
+				session_id: z.string().uuid(),
+				previous_session_id: z.string().uuid(),
+			}),
+			z.object({
+				mode: z.literal('not_delivered'),
+				session_id: z.string().uuid(),
+				reason: z.string(),
+			}),
+		])
+		.optional(),
 })
 
 /**

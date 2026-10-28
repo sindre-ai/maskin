@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
 	type AgentGrantAccess,
 	actors,
 	agentGrants,
+	apiKeys,
 	conversations,
 	notifications,
 	objects,
@@ -63,7 +64,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			},
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
-				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+				bet: ['opportunity', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
 				loop: ['running', 'waiting', 'paused', 'archived'],
 			},
@@ -540,10 +541,35 @@ export function buildCreateGraphBody(overrides?: Record<string, unknown>) {
 
 // ── Real DB Inserters (for integration tests) ──────────────────────────────
 
+/**
+ * Makes a plaintext key authenticate, the way a key minted by the app does: requests look keys up
+ * by hash in api_keys, so inserting the actor row alone (legacy actors.api_key) is not enough.
+ */
+export async function registerTestApiKey(
+	db: Database,
+	actorId: string,
+	apiKey: string | null | undefined,
+	kind: 'primary' | 'login' | 'login_ios' | 'session' = 'primary',
+) {
+	if (!apiKey?.startsWith('ank_')) return
+	await db
+		.insert(apiKeys)
+		.values({
+			actorId,
+			keyHash: createHash('sha256').update(apiKey).digest('hex'),
+			last4: apiKey.slice(-4),
+			kind,
+		})
+		.onConflictDoNothing()
+}
+
 export async function insertActor(db: Database, overrides?: Record<string, unknown>) {
 	const data = buildActor(overrides)
 	const rows = await db.insert(actors).values(data).returning()
-	return rows[0]
+	const actor = rows[0]
+	await registerTestApiKey(db, actor.id, actor.apiKey)
+	// buildActor always sets a key, so fixtures can use it as a Bearer token without a null check.
+	return { ...actor, apiKey: actor.apiKey as string }
 }
 
 export async function insertWorkspace(

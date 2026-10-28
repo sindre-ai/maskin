@@ -1,7 +1,12 @@
 import type { Readable } from 'node:stream'
 
+export interface PutOptions {
+	/** Aborts a Buffer upload when fired (streamed uploads ignore it). */
+	signal?: AbortSignal
+}
+
 export interface StorageProvider {
-	put(key: string, data: Buffer | Uint8Array | Readable): Promise<void>
+	put(key: string, data: Buffer | Uint8Array | Readable, options?: PutOptions): Promise<void>
 	get(key: string): Promise<Buffer>
 	list(prefix: string): Promise<string[]>
 	listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]>

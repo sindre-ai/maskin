@@ -71,6 +71,12 @@ const ALL_TOOL_NAMES = [
 	'get_loop',
 	'delete_loop',
 	'create_session',
+	'create_sub_chat',
+	'create_chat',
+	'add_chat_participant',
+	'remove_chat_participant',
+	'get_chat_activity',
+	'stop_chat_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
@@ -84,6 +90,7 @@ const ALL_TOOL_NAMES = [
 	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
+	'list_for_you',
 	'get_notification',
 	'update_notification',
 	'delete_notification',
@@ -799,6 +806,30 @@ describe('create_notification schema', () => {
 				source_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('list_for_you schema', () => {
+	const schema = tools.list_for_you.inputSchema
+
+	it('requires an actor id and defaults limit to 10', () => {
+		expect(() => schema.parse({})).toThrow()
+		expect(schema.parse({ actor_id: uuid }).limit).toBe(10)
+	})
+
+	it('rejects a limit above 50', () => {
+		expect(() => schema.parse({ actor_id: uuid, limit: 51 })).toThrow()
+	})
+
+	it('defaults offset to 0 and rejects a negative or fractional offset', () => {
+		expect(schema.parse({ actor_id: uuid }).offset).toBe(0)
+		expect(schema.parse({ actor_id: uuid, offset: 50 }).offset).toBe(50)
+		expect(() => schema.parse({ actor_id: uuid, offset: -1 })).toThrow()
+		expect(() => schema.parse({ actor_id: uuid, offset: 1.5 })).toThrow()
+	})
+
+	it('points list_notifications readers at list_for_you', () => {
+		expect(tools.list_notifications.description).toContain('list_for_you')
 	})
 })
 

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -40,6 +39,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -192,7 +192,6 @@ export async function seedDefaultAgentActors(
 					llmConfig: spec.llmConfig,
 					tools: spec.tools,
 					metadata: spec.metadata,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
@@ -256,7 +255,6 @@ export async function ensureChiefOfStaffActor(
 			llmConfig: chiefSpec.llmConfig,
 			tools: chiefSpec.tools,
 			metadata: chiefSpec.metadata,
-			apiKey: generateApiKey().key,
 			createdBy,
 		})
 		.returning()
@@ -466,7 +464,6 @@ export async function bootstrapDefaultAgents(
 					systemPrompt,
 					tools: (agent.tools ?? null) as Record<string, unknown> | null,
 					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
@@ -780,7 +777,10 @@ export async function provisionWorkspace(params: {
 			: params.settings
 
 	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
-	const settings = applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules)
+	// The request may carry LLM keys in plain text; the row only ever holds sealed ones.
+	const settings = sealWorkspaceLlmSecrets(
+		applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules),
+	)
 
 	let chiefOfStaffId: string | undefined
 

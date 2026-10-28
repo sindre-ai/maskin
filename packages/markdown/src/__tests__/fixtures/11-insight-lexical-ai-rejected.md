@@ -1,0 +1,5 @@
+PR #8331 introduced `@lexical/ai` — a provider-agnostic ReAct agent loop with 10 built-in editor tools (`get_document`, `replace_text`, `format_text`, etc.), `AIAdapter` interface, `LexicalAINativePlugin`, `useAIAgent` hooks. Reviewer response: "I don't think this is in the stage that it should be a new public package… should evolve for a while based on usage and feedback… should be exposed as an extension instead of a legacy plugin." Commits `f4db374` (refactor to Extension API) and `5f91e79` (remove standalone `@lexical/ai` package) landed 2026-04-20.
+
+**Why it matters:** Any 2026 comparison that describes Lexical as "AI-native" is out of date. The community pattern for LLM streaming into Lexical is still DIY `$convertFromMarkdownString(chunk, TRANSFORMERS, node)` per chunk (discussion #5967). This is a real gap vs Tiptap, BlockNote, and Plate — and a specific reason not to swap the current Maskin choice.
+
+Sources: https://github.com/facebook/lexical/pull/8331; https://github.com/facebook/lexical/discussions/5967

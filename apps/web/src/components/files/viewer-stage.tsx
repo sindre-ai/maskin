@@ -45,7 +45,8 @@ import {
 	Plus,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
+import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
+import { PdfPreview, isHtml, isInlineImage, isMarkdown, isPdf, isPlainText } from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
@@ -99,6 +100,7 @@ export function ViewerStage({
 	pins,
 	onPinPlace,
 }: ViewerStageProps) {
+	const editableMarkdown = useEditableMarkdown(file)
 	if (isHtml(file.mimeType))
 		return (
 			<HtmlViewerStage
@@ -110,9 +112,23 @@ export function ViewerStage({
 				onPinPlace={onPinPlace}
 			/>
 		)
+	if (editableMarkdown)
+		return (
+			<StageFrame>
+				<EditableMarkdownStage file={file} />
+			</StageFrame>
+		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
 	if (isPlainText(file.mimeType)) return <TextViewerStage file={file} />
+	if (isPdf(file.mimeType))
+		return (
+			<StageFrame>
+				<div className="flex h-full w-full p-4">
+					<PdfPreview file={file} className="min-h-0 flex-1 rounded-md border border-border" />
+				</div>
+			</StageFrame>
+		)
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center p-8">

@@ -148,7 +148,7 @@ describe('TargetsAndOwners', () => {
 		expect(screen.getByLabelText('Behind pace — 6 of 8')).toBeInTheDocument()
 	})
 	it('gives ahead / on-target / behind / missed visually distinct pills', () => {
-		// The pills used to borrow the status palette, where `--st-signal-*`
+		// The pills used to borrow the status palette, where `--st-opportunity-*`
 		// ("Behind pace") and `--st-validated-*` ("Above target") are the SAME
 		// violet in both colour schemes — so the one thing the pill exists to
 		// say at a glance did not come through. Assert the four verdicts do not

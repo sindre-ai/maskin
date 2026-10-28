@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
 import { parseResultLine } from '@maskin/shared'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import {
 	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_CUSTOM,
@@ -22,7 +22,7 @@ const MAX_LINES_SCANNED = 200
 const MAX_LOG_ROWS_FETCHED = 50
 const MAX_LIVE_RESULT_ROWS_FETCHED = 2000
 
-// Local to `sumRunningSessionUsage` below, which sums raw `result` envelopes
+// Local to `parseAssistantUsageFromLogChunks` below, which reads raw `usage` blocks
 // itself rather than going through `parseResultLine`.
 const finiteOrNull = (v: unknown): number | null => {
 	const n = typeof v === 'number' ? v : Number(v)
@@ -83,6 +83,92 @@ export async function readSessionStdoutChunks(db: Database, sessionId: string): 
 
 	// Rows came back newest-first; flip so chunks are in arrival order.
 	return rows.map((r) => r.content).reverse()
+}
+
+/**
+ * Sums every top-level `result` envelope in the chunks into one segment total.
+ *
+ * An interactive session emits one `result` per turn, and the CLI reports the
+ * token counts and `duration_ms` for that turn alone while `total_cost_usd`
+ * runs cumulatively across the process (checked against Claude Code 2.1.285
+ * with two turns in one process). So tokens and duration are added up and the
+ * cost is the last figure seen. Reading only the last envelope, as
+ * `parseUsageFromLogChunks` does, keeps one turn's tokens for a whole chat.
+ * Returns null when no envelope is found.
+ */
+export function sumResultUsageFromLogChunks(chunks: string[]): SessionUsage | null {
+	const total: SessionUsage = {
+		totalCostUsd: null,
+		inputTokens: null,
+		outputTokens: null,
+		cacheCreationInputTokens: null,
+		cacheReadInputTokens: null,
+		durationMs: null,
+	}
+	const add = (sum: number | null, next: number | null) => (next === null ? sum : (sum ?? 0) + next)
+	let found = false
+	for (const line of chunks.join('').split('\n')) {
+		const result = parseResultLine(line)
+		if (!result) continue
+		found = true
+		const { usage } = result
+		total.totalCostUsd = usage.totalCostUsd ?? total.totalCostUsd
+		total.inputTokens = add(total.inputTokens, usage.inputTokens)
+		total.outputTokens = add(total.outputTokens, usage.outputTokens)
+		total.cacheCreationInputTokens = add(
+			total.cacheCreationInputTokens,
+			usage.cacheCreationInputTokens,
+		)
+		total.cacheReadInputTokens = add(total.cacheReadInputTokens, usage.cacheReadInputTokens)
+		total.durationMs = add(total.durationMs, usage.durationMs)
+	}
+	return found ? total : null
+}
+
+/** System log written when a paused session is relaunched, which starts a new CLI process. */
+export const SESSION_RESUMED_LOG = 'Session resumed from snapshot'
+
+/**
+ * Usage of the session's current CLI process, summed over all its turns (see
+ * `sumResultUsageFromLogChunks`). A pause saves its segment's usage and the
+ * resume launches a fresh process, so only `result` lines after the latest
+ * resume marker belong to this segment; counting earlier ones would add the
+ * paused segment a second time. Reads every row that carries a `result`
+ * envelope, capped at the newest `MAX_LIVE_RESULT_ROWS_FETCHED`. The usage
+ * block sits after the result text, so a long reply that splits across rows
+ * keeps its tail through the `total_cost_usd` match.
+ */
+export async function sumSegmentResultUsage(
+	db: Database,
+	sessionId: string,
+): Promise<SessionUsage | null> {
+	const [marker] = await db
+		.select({ id: sessionLogs.id })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'system'),
+				eq(sessionLogs.content, SESSION_RESUMED_LOG),
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(1)
+
+	const rows = await db
+		.select({ content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'stdout'),
+				marker ? gt(sessionLogs.id, marker.id) : undefined,
+				sql`(${sessionLogs.content} LIKE '%"type":"result"%' OR ${sessionLogs.content} LIKE '%"total_cost_usd"%')`,
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
+	return sumResultUsageFromLogChunks(rows.map((r) => r.content).reverse())
 }
 
 /**
@@ -165,90 +251,6 @@ export async function sumAssistantUsage(
 		.orderBy(desc(sessionLogs.id))
 		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
 	return parseAssistantUsageFromLogChunks(rows.map((r) => r.content).reverse())
-}
-
-/**
- * Best-effort LIVE usage scan for a still-running session: sums *every*
- * `result` event seen so far, not just the last one — an interactive
- * session emits one `result` per turn, and a still-running session may
- * already be many turns in. This backs mid-session budget enforcement (a
- * long interactive session must be stoppable before it exhausts a
- * workspace's credit balance, not just checked once at dispatch), not
- * final billing — `extractSessionUsage`/`parseUsageFromLogChunks` remain
- * the source of truth once the session actually pauses or completes.
- *
- * Re-scans from scratch on every call rather than tracking a durable
- * watermark: simpler, can't under-count across a process restart, and
- * cheap relative to the ~60s cadence this is called at. The `LIKE` filter
- * keeps the query from pulling large non-result chunks (tool output can be
- * substantial); the tradeoff is a `result` line split exactly across two
- * log rows at the filter boundary would be missed — acceptable for a
- * safety net re-evaluated every tick, not the final debit computation.
- * Returns null when no `result` events are found yet.
- */
-export async function sumRunningSessionUsage(
-	db: Database,
-	sessionId: string,
-): Promise<SessionUsage | null> {
-	const rows = await db
-		.select({ content: sessionLogs.content })
-		.from(sessionLogs)
-		.where(
-			and(
-				eq(sessionLogs.sessionId, sessionId),
-				eq(sessionLogs.stream, 'stdout'),
-				sql`${sessionLogs.content} LIKE '%"type":"result"%'`,
-			),
-		)
-		.orderBy(desc(sessionLogs.id))
-		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
-
-	if (rows.length === 0) return null
-	const lines = rows
-		.map((r) => r.content)
-		.reverse()
-		.join('\n')
-		.split('\n')
-
-	let totalInput = 0
-	let totalOutput = 0
-	let totalCost = 0
-	let totalCacheCreate = 0
-	let totalCacheRead = 0
-	let totalDuration = 0
-	let found = false
-
-	for (const raw of lines) {
-		const line = raw.trim()
-		if (!line || line[0] !== '{') continue
-		let parsed: unknown
-		try {
-			parsed = JSON.parse(line)
-		} catch {
-			continue
-		}
-		if (!parsed || typeof parsed !== 'object') continue
-		const obj = parsed as Record<string, unknown>
-		if (obj.type !== 'result') continue
-		const usage = (obj.usage ?? {}) as Record<string, unknown>
-		found = true
-		totalInput += finiteOrNull(usage.input_tokens) ?? 0
-		totalOutput += finiteOrNull(usage.output_tokens) ?? 0
-		totalCost += finiteOrNull(obj.total_cost_usd) ?? 0
-		totalCacheCreate += finiteOrNull(usage.cache_creation_input_tokens) ?? 0
-		totalCacheRead += finiteOrNull(usage.cache_read_input_tokens) ?? 0
-		totalDuration += finiteOrNull(obj.duration_ms) ?? 0
-	}
-
-	if (!found) return null
-	return {
-		totalCostUsd: totalCost,
-		inputTokens: totalInput,
-		outputTokens: totalOutput,
-		cacheCreationInputTokens: totalCacheCreate,
-		cacheReadInputTokens: totalCacheRead,
-		durationMs: totalDuration,
-	}
 }
 
 export interface SessionCostInput {

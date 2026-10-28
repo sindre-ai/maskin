@@ -1,4 +1,11 @@
-import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
+import type {
+	AgentState,
+	WebhookConfig as ExtensionWebhookConfig,
+	FileAnnotation,
+	McpConfig,
+	SessionResult,
+	ToolGrants,
+} from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -28,7 +35,9 @@ export const actors = pgTable('actors', {
 	type: text('type').notNull(),
 	name: text('name').notNull(),
 	email: text('email').unique(),
-	apiKey: text('api_key').notNull().unique(),
+	// Legacy plaintext column. Nullable and no longer written (migration 0112); keys live
+	// hashed in api_keys. Emptied and dropped by the contract step.
+	apiKey: text('api_key').unique(),
 	passwordHash: text('password_hash'),
 	description: text('description'),
 	systemPrompt: text('system_prompt'),
@@ -781,6 +790,40 @@ export const sessions = pgTable(
 	],
 )
 
+// ── API Keys ───────────────────────────────────────────────────────────────
+
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+
+/**
+ * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
+ * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
+ * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
+ */
+export const apiKeys = pgTable(
+	'api_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
+		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
+		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+	],
+)
+export type ApiKey = typeof apiKeys.$inferSelect
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -1392,6 +1435,10 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
+		// only for rows that predate the column, which are hashed from storage
+		// on first read or first save. Echoed by clients as if_match.
+		contentHash: text('content_hash'),
 		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
 		// marks an HTML page written to be read in For you; nothing else is surfaced
 		// there, so a loop's incidental output files stay out of the row. Null for
@@ -1416,6 +1463,82 @@ export const files = pgTable(
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── Extensions ──────────────────────────────────────────────────────────────
+// Workspace-owned custom (bring-your-own) integrations. One row can carry an
+// MCP server config, a webhook config, or both. The slug is the join key to
+// `integrations.provider = 'extension:{slug}'` (the encrypted signing secret /
+// API key) and `webhook_deliveries.provider = 'extension:{slug}'`, so it is
+// immutable after creation. `webhook_token` is the opaque URL segment of
+// POST /api/webhooks/x/:token and is globally unique because the route resolves
+// it before it knows the workspace. See drizzle/0092_extensions.sql.
+
+export const extensions = pgTable(
+	'extensions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		slug: text('slug').notNull(),
+		name: text('name').notNull(),
+		status: text('status').$type<'active' | 'disabled' | 'draft'>().notNull().default('draft'),
+		mcpConfig: jsonb('mcp_config').$type<McpConfig | null>(),
+		webhookConfig: jsonb('webhook_config').$type<ExtensionWebhookConfig | null>(),
+		webhookToken: text('webhook_token'),
+		toolGrants: jsonb('tool_grants').$type<ToolGrants>().notNull().default({}),
+		// Runtime-populated skip reason (e.g. tool cap exceeded) so the UI can
+		// show an inline warning without adding a status value.
+		mcpLastError: text('mcp_last_error'),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('extensions_workspace_slug_uniq').on(t.workspaceId, t.slug),
+		uniqueIndex('extensions_webhook_token_uniq')
+			.on(t.webhookToken)
+			.where(sql`${t.webhookToken} IS NOT NULL`),
+		index('extensions_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+export type Extension = typeof extensions.$inferSelect
+export type NewExtension = typeof extensions.$inferInsert
+
+// ── Blocked tool calls ──────────────────────────────────────────────────────
+// One row per tool call the guard wrapper refused on a custom extension. Rows
+// older than 30 days are dropped by BlockedToolCallsCleaner. session_id is
+// nullable and set null on session delete so the audit row outlives the
+// session. See drizzle/0093_blocked_tool_calls.sql.
+
+export const blockedToolCalls = pgTable(
+	'blocked_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		extensionId: uuid('extension_id')
+			.references(() => extensions.id, { onDelete: 'cascade' })
+			.notNull(),
+		agentId: uuid('agent_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		toolName: text('tool_name').notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		blockedAt: timestamp('blocked_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('blocked_tool_calls_ext_agent_idx').on(
+			t.extensionId,
+			t.agentId,
+			sql`${t.blockedAt} DESC`,
+		),
+		index('blocked_tool_calls_ws_time_idx').on(t.workspaceId, sql`${t.blockedAt} DESC`),
+	],
+)
+export type BlockedToolCall = typeof blockedToolCalls.$inferSelect
+export type NewBlockedToolCall = typeof blockedToolCalls.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
@@ -2087,6 +2210,9 @@ export const fileComments = pgTable(
 		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
 		// pin still round-trips. `'legacy'` is reserved as the migration marker.
 		selector: text('selector'),
+		// Text comments: the quoted passage plus a little context each side, so
+		// the editor can find it again by matching. Null for pin comments.
+		textAnchor: jsonb('text_anchor').$type<{ quote: string; prefix: string; suffix: string }>(),
 		authorId: uuid('author_id')
 			.notNull()
 			.references(() => actors.id),

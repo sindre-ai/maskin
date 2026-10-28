@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @plugin '@tailwindcss/typography';
 
+/* Workspace packages ship React components whose utility classes live outside
+   apps/web, so Tailwind's automatic source detection misses them. Scan the
+   markdown package explicitly or its prose utilities are never generated. */
+@source "../../../packages/markdown/src";
+
 @custom-variant dark (&:is(.dark *));
 @custom-variant can-hover (@media (hover: hover));
 
@@ -139,8 +144,8 @@
 	--color-status-in_progress-text: var(--st-in_progress-text);
 	--color-status-active-bg: var(--st-active-bg);
 	--color-status-active-text: var(--st-active-text);
-	--color-status-signal-bg: var(--st-signal-bg);
-	--color-status-signal-text: var(--st-signal-text);
+	--color-status-opportunity-bg: var(--st-opportunity-bg);
+	--color-status-opportunity-text: var(--st-opportunity-text);
 	--color-status-proposed-bg: var(--st-proposed-bg);
 	--color-status-proposed-text: var(--st-proposed-text);
 	--color-status-clustered-bg: var(--st-clustered-bg);
@@ -372,8 +377,8 @@
 	--st-in_progress-text: #1d4ed8;
 	--st-active-bg: #dcfce7;
 	--st-active-text: #15803d;
-	--st-signal-bg: #ede9fe;
-	--st-signal-text: #6d28d9;
+	--st-opportunity-bg: #ede9fe;
+	--st-opportunity-text: #6d28d9;
 	--st-proposed-bg: #e0e7ff;
 	--st-proposed-text: #4338ca;
 	--st-clustered-bg: #ccfbf1;
@@ -520,8 +525,8 @@
 	--st-in_progress-text: #93c5fd;
 	--st-active-bg: #052e16;
 	--st-active-text: #86efac;
-	--st-signal-bg: #2e1065;
-	--st-signal-text: #c4b5fd;
+	--st-opportunity-bg: #2e1065;
+	--st-opportunity-text: #c4b5fd;
 	--st-proposed-bg: #1e1b4b;
 	--st-proposed-text: #a5b4fc;
 	--st-clustered-bg: #042f2e;
@@ -683,6 +688,29 @@
 		color: var(--brand);
 	}
 
+	/* Comment highlight in the markdown file editor (a ProseMirror decoration
+	   from packages/markdown/src/comment-highlights.ts, never saved in the
+	   file). Default = the base mark look; hover and the open card add a 1px
+	   brand ring; a resolved comment loses the background but stays clickable.
+	   Text colour is left alone so contrast against body text holds. */
+	.maskin-comment-highlight {
+		background-color: color-mix(in oklab, var(--brand) 12%, transparent);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		transition: box-shadow 120ms ease;
+	}
+	.dark .maskin-comment-highlight {
+		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
+	}
+	.maskin-comment-highlight:hover,
+	.maskin-comment-highlight--active {
+		box-shadow: 0 0 0 1px var(--brand);
+	}
+	.maskin-comment-highlight--resolved,
+	.dark .maskin-comment-highlight--resolved {
+		background-color: transparent;
+	}
+
 	/* Reduced motion — kill animations and transitions, don't just slow
 	   them. Mirrors .claude/skills/maskin-design/tokens/motion.css so every
 	   animated surface (Tailwind utilities, Radix data-state animations,
@@ -809,6 +837,141 @@
 		background-color: var(--muted);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+	}
+
+	/* v3 markdown look: em dash bullets, plain italic quotes, dark-fill task
+	   checkboxes. One block, keyed to the shared prose class that both the
+	   read renderer and the editor mount with (packages/markdown/src/react/
+	   prose.ts). To revert to the old look, delete this block. Design tokens
+	   only. */
+	.maskin-prose {
+		/* Bullets: em dash marker in muted grey. Numbered lists keep their
+		   native numerals, set tabular. Task lists are excluded here. */
+		& ul:not([data-type="taskList"], .contains-task-list) {
+			list-style: none;
+			padding-left: 0;
+		}
+		& ul:not([data-type="taskList"], .contains-task-list) > li {
+			position: relative;
+			padding-left: 22px;
+		}
+		& ul:not([data-type="taskList"], .contains-task-list) > li::before {
+			content: "\2014";
+			position: absolute;
+			left: 0;
+			color: var(--border-strong);
+		}
+		& ol > li::marker {
+			font-variant-numeric: tabular-nums;
+		}
+
+		/* Quotes: italic, muted, 20px left padding, no rule. */
+		& blockquote {
+			font-style: italic;
+			color: var(--muted-foreground);
+			padding-left: 20px;
+			border-left: 0;
+			quotes: none;
+		}
+		& blockquote p {
+			color: var(--muted-foreground);
+		}
+		& blockquote p::before,
+		& blockquote p::after {
+			content: none;
+		}
+
+		/* Task items: 17px square, 5px radius, 1.5px border; checked is filled
+		   with the foreground colour plus a tick, label struck through and muted.
+		   The box is pinned to the first line of the label so inline markup in
+		   the label never splits into separate flex items. */
+		& :is(ul[data-type="taskList"], ul.contains-task-list) {
+			list-style: none;
+			padding-left: 0;
+		}
+		& :is(li[data-checked], li.task-list-item) {
+			position: relative;
+			padding-left: 27px;
+		}
+		& li.task-list-item > input[type="checkbox"],
+		& li[data-checked] > label {
+			position: absolute;
+			left: 0;
+			top: calc((1lh - 17px) / 2);
+			margin: 0;
+		}
+		/* Loose task lists (blank lines between items) wrap the label, and the
+		   checkbox with it, in a paragraph. */
+		& li.task-list-item > p:first-child {
+			position: relative;
+		}
+		& li.task-list-item > p:first-child > input[type="checkbox"] {
+			position: absolute;
+			left: -27px;
+			top: calc((1lh - 17px) / 2);
+		}
+		& li[data-checked] > label > span {
+			display: none;
+		}
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"] {
+			appearance: none;
+			box-sizing: border-box;
+			display: grid;
+			place-content: center;
+			width: 17px;
+			height: 17px;
+			margin: 0;
+			border: 1.5px solid var(--border-strong);
+			border-radius: 5px;
+			background: transparent;
+			opacity: 1;
+			cursor: pointer;
+		}
+		& li.task-list-item input[type="checkbox"]:disabled {
+			cursor: default;
+		}
+		/* Unchecked boxes darken on hover; read-only (disabled) boxes stay still. */
+		&
+			:is(li[data-checked], li.task-list-item)
+			input[type="checkbox"]:hover:not(:disabled, :checked) {
+			border-color: var(--muted-foreground);
+		}
+		/* appearance: none drops the native look, so keep an explicit keyboard
+		   focus ring. */
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:focus-visible {
+			outline: 2px solid var(--ring);
+			outline-offset: 2px;
+		}
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:checked {
+			border-color: var(--foreground);
+			background: var(--foreground);
+		}
+		& :is(li[data-checked], li.task-list-item) input[type="checkbox"]:checked::after {
+			content: "";
+			width: 4px;
+			height: 8px;
+			margin-top: -1px;
+			border: solid var(--background);
+			border-width: 0 1.5px 1.5px 0;
+			transform: rotate(45deg);
+		}
+		& li[data-checked="true"] > div > p,
+		& li.task-list-item:has(> input:checked),
+		& li.task-list-item:has(> p:first-child > input:checked) {
+			color: var(--muted-foreground);
+			text-decoration: line-through;
+			text-decoration-color: var(--border-strong);
+		}
+		& li.task-list-item:has(> p:first-child > input:checked) > p:first-child {
+			color: var(--muted-foreground);
+		}
+
+		/* The editor wraps list item text in a paragraph; zero its margins so
+		   markers and boxes line up with the first line, as in the read view. */
+		& .ProseMirror li > p,
+		& .ProseMirror li > div > p {
+			margin: 0;
+		}
 	}
 
 	/* Origin deep-link — the message that spawned a session, pulsing once on
@@ -955,4 +1118,15 @@
 			height: 100%;
 		}
 	}
+}
+
+/* Tiptap's Placeholder extension only sets data-placeholder on the empty
+   first block; this is the rule that paints it. Without it the empty-state
+   hint ("Add a description. Type / for blocks.") never shows. */
+.ProseMirror p.is-editor-empty:first-child::before {
+	content: attr(data-placeholder);
+	float: left;
+	height: 0;
+	pointer-events: none;
+	color: var(--muted-foreground);
 }

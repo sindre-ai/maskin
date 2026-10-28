@@ -24,6 +24,7 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -79,10 +80,16 @@ import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
+	reportClaudeSessionAuthDeath,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifySessionExit } from '../lib/credit-classifier'
+import {
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -98,6 +105,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { HANDOFF_PROOF_BLOCK } from '../lib/handoff-rule'
 import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
@@ -119,6 +127,10 @@ import {
 	ScopeDeniedError,
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
+import {
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
 import {
 	byoApiKeyEnvName,
 	byoLoginEnvNames,
@@ -166,6 +178,7 @@ import {
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
 	resolveLlmRoute,
+	unreadableKeyError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -185,6 +198,7 @@ import {
 } from '../lib/mcp-session-header'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
+import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
 	AgentServerAuthError,
 	AgentServerClient,
@@ -192,6 +206,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -213,13 +228,14 @@ import {
 	settleSession,
 } from './session-lifecycle'
 import {
+	SESSION_RESUMED_LOG,
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
-	sumRunningSessionUsage,
+	sumSegmentResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
@@ -691,6 +707,34 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// The human's message went unanswered on the spent subscription. Re-run
+			// the responder for it so a fresh session answers on the new one —
+			// the same call as the chat's "retry" action, so nobody re-sends by hand.
+			onResumeAfterMove: async ({ conversationId, workspaceId, agentId }) => {
+				const [latest] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.conversationId, conversationId),
+							eq(messages.kind, 'message'),
+							ne(messages.actorId, agentId),
+						),
+					)
+					.orderBy(desc(messages.id))
+					.limit(1)
+				if (!latest) return
+				// Lazy import: conversation-responder imports this module's types.
+				const { evaluateAndRespond } = await import('./conversation-responder')
+				await evaluateAndRespond({
+					db,
+					sessionManager: this,
+					workspaceId,
+					conversationId,
+					messageId: latest.id,
+					options: { forceRespond: true, targetAgentId: agentId },
+				})
+			},
 			// An empty completion that survives the retries is tried once on
 			// another model. Both are optional: with no env var set the finalizer
 			// still retries and still tells the human.
@@ -1813,7 +1857,7 @@ export class SessionManager extends EventEmitter {
 			// session that never technically "completes". Must run before
 			// cleanupSession() clears the in-memory stdout tail this reads.
 			const llmRoute = (session.config as Record<string, unknown>)?.llm_route
-			await this.accumulateSessionUsage(sessionId)
+			await this.accumulateSessionUsage(sessionId, { allTurns: true })
 			if (llmRoute === LLM_ROUTE_MASKIN_PLAN) {
 				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 			}
@@ -2021,7 +2065,7 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
-			await this.insertSystemLog(sessionId, 'Session resumed from snapshot')
+			await this.insertSystemLog(sessionId, SESSION_RESUMED_LOG)
 
 			this.streamContainerLogs(sessionId, containerId)
 			this.watchContainerExit(sessionId, containerId)
@@ -2315,6 +2359,7 @@ export class SessionManager extends EventEmitter {
 					typeof sessionConfig.origin_conversation_id === 'string'))
 		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
 		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2323,7 +2368,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2331,11 +2376,12 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2558,7 +2604,12 @@ ${cont.continues_prompt}
 			}
 			// Workspace OpenAI key — independent of the anthropic-side routing above.
 			if (!llmConfig.api_key && wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+				try {
+					envVars.OPENAI_API_KEY = openSecret(wsLlmKeys.openai, 'llm_keys.openai')
+				} catch (err) {
+					if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+					throw err
+				}
 			}
 		}
 
@@ -2599,16 +2650,19 @@ ${cont.continues_prompt}
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access. Refuse to launch without
-		// one — an empty Bearer token causes MCP writes to either fail outright
-		// or, when a fallback key is present in the env, get attributed to the
-		// wrong actor (the original "agent comments posted as a human" bug).
-		if (!agent.apiKey) {
-			throw new Error(
-				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
-			)
-		}
-		envVars.MASKIN_API_KEY = agent.apiKey
+		// Mint a key for this launch. Keys are stored hashed, so the agent's own key can't be
+		// read back; each launch, resume and relaunch gets a fresh one tied to the session, the
+		// previous one for the session is revoked, and settleSession revokes the last. An empty
+		// Bearer token would make MCP writes fail outright or, when a fallback key is present in
+		// the env, get attributed to the wrong actor (the original "agent comments posted as a
+		// human" bug), so a mint that throws aborts the launch.
+		const sessionKey = await issueApiKey(this.db, {
+			actorId: agent.id,
+			kind: 'session',
+			sessionId: session.id,
+		})
+		await revokeSessionKeys(this.db, session.id, sessionKey.keyHash)
+		envVars.MASKIN_API_KEY = sessionKey.key
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub
@@ -2666,6 +2720,21 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
+		const extensionMcp = await buildExtensionMcpServers(
+			this.db,
+			session.workspaceId,
+			agent.id,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
+		)
+		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
+		Object.assign(envVars, extensionMcp.env)
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -3102,6 +3171,16 @@ ${cont.continues_prompt}
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			if (Object.keys(keychainEnv).length > 0) {
@@ -4107,7 +4186,7 @@ ${cont.continues_prompt}
 		// the helper returns null and the columns are left untouched. Parser
 		// failures must never block the status update below, which is why
 		// this is a separate try/catch'd write.
-		const usage = await this.accumulateSessionUsage(sessionId)
+		const usage = await this.accumulateSessionUsage(sessionId, { allTurns: true })
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
@@ -4216,6 +4295,14 @@ ${cont.continues_prompt}
 		// outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) {
 			void this.emitCompletedWithSkills(session, status)
+		}
+
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
 		}
 
 		if (status === 'failed' && !userStopped) {
@@ -4445,7 +4532,10 @@ ${cont.continues_prompt}
 	 * returns null when no usage could be parsed (e.g. Codex/custom runtimes
 	 * that emit no structured usage).
 	 */
-	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
+	private async accumulateSessionUsage(
+		sessionId: string,
+		opts: { allTurns?: boolean } = {},
+	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
 		try {
@@ -4456,7 +4546,12 @@ ${cont.continues_prompt}
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			// Every close-out (pause, exit, timeout, idle close, helper finished) must add up
+			// every turn of this process. The tail below holds only the newest one.
+			if (opts.allTurns) {
+				usage = await sumSegmentResultUsage(this.db, sessionId)
+			}
+			const tail = usage ? undefined : this.activeSessions.get(sessionId)?.stdoutTail
 			if (tail) {
 				usage = parseUsageFromLogChunks([tail])
 			}
@@ -4552,7 +4647,7 @@ ${cont.continues_prompt}
 	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
 	 * it's running, since those are only written on pause/completion) with a
 	 * fresh live scan of *this* session's own logs
-	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
+	 * (`sumSegmentResultUsage`), so no separate persistence step is needed
 	 * here — nothing is written until the session actually stops, at which
 	 * point `handleCompletion` → `accumulateSessionUsage` +
 	 * `debitCreditIfApplicable` record and bill it exactly as normal.
@@ -4583,7 +4678,7 @@ ${cont.continues_prompt}
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 		const [persistedUsedCents, liveUsage] = await Promise.all([
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
-			sumRunningSessionUsage(this.db, session.id),
+			sumSegmentResultUsage(this.db, session.id),
 		])
 		// Route-aware cost, not the live scan's own reported figure: only
 		// maskin_plan sessions reach this check (the watchdog query filters on
@@ -4688,6 +4783,10 @@ ${cont.continues_prompt}
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
+		// Save the usage first, as the timeout close does: the terminal row is final
+		// for usage writes, and the settle below reads these totals for its
+		// $ai_generation event. Must run before cleanupSession() clears the tail.
+		await this.accumulateSessionUsage(session.id, { allTurns: true })
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
@@ -4787,14 +4886,33 @@ ${cont.continues_prompt}
 			.limit(1)
 		if (!session || session.status !== 'running') return
 
+		// Same reason as the idle close: save the usage before the row goes final.
+		await this.accumulateSessionUsage(session.id, { allTurns: true })
+
+		// A helper that stopped on a Claude limit banner carries the reset time in
+		// its result text. Read it the way the two exit paths do, so the retry
+		// scheduler can rerun the helper once the allowance is back. Banners only:
+		// this is the helper's final error text, not a whole stdout tail, so the
+		// looser substring signals have nothing to add.
+		const limitReason = outcome.isError
+			? classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false })
+			: null
+		const scheduledRetryAt = pickRetryAt(limitReason)
+
 		const settled = await settleSession(
 			session.id,
 			outcome.isError
 				? {
 						kind: 'fail',
-						classification: 'unknown',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: limitReason,
+						}),
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
+						failureReason: limitReason ?? undefined,
+						retryAt: scheduledRetryAt ?? undefined,
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -4809,6 +4927,14 @@ ${cont.continues_prompt}
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
+
+		if (outcome.isError && isClaudeAuthDeathText(outcome.text)) {
+			reportClaudeSessionAuthDeath({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
 
 		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
 
@@ -5014,7 +5140,7 @@ ${cont.continues_prompt}
 				// reads the in-memory stdout tail that settleSession's own scope
 				// can't see; settleSession's additive-overlay handles the delta
 				// once accumulateSessionUsage has written it.)
-				await this.accumulateSessionUsage(session.id)
+				await this.accumulateSessionUsage(session.id, { allTurns: true })
 
 				// settleSession is the only writer of terminal sessions.status. Its
 				// stopSandbox / pushAgentFiles callbacks fold what used to be the
@@ -6027,7 +6153,9 @@ ${cont.continues_prompt}
 		let stdoutChunks: string[] = []
 		try {
 			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
-			usage = parseUsageFromLogChunks(stdoutChunks)
+			// Every turn of this process, not the last result line only (see sumSegmentResultUsage).
+			usage =
+				(await sumSegmentResultUsage(this.db, sessionId)) ?? parseUsageFromLogChunks(stdoutChunks)
 		} catch (err) {
 			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
@@ -6272,6 +6400,14 @@ ${cont.continues_prompt}
 		// on both the started and completed events. Best-effort. A user stop has
 		// no outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
+
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				config: updated.config as Record<string, unknown> | null,
+			})
+		}
 
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({

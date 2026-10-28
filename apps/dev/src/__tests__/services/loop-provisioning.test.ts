@@ -86,21 +86,19 @@ describe('buildActorInsert', () => {
 		expect(snake.llmProvider).toBe('anthropic')
 	})
 
-	it('always mints a fresh apiKey, ignoring any value in the snapshot', () => {
-		// Snapshot has no apiKey → mints a fresh one.
+	it('never carries an apiKey, even when the snapshot has one', () => {
+		// Keys live hashed in api_keys, so the insert row has no apiKey at all. A publisher key in
+		// the snapshot is untrusted input and must not be copied into the installer's workspace.
 		const fromEmpty = buildActorInsert({ name: 'A' }, { installed_loop_id: 'i' }, null)
-		expect(fromEmpty.apiKey).toMatch(/^ank_/)
+		expect(fromEmpty).not.toHaveProperty('apiKey')
 
-		// Snapshot carries a publisher apiKey → ignored. Honoring it would
-		// either leak the publisher's bearer token into the installer workspace
-		// or collide on the actors.api_key unique index.
 		const fromPublisherKey = buildActorInsert(
 			{ name: 'A', apiKey: 'ank_publisherleak' },
 			{ installed_loop_id: 'i' },
 			null,
 		)
-		expect(fromPublisherKey.apiKey).toMatch(/^ank_/)
-		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
+		expect(fromPublisherKey).not.toHaveProperty('apiKey')
+		expect(JSON.stringify(fromPublisherKey)).not.toContain('ank_publisherleak')
 	})
 
 	it('drops the legacy tools.browser flag from an old snapshot', () => {

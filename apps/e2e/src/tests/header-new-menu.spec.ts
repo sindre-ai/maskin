@@ -136,7 +136,7 @@ test.describe('Header New menu', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Header New menu object-detail check',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)

@@ -42,6 +42,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
 
 ## Runbooks
+- `docs/runbooks/agent-base-image-rollback.md` — retag the previous agent-base sha image as latest and restart maskin-agent-server; how far back it reaches and how to confirm it on a real session
 - `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
 
 ## Architecture
@@ -134,6 +135,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ### Objects (`/api/objects`) — unified CRUD for insight/bet/task
 - `POST /api/objects` — create object
 - `GET /api/objects` — list objects (filter by type, status, owner)
+- `GET /api/objects/facets` — exact counts (by type/status/driver, quick filters, group totals) under the same filters as the list; the Objects page reads every number from here, never from loaded rows. The list also takes `group_by`/`group_value`, `starred`, `working`, `attention_ids` and `q`
 - `GET /api/objects/search` — search objects by text in title/content
 - `GET /api/objects/:id` — get object by ID
 - `GET /api/objects/:id/graph` — get object with all relationships and connected objects
@@ -146,6 +148,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `PATCH /api/workspaces/:id` — update workspace
 - `POST /api/workspaces/:id/members` — add member
 - `GET /api/workspaces/:id/members` — list members
+
+### Search (`/api/search`)
+- `GET /api/search` — chats (the caller's own), loops, agents, objects and automations in one call; every typed word must match; returns `results` (capped at `limit`, max 150), `total`, `capped`, `facets` and `relaxed` counts over the full set, and `partial` for any source that failed
 
 ### Relationships (`/api/relationships`)
 - `POST /api/relationships` — create relationship

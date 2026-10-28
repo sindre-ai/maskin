@@ -96,6 +96,18 @@ function createConversationsApp(actorId: string, actorType: 'human' | 'agent' = 
 	return { app, sessionManager }
 }
 
+// The routes start the responder fire-and-forget, so how long a session takes to be created depends
+// on the runner. Poll for it rather than sleeping a fixed 50 ms and asserting.
+async function waitForSessions(
+	sessionManager: { createSession: ReturnType<typeof vi.fn> },
+	count: number,
+) {
+	await vi.waitFor(
+		() => expect(sessionManager.createSession.mock.calls.length).toBeGreaterThanOrEqual(count),
+		{ timeout: 5_000 },
+	)
+}
+
 async function addMember(workspaceId: string, actorId: string, role = 'member') {
 	await db.insert(workspaceMembers).values({ workspaceId, actorId, role })
 }
@@ -776,7 +788,7 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route (not awaited)
 			// — give the microtask queue a turn before asserting.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
@@ -890,7 +902,7 @@ describe('Conversations Integration', () => {
 			)
 
 			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 2)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
 			const sessionActorIds = sessionManager.createSession.mock.calls
 				.map((call) => (call[1] as { actorId: string }).actorId)
@@ -1650,7 +1662,7 @@ describe('Conversations Integration', () => {
 
 			// evaluateAndRespond is fire-and-forget from the route (not awaited)
 			// — give the microtask queue a turn before asserting.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
@@ -1659,8 +1671,8 @@ describe('Conversations Integration', () => {
 			// Regression test: a fresh 1:1 chat with an agent whose only LLM
 			// route is Claude OAuth (not chat-callable via resolveChatCredentials)
 			// used to silently never spawn a session for a plain, non-mentioning
-			// first message — checkRelevance failed closed and nothing surfaced
-			// it. Direct conversations now skip the relevance heuristic entirely.
+			// first message — the old model check failed closed and nothing surfaced
+			// it. Direct conversations always respond.
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
 			const { app: ownerApp } = createConversationsApp(ownerId)
@@ -1700,11 +1712,9 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
-		it('fails open in a group chat with no mention and no chat credentials configured', async () => {
-			// The relevance heuristic itself being uncallable (no chat-callable
-			// credential) is not proof the agent has no credentials at all — the
-			// real session launch supports Claude OAuth. So a missing heuristic
-			// credential should default to responding, not silently declining.
+		it('wakes nobody for the first untagged message in a group chat with two agents', async () => {
+			// The wake rule is plain and needs no credentials: with two agents and no tag
+			// there is nobody to pick, so nobody is woken (group chat wake rule).
 			const agent = await insertActor(db, { type: 'agent' })
 			const otherAgent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1749,7 +1759,7 @@ describe('Conversations Integration', () => {
 				messageId: triggering.id,
 			})
 
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips every agent once the consecutive-agent-reply cap is reached, even a @mentioned one', async () => {
@@ -2473,7 +2483,7 @@ describe('Conversations Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			// Fire-and-forget responder — let the microtask queue drain.
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			const [, params] = sessionManager.createSession.mock.calls[0] as [
 				string,
@@ -2575,7 +2585,7 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(202)
-			await new Promise((resolve) => setTimeout(resolve, 50))
+			await waitForSessions(sessionManager, 1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			const [, params] = sessionManager.createSession.mock.calls[0] as [
 				string,
@@ -2614,6 +2624,8 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(202)
+			await waitForSessions(sessionManager, 1)
+			// Give a wrongly started second reply a moment to show up before asserting there is none.
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			// Only the targeted agent re-runs — B must not post a duplicate reply.
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)

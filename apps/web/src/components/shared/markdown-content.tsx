@@ -1,23 +1,38 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { Textarea } from '@/components/ui/textarea'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
 	type StandaloneCard,
 	placeLinkedCards,
+	targetOfHref,
 } from '@/lib/linked-objects'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
-import { remarkPlugins } from '@maskin/markdown/plugins'
 import {
-	Children,
+	type ComponentOverridesContext,
+	MarkdownRenderer,
+	type MentionActor,
+	type RenderCodeBlockArgs,
+	type RenderImageArgs,
+} from '@maskin/markdown/react'
+import type {
+	MarkdownParseErrorInfo,
+	SavedInfo,
+	ShortcutInfo,
+	ToolbarActionInfo,
+} from '@maskin/markdown/react/editor'
+import {
 	Fragment,
-	type ReactElement,
 	type ReactNode,
-	isValidElement,
+	Suspense,
+	lazy,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -25,8 +40,17 @@ import {
 	useRef,
 	useState,
 } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import { MentionedText } from './mentioned-text'
+import type { Components } from 'react-markdown'
+
+// Dynamic-imported so Tiptap never bundles into a read-only route — read paths
+// (feeds, notifications, marketing) never touch this chunk. The Vite chunk-
+// name CI assertion (`apps/web/scripts/assert-editor-chunk.mjs`) enforces the
+// split at build time. See tech spec §12 rabbit hole #6.
+const MarkdownEditor = lazy(() =>
+	import('@/components/shared/document-markdown-editor').then((m) => ({
+		default: m.DocumentMarkdownEditor,
+	})),
+)
 
 const UUID_RE_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const FILE_VIEWER_PATH_RE = new RegExp(`^/(${UUID_RE_SRC})/files/(${UUID_RE_SRC})/?$`, 'i')
@@ -96,48 +120,30 @@ function FileViewerImage({
 	return <img src={`data:${data.mimeType};base64,${b64}`} alt={alt ?? ''} title={title} />
 }
 
-function wrapWithMentions(
-	children: ReactNode,
-	actors: ActorListItem[],
-	onMentionClick?: (actor: ActorListItem) => void,
-): ReactNode {
-	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
-	}
-	if (Array.isArray(children)) {
-		const mentionProps = { actors, onMentionClick }
-		return children.map((child, idx) =>
-			typeof child === 'string' ? (
-				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
-				<MentionedText key={`m-${idx}`} content={child} {...mentionProps} />
-			) : (
-				child
-			),
-		)
-	}
-	return children
+// An <img src> pointing at a maskin file viewer URL (/<workspaceId>/files/<fileId>)
+// loads an HTML viewer page as bytes and renders as broken. Swap it for a
+// component that fetches the file and inlines its bytes as a data-URI — mirrors
+// apps/web/src/components/files/file-body.tsx's inline-image path. Injected into
+// the package renderer because useFile is an app data hook.
+function renderMarkdownImage({ src, alt, title }: RenderImageArgs) {
+	const parsed = parseFileViewerUrl(src)
+	if (!parsed) return undefined
+	return (
+		<FileViewerImage
+			workspaceId={parsed.workspaceId}
+			fileId={parsed.fileId}
+			alt={alt}
+			title={title}
+		/>
+	)
 }
 
-/**
- * Extracts the language hint (e.g. "chart") from the `language-X` className
- * react-markdown puts on the inner `<code>` of a fenced block.
- */
-function readCodeLanguage(child: ReactNode): string | undefined {
-	if (!isValidElement(child)) return undefined
-	const childEl = child as ReactElement<{ className?: string }>
-	const className = childEl.props?.className
-	if (typeof className !== 'string') return undefined
-	const match = className.match(/language-([\w-]+)/)
-	return match?.[1]
-}
-
-function readCodeSource(child: ReactNode): string {
-	if (!isValidElement(child)) return ''
-	const childEl = child as ReactElement<{ children?: ReactNode }>
-	const inner = childEl.props?.children
-	if (typeof inner === 'string') return inner
-	if (Array.isArray(inner)) return inner.filter((c): c is string => typeof c === 'string').join('')
-	return ''
+// Fenced chart blocks render as inline visuals; injected for the same reason.
+function renderChartBlock({ language, source }: RenderCodeBlockArgs) {
+	if (language && isVisualLanguage(language)) {
+		return <CommentVisual language={language} source={source} />
+	}
+	return undefined
 }
 
 /**
@@ -362,9 +368,10 @@ function locateOffset(root: HTMLElement, target: number): { node: Node; offset: 
 }
 
 /**
- * Where a message's links to objects and files turn into cards. A link that stands alone in its
- * paragraph or list item is replaced by its card in place; any other link's card goes under the
- * text, and an id drawn in place is never drawn again there.
+ * Where a message's links to objects and files turn into cards and chips. A link that stands
+ * alone on its line, or alone in a list item, is replaced by its card in place. Any other link to
+ * an object is a chip where it stands; a draft or file linked in a sentence gets its card under
+ * the text. An id drawn in place is never drawn again.
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
@@ -380,7 +387,24 @@ export interface LinkedCardsOptions {
 	renderCard: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+		context: {
+			workspaceId: string
+			conversationId?: string
+			agentId?: string
+			label?: string
+			inList?: boolean
+			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
+			after?: boolean
+		},
+	) => ReactNode
+	/**
+	 * Draws a link to an object that is not replaced by a card as a chip, or `fallback` (the
+	 * original link) while it cannot. Keep its identity stable.
+	 */
+	renderChip?: (
+		target: LinkedTarget,
+		fallback: ReactNode,
+		context: { workspaceId: string },
 	) => ReactNode
 }
 
@@ -407,7 +431,7 @@ interface SelectionToolbarState {
 	end: number | null
 }
 
-export function MarkdownContent({
+function TextareaMarkdownContent({
 	content,
 	onChange,
 	editable = false,
@@ -455,6 +479,7 @@ export function MarkdownContent({
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
+	const chipRenderer = linkedCardsOption?.renderChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
@@ -464,9 +489,82 @@ export function MarkdownContent({
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						renderCard: cardsRenderer,
+						renderChip: chipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer],
+		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer, chipRenderer],
+	)
+	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
+	// any other link to an object as a chip; the original element is what shows until the card or
+	// chip is known to apply, so a link never vanishes.
+	const getComponentOverrides = useMemo(() => {
+		if (!linkedCards) return undefined
+		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
+			const card = (node as HastNode | undefined)?.data?.linkedCard as StandaloneCard | undefined
+			if (!card) return original
+			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
+				...linkedCards,
+				label: card.label ?? undefined,
+				inList: card.inList,
+			})
+		}
+		return ({ wrap }: ComponentOverridesContext) =>
+			({
+				p: ({ node, children }: { node?: HastNode; children?: ReactNode }) =>
+					withCard(node, <p>{wrap(children)}</p>, wrap(children)),
+				li: ({ children }: { children?: ReactNode }) => (
+					<li className={CARD_ITEM_CLASS}>{wrap(children)}</li>
+				),
+				a: ({
+					node,
+					href,
+					children,
+					...rest
+				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					// Same as the renderer's own link: an address on the web opens in a new tab.
+					const external = typeof href === 'string' && /^https?:\/\//.test(href)
+					const link = (
+						<a
+							{...rest}
+							href={href}
+							{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+						>
+							{wrap(children)}
+						</a>
+					)
+					const target = node?.data?.linkedChip ? targetOfHref(href) : null
+					return target && linkedCards.renderChip
+						? linkedCards.renderChip(target, link, linkedCards)
+						: link
+				},
+				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
+					const list = (key: string) =>
+						String(node?.properties?.[key] ?? '')
+							.split(',')
+							.filter(Boolean)
+					return (
+						<>
+							{list('objects').map((id) => (
+								<Fragment key={`object:${id}`}>
+									{linkedCards.renderCard({ kind: 'object', id }, null, {
+										...linkedCards,
+										after: true,
+									})}
+								</Fragment>
+							))}
+							{list('files').map((id) => (
+								<Fragment key={`file:${id}`}>
+									{linkedCards.renderCard({ kind: 'file', id }, null, linkedCards)}
+								</Fragment>
+							))}
+						</>
+					)
+				},
+			}) as unknown as Components
+	}, [linkedCards])
+	const rehypePlugins = useMemo(
+		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
+		[linkedCards, cardsSkipIds],
 	)
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
@@ -672,163 +770,6 @@ export function MarkdownContent({
 		}
 	}, [selectionToolbar])
 
-	const components = useMemo<Components>(() => {
-		// Inline code spans that contain a bare URL render as a clickable link instead
-		// of styled monospace — agents commonly write URLs in backticks and the
-		// remark-breaks + remark-gfm combination doesn't always autolink them.
-		const code: Components['code'] = ({ children, className }) => {
-			if (!className) {
-				const text = typeof children === 'string' ? children.trim() : ''
-				if (!text.includes('\n') && /^https?:\/\/\S+$/.test(text)) {
-					return (
-						<a href={text} target="_blank" rel="noopener noreferrer">
-							{text}
-						</a>
-					)
-				}
-			}
-			return <code className={className}>{children}</code>
-		}
-
-		// When renderVisuals is on, override <pre> (not just <code>) so the
-		// dispatched visual replaces the whole block — react-markdown wraps fenced
-		// blocks as <pre><code class="language-X">…</code></pre> and a <div>
-		// child inside <pre> is invalid HTML.
-		const pre: Components['pre'] = ({ children, ...rest }) => {
-			if (renderVisuals) {
-				const first = Children.toArray(children).find((c) => isValidElement(c)) as
-					| ReactElement
-					| undefined
-				const lang = readCodeLanguage(first)
-				if (lang && isVisualLanguage(lang)) {
-					return <CommentVisual language={lang} source={readCodeSource(first)} />
-				}
-			}
-			return <pre {...rest}>{children}</pre>
-		}
-
-		// `overflow-x-auto` on a `<table>` doesn't clamp the way it does on a
-		// block box — the table layout algorithm still computes its intrinsic
-		// width from cell content and can exceed the containing block. An outer
-		// block-level scroll wrapper is the reliable pattern for wide tables.
-		const table: Components['table'] = ({ children, ...rest }) => (
-			<div className="my-2 max-w-full overflow-x-auto">
-				<table {...rest}>{children}</table>
-			</div>
-		)
-
-		// `<img src>` to a maskin file viewer URL (`/<workspaceId>/files/<fileId>`)
-		// loads an HTML viewer page as bytes and renders as broken. Swap it for a
-		// component that fetches the file and inlines its bytes as a data-URI —
-		// mirrors `apps/web/src/components/files/file-body.tsx`'s inline-image path.
-		const img: Components['img'] = ({ src, alt, title }) => {
-			const parsed = parseFileViewerUrl(typeof src === 'string' ? src : undefined)
-			if (parsed) {
-				return (
-					<FileViewerImage
-						workspaceId={parsed.workspaceId}
-						fileId={parsed.fileId}
-						alt={alt}
-						title={title}
-					/>
-				)
-			}
-			return <img src={src} alt={alt ?? ''} title={title} />
-		}
-
-		// Markdown links open in a new tab so a click never navigates the app away
-		// from the page you are on — mirrors the inline-code-URL path above. Hash
-		// and relative links keep default behaviour so in-page anchors still work.
-		const link =
-			(wrapChildren?: (children: ReactNode) => ReactNode): Components['a'] =>
-			({ children, href, ...rest }) => {
-				const external = typeof href === 'string' && /^https?:\/\//.test(href)
-				return (
-					<a
-						{...rest}
-						href={href}
-						{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-					>
-						{wrapChildren ? wrapChildren(children) : children}
-					</a>
-				)
-			}
-
-		// With linkedCards on, a paragraph or list item that is only a link to a draft or a
-		// previewable file renders as its card; the original element is what shows until the
-		// card is known to qualify, so a link never vanishes.
-		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
-			const card = (node as HastNode | undefined)?.data?.linkedCard as StandaloneCard | undefined
-			if (!linkedCards || !card) return original
-			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
-				...linkedCards,
-				label: card.label ?? undefined,
-			})
-		}
-		const trailing: Components | Record<string, unknown> = linkedCards
-			? {
-					[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
-						const list = (key: string) =>
-							String(node?.properties?.[key] ?? '')
-								.split(',')
-								.filter(Boolean)
-						return (
-							<>
-								{list('objects').map((id) => (
-									<Fragment key={`object:${id}`}>
-										{linkedCards.renderCard({ kind: 'object', id }, null, linkedCards)}
-									</Fragment>
-								))}
-								{list('files').map((id) => (
-									<Fragment key={`file:${id}`}>
-										{linkedCards.renderCard({ kind: 'file', id }, null, linkedCards)}
-									</Fragment>
-								))}
-							</>
-						)
-					},
-				}
-			: {}
-
-		if (!mentionActors) {
-			if (!linkedCards) return { code, img, pre, table, a: link() }
-			return {
-				code,
-				img,
-				pre,
-				table,
-				a: link(),
-				p: ({ node, children }) => withCard(node, <p>{children}</p>, children),
-				li: ({ children }) => <li className={CARD_ITEM_CLASS}>{children}</li>,
-				...trailing,
-			} as Components
-		}
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
-		return {
-			code,
-			img,
-			pre,
-			table,
-			p: ({ node, children }) => withCard(node, <p>{wrap(children)}</p>, wrap(children)),
-			li: ({ children }) => (
-				<li className={linkedCards ? CARD_ITEM_CLASS : undefined}>{wrap(children)}</li>
-			),
-			em: ({ children }) => <em>{wrap(children)}</em>,
-			strong: ({ children }) => <strong>{wrap(children)}</strong>,
-			blockquote: ({ children }) => <blockquote>{wrap(children)}</blockquote>,
-			del: ({ children }) => <del>{wrap(children)}</del>,
-			a: link(wrap),
-			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
-			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
-			...trailing,
-		} as Components
-	}, [mentionActors, onMentionClick, renderVisuals, linkedCards])
-
-	const rehypePlugins = useMemo(
-		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
-		[linkedCards, cardsSkipIds],
-	)
-
 	if (editable && editing) {
 		const isDoc = size === 'doc'
 		// The primitive sets `md:text-sm` and a focus ring. At the document scale
@@ -1023,31 +964,197 @@ export function MarkdownContent({
 				}}
 				tabIndex={editable ? 0 : undefined}
 			>
-				<div
-					className={cn(
-						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none',
-						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full',
-						size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
-						size === 'doc' && [
-							'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
-							'[&_h1]:text-[13px] [&_h2]:text-[13px] [&_h3]:text-[13px] [&_h4]:text-[13px]',
-							'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2,h3,h4)]:mt-3.5',
-							'[&_li]:text-sm [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
-							"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
-						],
-					)}
-				>
-					<ReactMarkdown
-						remarkPlugins={remarkPlugins as unknown as never[]}
-						disallowedElements={disallowedElements}
-						unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
-						rehypePlugins={rehypePlugins as unknown as never[] | undefined}
-						components={components}
-					>
-						{content}
-					</ReactMarkdown>
-				</div>
+				<MarkdownRenderer
+					content={content}
+					size={size}
+					disallowedElements={disallowedElements}
+					mentionActors={mentionActors as MentionActor[] | undefined}
+					onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+					renderVisuals={renderVisuals}
+					renderCodeBlock={renderChartBlock}
+					renderImage={renderMarkdownImage}
+					rehypePlugins={rehypePlugins as unknown as never[] | undefined}
+					getComponentOverrides={getComponentOverrides}
+				/>
 			</div>
+		</>
+	)
+}
+/**
+ * Thin adapter over the split @maskin/markdown/react package (bet 666e3c4a).
+ *
+ * - editable=false: MarkdownRenderer (react-markdown, 0 KB added on read
+ *   routes), reached through TextareaMarkdownContent's rendered view.
+ * - editable=true + rich-markdown-editor flag on: MarkdownEditor from the
+ *   dynamic-imported Tiptap chunk.
+ * - editable=true + flag off: today's Textarea blur-emit behaviour, so nothing
+ *   changes for a flag-off user.
+ *
+ * Blur-emit save semantics hold on both branches: onChange(markdown) fires only
+ * on blur (tech spec §9).
+ */
+export function MarkdownContent({
+	preserveSource,
+	surface,
+	objectId,
+	...props
+}: Parameters<typeof TextareaMarkdownContent>[0] & {
+	/**
+	 * Rich editor only. Treat `content` as stored text to protect: a save rewrites
+	 * only the blocks the person touched, and text the editor cannot hold safely
+	 * opens read-only. Ignored on the Textarea path, which saves what was typed.
+	 */
+	preserveSource?: boolean
+	/** Rich editor only. Surface name carried on the editor events. */
+	surface?: string
+	objectId?: string
+}) {
+	const editorEnabled = useFeatureFlag('rich-markdown-editor')
+
+	if (props.editable && editorEnabled) {
+		return (
+			<EditorAdapter
+				content={props.content}
+				onChange={props.onChange}
+				className={props.className}
+				disallowedElements={props.disallowedElements}
+				preserveSource={preserveSource}
+				surface={surface}
+				objectId={objectId}
+			/>
+		)
+	}
+
+	return <TextareaMarkdownContent {...props} />
+}
+
+export const READ_ONLY_DESCRIPTION_BANNER =
+	"This description is read-only here. Editing it could change parts you didn't touch."
+
+// Same wording as the file editor's refused-rewrite banner, for a description.
+export const REFUSED_DESCRIPTION_BANNER =
+	"Part of this description can't be written back without losing something, so that part was left as it was. Your other changes are saved."
+
+// Flag-on: dynamic-imported Tiptap surface. Blur-emit is delegated to the
+// editor itself (spec §9). While the chunk is fetching, render the raw
+// markdown so nothing flashes empty. `surface` / `objectId` ride on the editor
+// events; the object description and create form pass them.
+function EditorAdapter({
+	content,
+	onChange,
+	className,
+	disallowedElements,
+	preserveSource,
+	surface,
+	objectId,
+}: {
+	content: string
+	onChange?: (value: string) => unknown
+	className?: string
+	disallowedElements?: string[]
+	preserveSource?: boolean
+	surface?: string
+	objectId?: string
+}) {
+	const [readOnly, setReadOnly] = useState(false)
+	const [rewriteRefused, setRewriteRefused] = useState(false)
+	// The editor reads `value` once, at mount. With preserveSource it also builds
+	// its block map from that text, so a change that did not come from this editor
+	// (an agent edit landing over SSE) has to remount it, or the next blur would
+	// save the old text over the new. Our own save echoing back, and a change
+	// while the person is mid-edit, leave it alone.
+	const dirtyRef = useRef(false)
+	const settledTextRef = useRef(content)
+	const [editorKey, setEditorKey] = useState(0)
+	useEffect(() => {
+		if (!preserveSource) return
+		if (content === settledTextRef.current || dirtyRef.current) return
+		settledTextRef.current = content
+		setEditorKey((key) => key + 1)
+	}, [content, preserveSource])
+
+	const handleChange = useCallback(
+		(markdown: string) => {
+			dirtyRef.current = false
+			// A save that comes out identical to what is stored (every rewrite was
+			// refused, or the edit was undone) is not sent: it would only stamp an
+			// edit on the object that nobody made.
+			if (preserveSource && markdown === settledTextRef.current) return
+			settledTextRef.current = markdown
+			onChange?.(markdown)
+		},
+		[onChange, preserveSource],
+	)
+
+	const handleEdit = useCallback(() => {
+		dirtyRef.current = true
+	}, [])
+
+	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
+		captureEditorParseError(info)
+		if (info.reason === 'read_only_fallback') setReadOnly(true)
+		if (info.reason === 'loss_check') setRewriteRefused(true)
+	}, [])
+
+	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
+		editorTelemetry(info).emitToolbarAction({ action: info.action })
+	}, [])
+
+	const handleShortcutUsed = useCallback((info: ShortcutInfo) => {
+		editorTelemetry(info).emitShortcut({ shortcut: info.shortcut })
+	}, [])
+
+	const handleSaved = useCallback((info: SavedInfo) => {
+		editorTelemetry(info).emitSaved({
+			contentLength: info.contentLength,
+			saveTrigger: info.saveTrigger,
+		})
+	}, [])
+
+	const disallowedNodes = useMemo(() => {
+		if (!disallowedElements) return undefined
+		const nodes: Array<'heading' | 'table' | 'taskList' | 'codeBlock'> = []
+		if (disallowedElements.some((el) => /^h[1-6]$/.test(el))) nodes.push('heading')
+		if (disallowedElements.includes('table')) nodes.push('table')
+		return nodes.length > 0 ? nodes : undefined
+	}, [disallowedElements])
+
+	return (
+		<>
+			{readOnly && surface === 'description' && (
+				<EditorBanner tone="info" className="mb-3">
+					{READ_ONLY_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			{rewriteRefused && surface === 'description' && (
+				<EditorBanner tone="danger" heading="Couldn't save your changes" className="mb-3">
+					{REFUSED_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			<Suspense
+				fallback={
+					<div className={className}>
+						<MarkdownRenderer content={content} />
+					</div>
+				}
+			>
+				<MarkdownEditor
+					key={editorKey}
+					value={content}
+					onChange={handleChange}
+					onEdit={handleEdit}
+					variant="document"
+					className={className}
+					disallowedNodes={disallowedNodes}
+					onParseError={handleParseError}
+					onToolbarAction={handleToolbarAction}
+					onShortcutUsed={handleShortcutUsed}
+					onSaved={handleSaved}
+					preserveSource={preserveSource}
+					surface={surface}
+					objectId={objectId}
+				/>
+			</Suspense>
 		</>
 	)
 }

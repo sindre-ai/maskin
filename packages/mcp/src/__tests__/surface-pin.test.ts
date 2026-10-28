@@ -58,6 +58,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ]
 
@@ -69,6 +70,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
+	'get_chat_activity',
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
@@ -286,6 +288,7 @@ describe('MCP surface pin', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter((n) => n.startsWith('delete_')),
 				'stop_session',
+				'stop_chat_agent',
 				'disconnect_integration',
 				'desktop_run',
 			].sort()
@@ -315,6 +318,8 @@ describe('MCP surface pin', () => {
 		it('openWorldHint is true for create_session, the integration tools and the tools that send mail only', () => {
 			const expected = [
 				'create_session',
+				'create_sub_chat',
+				'create_chat',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',

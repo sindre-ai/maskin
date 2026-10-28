@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { issueLoginKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, deviceAuthCodes } from '@maskin/db/schema'
 import {
@@ -212,8 +213,17 @@ app.openapi(tokenRoute, async (c) => {
 	if (!actor) return c.json({ status: 'expired' as const }, 200)
 
 	logger.info('device-auth: session issued', { actorId: actor.id, client: row.clientSource })
-	const { apiKey, passwordHash, systemPrompt, llmProvider, llmConfig, ...actorWithoutSecrets } =
-		actor
+	const {
+		apiKey: _legacyKey,
+		passwordHash,
+		systemPrompt,
+		llmProvider,
+		llmConfig,
+		...actorWithoutSecrets
+	} = actor
+	// Keys are stored hashed, so the TV gets a key minted for it. It takes the Apple-device kind so
+	// web logins can never revoke a TV that is signed in.
+	const apiKey = await issueLoginKey(db, actor.id, 'login_ios')
 	return c.json(
 		{
 			status: 'approved' as const,
@@ -222,7 +232,7 @@ app.openapi(tokenRoute, async (c) => {
 				system_prompt: systemPrompt,
 				llm_provider: llmProvider,
 				llm_config: llmConfig,
-				api_key: apiKey ?? '',
+				api_key: apiKey,
 			} as z.infer<typeof actorWithKeySchema>,
 		},
 		200,

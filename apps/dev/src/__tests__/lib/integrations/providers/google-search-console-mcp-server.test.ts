@@ -1,12 +1,15 @@
 import type { Database } from '@maskin/db'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-const recordEvent = vi.hoisted(() => vi.fn(async () => undefined))
+type RecordedEvent = { action: string; data?: { tool?: string } }
+const recordEvent = vi.hoisted(() =>
+	vi.fn(async (_db: unknown, _event: RecordedEvent): Promise<void> => undefined),
+)
 vi.mock('../../../../lib/events/record-event', () => ({ recordEvent }))
 
 import type { AgentAccess } from '../../../../lib/integrations/agent-access'
@@ -68,12 +71,23 @@ function payload(result: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('Search Console MCP server', () => {
-	it('registers exactly inspect_url and list_sites, both classified as reads', async () => {
+	it('registers exactly the read and sitemap tools, classified as reads and writes', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
-		expect(tools.map((t) => t.name).sort()).toEqual(['inspect_url', 'list_sites'])
-		expect(classifyTool('google-search-console', 'inspect_url')).toBe('read')
-		expect(classifyTool('google-search-console', 'list_sites')).toBe('read')
+		expect(tools.map((t) => t.name).sort()).toEqual([
+			'delete_sitemap',
+			'get_sitemap',
+			'inspect_url',
+			'list_sitemaps',
+			'list_sites',
+			'submit_sitemap',
+		])
+		for (const read of ['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']) {
+			expect(classifyTool('google-search-console', read)).toBe('read')
+		}
+		for (const write of ['submit_sitemap', 'delete_sitemap']) {
+			expect(classifyTool('google-search-console', write)).toBe('write')
+		}
 		// Anything else on this provider is a write, so a read-only grant can never call it.
 		expect(classifyTool('google-search-console', 'request_indexing')).toBe('write')
 	})
@@ -181,16 +195,482 @@ describe('Search Console MCP server', () => {
 		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
-	it('lets a read-only agent call both tools', async () => {
+	it('lets a read-only agent call the four read tools', async () => {
 		const { client } = await connect({}, 'read')
 
-		const inspect = await client.callTool({
-			name: 'inspect_url',
-			arguments: { inspection_url: 'https://maskin.io/', site_url: 'sc-domain:maskin.io' },
-		})
-		const sites = await client.callTool({ name: 'list_sites', arguments: {} })
+		const calls = [
+			{
+				name: 'inspect_url',
+				arguments: { inspection_url: 'https://maskin.io/', site_url: 'sc-domain:maskin.io' },
+			},
+			{ name: 'list_sites', arguments: {} },
+			{ name: 'list_sitemaps', arguments: { site_url: 'sc-domain:maskin.io' } },
+			{
+				name: 'get_sitemap',
+				arguments: {
+					site_url: 'sc-domain:maskin.io',
+					sitemap_url: 'https://maskin.io/sitemap.xml',
+				},
+			},
+		]
+		for (const call of calls) {
+			const result = await client.callTool(call)
+			expect(result.isError, call.name).toBeFalsy()
+		}
+	})
+})
 
-		expect(inspect.isError).toBeFalsy()
-		expect(sites.isError).toBeFalsy()
+const SITE = 'sc-domain:maskin.io'
+const SITEMAP = 'https://maskin.io/sitemap.xml'
+const SITE_API = 'https://www.googleapis.com/webmasters/v3/sites'
+const SITE_PATH = `${SITE_API}/${encodeURIComponent(SITE)}`
+const SITEMAP_PATH = `${SITE_PATH}/sitemaps/${encodeURIComponent(SITEMAP)}`
+
+const sitemapStatus = { path: SITEMAP, lastSubmitted: '2026-10-25T10:00:00Z', isPending: true }
+
+type Handler = (init?: RequestInit) => Response
+
+/** Answers by "METHOD url"; a request nobody planned for fails the test. */
+function stubGoogle(routes: Record<string, Handler>) {
+	return async (url: string | URL | Request, init?: RequestInit) => {
+		const key = `${init?.method ?? 'GET'} ${String(url)}`
+		const handler = routes[key]
+		if (!handler) throw new Error(`unplanned request: ${key}`)
+		return handler(init)
+	}
+}
+
+const owner = () => jsonResponse(200, { siteUrl: SITE, permissionLevel: 'siteOwner' })
+
+function requests(fetchImpl: { mock: { calls: unknown[][] } }) {
+	return fetchImpl.mock.calls.map(
+		([url, init]) => `${(init as RequestInit)?.method ?? 'GET'} ${String(url)}`,
+	)
+}
+
+describe('Search Console sitemap reads', () => {
+	it('list_sitemaps reads the property with the property percent-encoded in the path', async () => {
+		const { client, fetchImpl } = await connect()
+		const google = { sitemap: [sitemapStatus] }
+		fetchImpl.mockResolvedValueOnce(jsonResponse(200, google))
+
+		const result = await client.callTool({ name: 'list_sitemaps', arguments: { site_url: SITE } })
+
+		expect(payload(result)).toEqual({ http_status: 200, body: google })
+		expect(requests(fetchImpl)).toEqual([`GET ${SITE_PATH}/sitemaps`])
+	})
+
+	it('get_sitemap encodes a sitemap URL that has a query string', async () => {
+		const { client, fetchImpl } = await connect()
+		fetchImpl.mockResolvedValueOnce(jsonResponse(200, sitemapStatus))
+
+		await client.callTool({
+			name: 'get_sitemap',
+			arguments: { site_url: SITE, sitemap_url: 'https://maskin.io/sitemap.xml?lang=en&x=1' },
+		})
+
+		expect(requests(fetchImpl)).toEqual([
+			`GET ${SITE_PATH}/sitemaps/https%3A%2F%2Fmaskin.io%2Fsitemap.xml%3Flang%3Den%26x%3D1`,
+		])
+	})
+
+	it('get_sitemap passes Googles 404 through', async () => {
+		const { client, fetchImpl } = await connect()
+		const google = { error: { code: 404, status: 'NOT_FOUND' } }
+		fetchImpl.mockResolvedValueOnce(jsonResponse(404, google))
+
+		const result = await client.callTool({
+			name: 'get_sitemap',
+			arguments: { site_url: SITE, sitemap_url: SITEMAP },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(payload(result)).toEqual({ http_status: 404, body: google })
+	})
+})
+
+describe('Search Console submit_sitemap', () => {
+	beforeEach(() => recordEvent.mockClear())
+
+	const submit = (client: Client, site_url = SITE, sitemap_url = SITEMAP) =>
+		client.callTool({ name: 'submit_sitemap', arguments: { site_url, sitemap_url } })
+
+	it('checks permission, submits, reads the status back and records the submit', async () => {
+		const { client, fetchImpl, getAccessToken } = await connect()
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+				[`GET ${SITEMAP_PATH}`]: () => jsonResponse(200, sitemapStatus),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBeFalsy()
+		expect(payload(result)).toEqual({ http_status: 204, submitted: true, sitemap: sitemapStatus })
+		expect(requests(fetchImpl)).toEqual([
+			`GET ${SITE_PATH}`,
+			`PUT ${SITEMAP_PATH}`,
+			`GET ${SITEMAP_PATH}`,
+		])
+		// One token read for the three requests.
+		expect(getAccessToken).toHaveBeenCalledTimes(1)
+		expect(recordEvent).toHaveBeenCalledTimes(1)
+		expect(recordEvent).toHaveBeenCalledWith(expect.anything(), {
+			workspaceId: 'ws-1',
+			actorId: 'agent-1',
+			action: 'gsc_sitemap_submitted',
+			entityType: 'integration',
+			entityId: 'int-1',
+			data: { provider: 'google-search-console', property: SITE, sitemap_url: SITEMAP },
+		})
+	})
+
+	it('still reports the submit when the status read-back fails', async () => {
+		const { client, fetchImpl } = await connect()
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+				[`GET ${SITEMAP_PATH}`]: () => jsonResponse(500, {}),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBeFalsy()
+		expect(payload(result)).toEqual({
+			http_status: 204,
+			submitted: true,
+			sitemap: null,
+			status_read_failed: { http_status: 500 },
+		})
+	})
+
+	it('reports a submit Google accepted even when the audit row cannot be written', async () => {
+		const { client, fetchImpl } = await connect()
+		recordEvent.mockRejectedValueOnce(new Error('db down'))
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+				[`GET ${SITEMAP_PATH}`]: () => jsonResponse(200, sitemapStatus),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBeFalsy()
+		expect(payload(result).submitted).toBe(true)
+		expect(payload(result).warning).toContain('could not record it')
+	})
+
+	it('encodes a domain property and a sitemap URL with a query string in the path', async () => {
+		const { client, fetchImpl } = await connect()
+		const sitemap = 'https://blog.maskin.io/sitemap.xml?lang=en&x=1'
+		const path = `${SITE_PATH}/sitemaps/${encodeURIComponent(sitemap)}`
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${path}`]: () => new Response(null, { status: 204 }),
+				[`GET ${path}`]: () => jsonResponse(200, sitemapStatus),
+			}),
+		)
+
+		const result = await submit(client, SITE, sitemap)
+
+		expect(result.isError).toBeFalsy()
+		expect(path).toContain('sc-domain%3Amaskin.io/sitemaps/https%3A%2F%2Fblog.maskin.io')
+		expect(recordEvent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ data: expect.objectContaining({ sitemap_url: sitemap }) }),
+		)
+	})
+
+	it.each([
+		['a different domain', SITE, 'https://example.com/sitemap.xml'],
+		['a domain that only ends the same way', SITE, 'https://notmaskin.io/sitemap.xml'],
+		['the domain as a prefix of another host', SITE, 'https://maskin.io.evil.test/sitemap.xml'],
+		['a URL with the domain in the user part', SITE, 'https://maskin.io@evil.test/sitemap.xml'],
+		['a relative path', SITE, '/sitemap.xml'],
+		['a non-http scheme', SITE, 'ftp://maskin.io/sitemap.xml'],
+		['outside a URL-prefix property', 'https://maskin.io/blog/', 'https://maskin.io/sitemap.xml'],
+		[
+			'another protocol than a URL-prefix property',
+			'https://maskin.io/',
+			'http://maskin.io/sitemap.xml',
+		],
+		['a property that is neither form', 'maskin.io', SITEMAP],
+	])('refuses %s before calling Google', async (_label, site, sitemap) => {
+		const { client, fetchImpl, getAccessToken } = await connect()
+
+		const result = await submit(client, site, sitemap)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result).error.code).toBe('INVALID_SITEMAP_URL')
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(getAccessToken).not.toHaveBeenCalled()
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['a subdomain of a domain property', SITE, 'https://www.maskin.io/sitemap.xml'],
+		[
+			'a path under a URL-prefix property',
+			'https://maskin.io/blog/',
+			'https://maskin.io/blog/sitemap.xml',
+		],
+	])('accepts %s', async (_label, site, sitemap) => {
+		const { client, fetchImpl } = await connect()
+		const sitePath = `${SITE_API}/${encodeURIComponent(site)}`
+		const path = `${sitePath}/sitemaps/${encodeURIComponent(sitemap)}`
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${sitePath}`]: owner,
+				[`PUT ${path}`]: () => new Response(null, { status: 204 }),
+				[`GET ${path}`]: () => jsonResponse(200, sitemapStatus),
+			}),
+		)
+
+		const result = await submit(client, site, sitemap)
+
+		expect(payload(result).submitted).toBe(true)
+	})
+
+	it('refuses a restricted user without trying the submit', async () => {
+		const { client, fetchImpl } = await connect()
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: () => jsonResponse(200, { permissionLevel: 'siteRestrictedUser' }),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result).error.code).toBe('PROPERTY_NOT_WRITABLE')
+		expect(requests(fetchImpl)).toEqual([`GET ${SITE_PATH}`])
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+
+	it('passes Googles answer through when the account does not have the property', async () => {
+		const { client, fetchImpl } = await connect()
+		const google = { error: { code: 403, status: 'PERMISSION_DENIED' } }
+		fetchImpl.mockImplementation(
+			stubGoogle({ [`GET ${SITE_PATH}`]: () => jsonResponse(403, google) }),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result)).toEqual({ http_status: 403, body: google })
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+
+	it('tells the agent to ask for a reconnect when the token only has the read-only scope', async () => {
+		const { client, fetchImpl } = await connect()
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () =>
+					jsonResponse(403, {
+						error: {
+							code: 403,
+							message: 'Request had insufficient authentication scopes.',
+							details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }],
+						},
+					}),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result).error.code).toBe('RECONNECT_REQUIRED')
+		expect(payload(result).error.message).toContain('reconnect')
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+
+	it('passes any other refusal through and records nothing', async () => {
+		const { client, fetchImpl } = await connect()
+		const google = {
+			error: { code: 403, message: 'User does not have sufficient permission for site.' },
+		}
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () => jsonResponse(403, google),
+			}),
+		)
+
+		const result = await submit(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result)).toEqual({ http_status: 403, body: google })
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+})
+
+describe('Search Console delete_sitemap', () => {
+	beforeEach(() => recordEvent.mockClear())
+
+	const remove = (client: Client, site_url = SITE, sitemap_url = SITEMAP) =>
+		client.callTool({ name: 'delete_sitemap', arguments: { site_url, sitemap_url } })
+
+	const lastAction = (action: 'gsc_sitemap_submitted' | 'gsc_sitemap_deleted' | null) =>
+		vi.fn(async () => action)
+
+	it('deletes a sitemap Maskin submitted and records the delete', async () => {
+		const findLastSitemapAction = lastAction('gsc_sitemap_submitted')
+		const { client, fetchImpl } = await connect({ findLastSitemapAction })
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`DELETE ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+			}),
+		)
+
+		const result = await remove(client)
+
+		expect(result.isError).toBeFalsy()
+		expect(payload(result)).toEqual({ http_status: 204, deleted: true })
+		// Keyed by workspace, property and URL. No connection id, so it survives a reconnect.
+		expect(findLastSitemapAction).toHaveBeenCalledWith(expect.anything(), {
+			workspaceId: 'ws-1',
+			property: SITE,
+			sitemapUrl: SITEMAP,
+		})
+		expect(recordEvent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				action: 'gsc_sitemap_deleted',
+				data: { provider: 'google-search-console', property: SITE, sitemap_url: SITEMAP },
+			}),
+		)
+	})
+
+	it('looks the submit up by property and URL when the connection is a new one', async () => {
+		// Same workspace, new connection id: what a reconnect produces.
+		const findLastSitemapAction = lastAction('gsc_sitemap_submitted')
+		const { client, fetchImpl } = await connect({ integrationId: 'int-2', findLastSitemapAction })
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`DELETE ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+			}),
+		)
+
+		const result = await remove(client)
+
+		expect(payload(result).deleted).toBe(true)
+		expect(JSON.stringify(findLastSitemapAction.mock.calls)).not.toContain('int-')
+	})
+
+	it.each([
+		['one added in Search Console (no record)', null],
+		['one Maskin already deleted', 'gsc_sitemap_deleted' as const],
+	])('refuses %s without calling Google', async (_label, last) => {
+		const { client, fetchImpl, getAccessToken } = await connect({
+			findLastSitemapAction: lastAction(last),
+		})
+
+		const result = await remove(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result).error.code).toBe('NOT_SUBMITTED_BY_MASKIN')
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(getAccessToken).not.toHaveBeenCalled()
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+
+	it('refuses a sitemap outside the property before looking anything up', async () => {
+		const findLastSitemapAction = lastAction('gsc_sitemap_submitted')
+		const { client, fetchImpl } = await connect({ findLastSitemapAction })
+
+		const result = await remove(client, SITE, 'https://notmaskin.io/sitemap.xml')
+
+		expect(payload(result).error.code).toBe('INVALID_SITEMAP_URL')
+		expect(findLastSitemapAction).not.toHaveBeenCalled()
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('passes Googles 404 through and records nothing', async () => {
+		const { client, fetchImpl } = await connect({
+			findLastSitemapAction: lastAction('gsc_sitemap_submitted'),
+		})
+		const google = { error: { code: 404, status: 'NOT_FOUND' } }
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`DELETE ${SITEMAP_PATH}`]: () => jsonResponse(404, google),
+			}),
+		)
+
+		const result = await remove(client)
+
+		expect(result.isError).toBe(true)
+		expect(payload(result)).toEqual({ http_status: 404, body: google })
+		expect(recordEvent).not.toHaveBeenCalled()
+	})
+})
+
+describe('Search Console sitemap tools and agent access', () => {
+	beforeEach(() => recordEvent.mockClear())
+
+	const writes = [
+		{ name: 'submit_sitemap', arguments: { site_url: SITE, sitemap_url: SITEMAP } },
+		{ name: 'delete_sitemap', arguments: { site_url: SITE, sitemap_url: SITEMAP } },
+	]
+
+	it.each(['read', 'none'] as const)(
+		'refuses both write tools for an agent with %s access, without reaching Google',
+		async (access) => {
+			const { client, fetchImpl, getAccessToken } = await connect(
+				{ findLastSitemapAction: vi.fn(async () => 'gsc_sitemap_submitted' as const) },
+				access,
+			)
+
+			for (const call of writes) {
+				const result = await client.callTool(call)
+				expect(result.isError, call.name).toBe(true)
+				expect(JSON.stringify(result.content)).toContain(
+					'needs write access to Google Search Console',
+				)
+			}
+
+			expect(fetchImpl).not.toHaveBeenCalled()
+			expect(getAccessToken).not.toHaveBeenCalled()
+			const denials = recordEvent.mock.calls.filter(([, e]) => e.action === 'agent_access_denied')
+			expect(denials.map(([, e]) => e.data?.tool)).toEqual(['submit_sitemap', 'delete_sitemap'])
+			expect(
+				recordEvent.mock.calls.some(([, e]) => String(e.action).startsWith('gsc_sitemap')),
+			).toBe(false)
+		},
+	)
+
+	it('lets an agent with read and write access submit', async () => {
+		const { client, fetchImpl } = await connect({}, 'read_write')
+		fetchImpl.mockImplementation(
+			stubGoogle({
+				[`GET ${SITE_PATH}`]: owner,
+				[`PUT ${SITEMAP_PATH}`]: () => new Response(null, { status: 204 }),
+				[`GET ${SITEMAP_PATH}`]: () => jsonResponse(200, sitemapStatus),
+			}),
+		)
+
+		const result = await client.callTool(writes[0])
+
+		expect(payload(result).submitted).toBe(true)
+	})
+
+	it('lists the write tools as unavailable to a read-only agent', async () => {
+		const { client } = await connect({}, 'read')
+		const { tools } = await client.listTools()
+		const byName = new Map(tools.map((t) => [t.name, t]))
+
+		expect(byName.get('submit_sitemap')?.description).toContain('[Unavailable: needs write access')
+		expect(byName.get('delete_sitemap')?.description).toContain('[Unavailable: needs write access')
+		expect(byName.get('list_sitemaps')?.description).not.toContain('[Unavailable')
 	})
 })

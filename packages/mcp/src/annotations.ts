@@ -60,7 +60,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
+	'get_chat_activity',
 	'list_notifications',
+	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ])
@@ -84,9 +86,9 @@ function row(
 	}
 }
 
-// destructive: delete_*, stop_session, disconnect_integration, desktop_run (runs any command).
+// destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session (starts an agent), the integration tools, and the two tools that
+// openWorld: create_session, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -133,6 +135,11 @@ const ROWS: Record<string, Row> = {
 	list_chats: row('List chats'),
 	list_conversation_messages: row('List conversation messages'),
 	post_conversation_message: row('Post conversation message'),
+	create_chat: row('Create chat', { openWorld: true }),
+	add_chat_participant: row('Add chat participant'),
+	remove_chat_participant: row('Remove chat participant'),
+	get_chat_activity: row('Get chat activity'),
+	stop_chat_agent: row('Stop chat agent', { destructive: true }),
 	// Triggers
 	create_trigger: row('Create trigger'),
 	list_triggers: row('List triggers'),
@@ -149,6 +156,7 @@ const ROWS: Record<string, Row> = {
 	list_unread: row('List unread'),
 	// Sessions
 	create_session: row('Create session', { openWorld: true }),
+	create_sub_chat: row('Create sub-chat', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),
@@ -170,6 +178,7 @@ const ROWS: Record<string, Row> = {
 	// Notifications
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
+	list_for_you: row('List For You'),
 	update_notification: row('Update notification', { idempotent: true }),
 	// Session activity, drafts, mail and access
 	get_session_activity: row('Get session activity'),

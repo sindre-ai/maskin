@@ -33,6 +33,7 @@ import type {
 	RelationshipResponse,
 } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
+import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -270,7 +271,14 @@ export function ObjectDocumentView({
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
 			<div className="mb-8 xl:max-w-[75ch]">
 				{contentLoaded ? (
-					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+					<MarkdownContent
+						content={object.content ?? ''}
+						onChange={handleContentChange}
+						editable
+						preserveSource
+						surface="description"
+						objectId={object.id}
+					/>
 				) : (
 					<p className="text-sm text-muted-foreground italic">
 						Content not included in this response.
@@ -460,7 +468,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						attention: prev.attention,
 						fresh: prev.fresh,
 						starred: prev.starred,
-						updated: prev.updated,
+						updated: isUpdatedBucket(prev.updated) ? prev.updated : undefined,
 						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,

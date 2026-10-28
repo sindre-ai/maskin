@@ -26,6 +26,7 @@ import {
 	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
@@ -67,8 +68,8 @@ import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief
 import { insertConversationMessage } from '../services/conversation-messages'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
-import { isNotifyOnComplete } from '../services/mention-guards'
 import { ensureChatForSession } from '../services/session-chat'
+import { continueEndedSession } from '../services/session-continue'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 import {
@@ -286,12 +287,8 @@ function synthesizeSessionTitle(row: {
 	actionPrompt: string | null
 }): string {
 	if (row.triggerName && row.triggerName.trim().length > 0) return row.triggerName
-	const prompt = row.actionPrompt?.trim()
-	if (prompt && prompt.length > 0) {
-		return prompt.length > SESSION_TITLE_MAX_CHARS
-			? `${prompt.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`
-			: prompt
-	}
+	const title = sessionTitleFromPrompt(row.actionPrompt, SESSION_TITLE_MAX_CHARS)
+	if (title) return title
 	return `Session ${row.id.slice(0, 8)}`
 }
 
@@ -1238,57 +1235,10 @@ app.openapi(continueSessionRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
-	// The person's words are the session's prompt, as in any chat: that is what its first
-	// message and its title show. What the agent did before reaches it through the system
-	// prompt at launch (config.continues_*), not through this text.
-	const earlier = (session.actionPrompt ?? '').trim().slice(0, 600)
-	const actionPrompt = body.content.trim()
-
-	const origin = (session.config ?? {}) as { origin_conversation_id?: unknown; hop_depth?: unknown }
-	const relaunched = (session.config as { relaunching?: unknown } | null)?.relaunching === true
-	const config = {
-		interactive: true,
-		// Ends after its reply, like the helper it continues, so the thread reads Done between
-		// messages; the next message starts the next follow-up.
-		stop_on_result: true,
-		sent_by_actor_id: actorId,
-		continues_session_id: id,
-		continues_chain: [
-			...(Array.isArray((session.config as { continues_chain?: unknown } | null)?.continues_chain)
-				? ((session.config as { continues_chain: unknown[] }).continues_chain.filter(
-						(x) => typeof x === 'string',
-					) as string[])
-				: []),
-			id,
-		],
-		continues_prompt: earlier,
-		...(helperAskConversationId(session)
-			? { ask_conversation_id: helperAskConversationId(session) }
-			: {}),
-		...(typeof origin.origin_conversation_id === 'string'
-			? { origin_conversation_id: origin.origin_conversation_id }
-			: {}),
-		...(typeof origin.hop_depth === 'number' ? { hop_depth: origin.hop_depth } : {}),
-		// Stopped to carry on with a credential or access a person just gave it: the follow-up
-		// reports to the sender in its place, so the sender hears one ending, not two.
-		...(relaunched && isNotifyOnComplete(session.config) ? { notify_on_complete: true } : {}),
-	}
-	const handle = await startSession({
+	const handle = await continueEndedSession(session, {
 		workspaceId,
-		actorId: session.actorId,
-		callerKind: 'rest',
-		actionPrompt,
-		config,
-		createdBy: actorId,
-		initiatedFromObjectId: session.initiatedFromObjectId,
-		await: 'none',
-		// Another thread of the same chat: the anchor message when there is one, else the
-		// chat session that started the original.
-		spawnedByMessageId: session.spawnedByMessageId ?? undefined,
-		spawnedBySessionId:
-			session.spawnedByMessageId && !relaunched
-				? undefined
-				: (session.spawnedBySessionId ?? undefined),
+		actorId,
+		content: body.content,
 	})
 	return c.json({ session_id: handle.sessionId }, 201)
 }) as RouteHandler<typeof continueSessionRoute, Env>)

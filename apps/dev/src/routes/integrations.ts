@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	type AgentGrantAccess,
 	actors,
 	agentChatGrants,
 	agentGrants,
+	extensions,
 	integrations,
 	webhookDeliveries,
 	workspaceMembers,
@@ -19,6 +19,7 @@ import {
 	parseNativeOAuthReturnUrl,
 	skjaldOutcomePayloadSchema,
 	skjaldTranscriptionCompletedPayloadSchema,
+	webhookConfigSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
@@ -26,6 +27,7 @@ import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -33,8 +35,19 @@ import { recordEvent } from '../lib/events/record-event'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
+import { getEnvOrThrow } from '../lib/integrations/env'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import {
+	allowWebhookRequest,
+	deliveryEntityId,
+	extensionProvider,
+	isStaleDelivery,
+	mapWebhookEvent,
+	verifyExtensionSignature,
+} from '../lib/integrations/extensions'
+import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
+import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
@@ -340,7 +353,6 @@ async function bindGithubInstallation(opts: {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()
@@ -1041,7 +1053,6 @@ app.openapi(connectRoute, (async (c) => {
 				.values({
 					type: 'system',
 					name: systemActorName,
-					apiKey: generateApiKey().key,
 					createdBy: actorId,
 				})
 				.returning()
@@ -1849,7 +1860,6 @@ app.openapi(callbackRoute, (async (c) => {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: stateData.actorId,
 			})
 			.returning()
@@ -2961,7 +2971,11 @@ webhookApp.post('/slack-commands', async (c) => {
 		// Should be unreachable — slack config is always timestamp-scheme.
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack slash-command signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -3000,7 +3014,11 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 	if (!webhookConfig || 'type' in webhookConfig) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -3060,7 +3078,11 @@ webhookApp.post('/slack-interactive', async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
 	}
 
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive: signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
@@ -3402,11 +3424,33 @@ webhookApp.post('/resend/:token', async (c) => {
 	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
 	// Skjald stores the raw signing secret; Resend needs the API key alongside
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
-	let stored: { accessToken: string; webhookSecret: string }
+	//
+	// A row with no credentials (empty column, or a blob without both keys) is a
+	// permanent misconfiguration, not a transient fault. It answers 409 with a
+	// reason instead of a 500: Resend retries a 5xx on its backoff schedule and
+	// would hit the same failure every time.
+	const credentialsMissing = () => {
+		logger.warn('resend.webhook.credentials_missing', {
+			integration_id: integration.id,
+			workspace_id: integration.workspaceId,
+		})
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This Resend connection has no credentials. Reconnect Resend with POST /api/integrations/resend/connect.',
+				[{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' }],
+				'Reconnect Resend in this workspace, sending api_key and receive_subdomain.',
+			),
+			409,
+		)
+	}
+	if (!integration.credentials) return credentialsMissing()
+
+	let stored: { accessToken?: string; webhookSecret?: string }
 	try {
 		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
-			accessToken: string
-			webhookSecret: string
+			accessToken?: string
+			webhookSecret?: string
 		}
 	} catch {
 		logger.error('Resend webhook: credentials blob is unparseable', {
@@ -3414,9 +3458,11 @@ webhookApp.post('/resend/:token', async (c) => {
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
 	}
+	const { accessToken, webhookSecret } = stored
+	if (!accessToken || !webhookSecret) return credentialsMissing()
 
 	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
-	const verified = verifyResendSvix(body, headers, stored.webhookSecret)
+	const verified = verifyResendSvix(body, headers, webhookSecret)
 	if (!verified) {
 		logger.warn('Resend webhook: signature verification failed', {
 			integrationId: integration.id,
@@ -3531,7 +3577,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// so `events.data` carries the full body when the trigger fires.
 	let enriched: ResendEmailReceived
 	try {
-		enriched = await fetchResendBodyWithRetry(stored.accessToken, emailId, parsed.data)
+		enriched = await fetchResendBodyWithRetry(accessToken, emailId, parsed.data)
 	} catch (err) {
 		logger.error('resend.body_fetch.failed', {
 			email_id: emailId,
@@ -3612,6 +3658,177 @@ webhookApp.post('/resend/:token', async (c) => {
 	}
 })
 
+// ── Custom extension webhook ────────────────────────────────────────────
+// Registered before the generic `/:provider` catch-all, like the Skjald and
+// Resend token routes. `:token` is the opaque routing factor stored on the
+// `extensions` row (identifies the extension and its workspace); the
+// per-extension signing secret, decrypted from `integrations`
+// (provider 'extension:{slug}'), is the authentication factor. Signature
+// scheme, event mapping and rate limit all come from the row's webhook_config.
+// Failures that write nothing (bad signature, bad JSON, unmapped payload)
+// leave no row; only committed deliveries reach webhook_deliveries.
+webhookApp.post('/x/:token', async (c) => {
+	const startedAt = Date.now()
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [ext] = await db
+		.select()
+		.from(extensions)
+		.where(and(eq(extensions.webhookToken, token), eq(extensions.status, 'active')))
+		.limit(1)
+	if (!ext) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
+
+	const parsedConfig = webhookConfigSchema.safeParse(ext.webhookConfig)
+	if (!parsedConfig.success) {
+		logger.error('Extension webhook: stored webhook_config is invalid', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	const config = parsedConfig.data
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	let secret: string | null
+	try {
+		secret = await readExtensionSecret(db, ext.workspaceId, ext.slug)
+	} catch (err) {
+		logger.error('Extension webhook: could not read signing secret', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!secret) {
+		logger.error('Extension webhook: no signing secret stored', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+
+	let verified: boolean
+	try {
+		verified = verifyExtensionSignature(webhookHandler, config, body, headers, secret)
+	} catch (err) {
+		logger.error('Extension webhook: signature check could not run', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!verified) {
+		logger.warn('Extension webhook: signature verification failed', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	if (isStaleDelivery(config, headers)) {
+		logger.warn('Extension webhook: delivery older than maxAgeSeconds', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Delivery is too old'), 401)
+	}
+
+	if (!allowWebhookRequest(token, config.rateLimit.perMinute)) {
+		return c.json(createApiError('RATE_LIMITED', 'Too many requests'), 429)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	const mapped = mapWebhookEvent(config.eventMap, payload)
+	if (!mapped.ok) {
+		return c.json(createApiError('VALIDATION_ERROR', mapped.message), 422)
+	}
+	const { externalId, entityType, action, data } = mapped.event
+
+	const provider = extensionProvider(ext.slug)
+	// The claim key is external id + action, so a cancel after a create for the same
+	// booking is a new delivery while a retry of the same event is still a duplicate.
+	// The event entity id below stays on the bare external id.
+	const claimKey = `${externalId}:${action}`
+	let claimRowId: string | null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({ provider, externalId: claimKey, workspaceId: ext.workspaceId })
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Extension webhook: could not claim delivery', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Extension webhook: could not release delivery claim', {
+				extensionId: ext.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	try {
+		const systemActorId = await ensureExtensionSystemActor(db, ext.workspaceId, ext.createdBy)
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: ext.workspaceId,
+					actorId: systemActorId,
+					action,
+					entityType,
+					entityId: deliveryEntityId(ext.id, externalId),
+					data: data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('Extension webhook claim gone or already processed at commit time', {
+				extensionId: ext.id,
+				claimRowId: err.claimRowId,
+			})
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		logger.error('Extension webhook processing failed', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	void capturePosthogEvent('webhook_delivery_committed', ext.workspaceId, {
+		provider,
+		external_id: externalId,
+		workspace_id: ext.workspaceId,
+		latency_ms: Date.now() - startedAt,
+	})
+
+	return c.json({ ok: true, status: 'committed' })
+})
+
 // `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
 // event loop so the route can ack fast — the caller never gets a handle on
 // that background promise. Track it here so integration tests (running
@@ -3677,7 +3894,11 @@ webhookApp.post('/:provider', async (c) => {
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
 	} else {
-		if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		if (
+			!webhookHandler.verify(webhookConfig, body, headers, {
+				secret: getEnvOrThrow(webhookConfig.secretEnv),
+			})
+		) {
 			logger.warn(`Webhook signature verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}

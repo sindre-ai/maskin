@@ -1,6 +1,7 @@
 import {
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
+	plainSnippet,
 	showsObjectCard,
 	splitOwnLinks,
 	targetOfHref,
@@ -141,5 +142,26 @@ describe('splitOwnLinks', () => {
 		for (const text of [other, elsewhere, page, 'no links here']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
+	})
+})
+
+describe('plainSnippet', () => {
+	it('turns markdown into plain words on one line', () => {
+		expect(
+			plainSnippet(
+				'## Plan\n\n- Do **the thing**\n- See [the doc](https://x.test)\n\n```\ncode\n```',
+			),
+		).toBe('Plan Do the thing See the doc')
+	})
+
+	it('is empty for no text', () => {
+		expect(plainSnippet(null)).toBe('')
+		expect(plainSnippet('  \n ')).toBe('')
+	})
+
+	it('cuts a long text', () => {
+		const out = plainSnippet('word '.repeat(200))
+		expect(out.length).toBeLessThanOrEqual(281)
+		expect(out.endsWith('…')).toBe(true)
 	})
 })

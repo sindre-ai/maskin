@@ -39,6 +39,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/webhooks/google-drive', 'provider webhook, authenticated by channel token'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/skjald/:token', 'provider webhook, authenticated by token'],
+	['POST', '/api/webhooks/x/:token', 'custom extension webhook, signed with the extension secret'],
+	[
+		'POST',
+		'/api/internal/mcp-guard/report',
+		'guard wrapper in an agent container, authenticated by session key',
+	],
 	['POST', '/api/webhooks/slack-actions-account-link', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-commands', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-interactive', 'provider webhook, signed by Slack'],

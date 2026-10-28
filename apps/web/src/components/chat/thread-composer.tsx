@@ -1,9 +1,16 @@
 import { Composer } from '@/components/chat/chat'
-import { useConversation, useSendMessage } from '@/hooks/use-conversation'
+import { useActors } from '@/hooks/use-actors'
+import {
+	flattenMessagesOldestFirst,
+	useConversation,
+	useConversationMessages,
+	useSendMessage,
+} from '@/hooks/use-conversation'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import type { MessageMetadata } from '@/lib/api'
+import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useMemo, useReducer, useState } from 'react'
 
@@ -32,6 +39,8 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const messagesQuery = useConversationMessages(conversationId, workspaceId)
+	const { data: workspaceActors } = useActors(workspaceId)
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and
@@ -120,9 +129,47 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
 		firstMentionName ?? conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
-	const placeholder = counterpart
+	const todaysPlaceholder = counterpart
 		? `Reply to ${counterpart}…`
 		: 'Message… / reference or create · @ mention'
+
+	// Group-chat cue (3 or more active participants). While a needed answer is still
+	// loading it is the neutral placeholder with no hint; the box itself is never disabled.
+	// In a small chat the cue is null and today's text stays.
+	const cue = useMemo<ComposerCue | null>(() => {
+		if (!conversation) return { placeholder: NEUTRAL_PLACEHOLDER, hint: null }
+		const joiningAgents: ConversationParticipantResponse[] = []
+		for (const id of selection.agents) {
+			if (conversation.participants.some((p) => p.actorId === id)) continue
+			// An id missing from the workspace list counts as a person.
+			const known = workspaceActors?.find((a) => a.id === id)
+			if (known?.type === 'agent') {
+				joiningAgents.push({
+					actorId: id,
+					actorName: known.name,
+					actorType: 'agent',
+					joinedAt: null,
+					addedBy: null,
+				})
+			}
+		}
+		return deriveComposerCue({
+			selfId: self?.id ?? '',
+			participants: conversation.participants,
+			joiningAgents,
+			taggedIds: selection.agents,
+			messages: messagesQuery.data ? flattenMessagesOldestFirst(messagesQuery.data) : null,
+			hasMoreMessages: messagesQuery.hasNextPage,
+		})
+	}, [
+		conversation,
+		selection.agents,
+		workspaceActors,
+		messagesQuery.data,
+		messagesQuery.hasNextPage,
+		self?.id,
+	])
+	const placeholder = cue?.placeholder ?? todaysPlaceholder
 
 	return (
 		<Composer
@@ -141,6 +188,7 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 			onRemoveFile={(fileId) => dispatch({ type: 'remove_file', fileId })}
 			externalError={error}
 			onDismissExternalError={() => setError(null)}
+			hint={cue ? cue.hint : undefined}
 			// The accessible name stays constant while the visible placeholder
 			// names the counterpart — a name that changed with the thread's lead
 			// would make the same control a different control to a screen reader.

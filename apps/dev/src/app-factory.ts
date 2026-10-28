@@ -25,6 +25,7 @@ import {
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import accountRoutes from './routes/account'
+import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -42,6 +43,7 @@ import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
 import eventsRoutes from './routes/events'
+import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
 import filesRoutes from './routes/files'
@@ -68,6 +70,7 @@ import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
+import mcpGuardRoutes from './routes/mcp-guard'
 import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationPreferencesRoutes from './routes/notification-preferences'
@@ -77,6 +80,7 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import searchRoutes from './routes/search'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -315,6 +319,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - POST /api/internal/mcp-guard/report: the guard wrapper in an agent container
+	//     reports a refused tool call with a per-session key checked in the handler.
 	//   - POST /api/invites/:token/accept and GET /api/invites/preview: the
 	//     invitee is not yet a member of any workspace, so the standard
 	//     Bearer + X-Workspace-Id middleware cannot admit them. The accept
@@ -327,6 +333,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		const method = c.req.method
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
+		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
+		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (
 			method === 'POST' &&
@@ -337,6 +345,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/devices/unregister' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
+		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
@@ -428,6 +437,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
+	app.route('/api/actors', actorAvatarRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
@@ -481,8 +491,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		app.route('/api/test-grants', testGrantsRoutes)
 	}
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
+	app.route('/api/internal/mcp-guard', mcpGuardRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/conversations', conversationsRoutes)
+	app.route('/api/search', searchRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
@@ -499,6 +511,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// prefix so the nested /:id/comments paths sit under the existing files
 	// surface without touching files.ts.
 	app.route('/api/files', fileCommentsRoutes)
+	app.route('/api/extensions', extensionsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)

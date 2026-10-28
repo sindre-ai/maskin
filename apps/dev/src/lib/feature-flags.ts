@@ -76,6 +76,25 @@ export const FLAGS = {
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
 	/**
+	 * Bring-your-own integrations UI: the custom extensions list on Settings >
+	 * Extensions, the add-extension modal and the extension detail page
+	 * (/settings/extensions/$extId). Gates the visible surfaces only. The
+	 * extensions table, the /api/extensions API and POST /api/webhooks/x/:token
+	 * are not flagged: without an extension row every request to the route is
+	 * a 404, so it is safe for everyone. Default off; on for the two tester
+	 * humans through FF_TESTER_FEATURES. Retire once the surface is on for
+	 * everyone (delete the boundary, then this entry).
+	 */
+	BYO_EXTENSIONS_UI: 'byo-extensions-ui',
+	/**
+	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
+	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
+	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it
+	 * once the editor has been through tester validation across
+	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
+	 */
+	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
+	/**
 	 * Gates the daily capability scan (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
 	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
@@ -118,6 +137,16 @@ export const FLAGS = {
 	 * Retire once the outreach tools are on for everyone.
 	 */
 	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
+	/**
+	 * Gates the redesigned search page (bet
+	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
+	 * Frontend only, read once in the search route component, which swaps the
+	 * legacy page for the v2 page. Off means the page behaves as before. The
+	 * search endpoint, the shared types and the analytics events are not flagged:
+	 * they are additive and safe for everyone. Stays off until the 14-day
+	 * baseline has run. Retire once search v2 is on for everyone.
+	 */
+	SEARCH_V2: 'search-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

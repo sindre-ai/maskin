@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, hashPassword, issueApiKey, revokeActorKeys } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
@@ -109,6 +109,11 @@ function sameEnvFrom(next: unknown, stored: unknown): boolean {
 function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
 	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
 }
+
+/** Where the actor's picture is served, or null. `v` changes on every upload so the URL can be cached forever. */
+const actorAvatarUrlSql = sql<
+	string | null
+>`CASE WHEN ${actors.metadata}->>'avatar_version' IS NOT NULL THEN '/api/actors/' || ${actors.id} || '/avatar?v=' || (${actors.metadata}->>'avatar_version') END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -306,9 +311,6 @@ app.openapi(createActorRoute, async (c) => {
 		}
 	}
 
-	// Generate API key
-	const { key } = generateApiKey()
-
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
@@ -331,7 +333,6 @@ app.openapi(createActorRoute, async (c) => {
 				type: body.type,
 				name: body.name,
 				email: body.email,
-				apiKey: key,
 				passwordHash,
 				description: body.description,
 				systemPrompt: body.system_prompt,
@@ -343,6 +344,16 @@ app.openapi(createActorRoute, async (c) => {
 			.onConflictDoNothing({ target: actors.id })
 			.returning()
 
+	// The key is shown once, in this response; only its hash is stored. Minted in the same
+	// transaction as the actor so a signup never leaves an account that has no key.
+	let key = ''
+	const insertActorWithKey = async (tx: Transaction) => {
+		const [inserted] = await insertActor(tx)
+		if (!inserted) return undefined
+		key = (await issueApiKey(tx, { actorId: inserted.id, kind: 'primary' })).key
+		return inserted
+	}
+
 	let actor: typeof actors.$inferSelect | undefined
 	try {
 		if (memberWorkspaceId && creatorId) {
@@ -351,7 +362,7 @@ app.openapi(createActorRoute, async (c) => {
 			// Actor row, membership row and the audit event commit together or not
 			// at all, so a failure never leaves an agent outside the workspace.
 			actor = await db.transaction(async (tx) => {
-				const [inserted] = await insertActor(tx)
+				const inserted = await insertActorWithKey(tx)
 				if (!inserted) return undefined
 				await tx
 					.insert(workspaceMembers)
@@ -370,7 +381,7 @@ app.openapi(createActorRoute, async (c) => {
 				return inserted
 			})
 		} else {
-			;[actor] = await insertActor(db)
+			actor = await db.transaction((tx) => insertActorWithKey(tx))
 		}
 	} catch (err) {
 		if (isEmailUniqueViolation(err)) {
@@ -749,6 +760,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -803,6 +815,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1033,6 +1046,7 @@ app.openapi(getActorRoute, (async (c) => {
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+				avatar_url: actorAvatarUrlSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1351,6 +1365,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1404,15 +1419,21 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 
-	const { key } = generateApiKey()
+	// Every live key of the actor stops working, as when there was one shared key; the new
+	// primary key is returned once. Session keys are left alone: an agent rotating its own key
+	// should not be cut off from the container it is running in.
+	const key = await db.transaction(async (tx) => {
+		const [updated] = await tx
+			.update(actors)
+			.set({ updatedAt: new Date() })
+			.where(eq(actors.id, id))
+			.returning({ id: actors.id })
+		if (!updated) return null
+		await revokeActorKeys(tx, id, ['primary', 'login', 'login_ios'])
+		return (await issueApiKey(tx, { actorId: id, kind: 'primary' })).key
+	})
 
-	const [updated] = await db
-		.update(actors)
-		.set({ apiKey: key, updatedAt: new Date() })
-		.where(eq(actors.id, id))
-		.returning({ id: actors.id })
-
-	if (!updated) {
+	if (key === null) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -1501,8 +1522,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 		})
 
 	if (!updated) {

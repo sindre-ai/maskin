@@ -44,7 +44,7 @@ struct ProfileMenuTests {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
 				== [
-					"Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
+					"Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
 					"Billing", "Keys & MCP",
 				])
 		#expect(
