@@ -75,25 +75,34 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file'
+	kind: 'object' | 'file' | 'loop' | 'trigger'
 	id: string
 }
 
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files)/(${UUID_SRC})/?$`, 'i')
+const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers)/(${UUID_SRC})/?$`, 'i')
+
+const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' }>['kind']> = {
+	objects: 'object',
+	files: 'file',
+	loops: 'loop',
+	triggers: 'trigger',
+}
 
 function isAppHost(host: string): boolean {
 	const current = typeof window === 'undefined' ? '' : window.location.host
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object or file in this workspace. */
-export type OwnSegment = { kind: 'text'; text: string } | { kind: 'object' | 'file'; id: string }
+/** One run of a message you wrote: words, or a link to an object, file, loop or trigger in this workspace. */
+export type OwnSegment =
+	| { kind: 'text'; text: string }
+	| { kind: 'object' | 'file' | 'loop' | 'trigger'; id: string }
 
 /**
- * Your own message as an ordered run of words and links to this workspace's objects and files,
+ * Your own message as an ordered run of words and links to this workspace's objects, files, loops and triggers,
  * so each link can be drawn inline as a chip with the thing's name instead of a long address.
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
@@ -123,10 +132,7 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		}
 		const at = m.index ?? 0
 		pushText(content.slice(cursor, at))
-		segments.push({
-			kind: match[2].toLowerCase() === 'files' ? 'file' : 'object',
-			id: match[3].toLowerCase(),
-		})
+		segments.push({ kind: OWN_KIND[match[2].toLowerCase()], id: match[3].toLowerCase() })
 		cursor = at + address.length
 	}
 	pushText(content.slice(cursor))
@@ -146,14 +152,20 @@ export interface HastNode {
 const UUID = UUID_SRC
 const OBJECT_HREF = new RegExp(`/objects/(${UUID})(?:[/?#]|$)`, 'i')
 const FILE_HREF = new RegExp(`/files/(${UUID})(?:[/?#]|$)`, 'i')
+const LOOP_HREF = new RegExp(`/loops/(${UUID})(?:[/?#]|$)`, 'i')
+const TRIGGER_HREF = new RegExp(`/triggers/(${UUID})(?:[/?#]|$)`, 'i')
 
-/** The object or file a link's address points at, if it points at one. */
+/** The object, file, loop or trigger a link's address points at, if it points at one. */
 export function targetOfHref(href: unknown): LinkedTarget | null {
 	if (typeof href !== 'string') return null
 	const object = OBJECT_HREF.exec(href)
 	if (object) return { kind: 'object', id: object[1].toLowerCase() }
 	const file = FILE_HREF.exec(href)
 	if (file) return { kind: 'file', id: file[1].toLowerCase() }
+	const loop = LOOP_HREF.exec(href)
+	if (loop) return { kind: 'loop', id: loop[1].toLowerCase() }
+	const trigger = TRIGGER_HREF.exec(href)
+	if (trigger) return { kind: 'trigger', id: trigger[1].toLowerCase() }
 	return null
 }
 
@@ -285,6 +297,9 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
+/** Objects, loops and triggers: what the app looks up for a link, as against a file. */
+const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
+
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */
 export const LINKED_CARDS_TAG = 'linked-cards'
 
@@ -313,14 +328,16 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const trailed = new Set<string>()
 	const trailing: HastNode[] = []
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
+	// Loops and triggers cost no request of their own (they read shared lists), but they count
+	// toward the same caps as objects so there is one rule.
 	const fetchable = new Set(
 		linksIn(tree.children ?? [])
-			.filter((t) => t.kind === 'object')
+			.filter(isLookedUp)
 			.slice(0, MAX_OBJECT_FETCHES)
-			.map((t) => t.id),
+			.map(key),
 	)
 	const available = (t: LinkedTarget) =>
-		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(t.id))
+		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(key(t)))
 	// Whether a link standing alone may be replaced by its card here.
 	const cardable = (t: LinkedTarget, inList: boolean) =>
 		available(t) && (inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
@@ -358,7 +375,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const markCard = (node: HastNode, card: StandaloneCard) => {
 		node.data = { ...node.data, linkedCard: card }
 		drawn.add(key(card.target))
-		if (!card.inList && card.target.kind === 'object') placed.object += 1
+		if (!card.inList && isLookedUp(card.target)) placed.object += 1
 	}
 
 	const paragraph = (children: HastNode[]): HastNode => ({
@@ -471,7 +488,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
-			if (target?.kind === 'object' && fetchable.has(target.id)) {
+			if (target && isLookedUp(target) && fetchable.has(key(target))) {
 				node.data = { ...node.data, linkedChip: true }
 			}
 		}
@@ -508,4 +525,30 @@ export function plainSnippet(content: string | null | undefined): string {
 		.replace(/\s+/g, ' ')
 		.trim()
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
+}
+
+/** The longest a name on an inline chip runs before it is cut with an ellipsis. */
+export const CHIP_MAX_LENGTH = 90
+// A cut that falls on a word keeps the word whole only when it leaves most of the name.
+const CHIP_MIN_WORD_CUT = 60
+
+/**
+ * The part of a title a chip shows: the text before the first space, long dash and space ("David
+ * Harboe — Norlix (CTO)" reads "David Harboe"). A title without that shows whole. Only the chip
+ * uses it; the card, the preview and the accessible name carry the full title.
+ */
+export function shortName(title: string): string {
+	const dash = title.indexOf(' — ')
+	return dash > 0 ? title.slice(0, dash).trimEnd() : title
+}
+
+/**
+ * A name longer than `CHIP_MAX_LENGTH` cut at the last space before that length when the space is
+ * past character 60, else at the length itself, and ended with an ellipsis.
+ */
+export function cutLabel(name: string): string {
+	if (name.length <= CHIP_MAX_LENGTH) return name
+	const head = name.slice(0, CHIP_MAX_LENGTH)
+	const space = head.lastIndexOf(' ')
+	return `${head.slice(0, space > CHIP_MIN_WORD_CUT ? space : CHIP_MAX_LENGTH).trimEnd()}…`
 }

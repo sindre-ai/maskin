@@ -113,7 +113,6 @@ import {
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
-import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
 	customGatewayServerSpec,
@@ -131,11 +130,7 @@ import {
 	buildExtensionMcpServers,
 	createExtensionMcpKeyReader,
 } from '../lib/integrations/extensions-db'
-import {
-	byoApiKeyEnvName,
-	byoLoginEnvNames,
-	redactLaunchEnv,
-} from '../lib/integrations/keychain-env'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -3005,9 +3000,11 @@ ${cont.continues_prompt}
 				const gated = isGatedRow(integration.config)
 				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
 				if (missing.length > 0) {
+					// A login is never put in the container, so asking for access cannot fix it.
+					const usesLogin = missing.some((v) => index.get(v)?.kind === 'login')
 					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
 					unattached.push(
-						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}${usesLogin ? ' (a saved login can only be typed on your computer, not given to a tool server that runs here)' : ''}`,
 					)
 					continue
 				}
@@ -3406,8 +3403,10 @@ ${cont.continues_prompt}
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, that an agent grant names
-	 * for the session's actor. The grant filter runs in SQL so a key
+	 * keys, active or still inside their undo window, that an agent grant names for the
+	 * session's actor. A saved LOGIN is never injected, so its password never reaches the
+	 * session: the agent types it with desktop_type and a {{keychain:Name.password}}
+	 * reference that Maskin fills in (lib/integrations/keychain-typing.ts). The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3415,8 +3414,7 @@ ${cont.continues_prompt}
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
-	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
@@ -3449,7 +3447,7 @@ ${cont.continues_prompt}
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+					eq(integrations.providerMode, 'byo_apikey'),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3465,13 +3463,7 @@ ${cont.continues_prompt}
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const isLogin = row.providerMode === 'byo_login'
-			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
-			const name = isLogin
-				? (loginNames?.username ?? null)
-				: row.displayName
-					? byoApiKeyEnvName(row.displayName)
-					: null
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3494,20 +3486,7 @@ ${cont.continues_prompt}
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				if (isLogin && loginNames) {
-					const login = decodeLogin(credential.value)
-					if (!login) {
-						logger.error('Keychain login is not a well-formed login; not injected', {
-							sessionId: session.id,
-							integrationId: row.id,
-						})
-						continue
-					}
-					env[loginNames.username] = login.username
-					env[loginNames.password] = login.password
-				} else {
-					env[name] = credential.value
-				}
+				env[name] = credential.value
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.

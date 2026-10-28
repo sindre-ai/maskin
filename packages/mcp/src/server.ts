@@ -5716,6 +5716,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
@@ -7918,7 +7919,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -8009,7 +8010,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -8033,7 +8034,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
 					},
 				],
 			}

@@ -29,6 +29,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: undefined, isLoading: false }),
 }))
 
+const useSessionMock = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSession: (...args: unknown[]) => useSessionMock(...args),
+}))
+
 const markReadMutate = vi.fn()
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: vi.fn(() => ({ mutate: markReadMutate, isPending: false })),
@@ -163,6 +168,48 @@ describe('TimelineTab', () => {
 		expect(within(row).getByText('attached')).toBeInTheDocument()
 		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
 		expect(within(row).queryByText(/deleted object/i)).toBeNull()
+	})
+
+	// Regression: a session endpoint (`produced_by`) is not an object either. It
+	// used to render through a placeholder object whose status was the literal
+	// word "unknown". It must name the agent that ran the session instead.
+	describe('session endpoint on a produced_by edge', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-session',
+				sourceId: 'session-1',
+				sourceType: 'session',
+				sourceTitle: 'Drive the task',
+				targetId: 'obj-1',
+				targetType: 'bet',
+				type: 'produced_by',
+				createdBy: 'actor-2',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+
+		it('names the agent that ran the session, never "unknown"', () => {
+			useSessionMock.mockReturnValue({ data: { id: 'session-1', actorId: 'actor-2' } })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByRole('link', { name: /Agent Smith session/i })).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown/i)).toBeNull()
+		})
+
+		it('falls back to a neutral label when the session or its agent is gone', () => {
+			useSessionMock.mockReturnValue({ data: undefined })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByText('Session')).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown|deleted object/i)).toBeNull()
+		})
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and

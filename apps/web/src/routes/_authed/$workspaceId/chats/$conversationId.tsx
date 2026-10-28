@@ -1,6 +1,7 @@
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
+import { MessageThreadPane } from '@/components/chat/replies/message-thread-pane'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -23,8 +24,8 @@ import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conversation-linked'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
-import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import type { MessageMetadata } from '@/lib/api'
@@ -41,6 +42,8 @@ import { z } from 'zod'
 // typed value across re-serialisation). Anything unparseable is dropped.
 const chatSearchSchema = z.object({
 	msg: z.coerce.number().int().positive().optional(),
+	// `?thread=<root message id>` opens that message's reply thread in the right rail.
+	thread: z.coerce.number().int().positive().optional(),
 })
 
 const SEEN_KEY = (conversationId: string) => `maskin-overview-seen:${conversationId}`
@@ -69,12 +72,12 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/$conversationI
 
 function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
-	const { msg: deepLinkMessageId } = Route.useSearch()
+	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
-	const updateMe = useUpdateConversationMe(workspaceId)
+	useMarkConversationRead(conversationId, workspaceId)
 	const { produced: producedSearch } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const producedRequested = !!producedSearch
 	const sendMessage = useSendMessage(conversationId, workspaceId)
@@ -99,6 +102,14 @@ function ConversationThreadPage() {
 		setFillRequest(null)
 	}, [conversationId])
 	const navigate = useNavigate()
+	// The URL owns the open reply thread (Back and deep links work). Opening pushes; closing
+	// replaces so Back does not reopen a pane that was just closed.
+	const closeReplies = useCallback(() => {
+		if (!openThreadRootId) return
+		navigate({ to: '.', search: (prev) => ({ ...prev, thread: undefined }), replace: true })
+	}, [navigate, openThreadRootId])
+	const closeRepliesRef = useRef(closeReplies)
+	closeRepliesRef.current = closeReplies
 	// Desktop (≥1024) gets the persistent right-rail column when open;
 	// everything smaller (mobile + tablet portrait/landscape at 641-1023) opens
 	// the pane as a bottom Sheet — the "no persistent third column" rail from
@@ -129,6 +140,7 @@ function ConversationThreadPage() {
 	const linkedPanel = useMemo(
 		() => ({
 			openLinked: (target: { kind: 'object' | 'file'; id: string }) => {
+				closeRepliesRef.current()
 				focusNonceRef.current += 1
 				setLinkedFocus({ ...target, nonce: focusNonceRef.current })
 				setOverview({ tab: 'produced', sessionId: null })
@@ -142,11 +154,13 @@ function ConversationThreadPage() {
 	}, [conversationId])
 	const threadsContext = useMemo(
 		() => ({
-			openThread: (sessionId: string) => setOverview({ tab: 'threads', sessionId }),
+			openThread: (sessionId: string) => {
+				closeRepliesRef.current()
+				setOverview({ tab: 'threads', sessionId })
+			},
 		}),
 		[],
 	)
-	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
 	// Chat-level aggregate — one events fetch per chat time-window, shared
@@ -160,8 +174,16 @@ function ConversationThreadPage() {
 	} = useConversationProduced(workspaceId, conversationId)
 
 	const toggleOverview = useCallback(() => {
+		closeRepliesRef.current()
 		setOverview((prev) => (prev ? null : { tab: 'threads', sessionId: null }))
 	}, [])
+	const openReplies = useCallback(
+		(rootId: number) => {
+			setOverview(null)
+			navigate({ to: '.', search: (prev) => ({ ...prev, thread: rootId }) })
+		},
+		[navigate],
+	)
 
 	// Pulse the Overview dot when threads or produced items changed since the
 	// pane was last open. "Seen" is remembered per chat so a reload doesn't
@@ -186,20 +208,6 @@ function ConversationThreadPage() {
 		!overview &&
 		(threads.length > 0 || totalCount > 0 || linkedCount > 0) &&
 		overviewSignature !== seenSignature
-
-	// Mark the newest message read once it's loaded — mirrors the "open = read"
-	// convention used elsewhere (subscriptions markRead on open).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: updateMe is a stable mutation handle; including it would rerun this on every render without changing behavior
-	useEffect(() => {
-		if (!conversation) return
-		const messages = flattenMessagesOldestFirst(messagesData)
-		const newest = messages[messages.length - 1]
-		if (!newest || newest.id <= 0) return
-		if (newest.id === conversation.last_read_message_id) return
-		if (lastMarkedRef.current === newest.id) return
-		lastMarkedRef.current = newest.id
-		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
-	}, [conversation, messagesData, conversationId])
 
 	// P toggles the Overview pane. Skipped when the user is typing in an
 	// editable element (input/textarea/contentEditable) so composer keystrokes
@@ -287,6 +295,34 @@ function ConversationThreadPage() {
 		/>
 	) : null
 
+	// One right slot at a time: an open reply thread takes it over from the Overview.
+	const rail = openThreadRootId
+		? {
+				label: 'Thread pane',
+				title: 'Thread',
+				description: 'The replies under one message.',
+				node: (
+					<MessageThreadPane
+						key={openThreadRootId}
+						workspaceId={workspaceId}
+						conversationId={conversationId}
+						rootId={openThreadRootId}
+						onClose={closeReplies}
+					/>
+				),
+				onClose: closeReplies,
+			}
+		: overview
+			? {
+					label: 'Overview pane',
+					title: 'Overview',
+					description:
+						'Work this chat handed to other agents, what it produced, and what it links to.',
+					node: overviewNode,
+					onClose: () => setOverview(null),
+				}
+			: null
+
 	return (
 		<LinkedPanelContext.Provider value={linkedPanel}>
 			<ThreadsPaneContext.Provider value={threadsContext}>
@@ -310,6 +346,7 @@ function ConversationThreadPage() {
 							onPickStep={requestComposer}
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
+							onOpenReplies={openReplies}
 						/>
 						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
@@ -333,24 +370,22 @@ function ConversationThreadPage() {
 			    animation via `motion-reduce:animate-none` — the underlying
 			    Tailwind utility zeros the duration to the base ~0ms, matching
 			    the "Reduced motion drops to 0.001ms" requirement. */}
-					{overview && isDesktop ? (
+					{rail && isDesktop ? (
 						<aside
-							aria-label="Overview pane"
+							aria-label={rail.label}
 							className="duration-slide ease-emphasized w-[400px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none xl:w-[440px]"
 						>
-							{overviewNode}
+							{rail.node}
 						</aside>
 					) : null}
-					{overview && !isDesktop ? (
-						<Sheet open onOpenChange={(open) => !open && setOverview(null)}>
+					{rail && !isDesktop ? (
+						<Sheet open onOpenChange={(open) => !open && rail.onClose()}>
 							<SheetContent side="bottom" className="h-[85dvh] rounded-t-lg p-0" hideCloseButton>
 								<SheetHeader className="sr-only">
-									<SheetTitle>Overview</SheetTitle>
-									<SheetDescription>
-										Work this chat handed to other agents, what it produced, and what it links to.
-									</SheetDescription>
+									<SheetTitle>{rail.title}</SheetTitle>
+									<SheetDescription>{rail.description}</SheetDescription>
 								</SheetHeader>
-								{overviewNode}
+								{rail.node}
 							</SheetContent>
 						</Sheet>
 					) : null}
