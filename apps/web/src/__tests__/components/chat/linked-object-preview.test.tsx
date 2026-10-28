@@ -237,9 +237,7 @@ describe('LinkedObjectCard', () => {
 		it('still shows the recipient under the title when contracted', () => {
 			useObject.mockReturnValue({ data: filed() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
-			expect(
-				screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison'),
-			).toBeInTheDocument()
+			expect(screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison')).toBeInTheDocument()
 		})
 	})
 
