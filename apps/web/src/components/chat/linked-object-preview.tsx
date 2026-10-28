@@ -301,10 +301,7 @@ export function LinkedObjectCard({
 									type="button"
 									size="sm"
 									disabled={
-										!canAct ||
-										approve.isPending ||
-										update.isPending ||
-										preview.missing.length > 0
+										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
 									}
 									onClick={approveDraft}
 								>
