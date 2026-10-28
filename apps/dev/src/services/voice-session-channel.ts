@@ -170,6 +170,27 @@ function cap(text: string): string {
 		: text
 }
 
+/** Tools that write something the person decided: a comment or a change on a card. */
+const DECISION_WRITE_TOOLS: ReadonlySet<string> = new Set(['create_comment', 'update_objects'])
+
+/**
+ * True when the call would record an answer on a decision card the call started with. Such a write
+ * is held until the person has said a clear yes to a read-back (voice-write-gate.ts), so a filler
+ * sound can never be recorded as a go or a stop. A comment that itself carries a decision is the
+ * agent asking, not answering, so it is not counted.
+ */
+export function isDecisionCardWrite(
+	state: Pick<VoiceCallState, 'startCards'>,
+	tool: string,
+	args: unknown,
+): boolean {
+	if (!DECISION_WRITE_TOOLS.has(tool)) return false
+	if (tool === 'create_comment' && (args as { decision?: unknown } | null)?.decision != null)
+		return false
+	const card = matchStartCard(state, targetIdsOf(args))
+	return card?.source === 'decision'
+}
+
 function heldMessage(
 	tool: string,
 	review: Exclude<WriteReview, { kind: 'run' }>,
@@ -179,6 +200,12 @@ function heldMessage(
 		return review.reason === 'declined'
 			? `The person said no, so ${tool} was not run. Do not call it again unless they ask for it.`
 			: `${tool} was not run: no yes from the person was heard after you asked. Ask them again, wait for their answer, then repeat the same call.`
+	}
+	if (review.decision) {
+		const preview = review.preview
+			? `\n\n${formatHoldPreviewForModel(review.preview)}\n\n`
+			: '\n\nNo preview could be made for this call.\n\n'
+		return `Not done yet. This would record the person's decision on a card, and a decision is only recorded after they have clearly answered a specific question. Nothing has been written. Mm, mhm, okay, yeah or go on said while listening is not an answer. Do not call it again until you have: (1) asked the person the actual question (for example approve or reject, go or stop), and heard a clear answer; (2) read the decision back in one short sentence ("So that's a go on the Unipile bet, right?") and heard a clear yes after it. If they said no or something else, do not record it. Then call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}".${review.changed ? ' The earlier yes does not count for the changed text.' : ''} A yes only counts if the person says it out loud after your read-back.${preview}`
 	}
 	const target = review.risky
 		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
@@ -203,6 +230,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		previewFor: (tool, args) =>
 			buildHoldPreview({ db, workspaceId: session.workspaceId, tool, args }),
 		onHoldEnded: (end) => noteHoldEnded(end),
+		isDecisionWrite: (tool, args) => isDecisionCardWrite(callState, tool, args),
 	})
 	callState.pendingHold = () => writeGate.pendingHold()
 	let knownConversationId = session.conversationId

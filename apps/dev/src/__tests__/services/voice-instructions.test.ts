@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CALL_CONDUCT,
+	VOICE_DECISION_RULE,
 	VOICE_DRAFT_RULE,
 	VOICE_FOR_YOU_RULE,
 	VOICE_LANGUAGE_RULE,
@@ -127,6 +128,13 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_WRITE_CONFIRMATION).toContain('run at once')
 		expect(VOICE_WRITE_CONFIRMATION).toContain('without asking first')
 		expect(VOICE_WRITE_CONFIRMATION).toContain('confirmation_id')
+	})
+
+	it('tells the agent a filler sound is never a decision and to read the decision back', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_DECISION_RULE)
+		expect(VOICE_DECISION_RULE).toContain('"Mm", "mhm"')
+		expect(VOICE_DECISION_RULE).toContain('"go on" meaning keep talking')
+		expect(VOICE_DECISION_RULE).toContain('read the decision back in one short sentence')
 	})
 
 	it('tells the agent to save changed wording and read it back before asking for approval', () => {
