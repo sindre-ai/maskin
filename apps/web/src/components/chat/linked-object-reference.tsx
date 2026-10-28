@@ -200,7 +200,7 @@ function ChipPreview({
 						aria-hidden="true"
 						data-linked-preview=""
 						style={place.alignEnd ? { right: place.shift } : { left: place.shift }}
-						className="absolute top-full z-50 block pt-1 duration-180 ease-standard animate-in fade-in-0 slide-in-from-bottom-0.5"
+						className="absolute top-full z-50 block pt-1 chip-preview-rise"
 					>
 						{card}
 					</span>
