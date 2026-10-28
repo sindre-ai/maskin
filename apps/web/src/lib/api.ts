@@ -6,6 +6,7 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
@@ -1614,6 +1615,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -2530,6 +2550,10 @@ export interface FileDetail extends FileListItem {
 	annotations: FileAnnotation[]
 	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
 	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
