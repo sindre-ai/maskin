@@ -116,7 +116,8 @@ public struct MarkdownLinkCard: View {
 				Image(systemName: info.symbol)
 					.maskinSymbol(MaskinFontSize.t14, weight: .semibold)
 					.accessibilityHidden(true)
-				Text(name).maskinText(.subhead).fontWeight(.semibold).lineLimit(1)
+				// One line; a name too long for it loses its middle, so the number at the end stays.
+				Text(name).maskinText(.subhead).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
 				Image(systemName: "arrow.up.right")
 					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
 					.foregroundStyle(MaskinColor.ink4)
