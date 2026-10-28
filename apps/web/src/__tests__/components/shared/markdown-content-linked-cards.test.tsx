@@ -51,6 +51,8 @@ const LOOP = 'c9389ff0-5ba6-4eae-a49c-4d4c4e84e6c0'
 const TRIGGER = 'd0490aa1-6cb7-4faf-b5ad-5e5d5f95f7d1'
 const loopUrl = (id: string) => `https://maskin.io/${WS}/loops/${id}`
 const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
+const AGENT = 'dc2ee1b4-5659-4038-be88-0a1b298ba373'
+const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
@@ -407,6 +409,37 @@ describe('MarkdownContent linkedCards', () => {
 			renderMessage(`Use \`${loopUrl(LOOP)}\` as the address.`)
 			expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
 			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+	})
+
+	describe('agents', () => {
+		it('draws an agent link alone on its line as a card, whatever the link text says', () => {
+			renderMessage(`[the developer](${agentUrl(AGENT)})`)
+			expect(screen.getByTestId('reference')).toHaveTextContent(AGENT)
+			expect(screen.queryByText('the developer')).not.toBeInTheDocument()
+		})
+
+		it('draws an agent in a sentence as a chip where it stands', () => {
+			renderMessage(`Ask [the developer](${agentUrl(AGENT)}) today.`)
+			expect(screen.getByTestId('chip')).toHaveAttribute('data-id', AGENT)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+
+		it('shares the three-card limit and the never-twice rule with the other kinds', () => {
+			renderMessage(
+				[objectUrl(A), loopUrl(LOOP), agentUrl(AGENT), agentUrl(AGENT)]
+					.map((url) => `[x](${url})`)
+					.join('\n\n'),
+			)
+			expect(screen.getAllByTestId('card')).toHaveLength(1)
+			expect(screen.getAllByTestId('reference')).toHaveLength(2)
+			expect(screen.getAllByTestId('chip')).toHaveLength(1)
+		})
+
+		it('keeps an agent in a list a chip', () => {
+			renderMessage(`- [One](${agentUrl(AGENT)})`)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+			expect(screen.getByTestId('chip')).toBeInTheDocument()
 		})
 	})
 })
