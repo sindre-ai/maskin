@@ -184,36 +184,6 @@
 					"reason"
 				]
 			},
-			"TranscribeResponse": {
-				"type": "object",
-				"properties": {
-					"text": {
-						"type": "string"
-					}
-				},
-				"required": [
-					"text"
-				]
-			},
-			"TranscribeBody": {
-				"type": "object",
-				"properties": {
-					"audio": {
-						"type": "string",
-						"minLength": 1,
-						"maxLength": 10000000,
-						"description": "Base64 of a WAV file (16 kHz mono recommended)."
-					},
-					"language": {
-						"type": "string",
-						"pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$",
-						"description": "Optional language hint, e.g. \"en\" or \"nb-NO\"."
-					}
-				},
-				"required": [
-					"audio"
-				]
-			},
 			"VoiceToolCall": {
 				"type": "object",
 				"properties": {
@@ -307,6 +277,36 @@
 				"required": [
 					"tool_calls",
 					"next_cursor"
+				]
+			},
+			"TranscribeResponse": {
+				"type": "object",
+				"properties": {
+					"text": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"text"
+				]
+			},
+			"TranscribeBody": {
+				"type": "object",
+				"properties": {
+					"audio": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 10000000,
+						"description": "Base64 of a WAV file (16 kHz mono recommended)."
+					},
+					"language": {
+						"type": "string",
+						"pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$",
+						"description": "Optional language hint, e.g. \"en\" or \"nb-NO\"."
+					}
+				},
+				"required": [
+					"audio"
 				]
 			}
 		},
@@ -72408,6 +72408,182 @@
 				}
 			}
 		},
+		"/api/voice-sessions/{id}/tool-calls": {
+			"get": {
+				"tags": [
+					"Voice"
+				],
+				"summary": "List a voice call's tool calls",
+				"description": "What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 200,
+							"default": 50
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "A page of tool calls",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceToolCallList"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad limit or cursor",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such voice session in this workspace, or not visible to the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/transcriptions": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -72667,182 +72843,6 @@
 					},
 					"502": {
 						"description": "The speech provider failed",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					}
-				}
-			}
-		},
-		"/api/voice-sessions/{id}/tool-calls": {
-			"get": {
-				"tags": [
-					"Voice"
-				],
-				"summary": "List a voice call's tool calls",
-				"description": "What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
-				"parameters": [
-					{
-						"schema": {
-							"type": "string",
-							"format": "uuid"
-						},
-						"required": true,
-						"name": "id",
-						"in": "path"
-					},
-					{
-						"schema": {
-							"type": "integer",
-							"minimum": 1,
-							"maximum": 200,
-							"default": 50
-						},
-						"required": false,
-						"name": "limit",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "string",
-							"minLength": 1,
-							"maxLength": 200
-						},
-						"required": false,
-						"name": "cursor",
-						"in": "query"
-					},
-					{
-						"schema": {
-							"type": "string",
-							"format": "uuid"
-						},
-						"required": true,
-						"name": "x-workspace-id",
-						"in": "header"
-					}
-				],
-				"responses": {
-					"200": {
-						"description": "A page of tool calls",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/VoiceToolCallList"
-								}
-							}
-						}
-					},
-					"400": {
-						"description": "Bad limit or cursor",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "No such voice session in this workspace, or not visible to the caller",
 						"content": {
 							"application/json": {
 								"schema": {
