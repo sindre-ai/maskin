@@ -46,8 +46,37 @@ describe('forYouItemToFeedItem', () => {
 		expect(item?.latest_activity_at).toBe('2026-10-18T08:00:00.000Z')
 	})
 
-	it('drops an item that points at no object, since the feed cannot open it', () => {
-		expect(forYouItemToFeedItem(buildForYouItem({ entity_id: null, entity_type: null }))).toBeNull()
+	it('drops an item that has neither an object nor a notification to dismiss', () => {
+		expect(
+			forYouItemToFeedItem(
+				buildForYouItem({ entity_id: null, entity_type: null, notification_id: null }),
+			),
+		).toBeNull()
+	})
+
+	it('keys a card with no object by its notification, which is what dismissing resolves', () => {
+		const item = forYouItemToFeedItem(
+			buildForYouItem({
+				entity_id: null,
+				entity_type: null,
+				notification_id: 'n-9',
+				headline: 'Yesterday: 38 runs, $3.20.',
+				rationale: 'Today: ░░░░░░░░░░ $0.00 of $10.00 so far.',
+			}),
+		)
+		expect(item).toMatchObject({
+			entity_type: 'notification',
+			entity_id: 'n-9',
+			latest_event_id: null,
+			curated: { headline: 'Yesterday: 38 runs, $3.20.' },
+		})
+	})
+
+	it('maps a card tied to an object exactly as before', () => {
+		expect(forYouItemToFeedItem(buildForYouItem())).toMatchObject({
+			entity_type: 'object',
+			entity_id: 'o-1',
+		})
 	})
 
 	it('maps a decision card that has no notification behind it', () => {

@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({
 			markUnread: vi.fn(),
 			unread: vi.fn(),
 		},
+		notifications: { update: vi.fn() },
 	},
 }))
 
@@ -169,6 +170,18 @@ describe('useSubscriptions', () => {
 			})
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.subscriptions.markRead).toHaveBeenCalledWith('ws-1', 'object', 'obj-1', 42)
+			expect(api.notifications.update).not.toHaveBeenCalled()
+		})
+
+		it('dismisses the notification for a card with no object', async () => {
+			vi.mocked(api.notifications.update).mockResolvedValue({} as never)
+
+			const { result } = renderHook(() => useMarkRead('ws-1'), { wrapper: TestWrapper })
+
+			result.current.mutate({ entityType: 'notification', entityId: 'n-1', lastEventId: 1 })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.notifications.update).toHaveBeenCalledWith('n-1', { status: 'dismissed' })
+			expect(api.subscriptions.markRead).not.toHaveBeenCalled()
 		})
 	})
 
@@ -181,6 +194,18 @@ describe('useSubscriptions', () => {
 			result.current.mutate({ entityType: 'object', entityId: 'obj-1' })
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.subscriptions.markUnread).toHaveBeenCalledWith('ws-1', 'object', 'obj-1')
+			expect(api.notifications.update).not.toHaveBeenCalled()
+		})
+
+		it('puts the notification back for a card with no object', async () => {
+			vi.mocked(api.notifications.update).mockResolvedValue({} as never)
+
+			const { result } = renderHook(() => useMarkUnread('ws-1'), { wrapper: TestWrapper })
+
+			result.current.mutate({ entityType: 'notification', entityId: 'n-1' })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.notifications.update).toHaveBeenCalledWith('n-1', { status: 'pending' })
+			expect(api.subscriptions.markUnread).not.toHaveBeenCalled()
 		})
 	})
 })

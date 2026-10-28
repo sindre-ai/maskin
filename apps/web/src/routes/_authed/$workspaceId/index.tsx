@@ -28,7 +28,13 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
-import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
+import {
+	type FeedBucket,
+	bucketRank,
+	feedItemKey,
+	feedTailLabel,
+	isObjectlessCard,
+} from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -259,7 +265,8 @@ function ForYouFeed() {
 	// neither `decided` nor the unread list and disappears for good.
 	const markItemRead = useCallback(
 		(item: UnreadItem, onFailed?: () => void) => {
-			const eventId = item.latest_event_id ?? 0
+			// A card with no object has no read position; dismissing resolves its notification.
+			const eventId = isObjectlessCard(item) ? 1 : (item.latest_event_id ?? 0)
 			if (eventId <= 0) return false
 			// `mutateAsync`, not `mutate` with an `onError` callback: these hooks
 			// hold ONE mutation observer for the whole feed, and every
