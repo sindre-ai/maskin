@@ -47,6 +47,12 @@ const renderChip = (
 		</span>
 	)
 
+const renderGithubChip = (target: { type: string; repo: string; number: number }, href: string) => (
+	<a data-testid="github-chip" href={href}>
+		{`${target.type}:${target.repo}#${target.number}`}
+	</a>
+)
+
 const WS = 'ws-1'
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const B = 'b8278eef-4a95-43df-911e-3cb3473a55fb'
@@ -80,6 +86,74 @@ function renderMessage(
 		{ wrapper: TestWrapper },
 	)
 }
+
+describe('MarkdownContent linkedCards, GitHub links', () => {
+	const PR = 'https://github.com/sindre-ai/maskin/pull/2637'
+	const ISSUE = 'https://github.com/sindre-ai/maskin/issues/12'
+	const draw = (content: string) =>
+		render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{ workspaceId: WS, renderCard, renderChip, renderGithubChip }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+	it('draws a pull request and an issue in a sentence as chips, whatever the link text', () => {
+		draw(`See [the fix](${PR}) and ${ISSUE} for context.`)
+		const chips = screen.getAllByTestId('github-chip')
+		expect(chips.map((c) => c.textContent)).toEqual(['pull:maskin#2637', 'issue:maskin#12'])
+		expect(chips[0]).toHaveAttribute('href', PR)
+		expect(screen.queryByText('the fix')).not.toBeInTheDocument()
+	})
+
+	it('keeps a link alone on a line a chip in the text flow, not a card', () => {
+		draw(`Here you go.\n\n[Review this](${PR})`)
+		expect(screen.getByTestId('github-chip')).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.getByTestId('github-chip').closest('p')).not.toBeNull()
+	})
+
+	it('does not count toward the three-card cap', () => {
+		qualifying = new Set()
+		draw(
+			[
+				`[a](${PR})`,
+				'[b](https://github.com/a/b/pull/2)',
+				'[c](https://github.com/a/b/pull/3)',
+				'[d](https://github.com/a/b/pull/4)',
+				`[o](${objectUrl(A)})`,
+			].join('\n\n'),
+		)
+		expect(screen.getAllByTestId('github-chip')).toHaveLength(4)
+		expect(screen.getByTestId('reference')).toHaveTextContent(A)
+	})
+
+	it('leaves a sub-path, another github.com address and another site as plain links', () => {
+		draw(
+			[
+				`[files](${PR}/files)`,
+				'[repo](https://github.com/sindre-ai/maskin)',
+				'[lookalike](https://github.com.evil.com/a/b/pull/1)',
+				'[elsewhere](https://example.com/a/b/pull/1)',
+			].join('\n\n'),
+		)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+		for (const text of ['files', 'repo', 'lookalike', 'elsewhere']) {
+			expect(screen.getByRole('link', { name: text })).toBeInTheDocument()
+		}
+	})
+
+	it('stays a plain link when nothing draws GitHub chips, and without the prop', () => {
+		renderMessage(`See [the fix](${PR}).`)
+		expect(screen.getByRole('link', { name: 'the fix' })).toHaveAttribute('href', PR)
+		renderMessage(`See [the other fix](${PR}).`, false)
+		expect(screen.getByRole('link', { name: 'the other fix' })).toHaveAttribute('href', PR)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+	})
+})
 
 describe('MarkdownContent linkedCards', () => {
 	beforeEach(() => {

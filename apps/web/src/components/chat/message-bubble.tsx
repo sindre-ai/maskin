@@ -1,4 +1,8 @@
-import { renderLinkedCard, renderLinkedChip } from '@/components/chat/linked-object-preview'
+import {
+	renderLinkedCard,
+	renderLinkedChip,
+	renderLinkedGithubChip,
+} from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -15,9 +19,25 @@ import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { splitOwnLinks } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	githubChipName,
+	githubChipText,
+	splitOwnLinks,
+} from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Bell, Box, Copy, Link2, MessageSquareReply, Pencil, RotateCcw } from 'lucide-react'
+import {
+	ArrowUpRight,
+	Bell,
+	Box,
+	CircleDot,
+	Copy,
+	GitPullRequest,
+	Link2,
+	MessageSquareReply,
+	Pencil,
+	RotateCcw,
+} from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
@@ -381,6 +401,7 @@ export function MessageBubble({
 								updatedIds: updatedLinkedObjectIds,
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
+								renderGithubChip: renderLinkedGithubChip,
 							}}
 						/>
 					</div>
@@ -592,12 +613,34 @@ function OwnLinkChip({
 		| { kind: 'trigger'; id: string }
 		| { kind: 'agent'; id: string }
 		| { kind: 'object' | 'file'; id: string }
+		| { kind: 'github'; href: string; target: GithubTarget }
 }) {
+	if (segment.kind === 'github') {
+		return <OwnGithubChip href={segment.href} target={segment.target} />
+	}
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
+}
+
+/** A GitHub pull request or issue in your own message: icon, "{repo} #{n}" and an arrow, opening GitHub in a new tab. Nothing is fetched. */
+function OwnGithubChip({ href, target }: { href: string; target: GithubTarget }) {
+	const Icon = target.type === 'pull' ? GitPullRequest : CircleDot
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={githubChipName(target)}
+			className={OWN_CHIP_CLASS}
+		>
+			<Icon size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{githubChipText(target)}</span>
+			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
+		</a>
+	)
 }
 
 function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {

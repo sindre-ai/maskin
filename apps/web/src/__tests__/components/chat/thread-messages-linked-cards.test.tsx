@@ -29,6 +29,7 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 		context: { updated?: boolean },
 	): ReactNode => <p>{`${context.updated ? 'Updated card' : 'Card'} for ${target.id}`}</p>,
 	renderLinkedChip: (_target: unknown, fallback: ReactNode): ReactNode => fallback,
+	renderLinkedGithubChip: (): ReactNode => null,
 }))
 
 import { ThreadMessages } from '@/components/chat/thread-messages'

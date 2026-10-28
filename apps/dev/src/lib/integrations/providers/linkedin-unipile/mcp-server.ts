@@ -1,9 +1,5 @@
 import type { Database } from '@maskin/db'
-import {
-	deletePostInputShape,
-	editPostInputShape,
-	linkedinAttachmentsArraySchema,
-} from '@maskin/mcp'
+import { deletePostInputShape, editPostInputShape } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
@@ -131,6 +127,10 @@ function jsonResult(payload: unknown) {
 	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
 }
 
+/** What a caller gets for passing the removed raw `attachments` to publish_post. */
+const PUBLISH_ATTACHMENTS_REFUSED_MESSAGE =
+	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG files, which the server reads. Nothing was posted.'
+
 const sendObjectIdSchema = z
 	.string()
 	.uuid()
@@ -253,32 +253,44 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription('Publish a LinkedIn post', cfg),
-				inputSchema: {
-					text: z
-						.string()
-						.min(1)
-						.max(3000)
-						.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
-					attachments: linkedinAttachmentsArraySchema
-						.optional()
-						.describe(
-							'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
-						),
-					can_read: z
-						.string()
-						.optional()
-						.describe('Post visibility, e.g. "connections", "public".'),
-					can_comment: z
-						.string()
-						.optional()
-						.describe('Who can comment, e.g. "connections", "anyone", "none".'),
-					quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
-				},
+				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
+				// is refused by name, instead of the field being dropped and the post going out text-only.
+				inputSchema: z
+					.object({
+						text: z
+							.string()
+							.min(1)
+							.max(3000)
+							.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
+						attachment_file_ids: z
+							.array(z.string().uuid())
+							.max(9)
+							.optional()
+							.describe(
+								'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
+							),
+						can_read: z
+							.string()
+							.optional()
+							.describe('Post visibility, e.g. "connections", "public".'),
+						can_comment: z
+							.string()
+							.optional()
+							.describe('Who can comment, e.g. "connections", "anyone", "none".'),
+						quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
+					})
+					.passthrough(),
 			},
 			async (args) => {
 				try {
 					return jsonResult(
 						await logged('publish_post', 'write', undefined, async (rec) => {
+							if ((args as { attachments?: unknown }).attachments !== undefined) {
+								throw new LinkedInIntegrationError(
+									'INVALID_INPUT',
+									PUBLISH_ATTACHMENTS_REFUSED_MESSAGE,
+								)
+							}
 							const result = await publishLinkedInPost(opCtx, args)
 							return learned(rec, result, { refId: result.post_id })
 						}),

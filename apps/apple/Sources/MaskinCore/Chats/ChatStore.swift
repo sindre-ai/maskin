@@ -85,6 +85,11 @@ public final class ChatStore {
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
 	/// one-line status. Set by the screen that builds the store.
 	@ObservationIgnored public var trace: ActivityStore?
+	/// Session reads whose finished-turn history is still on its way to `trace`. Each turn that has
+	/// steps adds a one-line row to the thread, so the thread waits for this (briefly) before it shows
+	/// itself, instead of letting those rows appear under the reader.
+	public var isLoadingTrace: Bool { traceLoads > 0 }
+	@ObservationIgnored private var traceLoads = 0
 	/// Told after every successful session refresh (feeds the Live Activity).
 	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
 	/// The flow this conversation belongs to, when the opener knows it (the API does not link a
@@ -812,13 +817,20 @@ public final class ChatStore {
 	}
 
 	public func refreshSessions() async {
-		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
+		traceLoads += 1
+		guard let sessions = try? await api.sessions(conversationID: conversationID) else {
+			traceLoads -= 1
+			return
+		}
 		let sorted = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
 		if sorted != agentSessions { agentSessions = sorted }
 		// Not awaited: fetching a finished turn's history must never delay the thread itself.
-		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
+		Task { [weak self, trace, sessions = agentSessions] in
+			await trace?.update(sessions: sessions)
+			self?.traceLoads -= 1
+		}
 		onSessionsRefreshed?(agentSessions)
 	}
 

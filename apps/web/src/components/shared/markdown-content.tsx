@@ -4,10 +4,12 @@ import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
+	type GithubTarget,
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
 	type StandaloneCard,
+	githubTargetOf,
 	placeLinkedCards,
 	targetOfHref,
 } from '@/lib/linked-objects'
@@ -188,6 +190,11 @@ export interface LinkedCardsOptions {
 			cardFollows?: boolean
 		},
 	) => ReactNode
+	/**
+	 * Draws a link to a GitHub pull request or issue as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderGithubChip?: (target: GithubTarget, href: string) => ReactNode
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
@@ -258,6 +265,7 @@ function RenderedMarkdownContent({
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
 	const chipRenderer = linkedCardsOption?.renderChip
+	const githubChipRenderer = linkedCardsOption?.renderGithubChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
 	// By value, like the rest: a fresh set with the same ids must not remount the cards.
 	const cardsUpdatedKey = linkedCardsOption?.updatedIds
@@ -273,6 +281,7 @@ function RenderedMarkdownContent({
 						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
+						renderGithubChip: githubChipRenderer,
 					}
 				: undefined,
 		[
@@ -282,6 +291,7 @@ function RenderedMarkdownContent({
 			cardsRenderer,
 			chipRenderer,
 			cardsUpdatedKey,
+			githubChipRenderer,
 		],
 	)
 	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
@@ -312,6 +322,10 @@ function RenderedMarkdownContent({
 					children,
 					...rest
 				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					const github = githubTargetOf(href)
+					if (github && linkedCards.renderGithubChip && href) {
+						return linkedCards.renderGithubChip(github, href)
+					}
 					// Same as the renderer's own link: an address on the web opens in a new tab.
 					const external = typeof href === 'string' && /^https?:\/\//.test(href)
 					const link = (
