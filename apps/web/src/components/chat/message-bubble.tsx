@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
@@ -615,12 +616,12 @@ function OwnLinkChip({
 }: {
 	workspaceId: string
 	segment:
+		| { kind: 'loop'; id: string; otherWorkspaceId?: string }
+		| { kind: 'trigger'; id: string; otherWorkspaceId?: string }
+		| { kind: 'agent'; id: string; otherWorkspaceId?: string }
+		| { kind: 'chat'; id: string; otherWorkspaceId?: string }
+		| { kind: 'object' | 'file'; id: string; otherWorkspaceId?: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
-		| {
-				kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
-				id: string
-				otherWorkspaceId?: string
-		  }
 }) {
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
@@ -638,6 +639,7 @@ function OwnLinkChip({
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'chat') return <OwnChatChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
 }
 
@@ -664,7 +666,7 @@ function OwnOtherWorkspaceChip({
 	otherWorkspaceId,
 	id,
 }: {
-	kind: 'object' | 'loop' | 'trigger' | 'agent'
+	kind: 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
 	otherWorkspaceId: string
 	id: string
 }) {
@@ -744,6 +746,24 @@ function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) 
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
+		</Link>
+	)
+}
+
+function OwnChatChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const chat = useLinkedChat(workspaceId, id)
+	const name = chat?.title.trim()
+	return (
+		<Link
+			to="/$workspaceId/chats/$conversationId"
+			params={{ workspaceId, conversationId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Chat'}</span>
 		</Link>
 	)
 }

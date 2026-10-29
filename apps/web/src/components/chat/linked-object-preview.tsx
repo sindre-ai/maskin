@@ -1,6 +1,8 @@
 import {
 	AgentReferenceCard,
 	AgentReferenceChip,
+	ChatReferenceCard,
+	ChatReferenceChip,
 	GithubReferenceChip,
 	LoopReferenceCard,
 	LoopReferenceChip,
@@ -378,7 +380,7 @@ export function LinkedObjectCard({
  * the reference card (what it is, where it stands, who has it), except in a list, where only a
  * draft is a card. A file is a card once it is known to be previewable. Otherwise `fallback` (the
  * original link or paragraph; nothing for a card that is only ever added) stays, so a link never
- * vanishes. A loop or a trigger is never a draft: it is a reference card on its own line, a chip
+ * vanishes. A loop, a trigger or a chat is never a draft: it is a reference card on its own line, a chip
  * (the fallback) in a list, and nothing under a sentence.
  */
 export function LinkedCardOrLink({
@@ -432,15 +434,17 @@ export function LinkedCardOrLink({
 			/>
 		)
 	}
-	if (target.kind === 'loop' || target.kind === 'trigger') {
+	if (target.kind === 'loop' || target.kind === 'trigger' || target.kind === 'chat') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
 		return withLabel(
 			label,
 			target.kind === 'loop' ? (
 				<LoopReferenceCard workspaceId={workspaceId} loopId={target.id} />
-			) : (
+			) : target.kind === 'trigger' ? (
 				<TriggerReferenceCard workspaceId={workspaceId} triggerId={target.id} />
+			) : (
+				<ChatReferenceCard workspaceId={workspaceId} chatId={target.id} />
 			),
 		)
 	}
@@ -516,7 +520,7 @@ export function renderLinkedGithubChip(target: GithubTarget, href: string): Reac
 	return <GithubReferenceChip target={target} href={href} />
 }
 
-/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop or trigger inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
+/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop, trigger, agent or chat inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
 export function renderLinkedChip(
 	target: LinkedTarget,
 	fallback: ReactNode,
@@ -558,6 +562,14 @@ export function renderLinkedChip(
 				<AgentReferenceChip
 					workspaceId={context.workspaceId}
 					agentId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'chat':
+			return (
+				<ChatReferenceChip
+					workspaceId={context.workspaceId}
+					chatId={target.id}
 					fallback={fallback}
 				/>
 			)
