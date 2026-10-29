@@ -182,9 +182,10 @@ describe('GET /api/search against real Postgres', () => {
 		await say(chat.id, otherUserId, 'the quarterly numbers look odd')
 		await say(chat.id, otherUserId, 'please review the budget')
 
-		expect((await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title)).toEqual([
-			'Weekly sync',
-		])
+		// Chats only: the other user is also a member, so the people source finds them too.
+		expect(
+			(await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title),
+		).toEqual(['Weekly sync'])
 		expect((await search({ q: 'budget' })).total).toBe(1)
 		// Only the latest message is searched.
 		expect((await search({ q: 'quarterly' })).total).toBe(0)
