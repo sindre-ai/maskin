@@ -566,6 +566,25 @@ export async function listSandboxNames(deps: MicrosandboxDeps): Promise<string[]
 	return list.map((s) => s.name)
 }
 
+/**
+ * Whether a sandbox is still there and running, for explaining a failed relay.
+ * Never throws: `unknown` means msb could not be asked.
+ */
+export async function sandboxState(
+	name: string,
+	deps: MicrosandboxDeps,
+): Promise<'running' | 'stopped' | 'missing' | 'unknown'> {
+	try {
+		const run = deps.run ?? defaultRunner()
+		const { stdout } = await run(deps.msbBin, ['list', '--format', 'json'], { timeoutMs: 10_000 })
+		const entry = (JSON.parse(stdout) as MsbStatusRow[]).find((s) => s.name === name)
+		if (!entry) return 'missing'
+		return entry.status?.toLowerCase() === 'running' ? 'running' : 'stopped'
+	} catch {
+		return 'unknown'
+	}
+}
+
 export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner }): Promise<
 	string | null
 > {
@@ -736,7 +755,7 @@ function safeKill(proc: ChildProcess): void {
 	}
 }
 
-const RELAY_STDERR_TAIL_CHARS = 300
+const RELAY_STDERR_TAIL_CHARS = 160
 
 // Keeps the tail of a relay child's stderr and how it ended, so a failed tunnel
 // can say why instead of only that it never came up. The pipe is drained here:
@@ -754,7 +773,11 @@ function captureStderr(proc: ChildProcess): {
 		exit: (message) => {
 			ended = message
 		},
-		describe: (fallback) => [ended || fallback, tail.trim()].filter(Boolean).join(': '),
+		// Host paths (key file, msb home) are not for the agent to see.
+		describe: (fallback) =>
+			[ended || fallback, tail.trim().replace(/(?:\/[\w.@-]+){2,}/g, '<path>')]
+				.filter(Boolean)
+				.join(': '),
 	}
 }
 

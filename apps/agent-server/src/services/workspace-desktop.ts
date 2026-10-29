@@ -20,6 +20,7 @@ import {
 	findFreeHostPort,
 	releaseHostPort,
 	reserveHostPort,
+	sandboxState,
 	startSshRelay,
 	waitForRunning,
 } from './microsandbox'
@@ -829,6 +830,7 @@ export class WorkspaceDesktopRegistry {
 				this.deps.msb,
 			)
 			if (!started.ok) {
+				const sandbox = await sandboxState(sessionId, this.deps.msb)
 				logger.error('workspace desktop: tunnel could not be opened', {
 					workspaceId,
 					agentId,
@@ -837,11 +839,12 @@ export class WorkspaceDesktopRegistry {
 					relayPort,
 					step: started.step,
 					detail: started.detail,
+					sandbox,
 				})
 				return {
 					ok: false as const,
 					reason: 'relay_failed' as const,
-					message: `The tunnel could not be opened. ${started.detail}`,
+					message: `The tunnel could not be opened. ${started.detail} Session sandbox: ${sandbox}.`,
 				}
 			}
 			const { relay } = started

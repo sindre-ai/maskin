@@ -266,12 +266,16 @@ describe('WorkspaceDesktopRegistry port exposure', () => {
 	})
 
 	it('says why the tunnel failed, with what ssh reported', async () => {
-		const { msb, spawned } = makeMsb()
+		const { msb, spawned, sandboxes } = makeMsb()
+		sandboxes.add(SESSION)
 		msb.tcpPollReady = async (_host, port) => {
 			// the first poll is msb ssh serve and passes; the second is the ssh tunnel
 			if (port !== PORT_START) return
 			const tunnel = spawned.find((p) => p.bin !== '/fake/msb')
-			tunnel?.stderr.emit('data', Buffer.from('root@127.0.0.1: Permission denied (publickey).\n'))
+			tunnel?.stderr.emit(
+				'data',
+				Buffer.from('Load key "/home/msb/.ssh/relay_key": Permission denied (publickey).\n'),
+			)
 			throw new Error('never ready')
 		}
 		const registry = makeRegistry(msb)
@@ -283,6 +287,23 @@ describe('WorkspaceDesktopRegistry port exposure', () => {
 		if (result.ok) throw new Error('expected a failure')
 		expect(result.message).toContain('ssh could not forward port 5173')
 		expect(result.message).toContain('Permission denied (publickey)')
+		// host paths stay out of what the agent sees
+		expect(result.message).not.toContain('/home/msb')
+		expect(result.message).toContain('Session sandbox: running.')
+	})
+
+	it('says when the session sandbox is already gone', async () => {
+		const { msb } = makeMsb()
+		msb.tcpPollReady = async () => {
+			throw new Error('never ready')
+		}
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS, AGENT_A)
+
+		const result = await registry.exposePort(WS, AGENT_A, SESSION, 5173)
+
+		if (result.ok) throw new Error('expected a failure')
+		expect(result.message).toContain('Session sandbox: missing.')
 	})
 
 	it('refuses when the agent has no computer', async () => {
