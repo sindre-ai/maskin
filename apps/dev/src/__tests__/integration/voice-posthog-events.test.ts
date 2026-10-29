@@ -167,12 +167,17 @@ async function newCall(
 	return { contactId: contact.id, send, body, tool, sendLegB }
 }
 
+// The audited Resend read fires keychain_credential_accessed through the same
+// spy. It is not one of the five voice events, so the lists below leave it out.
+const AUDIT_EVENT = 'keychain_credential_accessed'
 const captured = () =>
-	capture.mock.calls.map(([event, distinctId, props]) => ({
-		event,
-		distinctId,
-		props,
-	}))
+	capture.mock.calls
+		.filter(([event]) => event !== AUDIT_EVENT)
+		.map(([event, distinctId, props]) => ({
+			event,
+			distinctId,
+			props,
+		}))
 const names = () => captured().map((c) => c.event)
 
 describe('voice PostHog events: the spec walk', () => {
@@ -450,7 +455,10 @@ describe('voice PostHog events: negative cases', () => {
 describe('voice PostHog events: capture failure never reaches the webhook', () => {
 	it('a throwing capture still answers 200 and logs; state, hooks and the email carry on', async () => {
 		const warn = vi.spyOn(logger, 'warn')
-		capture.mockImplementation(() => {
+		// Only the voice events throw. The real capture never throws, and the
+		// audited credential read (AUDIT_EVENT) is outside what this test covers.
+		capture.mockImplementation((event) => {
+			if (event === AUDIT_EVENT) return Promise.resolve()
 			throw new Error('posthog exploded')
 		})
 		const c = await newCall()
