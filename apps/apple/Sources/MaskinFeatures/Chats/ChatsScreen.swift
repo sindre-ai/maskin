@@ -56,6 +56,8 @@ private struct ChatsContainer: View {
 	@State private var showThreads = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+	@Environment(\.verticalSizeClass) private var verticalSizeClass
 	@Binding var requestedConversationId: String?
 
 	private struct NewChatRequest: Identifiable {
@@ -88,7 +90,10 @@ private struct ChatsContainer: View {
 				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
 				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
 				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } },
-				onThreads: { showThreads = true }
+				onThreads: { showThreads = true },
+				pillPlacement: TeamPillPlacement.resolve(
+					compactWidth: horizontalSizeClass == .compact, regularHeight: verticalSizeClass == .regular),
+				pill: runtime?.teamPill
 			)
 			.shellToolbar(
 				environment: environment, title: "Team",
@@ -139,7 +144,11 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
-		.onDisappear { store.stop() }
+		.onAppear { runtime?.teamPill.attach(store: store, onThreads: { showThreads = true }) }
+		.onDisappear {
+			store.stop()
+			runtime?.teamPill.detach(store)
+		}
 		.sheet(isPresented: $showThreads) {
 			ThreadsSheet(environment: environment, conversations: store)
 		}
