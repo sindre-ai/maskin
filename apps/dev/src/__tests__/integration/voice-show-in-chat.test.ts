@@ -98,6 +98,33 @@ describe('show_in_chat against real Postgres', () => {
 		).toHaveLength(0)
 	})
 
+	it('opens the card from a shortened or dash-less id, and never from another workspace', async () => {
+		const { session, ws, humanId } = await seedCall()
+		const object = await insertObject(db, ws.id, humanId, { title: 'Reply to Jonas' })
+		const other = await seedCall('ended')
+		const foreign = await insertObject(db, other.ws.id, other.humanId)
+
+		const short = await showInChat({
+			db,
+			session,
+			agentName: 'A',
+			args: { object_ids: [object.id.slice(0, 8)] },
+		})
+		expect(short.objectIds).toEqual([object.id])
+		const flat = await showInChat({
+			db,
+			session,
+			agentName: 'A',
+			args: { object_ids: [object.id.replace(/-/g, '')] },
+		})
+		expect(flat.objectIds).toEqual([object.id])
+
+		// A prefix of an object that lives elsewhere does not resolve here.
+		await expect(
+			showInChat({ db, session, agentName: 'A', args: { object_ids: [foreign.id.slice(0, 8)] } }),
+		).rejects.toBeInstanceOf(VoiceShowInChatError)
+	})
+
 	it('refuses a list over the cap', async () => {
 		const { session } = await seedCall()
 		const links = Array.from({ length: 6 }, (_, i) => ({ url: `https://example.com/${i}` }))

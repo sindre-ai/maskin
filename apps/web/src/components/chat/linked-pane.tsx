@@ -1,10 +1,10 @@
 import { LinkedObjectCard } from '@/components/chat/linked-object-preview'
+import { ObjectReferenceCard } from '@/components/chat/linked-object-reference'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { ProducedFilesGroup, ProducedObjectsGroup } from '@/components/objects/produced-pane'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilePreview } from '@/components/shared/file-preview'
 import { Skeleton } from '@/components/shared/loading-skeleton'
-import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import type { LinkedItem } from '@/hooks/use-conversation-linked'
 import type { ProducedFileItem, ProducedObjectItem } from '@/hooks/use-conversation-produced'
 import { useObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
-import { hasPreviewCard } from '@/lib/linked-objects'
+import { showsObjectCard } from '@/lib/linked-objects'
 import { useEffect, useRef, useState } from 'react'
 
 export interface LinkedFocus {
@@ -81,7 +81,8 @@ function LinkedObjectBody({
 	const { data: object, isLoading } = useObject(item.id)
 	if (isLoading) return <Skeleton className="h-14 w-full rounded-md" />
 	if (!object || object.workspaceId !== workspaceId) return null
-	if (hasPreviewCard(object) && object.content?.trim()) {
+	// The same gate as the transcript: a draft is the approval card, any other object the reference card.
+	if (showsObjectCard(object, workspaceId)) {
 		return (
 			<LinkedObjectCard
 				workspaceId={workspaceId}
@@ -93,16 +94,7 @@ function LinkedObjectBody({
 			/>
 		)
 	}
-	return (
-		<div className="rounded-md border border-border bg-surface-sunken transition-colors hover:bg-background hover:shadow-xs">
-			<ObjectReference
-				objectId={item.id}
-				workspaceId={workspaceId}
-				object={object}
-				variant="block"
-			/>
-		</div>
-	)
+	return <ObjectReferenceCard workspaceId={workspaceId} objectId={item.id} />
 }
 
 function LinkedItemRow({
@@ -172,8 +164,9 @@ function LinkedItemRow({
 /**
  * The Items tab of the chat's Overview drawer: every object and file the conversation's
  * messages link to, newest first, where drafts can be approved and files read, followed by
- * what the chat's sessions produced that no message links to. A contact or company stays a
- * compact row. The transcript keeps its cards; this is the place to work.
+ * what the chat's sessions produced that no message links to. Each item is drawn as the transcript
+ * draws it: a draft as its approval card, any other object as the reference card. The transcript
+ * keeps its cards; this is the place to work.
  */
 export function LinkedPane({
 	workspaceId,

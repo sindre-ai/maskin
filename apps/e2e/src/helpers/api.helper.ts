@@ -131,6 +131,9 @@ interface MessageResponse {
 	metadata: Record<string, unknown> | null
 	sessionId: string | null
 	createdAt: string | null
+	threadRootId?: number | null
+	threadAlsoInChannel?: boolean
+	thread?: { replyCount: number; unreadCount: number } | null
 }
 
 interface SessionResponse {
@@ -566,7 +569,12 @@ export class TestAPI {
 	async postConversationMessage(
 		id: string,
 		workspaceId: string,
-		data: { content: string; metadata?: Record<string, unknown> },
+		data: {
+			content: string
+			metadata?: Record<string, unknown>
+			thread_root_id?: number
+			also_in_channel?: boolean
+		},
 	): Promise<MessageResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
 			method: 'POST',
@@ -574,6 +582,18 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Newest-first page of a conversation's messages, replies included (as the web client receives them). */
+	async listConversationMessages(
+		id: string,
+		workspaceId: string,
+	): Promise<{ messages: MessageResponse[]; has_more: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listConversationMessages failed: ${res.status}`)
 		return res.json()
 	}
 

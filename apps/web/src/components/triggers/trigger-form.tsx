@@ -22,7 +22,6 @@ import { useAutoSave } from '@/hooks/use-auto-save'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
@@ -542,7 +541,6 @@ export function TriggerForm({
 	// the error copy renders only in the edit path when a saved trigger's
 	// action = 'commented' and the flag is off, since the author already
 	// committed to the shape and needs to know the trigger is unshipped.
-	const triggerEngineV2Enabled = useFeatureFlag('trigger_engine_v2')
 
 	// Workspace settings
 	const settings = workspace.settings as Record<string, unknown>
@@ -604,8 +602,7 @@ export function TriggerForm({
 
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	// Comment-action gating: available only for internal object types (matches
-	// the internalEntityTypes registry — comments live on `objects`) AND only
-	// when the trigger-engine v2 flag is on for this actor. Non-internal event
+	// the internalEntityTypes registry — comments live on `objects`). Non-internal event
 	// types (Slack, GitHub, integration providers) never expose `commented`.
 	// The pinned 'object' subject (action = commented) is not a module type, so
 	// it has no event definition — list the default object actions for it.
@@ -613,15 +610,11 @@ export function TriggerForm({
 	const rawActions = isPinnedObject ? [...DEFAULT_OBJECT_ACTIONS] : (currentEventDef?.actions ?? [])
 	const availableActions = rawActions.filter((a) => {
 		if (a !== 'commented') return true
-		if (!triggerEngineV2Enabled) return false
 		return isPinnedObject || internalEntityTypes.has(entityType)
 	})
 	const isInternal = internalEntityTypes.has(entityType)
 	const isSlack = isSlackEntityType(entityType)
 	const isCommentedAction = action === 'commented'
-	// Saved trigger uses `commented` but this actor's flag is off — surface the
-	// spec's flag-off error copy so the author knows what to do next.
-	const showCommentedFlagOffError = isCommentedAction && !triggerEngineV2Enabled
 	const slackIntegrationId = useMemo(
 		() => (integrations ?? []).find((i) => i.provider === 'slack' && i.status === 'active')?.id,
 		[integrations],
@@ -1094,13 +1087,7 @@ export function TriggerForm({
 							</FieldColumn>
 							<FieldColumn label="Changes to" htmlFor="trigger-action">
 								<Select value={action} onValueChange={handleActionChange}>
-									<SelectTrigger
-										id="trigger-action"
-										className={cn(
-											'min-h-11 w-full sm:min-h-9',
-											showCommentedFlagOffError && 'border-error bg-error/[.06]',
-										)}
-									>
+									<SelectTrigger id="trigger-action" className="min-h-11 w-full sm:min-h-9">
 										<SelectValue placeholder="Select an action" />
 									</SelectTrigger>
 									<SelectContent>
@@ -1123,7 +1110,7 @@ export function TriggerForm({
 								</Select>
 							</FieldColumn>
 						</div>
-						{isCommentedAction && !showCommentedFlagOffError && (
+						{isCommentedAction && (
 							<div
 								role="note"
 								className="mt-2.5 rounded-xl border border-ask-border bg-ask-surface px-3.5 py-3 text-[12.5px] leading-relaxed text-foreground"
@@ -1131,12 +1118,6 @@ export function TriggerForm({
 								Comments where an agent is @mentioned already auto-dispatch that agent. This trigger
 								runs in addition, not instead.
 							</div>
-						)}
-						{showCommentedFlagOffError && (
-							<p className="mt-2.5 text-[11.5px] leading-relaxed text-error">
-								This workspace hasn&apos;t rolled to <strong>trigger_engine_v2</strong> yet. Ask an
-								admin to enable it, or pick a different action.
-							</p>
 						)}
 					</section>
 

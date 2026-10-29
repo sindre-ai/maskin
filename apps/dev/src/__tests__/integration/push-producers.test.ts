@@ -376,6 +376,114 @@ describe('push producers', () => {
 		})
 	})
 
+	describe('thread replies', () => {
+		let thirdHumanId: string
+		let rootId: number
+
+		beforeEach(async () => {
+			thirdHumanId = (await insertActor(db, { type: 'human' })).id
+			await db.insert(conversationParticipants).values({ conversationId, actorId: thirdHumanId })
+			// Mentions only reach workspace members.
+			await db.insert(workspaceMembers).values(
+				[secondHumanId, thirdHumanId].map((actorId) => ({
+					workspaceId,
+					actorId,
+					role: 'member' as const,
+				})),
+			)
+			// The root is a person's top-level message: it pushes nobody.
+			const root = await insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId: humanId,
+				content: 'Who owns the Q4 plan?',
+				metadata: null,
+				sessionId: null,
+			})
+			rootId = (root as { id: number }).id
+		})
+
+		const allRows = () =>
+			db.select().from(notifications).where(eq(notifications.workspaceId, workspaceId))
+
+		function reply(actorId: string, over: Record<string, unknown> = {}) {
+			return insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId,
+				content: 'I can take it.',
+				metadata: null,
+				sessionId: null,
+				threadRootId: rootId,
+				...over,
+			})
+		}
+
+		it("pushes the root's author when someone replies, and nobody else in the chat", async () => {
+			const created = await reply(secondHumanId)
+			const rows = await allRows()
+			expect(rows.map((r) => r.targetActorId)).toEqual([humanId])
+			expect(rows[0]?.metadata).toMatchObject({
+				push_category: 'conversation',
+				push_collapse_key: `chat:${conversationId}:thread:${rootId}`,
+				push_delay_seconds: 25,
+				push_only: true,
+				conversation_id: conversationId,
+				message_id: created?.id,
+				thread_root_id: rootId,
+			})
+		})
+
+		it('widens to everyone who has replied, still leaving out people who never joined the thread', async () => {
+			await reply(secondHumanId)
+			await db.delete(notifications).where(eq(notifications.workspaceId, workspaceId))
+			await reply(humanId)
+			expect((await allRows()).map((r) => r.targetActorId)).toEqual([secondHumanId])
+		})
+
+		it("sends an agent's end-of-turn reply in a thread to the thread's people only", async () => {
+			await reply(secondHumanId)
+			await db.delete(notifications).where(eq(notifications.workspaceId, workspaceId))
+			await finalReply('turn-thread', { threadRootId: rootId })
+			expect((await allRows()).map((r) => r.targetActorId).sort()).toEqual(
+				[humanId, secondHumanId].sort(),
+			)
+		})
+
+		it('leaves a mentioned newcomer to the mention push, which opens the thread', async () => {
+			await reply(secondHumanId, { metadata: { mentions: [thirdHumanId] } })
+			const rows = await allRows()
+			const forThird = rows.filter((r) => r.targetActorId === thirdHumanId)
+			expect(forThird).toHaveLength(1)
+			expect(forThird[0]).toMatchObject({ title: expect.stringMatching(/mentioned you$/) })
+			expect(forThird[0]?.metadata).toMatchObject({
+				thread_root_id: rootId,
+				push_collapse_key: expect.stringContaining('chat-mention:'),
+			})
+			// The thread push still goes to the root's author.
+			expect(rows.filter((r) => r.targetActorId === humanId)).toHaveLength(1)
+		})
+
+		it('gives a thread participant who is also mentioned one push, the immediate mention', async () => {
+			await reply(secondHumanId, { metadata: { mentions: [humanId] } })
+			const rows = (await allRows()).filter((r) => r.targetActorId === humanId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.title).toMatch(/mentioned you$/)
+			expect(rows[0]?.metadata).toMatchObject({ thread_root_id: rootId })
+			expect(rows[0]?.metadata).not.toHaveProperty('push_delay_seconds')
+		})
+
+		it('stays quiet for an agent interim note in a thread', async () => {
+			await reply(agentId, { metadata: { delivery: 'proactive' } })
+			expect(await allRows()).toHaveLength(0)
+		})
+
+		it('does not notify the author of their own reply', async () => {
+			await reply(humanId)
+			expect(await allRows()).toHaveLength(0)
+		})
+	})
+
 	describe('answering an agent question in the chat', () => {
 		async function ask(sessionId: string) {
 			const res = await createSessionsApp(agentId).request(

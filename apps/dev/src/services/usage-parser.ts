@@ -171,6 +171,105 @@ export async function sumSegmentResultUsage(
 	return sumResultUsageFromLogChunks(rows.map((r) => r.content).reverse())
 }
 
+/** What the session's usage columns already hold, as recorded on the row. */
+export interface UsageWatermark {
+	/** Newest `session_logs.id` whose `result` envelope is already counted; null = none. */
+	logId: number | null
+	/** The CLI's cumulative `total_cost_usd` for the current process at that point. */
+	cliCost: number | null
+}
+
+export interface UncountedUsage {
+	/** Tokens/duration added up over the uncounted results; `totalCostUsd` is the cost INCREMENT. */
+	usage: SessionUsage
+	/** Move the watermark here once `usage` is saved. */
+	watermark: { logId: number; cliCost: number }
+}
+
+/**
+ * Sums the `result` envelopes the session's usage columns do not hold yet.
+ *
+ * A per-turn write and every settle path call this and then advance the
+ * watermark in the same UPDATE that adds the usage, so each envelope is added
+ * exactly once however the writers interleave. Only envelopes after the latest
+ * resume marker count for the cost base: a resume starts a new CLI process whose
+ * cumulative `total_cost_usd` restarts from zero, so the stored `cliCost` is
+ * ignored once a marker sits after the watermark.
+ *
+ * Tokens and duration are per turn, so they are summed. The cost is cumulative
+ * per process, so the increment is the last figure seen minus the base.
+ * Returns null when no new envelope is found.
+ */
+export async function sumUncountedResultUsage(
+	db: Database,
+	sessionId: string,
+	watermark: UsageWatermark,
+): Promise<UncountedUsage | null> {
+	const [marker] = await db
+		.select({ id: sessionLogs.id })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'system'),
+				eq(sessionLogs.content, SESSION_RESUMED_LOG),
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(1)
+
+	const countedId = watermark.logId ?? 0
+	const sameProcess = watermark.logId !== null && (!marker || marker.id < watermark.logId)
+	const lowerBound = Math.max(marker?.id ?? 0, countedId)
+	const baseCost = sameProcess ? (watermark.cliCost ?? 0) : 0
+
+	const rows = await db
+		.select({ id: sessionLogs.id, content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(
+			and(
+				eq(sessionLogs.sessionId, sessionId),
+				eq(sessionLogs.stream, 'stdout'),
+				gt(sessionLogs.id, lowerBound),
+				sql`(${sessionLogs.content} LIKE '%"type":"result"%' OR ${sessionLogs.content} LIKE '%"total_cost_usd"%')`,
+			),
+		)
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LIVE_RESULT_ROWS_FETCHED)
+
+	// Walk oldest first, remembering the row each complete envelope ended in: the
+	// watermark must never move past the first half of an envelope split across rows.
+	const ordered = rows.reverse()
+	let buffer = ''
+	let throughLogId: number | null = null
+	let lastCost: number | null = null
+	const found: string[] = []
+	for (const row of ordered) {
+		buffer += row.content
+		const lines = buffer.split('\n')
+		buffer = lines.pop() ?? ''
+		for (const line of [...lines, ...(parseResultLine(buffer) ? [buffer] : [])]) {
+			if (!parseResultLine(line)) continue
+			found.push(line)
+			throughLogId = row.id
+		}
+		if (parseResultLine(buffer)) buffer = ''
+	}
+	if (found.length === 0 || throughLogId === null) return null
+
+	const summed = sumResultUsageFromLogChunks(found.map((l) => `${l}\n`))
+	if (!summed) return null
+	lastCost = summed.totalCostUsd
+	const cliCostAfter = lastCost ?? baseCost
+	return {
+		usage: {
+			...summed,
+			totalCostUsd: lastCost === null ? null : Math.max(0, lastCost - baseCost),
+		},
+		watermark: { logId: throughLogId, cliCost: cliCostAfter },
+	}
+}
+
 /**
  * Token-only fallback for a session whose stdout holds no `result` envelope —
  * a non-interactive run killed at the wall-time ceiling never emits one, so the

@@ -785,6 +785,28 @@ private actor IdleTraceSource: SessionActivitySource {
 	}
 }
 
+@Suite("ChatStore trace loading")
+@MainActor
+struct ChatStoreTraceLoadingTests {
+	@Test("the trace counts as loading from a sessions read until the finished turns have landed")
+	func loadingUntilHistoryLands() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .completed, startedAt: chatT0)])
+		h.store.trace = ActivityStore(source: IdleTraceSource([]))
+		#expect(!h.store.isLoadingTrace)
+		await h.store.refreshSessions()
+		#expect(await eventually { !h.store.isLoadingTrace })
+	}
+
+	@Test("without a trace store nothing is left loading")
+	func noTraceStore() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .completed, startedAt: chatT0)])
+		await h.store.refreshSessions()
+		#expect(await eventually { !h.store.isLoadingTrace })
+	}
+}
+
 @Suite("ChatStore idle sessions")
 @MainActor
 struct ChatStoreIdleTests {

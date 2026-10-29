@@ -134,11 +134,9 @@ test.describe('App shell', () => {
 		})
 		await page.goto(`/${account.workspaceId}`)
 
-		// NavSearch collapses to a single icon; the ⌘K button that opens the
-		// palette mounts once it expands (layout/nav-search.tsx).
-		await page.getByRole('button', { name: 'Search the workspace' }).click()
-		await page.getByRole('button', { name: 'Open commands' }).click()
-		const palette = page.getByPlaceholder('Run a command or jump to…')
+		// NavSearch is one button that opens the launcher (layout/nav-search.tsx).
+		await page.getByRole('button', { name: 'Search or run a command' }).click()
+		const palette = page.getByRole('dialog', { name: 'Command palette' })
 		await expect(palette).toBeVisible()
 
 		await page.keyboard.press('Escape')

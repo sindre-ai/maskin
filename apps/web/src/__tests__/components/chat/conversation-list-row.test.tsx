@@ -56,6 +56,23 @@ function renderRow(conversation: ConversationListItemResponse) {
 }
 
 describe('ConversationListRow', () => {
+	it('says so when a thread in an otherwise read chat has unread replies', () => {
+		render(
+			<ConversationListRow
+				workspaceId="ws-1"
+				conversation={buildConversation()}
+				threadUnread={2}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('2 unread replies in threads')).toBeInTheDocument()
+	})
+
+	it('shows no thread hint when no thread is unread', () => {
+		renderRow(buildConversation())
+		expect(screen.queryByText(/in threads/)).not.toBeInTheDocument()
+	})
+
 	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
 		// Two participants, one of them the viewer — only the counterpart plates.

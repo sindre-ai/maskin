@@ -710,6 +710,13 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/voice-sessions/{id}/hangup`.
     /// - Remark: Generated from `#/paths//api/voice-sessions/{id}/hangup/post`.
     func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Output
+    /// Transcribe a short voice recording (chat dictation)
+    ///
+    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.
+    ///
+    /// - Remark: HTTP `POST /api/transcriptions`.
+    /// - Remark: Generated from `#/paths//api/transcriptions/post`.
+    func post_sol_api_sol_transcriptions(_ input: Operations.post_sol_api_sol_transcriptions.Input) async throws -> Operations.post_sol_api_sol_transcriptions.Output
 }
 
 /// Convenience overloads for operation inputs.
@@ -2507,6 +2514,21 @@ extension APIProtocol {
     ) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Output {
         try await post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input(
             path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Transcribe a short voice recording (chat dictation)
+    ///
+    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.
+    ///
+    /// - Remark: HTTP `POST /api/transcriptions`.
+    /// - Remark: Generated from `#/paths//api/transcriptions/post`.
+    public func post_sol_api_sol_transcriptions(
+        headers: Operations.post_sol_api_sol_transcriptions.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_transcriptions.Input.Body
+    ) async throws -> Operations.post_sol_api_sol_transcriptions.Output {
+        try await post_sol_api_sol_transcriptions(Operations.post_sol_api_sol_transcriptions.Input(
             headers: headers,
             body: body
         ))

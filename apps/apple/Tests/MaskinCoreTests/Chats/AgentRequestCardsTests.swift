@@ -76,6 +76,7 @@ struct AgentRequestCardsTests {
 	@Test func onlyCardsThatRecordAnAnswerAskForOne() {
 		#expect(message(.object(["computer_request": .object([:])])).asksForAnswer)
 		#expect(message(.object(["integration_access_request": .object([:])])).asksForAnswer)
+		#expect(message(.object(["mcp_server_request": .object([:])])).asksForAnswer)
 		#expect(message(.object(["integration_connect": .object([:])])).asksForAnswer == false)
 		#expect(message(nil).asksForAnswer == false)
 	}

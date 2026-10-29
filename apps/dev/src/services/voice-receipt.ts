@@ -178,6 +178,8 @@ export async function describeToolCall(input: {
 	args: unknown
 	resultText: string | null
 	state: Pick<VoiceCallState, 'startCards'>
+	/** How the call as a whole went. A failed read still earns a line, so a problem is never hidden. */
+	outcome?: ReceiptOutcome
 }): Promise<ReceiptDraft[]> {
 	const { db, workspaceId, tool, state } = input
 	const args = asRecord(input.args) ?? {}
@@ -237,6 +239,17 @@ export async function describeToolCall(input: {
 
 	if (tool === 'get_objects') {
 		const id = ids.length === 1 ? (ids[0] as string) : null
+		if (input.outcome === 'failed') {
+			return [
+				{
+					event: 'other',
+					objectId: id,
+					objectType: id ? (known.get(id)?.type ?? null) : null,
+					objectTitle: id ? nameOf(id) : null,
+					template: id ? 'Open {title}' : 'Look up items',
+				},
+			]
+		}
 		if (id && known.get(id)?.type === 'task') {
 			return [
 				{
@@ -504,16 +517,44 @@ export function buildReceiptNumbers(
 	}
 }
 
-const short = (id: string) => (id.length > 8 ? id.slice(0, 8) : id)
+/** The titles the receipt text names for the top card and the first card handled. Never ids. */
+export interface ReceiptCardTitles {
+	rank1: string | null
+	first: string | null
+}
 
-/** The numbers as one plain sentence group. Ids and counts only, never card or draft text. */
-export function numbersInWords(n: ReceiptNumbers): string {
+export function cardTitlesOf(state: VoiceCallState | undefined): ReceiptCardTitles {
+	const cards = state?.startCards ?? []
+	const rank1 = cards[0] ?? null
+	const first = state?.firstCardNamed
+		? (cards.find((c) => cardIdOf(c) === state.firstCardNamed) ?? null)
+		: null
+	const title = (card: { title?: string | null } | null) =>
+		card?.title ? oneLine(card.title, TITLE_MAX) || null : null
+	return { rank1: title(rank1), first: title(first) }
+}
+
+/**
+ * The numbers as one plain sentence group. A card is named by its title, never its id: when the
+ * first card handled was not the top card, the text says so and names the one that was skipped.
+ */
+export function numbersInWords(
+	n: ReceiptNumbers,
+	titles: ReceiptCardTitles = { rank1: null, first: null },
+): string {
+	const quoted = (t: string | null) => (t ? `"${t}"` : null)
 	const first =
 		n.first_card_is_rank_1 === true
-			? 'The first card named was the top card.'
+			? 'The first card handled was the top card.'
 			: n.first_card_is_rank_1 === false
-				? `The first card named (${short(n.first_card_named)}) was not the top card (${short(n.rank_1_card_at_start)}).`
-				: `Top card at start: ${n.rank_1_card_at_start === 'unknown' ? 'unknown' : n.rank_1_card_at_start === 'none' ? 'none' : short(n.rank_1_card_at_start)}. First card named: ${n.first_card_named === 'unknown' || n.first_card_named === 'none' ? n.first_card_named : short(n.first_card_named)}.`
+				? `The first card handled${quoted(titles.first) ? ` (${quoted(titles.first)})` : ''} was not the top card: the top card${quoted(titles.rank1) ? ` ${quoted(titles.rank1)}` : ''} was skipped.`
+				: n.rank_1_card_at_start === 'unknown'
+					? 'The top card at the start of the call is not known.'
+					: n.rank_1_card_at_start === 'none'
+						? 'There was no card waiting at the start of the call.'
+						: n.first_card_named === 'none' || n.first_card_named === 'unknown'
+							? `No card was handled${quoted(titles.rank1) ? `; the top card was ${quoted(titles.rank1)}` : ''}.`
+							: 'The first card handled is not known.'
 	const sends = n.sends.length
 		? n.sends
 				.map((s, i) => {
@@ -587,7 +628,9 @@ export async function postClosingReceipt(
 		const ran = rows.filter((r) => r.outcome === 'ran')
 		const failed = rows.filter((r) => r.outcome === 'failed')
 		const notDone = rows.filter((r) => r.outcome === 'not_done')
+		// A call that failed is a thing not done, and it must show where the metadata is read.
 		const notDoneTexts = [
+			...failed.map((r) => r.text),
 			...notDone.map((r) => r.text),
 			...(pending
 				? [`Not done: ${pending.summary}. The call ended before your yes was used.`]
@@ -615,7 +658,7 @@ export async function postClosingReceipt(
 		}
 
 		const header = `**Call receipt** (${minutesWords(durationSeconds)})`
-		const footer = numbersInWords(numbers)
+		const footer = numbersInWords(numbers, cardTitlesOf(state))
 		const body: string[] = []
 		const section = (title: string, lines: string[]) => {
 			if (lines.length === 0) return

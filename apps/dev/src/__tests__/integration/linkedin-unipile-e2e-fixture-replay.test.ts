@@ -15,7 +15,6 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import accountReconnectFixture from '../../lib/integrations/providers/linkedin-unipile/__fixtures__/account.reconnect.json'
 import messageNewFixture from '../../lib/integrations/providers/linkedin-unipile/__fixtures__/message.new.json'
 import ownSendFixture from '../../lib/integrations/providers/linkedin-unipile/__fixtures__/message.new.own-send.json'
@@ -52,7 +51,6 @@ const OWN_PROVIDER_ID = ownSendFixture.payload.sender_id
 const SENDER_PROVIDER_ID = messageNewFixture.payload.sender_id
 const CHAT_ID = messageNewFixture.payload.chat_id
 const INBOUND_MESSAGE_ID = messageNewFixture.payload.id
-const FLAG = 'linkedin-unipile-events'
 const REPLY_PATH = '/api/integrations/linkedin-unipile/reply'
 
 // The slug getProfile returns for the fixture sender, and the slug the fixture
@@ -65,8 +63,6 @@ const ENV_KEYS = [
 	'UNIPILE_BASE_URL',
 	'UNIPILE_API_KEY',
 	'INTEGRATION_ENCRYPTION_KEY',
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
 	'POSTHOG_API_KEY',
 ] as const
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
@@ -98,7 +94,6 @@ afterAll(() => {
 		if (ORIGINAL_ENV[key] === undefined) delete process.env[key]
 		else process.env[key] = ORIGINAL_ENV[key]
 	}
-	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
 })
 
@@ -116,8 +111,8 @@ beforeEach(async () => {
 	__resetSenderCachesForTests()
 	logInfo.mockClear()
 
-	// The integration is owned by the test actor, so the same actor is the flag
-	// tester on the webhook path and the caller on the reply route.
+	// The integration is owned by the test actor, so the same actor is the
+	// caller on the reply route.
 	actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	workspaceId = ws.id
@@ -136,10 +131,6 @@ beforeEach(async () => {
 		.returning()
 	if (!row) throw new Error('integration insert returned no row')
 	integrationId = row.id
-
-	process.env.FF_TESTER_ACTOR_IDS = actorId
-	process.env.FF_TESTER_FEATURES = FLAG
-	_resetFeatureFlagConfig()
 
 	const replied = await insertContact(`https://www.linkedin.com/in/${SENDER_SLUG}/`, 'messaged')
 	repliedContactId = replied.id

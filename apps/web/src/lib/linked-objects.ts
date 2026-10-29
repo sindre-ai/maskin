@@ -75,25 +75,76 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file'
+	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
 	id: string
+}
+
+/** A {@link LinkedTarget} read from an address, with the workspace that address names. */
+export interface HrefTarget extends LinkedTarget {
+	/** The segment before the kind, or null when the address has none. */
+	workspaceId: string | null
 }
 
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files)/(${UUID_SRC})/?$`, 'i')
+const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
+
+const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
+	objects: 'object',
+	files: 'file',
+	loops: 'loop',
+	triggers: 'trigger',
+	agents: 'agent',
+}
 
 function isAppHost(host: string): boolean {
 	const current = typeof window === 'undefined' ? '' : window.location.host
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object or file in this workspace. */
-export type OwnSegment = { kind: 'text'; text: string } | { kind: 'object' | 'file'; id: string }
+/** A GitHub pull request or issue, read from its address alone. Nothing is fetched. */
+export interface GithubTarget {
+	type: 'pull' | 'issue'
+	repo: string
+	number: number
+}
+
+const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
 
 /**
- * Your own message as an ordered run of words and links to this workspace's objects and files,
+ * The pull request or issue an address points at: exactly github.com (not a lookalike or a
+ * subdomain), then `/{owner}/{repo}/pull/{n}` or `/{owner}/{repo}/issues/{n}`. A sub-path (files,
+ * commits, checks), any other github.com address and any other site is null and stays a plain link.
+ */
+export function githubTargetOf(href: unknown): GithubTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href)
+	} catch {
+		return null
+	}
+	if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.host !== 'github.com') {
+		return null
+	}
+	if (url.username || url.password) return null
+	const match = GITHUB_PATH.exec(url.pathname)
+	if (!match) return null
+	return { type: match[2] === 'pull' ? 'pull' : 'issue', repo: match[1], number: Number(match[3]) }
+}
+
+/**
+ * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
+ * workspace, or a GitHub pull request or issue.
+ */
+export type OwnSegment =
+	| { kind: 'text'; text: string }
+	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| { kind: 'github'; href: string; target: GithubTarget }
+
+/**
+ * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
  * so each link can be drawn inline as a chip with the thing's name instead of a long address.
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
@@ -117,16 +168,20 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		} catch {
 			continue
 		}
+		const github = githubTargetOf(address)
+		if (github) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'github', href: address, target: github })
+			cursor = (m.index ?? 0) + address.length
+			continue
+		}
 		const match = APP_PATH.exec(url.pathname)
 		if (!match || !isAppHost(url.host) || match[1].toLowerCase() !== workspaceId.toLowerCase()) {
 			continue
 		}
 		const at = m.index ?? 0
 		pushText(content.slice(cursor, at))
-		segments.push({
-			kind: match[2].toLowerCase() === 'files' ? 'file' : 'object',
-			id: match[3].toLowerCase(),
-		})
+		segments.push({ kind: OWN_KIND[match[2].toLowerCase()], id: match[3].toLowerCase() })
 		cursor = at + address.length
 	}
 	pushText(content.slice(cursor))
@@ -144,16 +199,30 @@ export interface HastNode {
 }
 
 const UUID = UUID_SRC
-const OBJECT_HREF = new RegExp(`/objects/(${UUID})(?:[/?#]|$)`, 'i')
-const FILE_HREF = new RegExp(`/files/(${UUID})(?:[/?#]|$)`, 'i')
+// Each kind's address: an optional workspace segment, then the kind and the id.
+const hrefOf = (segment: string) =>
+	new RegExp(`(?:/([^/?#]+))?/${segment}/(${UUID})(?:[/?#]|$)`, 'i')
+// In the order they are tried when an address holds more than one.
+const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
+	['object', hrefOf('objects')],
+	['file', hrefOf('files')],
+	['loop', hrefOf('loops')],
+	['trigger', hrefOf('triggers')],
+	['agent', hrefOf('agents')],
+]
 
-/** The object or file a link's address points at, if it points at one. */
-export function targetOfHref(href: unknown): LinkedTarget | null {
+/**
+ * The object, file, loop, trigger or agent a link's address points at, if it points at one, with the
+ * workspace the address names (null when it names none). Later kinds are added to the list above.
+ */
+export function targetOfHref(href: unknown): HrefTarget | null {
 	if (typeof href !== 'string') return null
-	const object = OBJECT_HREF.exec(href)
-	if (object) return { kind: 'object', id: object[1].toLowerCase() }
-	const file = FILE_HREF.exec(href)
-	if (file) return { kind: 'file', id: file[1].toLowerCase() }
+	for (const [kind, pattern] of HREF_KINDS) {
+		const match = pattern.exec(href)
+		if (match) {
+			return { kind, id: match[2].toLowerCase(), workspaceId: match[1]?.toLowerCase() ?? null }
+		}
+	}
 	return null
 }
 
@@ -285,6 +354,9 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
+/** Objects, loops, triggers and agents: what the app looks up for a link, as against a file. */
+const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
+
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */
 export const LINKED_CARDS_TAG = 'linked-cards'
 
@@ -313,14 +385,16 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const trailed = new Set<string>()
 	const trailing: HastNode[] = []
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
+	// Loops and triggers cost no request of their own (they read shared lists), but they count
+	// toward the same caps as objects so there is one rule.
 	const fetchable = new Set(
 		linksIn(tree.children ?? [])
-			.filter((t) => t.kind === 'object')
+			.filter(isLookedUp)
 			.slice(0, MAX_OBJECT_FETCHES)
-			.map((t) => t.id),
+			.map(key),
 	)
 	const available = (t: LinkedTarget) =>
-		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(t.id))
+		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(key(t)))
 	// Whether a link standing alone may be replaced by its card here.
 	const cardable = (t: LinkedTarget, inList: boolean) =>
 		available(t) && (inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
@@ -358,7 +432,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const markCard = (node: HastNode, card: StandaloneCard) => {
 		node.data = { ...node.data, linkedCard: card }
 		drawn.add(key(card.target))
-		if (!card.inList && card.target.kind === 'object') placed.object += 1
+		if (!card.inList && isLookedUp(card.target)) placed.object += 1
 	}
 
 	const paragraph = (children: HastNode[]): HastNode => ({
@@ -467,12 +541,30 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 		element.properties = { ...element.properties, objects: ids.join(',') }
 	}
 
-	// Every link to an object that is not replaced by a card is a chip where it stands.
+	// The drafts a card is still drawn for under their sentence. The card follows the first link to
+	// each; a later link to the same id, or a link past the card cap, has no card.
+	const followed = new Set(
+		trailing.flatMap((element) =>
+			String(element.properties?.objects ?? '')
+				.split(',')
+				.filter(Boolean),
+		),
+	)
+	const seen = new Set<string>()
+
+	// Every link to an object that is not replaced by a card is a chip where it stands. A draft
+	// keeps its plain link only when its card follows; otherwise it is a chip like any object.
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
-			if (target?.kind === 'object' && fetchable.has(target.id)) {
-				node.data = { ...node.data, linkedChip: true }
+			if (target && isLookedUp(target) && fetchable.has(key(target))) {
+				const first = !seen.has(key(target))
+				seen.add(key(target))
+				node.data = {
+					...node.data,
+					linkedChip: true,
+					cardFollows: target.kind === 'object' && first && followed.has(target.id),
+				}
 			}
 		}
 		for (const child of node.children ?? []) markChips(child)
@@ -508,4 +600,102 @@ export function plainSnippet(content: string | null | undefined): string {
 		.replace(/\s+/g, ' ')
 		.trim()
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
+}
+
+/** The longest a name on an inline chip runs before it is cut with an ellipsis. */
+export const CHIP_MAX_LENGTH = 90
+// A cut that falls on a word keeps the word whole only when it leaves most of the name.
+const CHIP_MIN_WORD_CUT = 60
+
+/**
+ * The part of a title a chip shows: the text before the first space, long dash and space ("David
+ * Harboe — Norlix (CTO)" reads "David Harboe"). A title without that shows whole. Only the chip
+ * uses it; the card, the preview and the accessible name carry the full title.
+ */
+export function shortName(title: string): string {
+	const dash = title.indexOf(' — ')
+	return dash > 0 ? title.slice(0, dash).trimEnd() : title
+}
+
+/**
+ * A name longer than `CHIP_MAX_LENGTH` cut at the last space before that length when the space is
+ * past character 60, else at the length itself, and ended with an ellipsis.
+ */
+export function cutLabel(name: string): string {
+	if (name.length <= CHIP_MAX_LENGTH) return name
+	const head = name.slice(0, CHIP_MAX_LENGTH)
+	const space = head.lastIndexOf(' ')
+	return `${head.slice(0, space > CHIP_MIN_WORD_CUT ? space : CHIP_MAX_LENGTH).trimEnd()}…`
+}
+
+/** A labelled row on a card: a field the record really holds. */
+export interface CardFact {
+	label: string
+	value: string
+}
+
+/** The most fact rows a card shows. */
+export const MAX_CARD_FACTS = 3
+// Fields the card already shows elsewhere, so they are never a fact row.
+const FACT_SKIPPED = new Set(['title', 'status', 'text', 'driver'])
+
+function factText(value: unknown): string {
+	if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim()
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+	if (Array.isArray(value)) return value.map(factText).filter(Boolean).join(', ')
+	return ''
+}
+
+/** A field name or enum value as plain words with a capital: "moves_the_bar" is "Moves the bar". */
+export function plainWords(raw: string): string {
+	const words = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+	return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// A link or a git ref is not a fact to read at a glance, the card itself is the way in.
+const LINK_FIELD_NAME = /(^|[\s_-])(url|link|branch)$/i
+const LINK_VALUE = /^https?:\/\//i
+
+/**
+ * The fact rows of an object card: up to three fields of the type's field list that the record
+ * has filled in, in the list's order, leaving out title, status, text and driver. Label is the
+ * field's name in plain words and value its text on one line (an enum value in plain words too).
+ * A link field, by its name or by a value that is a web address, is left out. An empty field is
+ * left out, so a record with none filled gets no rows.
+ */
+export function pickFacts(
+	fields: ReadonlyArray<{ name: string; type?: string }> | null | undefined,
+	metadata: Record<string, unknown> | null | undefined,
+): CardFact[] {
+	const facts: CardFact[] = []
+	for (const field of fields ?? []) {
+		if (facts.length >= MAX_CARD_FACTS) break
+		if (FACT_SKIPPED.has(field.name.toLowerCase()) || LINK_FIELD_NAME.test(field.name)) continue
+		const text = factText(metadata?.[field.name])
+		if (!text || LINK_VALUE.test(text)) continue
+		facts.push({
+			label: plainWords(field.name),
+			value: field.type === 'enum' ? plainWords(text) : text,
+		})
+	}
+	return facts
+}
+
+/**
+ * The words for something that cannot be drawn, on a card and on a chip. `kind` is the noun
+ * ("object"). The lookup cannot tell a deleted thing from one you may not see, so it is always
+ * "deleted".
+ */
+export function unavailableCopy(kind: string): { card: string; chip: string } {
+	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
+}
+
+/** What a GitHub chip reads: the repository's name (not its owner) and the number. */
+export function githubChipText(target: GithubTarget): string {
+	return `${target.repo} #${target.number}`
+}
+
+/** The accessible name of a GitHub chip: it says it leaves the app. */
+export function githubChipName(target: GithubTarget): string {
+	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
 }

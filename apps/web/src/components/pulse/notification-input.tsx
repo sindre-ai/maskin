@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { capture } from '@/lib/posthog'
 import type { MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
 import { Suspense, lazy, useCallback, useState } from 'react'
@@ -77,9 +76,6 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 	const question = metadata.question as string | undefined
 	const options = coerceOptions(metadata.options)
 	const placeholder = metadata.placeholder as string | undefined
-	// One read, for the multiline text branch only. The single-line Input stays
-	// a plain input whatever the flag says.
-	const richEditor = useFeatureFlag('rich-markdown-editor')
 	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
 		capture('editor_markdown_parse_error', {
 			error_message: info.errorMessage,
@@ -180,7 +176,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 				{/* Text input */}
 				{inputType === 'text' && (
 					<>
-						{(metadata.multiline as boolean) && richEditor ? (
+						{(metadata.multiline as boolean) ? (
 							<div className="mb-3 rounded-md border bg-background px-3 py-2 text-sm">
 								<Suspense
 									fallback={
@@ -206,14 +202,6 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 									/>
 								</Suspense>
 							</div>
-						) : (metadata.multiline as boolean) ? (
-							<Textarea
-								value={textValue}
-								onChange={(e) => setTextValue(e.target.value)}
-								placeholder={placeholder ?? 'Type your response...'}
-								className="mb-3"
-								rows={3}
-							/>
 						) : (
 							<Input
 								value={textValue}

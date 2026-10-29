@@ -6,26 +6,11 @@ import { Search, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 
 /**
- * The shared top nav's workspace search — mockup lines 202–212.
- *
- * Collapsed it is a 30px icon button; opening it expands an inline field that
- * grows to at most 320px. Enter commits the query to the /search page, which is
- * the source of truth for results; this field only carries the query there.
- * The ⌘K chip opens the command palette, which is a different affordance —
- * jump-anywhere and run-an-action, not text search.
- *
- * With the `search-v2` flag on (the workspace layout passes it down through the palette
- * context), this field is replaced by one button that opens the launcher, except on
- * Marketplace, which keeps the inline field.
+ * The shared top nav's workspace search: one button that opens the launcher, whose last
+ * row opens /search. Search itself has its own field, so the header shows nothing there,
+ * and Marketplace keeps the inline field.
  */
 export function NavSearch() {
-	const { searchV2 } = useCommandPalette()
-	return searchV2 ? <NavSearchV2 /> : <NavSearchInline />
-}
-
-// One entry point to search: the button opens the launcher, whose last row opens /search.
-// Search itself has its own field, so the header shows nothing there.
-function NavSearchV2() {
 	const { workspaceId } = useWorkspace()
 	const { setOpen } = useCommandPalette()
 	const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -43,7 +28,7 @@ function NavSearchV2() {
 			<Search aria-hidden="true" className="size-[15px] shrink-0" />
 			{/* Icon only up to 1024px: the labelled button is 227px and crushes the page title. */}
 			<span className="hidden min-[1024px]:inline">Search or run a command</span>
-			<kbd className="hidden rounded-[5px] border border-border bg-muted px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
+			<kbd className="hidden rounded-[5px] border border-border bg-background px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
 				{paletteShortcut}
 			</kbd>
 		</button>

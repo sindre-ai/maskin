@@ -146,7 +146,8 @@ private struct ChatsContainer: View {
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
-				initialRecipient: request.recipient
+				initialRecipient: request.recipient,
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -185,7 +186,7 @@ extension ChatsContainer {
 	fileprivate func startLive(with agent: ChatParticipant) async {
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: [agent.name]), participantIDs: [agent.id],
+				title: ThreadLayout.newChatTitle(for: [agent.name], startsLiveCall: true), participantIDs: [agent.id],
 				firstMessage: nil)
 			selection = created.id
 			liveMeeting.present(.conversation(id: created.id, lead: agent))
@@ -390,7 +391,7 @@ private struct ChatThreadHost: View {
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
 				topic: conversations.conversation(id: conversationID)?.title, now: Date())
 			Task {
-				await coordinator.reconcile(turns)
+				await coordinator.reconcile(turns, conversationId: conversationID)
 				await coordinator.sweep()
 			}
 		}

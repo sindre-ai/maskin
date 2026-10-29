@@ -805,6 +805,37 @@
 		}
 	}
 
+	/* The phone sheet of a chat chip: it rises over --duration-slide, the backdrop fades in over 180ms.
+	   The global reduced-motion rule above zeros both. */
+	.chip-sheet-rise {
+		animation: chip-sheet-rise var(--duration-slide) var(--ease-emphasized);
+	}
+	.chip-sheet-fade {
+		animation: chip-sheet-fade var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-sheet-rise {
+		from {
+			transform: translateY(100%);
+		}
+	}
+	@keyframes chip-sheet-fade {
+		from {
+			opacity: 0;
+		}
+	}
+
+	/* The hover preview of a chat chip: it fades in and rises 2px over 180ms.
+	   The global reduced-motion rule above zeros it. */
+	.chip-preview-rise {
+		animation: chip-preview-rise var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-preview-rise {
+		from {
+			opacity: 0;
+			transform: translateY(2px);
+		}
+	}
+
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
 	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
 	   The compound selector (.agent-output p/li) has higher specificity than the
