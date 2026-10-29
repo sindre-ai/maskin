@@ -35,6 +35,11 @@ name: Apple
 # and xcodegen: Tokens.swift and Sources/MaskinAPI/Generated are checked in and
 # verified by `apple`, so the build jobs skip node, pnpm and the OpenAPI steps.
 #
+# Job limits (60 for `apple`, 50 for `apple-build`) are a hang guard, not a budget.
+# After the split, healthy runs took 14-16 min for `apple` and up to 27 min for the
+# slowest platform (iOS), with slow-runner days of 40+ min for `apple` on record. Keep
+# the limit well above the slowest healthy job so a slow runner is not a false red.
+#
 # Toolchain: the project needs Xcode 26 / Swift 6.x. The jobs run on macos-26 and
 # select the newest installed Xcode 26.x explicitly; they fail loudly if none is
 # installed rather than silently building with an older SDK. Builds use generic
@@ -59,7 +64,7 @@ concurrency:
 jobs:
   apple:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -139,7 +144,7 @@ jobs:
   apple-build:
     name: apple-build (${{ matrix.platform }})
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
       fail-fast: false
