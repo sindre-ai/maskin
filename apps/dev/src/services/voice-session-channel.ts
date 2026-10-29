@@ -35,6 +35,7 @@ import {
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
 import { recordVoiceToolCallLog } from './voice-tool-call-log'
+import { capToolOutput } from './voice-tool-output'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -165,9 +166,7 @@ function toolResultText(result: unknown): { text: string; isError: boolean } {
 }
 
 function cap(text: string): string {
-	return text.length > VOICE_MAX_TOOL_OUTPUT_CHARS
-		? `${text.slice(0, VOICE_MAX_TOOL_OUTPUT_CHARS)}… [truncated]`
-		: text
+	return capToolOutput(text, VOICE_MAX_TOOL_OUTPUT_CHARS)
 }
 
 /** Tools that write something the person decided: a comment or a change on a card. */

@@ -82,6 +82,19 @@ describe('capVoiceSkills', () => {
 	})
 })
 
+describe('VOICE_CALL_CONDUCT connections rule', () => {
+	it('routes "is X connected" to list_integrations with provider, not a long list', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('list_integrations with provider set to its name')
+		expect(VOICE_CALL_CONDUCT).toContain('Never ask for a long list')
+	})
+
+	it('says an incomplete list is not proof that something is missing', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('voice_truncated')
+		expect(VOICE_CALL_CONDUCT).toContain('page.has_more')
+		expect(VOICE_CALL_CONDUCT).toContain('never that the thing is not connected')
+	})
+})
+
 describe('buildVoiceInstructions', () => {
 	const base = {
 		systemPrompt: 'You are the agent.',
