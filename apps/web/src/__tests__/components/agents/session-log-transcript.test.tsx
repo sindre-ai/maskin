@@ -243,6 +243,37 @@ describe('getLatestActivityPreview', () => {
 		expect(preview?.endsWith('…')).toBe(true)
 	})
 
+	it('strips markdown markers so the one-line preview shows no literal stars', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [
+					{
+						type: 'text',
+						text: '**Claimed by session 83e1** on `feat/task-bfe77591` with _two_ [links](https://maskin.io/x) and *more*',
+					},
+				],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Claimed by session 83e1 on feat/task-bfe77591 with two links and more',
+		)
+	})
+
+	it('leaves a lone asterisk and snake_case names alone', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'text', text: 'Reading 2 * 3 in list_objects and get_file' }],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Reading 2 * 3 in list_objects and get_file',
+		)
+	})
+
 	it('returns null when there is nothing renderable yet', () => {
 		expect(getLatestActivityPreview([])).toBeNull()
 	})

@@ -1,21 +1,21 @@
 import { Composer } from '@/components/chat/chat'
-import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
+	type ChatSelectionFile,
 	EMPTY_CHAT_SELECTION,
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { type ComposerCue, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
 import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -46,6 +46,8 @@ interface NewChatSearch {
 	objectType?: string
 	notificationId?: string
 	notificationTitle?: string
+	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
+	text?: string
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -60,6 +62,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationId: typeof search.notificationId === 'string' ? search.notificationId : undefined,
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
+		text: typeof search.text === 'string' ? search.text : undefined,
 	}),
 })
 
@@ -70,27 +73,9 @@ interface Recipient {
 	description?: string | null
 }
 
-/**
- * Feature-flag boundary for the Chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
- * Read once at this route per the feature-flags rule
- * (`.claude/rules/feature-flags.md`) — the umbrella AND the `.new_chat` sub-flag.
- * Flag off renders the pre-bet screen vendored in
- * `components/chat/legacy/new-chat-form.tsx`; the v4 rewrite lives in `NewChatV4`
- * below. Retiring the flag means deleting the legacy file, this boundary, and the
- * flag ids in `apps/dev/src/lib/feature-flags.ts`.
- */
 function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
-	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
-	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
-	if (!chatsV4Enabled || !newChatV4Enabled) {
-		return <LegacyNewChatForm search={search} />
-	}
-	return <NewChatV4 search={search} />
-}
-
-function NewChatV4({ search }: { search: NewChatSearch }) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
@@ -103,14 +88,15 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
 	const [activeIndex, setActiveIndex] = useState(0)
-	// Task 6321aecf: promote `/` and `@` in the no-recipient composer placeholder
-	// once the `+` menu collapses. Same flag boundary as the DropdownMenu switch
-	// in `<Composer>` — the two changes ship together. Applied to the
-	// no-recipient case of the v4 new-chat placeholder below.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
-	const [draft, setDraft] = useState('')
+	const [draft, setDraft] = useState(search.text ?? '')
+	const [toFocused, setToFocused] = useState(false)
+	// The page stays mounted when the launcher opens /chats/new?text=... from
+	// here, so a new text has to replace the box; the initial value covers mount.
+	useEffect(() => {
+		if (search.text !== undefined) setDraft(search.text)
+	}, [search.text])
 	const inputRef = useRef<HTMLInputElement>(null)
 
 	// Objects handed over by "Ask an agent". Resolved so the chips read as
@@ -240,8 +226,9 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const dropdownRows = typedMode ? typedMatches : recentCandidates
 	// The whole dropdown block hides on the empty-RECENT case (no empty header).
 	// It stays visible in typed mode so the "No agent by that name" line has a
-	// place to render.
-	const showDropdown = typedMode || dropdownRows.length > 0
+	// place to render. It only shows while the To input has focus, so moving to
+	// the message box clears the list off the composer.
+	const showDropdown = toFocused && (typedMode || dropdownRows.length > 0)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: dropdownRows.length and typedMode ARE the reset triggers — a shorter row set or a mode switch should snap the active row back to the top; setActiveIndex is a stable React setter, so it is deliberately absent.
 	useEffect(() => {
@@ -291,7 +278,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	)
 
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 			setError(null)
 			// Fold both entry points for participants into the id set:
 			// (1) recipient chips picked in the To row above, and
@@ -322,8 +309,9 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					: selection.notifications
 
 			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
+			const files = [...selection.files, ...(extras?.files ?? [])]
+			if (files.length > 0) {
+				metadata.attachments = files.map((f) => ({
 					file_id: f.fileId,
 					name: f.name,
 					mime_type: f.mimeType ?? 'application/octet-stream',
@@ -390,12 +378,59 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 		],
 	)
 
-	const composerPlaceholder =
+	// Call is offered only when exactly one agent is addressed, counting both the
+	// To-row chips and @-mentioned agents (a multi-agent call is v2). People
+	// don't count: a call targets the agent.
+	const callAgent = useMemo<Recipient | null>(() => {
+		const agents = new Map<string, Recipient>()
+		for (const r of recipients) if (r.type === 'agent') agents.set(r.id, r)
+		for (const id of selection.agents) {
+			const c = candidates.find((cand) => cand.id === id)
+			if (c?.type === 'agent') agents.set(c.id, c)
+		}
+		return agents.size === 1 ? (agents.values().next().value ?? null) : null
+	}, [recipients, selection.agents, candidates])
+
+	const todaysPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
-			: plusMenuAttachOnly
-				? 'Message… / reference or create · @ mention'
-				: 'Message this conversation'
+			: 'Message… / reference or create · @ mention'
+
+	// Group-chat cue: this screen has its own composer wiring (it does not use ThreadComposer),
+	// so it calls the same shared function. A new chat has no messages,
+	// so nobody has spoken yet and the next message is the first one. Participants are you, the
+	// To-row chips and anyone tagged in the box, which is who the server adds when it creates
+	// the chat. Fewer than 3 participants: today's placeholder and no hint.
+	const cue = useMemo<ComposerCue | null>(() => {
+		const asParticipant = (r: Recipient) => ({
+			actorId: r.id,
+			actorName: r.name,
+			actorType: (r.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human',
+		})
+		const people = new Map<string, ReturnType<typeof asParticipant>>()
+		if (currentActor) {
+			people.set(currentActor.id, asParticipant({ id: currentActor.id, name: '', type: 'human' }))
+		}
+		for (const r of recipients) people.set(r.id, asParticipant(r))
+		for (const id of selection.agents) {
+			if (people.has(id)) continue
+			// An id missing from the workspace lists counts as a person.
+			const known = candidates.find((c) => c.id === id)
+			people.set(
+				id,
+				asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }),
+			)
+		}
+		return deriveComposerCue({
+			selfId: currentActor?.id ?? '',
+			participants: [...people.values()],
+			taggedIds: selection.agents,
+			messages: null,
+			hasMoreMessages: false,
+			isNewChat: true,
+		})
+	}, [currentActor, recipients, selection.agents, selection.agentNames, candidates])
+	const composerPlaceholder = cue?.placeholder ?? todaysPlaceholder
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -435,6 +470,8 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 						type="text"
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
+						onFocus={() => setToFocused(true)}
+						onBlur={() => setToFocused(false)}
 						onKeyDown={handleInputKeyDown}
 						placeholder={recipients.length === 0 ? chatToPh : ''}
 						aria-label="Add recipients"
@@ -449,7 +486,12 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 				</div>
 
 				{showDropdown ? (
-					<div className="mt-1 rounded-[11px] border border-border bg-card p-1.5">
+					<div
+						// Keep focus in the To input while a row is pressed. Otherwise the
+						// blur hides the list before the click lands and nothing is picked.
+						onMouseDown={(e) => e.preventDefault()}
+						className="mt-1 rounded-[11px] border border-border bg-card p-1.5"
+					>
 						<div className="eyebrow px-1.5 pt-1 pb-1.5">
 							{typedMode ? 'ADD SOMEONE — PERSON OR AGENT' : 'RECENT'}
 						</div>
@@ -540,10 +582,11 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 
 			{/* The composer is pinned below the scroll region, gutter-aligned with
 			    the header and with no divider above it (mockup 645–646). */}
-			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
+			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 				<Composer
 					workspaceId={workspaceId}
 					onSend={handleSend}
+					longTextAsFile
 					disabled={createConversation.isPending}
 					pending={createConversation.isPending}
 					surface="sheet"
@@ -556,9 +599,11 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={error}
 					onDismissExternalError={() => setError(null)}
+					hint={cue ? cue.hint : undefined}
 					textareaLabel="Message this conversation"
 					value={draft}
 					onValueChange={setDraft}
+					callAgent={callAgent}
 				/>
 			</div>
 		</div>

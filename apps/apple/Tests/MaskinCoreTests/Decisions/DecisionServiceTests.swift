@@ -72,6 +72,53 @@ struct DecisionServiceTests {
 		#expect(service.record(for: "obj-1")?.note == nil)
 	}
 
+	@Test func aDraftActionIsOneCommentWithTheWebFormat() async {
+		let (service, _, backend, _) = make()
+		let queued = service.actOnDraft(
+			.send, label: "LinkedIn DM", to: "Kenneth Krog Madsen", id: "kenneth", on: target)
+		#expect(queued)
+		#expect(await eventually { backend.calls.count == 1 })
+		#expect(backend.calls == ["comment:obj-1:Send: LinkedIn DM to Kenneth Krog Madsen (kenneth):42"])
+	}
+
+	@Test func aDraftActionLeavesOutWhatItDoesNotHave() {
+		#expect(
+			DecisionService.draftActionContent(.skip, label: nil, to: nil, id: nil) == "Skip: Message")
+		#expect(
+			DecisionService.draftActionContent(.skip, label: "  ", to: " ", id: "") == "Skip: Message")
+		#expect(
+			DecisionService.draftActionContent(.send, label: "Email", to: nil, id: "a") == "Send: Email (a)")
+		#expect(
+			DecisionService.draftActionContent(.send, label: "Email", to: "Ada", id: nil)
+				== "Send: Email to Ada")
+	}
+
+	@Test func aDraftActionKeepsTheCardOpenAndNeverMarksTheThreadRead() async {
+		let (service, outbox, backend, _) = make()
+		service.actOnDraft(.skip, label: "DM", to: "Dan", id: "dan", on: target)
+		#expect(await eventually { backend.calls.count == 1 })
+		try? await Task.sleep(for: .milliseconds(300))
+		#expect(service.record(for: "obj-1") == nil)  // the card stays open for its other messages
+		#expect(!backend.calls.contains { $0.hasPrefix("read:") })
+		#expect(outbox.entries.isEmpty)
+	}
+
+	@Test func aDraftActionGoesAtOnceWithNoUndoWindow() async {
+		let (service, _, backend, _) = make(window: 60)
+		service.actOnDraft(.send, label: "DM", to: "Dan", id: "dan", on: target)
+		#expect(await eventually { backend.calls.count == 1 })
+	}
+
+	@Test func twoMessagesOfOneCardAreTwoComments() async {
+		let (service, _, backend, _) = make()
+		service.actOnDraft(.send, label: "DM", to: "Kenneth", id: "kenneth", on: target)
+		service.actOnDraft(.skip, label: "DM", to: "Dan", id: "dan", on: target)
+		#expect(await eventually { backend.calls.count == 2 })
+		#expect(Set(backend.calls) == [
+			"comment:obj-1:Send: DM to Kenneth (kenneth):42", "comment:obj-1:Skip: DM to Dan (dan):42",
+		])
+	}
+
 	@Test func sendsCommentThenMarkReadAfterTheWindow() async {
 		let (service, _, backend, _) = make()
 		service.choose("Approve", on: target)

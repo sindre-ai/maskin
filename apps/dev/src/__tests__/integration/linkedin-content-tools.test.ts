@@ -11,6 +11,7 @@ import { __setLinkedInClientForTests } from '../../lib/integrations/providers/li
 import {
 	getLinkedInPostEngagement,
 	publishLinkedInPost,
+	readLinkedInPostComments,
 } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { insertWorkspace } from '../factories'
@@ -60,6 +61,7 @@ async function insertConnectedLinkedInCredential(workspaceId: string, actorId: s
 		provider: 'linkedin-unipile',
 		status: INTEGRATION_STATUS_ACTIVE,
 		credentials: credentialsBlob,
+		// The grant migration 0088 writes to a connected row.
 		actorId,
 		createdBy: actorId,
 	})
@@ -417,6 +419,109 @@ describe('get_post_engagement fan-out', () => {
 			expect(subRoutePaths).toHaveLength(2)
 			expect(subRoutePaths.every((p) => p.includes('/posts/mock-post-1/'))).toBe(true)
 			expect(subRoutePaths.some((p) => p.includes(encodeURIComponent(activityId)))).toBe(false)
+		})
+	})
+
+	/**
+	 * read_post_comments and get_post_engagement take every form a caller might
+	 * hold: the activity number, its URN, a post URL, or the opaque id
+	 * list_user_posts returned. The mock 400s the comments and reactions routes
+	 * for any id but the resolved one, as the live API does, so each activity
+	 * form only succeeds if it was resolved through retrievePost first.
+	 */
+	describe('accepts every post id form', () => {
+		const activityNumber = '7519434747178049536'
+		const activityForms = [
+			['a bare activity number', activityNumber],
+			['an urn:li:activity URN', `urn:li:activity:${activityNumber}`],
+			[
+				'a /posts/ URL',
+				`https://www.linkedin.com/posts/satyanadella_example-activity-${activityNumber}-AbCd?utm_source=share`,
+			],
+			[
+				'a /feed/update/ URL',
+				`https://www.linkedin.com/feed/update/urn:li:activity:${activityNumber}/`,
+			],
+		] as const
+
+		let mock: LinkedInMockServer
+
+		beforeAll(async () => {
+			mock = await startLinkedInMock()
+			process.env.UNIPILE_BASE_URL = mock.baseUrl
+			process.env.UNIPILE_API_KEY = 'test-api-key'
+		})
+
+		afterAll(async () => {
+			await mock.close()
+			process.env.UNIPILE_BASE_URL = 'http://ignored-by-test-stub'
+			process.env.UNIPILE_API_KEY = 'ignored-by-test-stub'
+		})
+
+		beforeEach(() => {
+			mock.resetInbox()
+		})
+
+		it.each(activityForms)('read_post_comments resolves %s', async (_label, postId) => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			await insertConnectedLinkedInCredential(ws.id, actorId)
+
+			const out = await readLinkedInPostComments(
+				{ db, actorId, workspaceId: ws.id },
+				{ post_id: postId },
+			)
+
+			expect(out.comments).toHaveLength(1)
+			const paths = mock.inbox().map((r) => r.path)
+			// The retrieve call got the bare activity number, never the URL or URN...
+			expect(paths.some((p) => p.endsWith(`/posts/${activityNumber}`))).toBe(true)
+			// ...and the comments call ran on the resolved id.
+			expect(paths.some((p) => p.includes('/posts/mock-post-1/comments'))).toBe(true)
+		})
+
+		it('read_post_comments sends the id list_user_posts returned straight to the comments route', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			await insertConnectedLinkedInCredential(ws.id, actorId)
+
+			const out = await readLinkedInPostComments(
+				{ db, actorId, workspaceId: ws.id },
+				{ post_id: 'mock-post-1' },
+			)
+
+			expect(out.comments).toHaveLength(1)
+			// No retrieve call: the opaque id is already what the comments route wants.
+			expect(mock.inbox().filter((r) => !r.path.includes('/comments'))).toHaveLength(0)
+		})
+
+		it.each(activityForms)('get_post_engagement resolves %s', async (_label, postId) => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			await insertConnectedLinkedInCredential(ws.id, actorId)
+
+			const result = await getLinkedInPostEngagement(
+				{ db, actorId, workspaceId: ws.id },
+				{ post_id: postId },
+			)
+
+			expect(result.is_partial).toBe(false)
+			expect(result.reactions.total).toBe(2)
+			expect(result.comments.total).toBe(1)
+		})
+
+		it('rejects a URL with no activity number before any provider call, naming the accepted forms', async () => {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			await insertConnectedLinkedInCredential(ws.id, actorId)
+
+			await expect(
+				readLinkedInPostComments(
+					{ db, actorId, workspaceId: ws.id },
+					{ post_id: 'https://www.linkedin.com/in/satyanadella/' },
+				),
+			).rejects.toThrow(/Accepted post_id forms/)
+			expect(mock.inbox()).toHaveLength(0)
 		})
 	})
 })

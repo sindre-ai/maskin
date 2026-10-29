@@ -24,6 +24,7 @@ import {
 } from '../lib/claude-oauth-slots'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	billingAfterByoTransition,
 	cancelActivePaidSubscription,
@@ -33,6 +34,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -126,6 +128,7 @@ function slotFingerprint(slot: {
 const disconnectRoute = createRoute({
 	method: 'delete',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['claude-oauth'],
 	summary: 'Disconnect a Claude OAuth slot (default: primary)',
 	request: {
@@ -158,6 +161,7 @@ app.openapi(disconnectRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	// Locked read-modify-write so a concurrent session-start (which persists
 	// refreshed tokens or a failover transition via its own `SELECT ... FOR
@@ -349,6 +353,7 @@ app.openapi(statusRoute, (async (c) => {
 const importRoute = createRoute({
 	method: 'post',
 	path: '/import',
+	'x-viewer-policy': 'writer',
 	tags: ['claude-oauth'],
 	summary: 'Import Claude OAuth tokens into a slot (default: primary)',
 	request: {
@@ -404,6 +409,7 @@ app.openapi(importRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const body = c.req.valid('json')
 	const { slot: requestedSlot, ...tokens } = body
@@ -534,6 +540,18 @@ app.openapi(importRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(workspaces.id, workspaceId))
+		// Connecting a login improves what the workspace can run, so it must log
+		// the same event a settings PATCH does: that is what lifts a trigger pause
+		// for "no credentials" (trigger-runner SUPPRESSION_CLEARING_ACTIONS).
+		// Key names only, never the tokens.
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: { changed_settings_keys: ['claude_oauth'] },
+		})
 		return { kind: 'ok', slot }
 	})
 
@@ -588,6 +606,7 @@ app.openapi(importRoute, (async (c) => {
 const renameRoute = createRoute({
 	method: 'patch',
 	path: '/nickname',
+	'x-viewer-policy': 'writer',
 	tags: ['claude-oauth'],
 	summary: "Set or clear a slot's nickname",
 	request: {
@@ -629,6 +648,7 @@ app.openapi(renameRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	// Locked read-modify-write — see the disconnect route above for why.
 	const result = await db.transaction(async (tx) => {
@@ -674,6 +694,7 @@ app.openapi(renameRoute, (async (c) => {
 const promoteRoute = createRoute({
 	method: 'post',
 	path: '/promote',
+	'x-viewer-policy': 'writer',
 	tags: ['claude-oauth'],
 	summary: 'Move a subscription to the front of the failover chain',
 	request: {
@@ -708,6 +729,7 @@ app.openapi(promoteRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const result = await promoteToHead(db, workspaceId, slot)
 	if (result === 'not_found') {
@@ -728,6 +750,7 @@ app.openapi(promoteRoute, (async (c) => {
 const swapRoute = createRoute({
 	method: 'post',
 	path: '/swap',
+	'x-viewer-policy': 'writer',
 	tags: ['claude-oauth'],
 	summary: 'Swap the primary and backup designations',
 	request: {
@@ -762,6 +785,7 @@ app.openapi(swapRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const result = await promoteToHead(db, workspaceId, 'backup', { requirePrimary: true })
 	if (result === 'not_found') {

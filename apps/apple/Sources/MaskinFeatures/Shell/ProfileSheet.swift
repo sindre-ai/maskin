@@ -145,20 +145,22 @@ struct ProfileSheet: View {
 		case .integrations:
 			IntegrationsView(
 				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+		case .keychain:
+			KeychainView(store: services.keychainStore())
 		case .triggers:
 			if let workspaceID = environment.workspaceId {
 				TriggersPage(environment: environment, workspaceID: workspaceID)
 			}
 		case .billing:
-			BillingView(store: services.billingStore())
+			BillingView(
+				store: services.billingStore(),
+				manageURL: services.role == .owner ? services.webURL("billing") : nil)
 		case .keys:
 			KeysPage(
 				store: services.apiKeyStore(), mcp: services.mcpStore(),
 				workspaceId: services.workspaceId ?? "", apiKey: services.apiKey)
 		case .settings:
 			SettingsScreen(environment: environment)
-		case .notifications:
-			NotificationsPage(flows: loops?.loops ?? [])
 		case .autonomy:
 			if let workspaceID = environment.workspaceId {
 				AutonomyView(
@@ -176,15 +178,15 @@ struct ProfileSheet: View {
 		if let session = environment.auth.session {
 			NavigationLink(value: Route.yourProfile) {
 				HStack(spacing: MaskinSpace.s8) {
-					ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12)
+					ActorAvatar(
+						name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12, seed: session.actorId)
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 						Text(session.name).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						if let email = session.email {
-							Text(email).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-								.lineLimit(1)
-						}
+						Text(profileSubtitle(email: session.email)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+							.lineLimit(1)
 					}
 					Spacer(minLength: MaskinSpace.s4)
+					Text("Your profile").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 					Image(systemName: "chevron.right")
 						.maskinSymbol(MaskinSpace.s7, weight: .semibold)
 						.foregroundStyle(MaskinColor.ink5)
@@ -199,19 +201,34 @@ struct ProfileSheet: View {
 		}
 	}
 
+	/// "Owner · Workspace name", else the email when no workspace is selected.
+	private func profileSubtitle(email: String?) -> String {
+		guard let name = environment.workspaces.selected?.name else { return email ?? "" }
+		return "\(role.label) \u{00B7} \(name)"
+	}
+
+	/// "4 agents · 3 flows · switch workspace".
+	private var workspaceSubtitle: String {
+		let agentCount = agents?.agents.count ?? 0
+		let flowCount = loops?.loops.count ?? 0
+		return "\(agentCount) \(agentCount == 1 ? "agent" : "agents") \u{00B7} \(flowCount) \(flowCount == 1 ? "flow" : "flows") \u{00B7} switch workspace"
+	}
+
 	/// The workspace you are working in, with Switch.
 	private var workspaceCard: some View {
 		HStack(spacing: MaskinSpace.s8) {
 			MaskinLogoTile(size: ProfileTile.size)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text("Workspace").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				Text(environment.workspaces.selected?.name ?? "Choose workspace")
 					.maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
+				Text(workspaceSubtitle).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s4)
 			Button("Switch") { showWorkspaces = true }
-				.buttonStyle(.bordered)
-				.controlSize(.small)
+				.buttonStyle(.maskinPressed)
+				.maskinText(.subhead).fontWeight(.bold)
+				.foregroundStyle(MaskinColor.ink)
+				.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 		}
 		.padding(.horizontal, MaskinSpace.s9)
 		.padding(.vertical, MaskinSpace.s5)
@@ -315,9 +332,9 @@ extension ProfileMenuItem {
 		case .triggers: "bolt"
 		case .members: "person.2"
 		case .integrations: "puzzlepiece.extension"
+		case .keychain: "lock"
 		case .billing: "creditcard"
 		case .keys: "key"
-		case .notifications: "bell"
 		case .autonomy: "slider.horizontal.3"
 		}
 	}

@@ -96,6 +96,10 @@ struct ThreadLayoutTests {
 			case .system: kinds.append("sys")
 			case .unreadDivider: kinds.append("new")
 			case .handoff: kinds.append("handoff")
+			case .liveCall: kinds.append("call")
+			case .callDivider: kinds.append("call-divider")
+			case .receipt: kinds.append("receipt")
+			case .callSummary: kinds.append("summary")
 case .message(let m, let author): kinds.append("\(m.serverID!)\(author ? "+" : "-")")
 			}
 		}
@@ -235,6 +239,20 @@ struct ConversationsStoreTests {
 		#expect(call?.0 == "Plan")
 		#expect(call?.1 == ["relay"])
 		#expect(call?.2 == nil)
+	}
+
+	@Test("the first message's attachments ride along when the conversation is created")
+	func createWithAttachments() async throws {
+		let api = FakeListAPI([])
+		let store = ConversationsStore(api: api, events: nil)
+		let metadata = ChatSendMetadata(attachments: [ChatAttachmentRef(fileID: "f1", name: "a.jpg")])
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: "see this", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata == [metadata])
+		// With no message there is nothing for the attachments to belong to.
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: " ", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata.last == .some(nil))
 	}
 
 	@Test("loadMore appends the next page without duplicates")

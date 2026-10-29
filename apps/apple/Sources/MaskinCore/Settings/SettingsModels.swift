@@ -3,7 +3,15 @@ import Foundation
 /// A failure with a sentence a person can read. Carries no ids, tokens or response bodies.
 public struct SettingsError: Error, Equatable, Sendable {
 	public var message: String
+	/// The request never reached the server (no connection), so retrying later can work.
+	public var isOffline = false
 	public init(_ message: String) { self.message = message }
+
+	public static let offline = SettingsError("You're offline.", isOffline: true)
+	private init(_ message: String, isOffline: Bool) {
+		self.message = message
+		self.isOffline = isOffline
+	}
 
 	/// The server has no MCP client or tool listing yet (see `MCPAPI`).
 	public static let mcpNotAvailable = SettingsError("Not available on this server yet.")

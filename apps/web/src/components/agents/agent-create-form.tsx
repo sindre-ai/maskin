@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useEffect, useRef, useState } from 'react'
-import { McpServers } from './mcp-servers'
 
 interface AgentCreateFormProps {
 	onAutoCreate: (data: { name: string }) => void
@@ -71,12 +70,6 @@ export function AgentCreateForm({
 	const handleModelBlur = () => {
 		if (agent && onUpdate) {
 			onUpdate({ llm_config: { model: modelDraft || undefined } })
-		}
-	}
-
-	const handleToolsUpdate = (tools: Record<string, unknown>) => {
-		if (agent && onUpdate) {
-			onUpdate({ tools })
 		}
 	}
 
@@ -165,11 +158,6 @@ export function AgentCreateForm({
 						/>
 					</div>
 				</div>
-			</Section>
-
-			{/* MCP Servers */}
-			<Section title="MCP Servers">
-				<McpServers tools={agent?.tools ?? {}} onUpdate={handleToolsUpdate} />
 			</Section>
 
 			{isPending && <p className="text-xs text-muted-foreground">Creating...</p>}

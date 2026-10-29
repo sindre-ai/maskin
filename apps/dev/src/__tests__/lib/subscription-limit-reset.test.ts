@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
 	parseCliResetBanner,
+	parseRateLimitEventReset,
 	parseSubscriptionLimitReset,
 } from '../../lib/subscription-limit-reset'
 
@@ -10,7 +11,7 @@ const now = () => FIXED_NOW
 
 describe('parseSubscriptionLimitReset', () => {
 	describe('anthropic-ratelimit-unified-reset header (source 1/2)', () => {
-		it('parses an ISO-8601 timestamp inside the [now+60s, now+24h] clamp', () => {
+		it('parses an ISO-8601 timestamp inside the [now+60s, now+8d] clamp', () => {
 			const at = new Date(FIXED_NOW + 30 * 60_000).toISOString()
 			const result = parseSubscriptionLimitReset({
 				anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -40,8 +41,18 @@ describe('parseSubscriptionLimitReset', () => {
 			).toBeNull()
 		})
 
-		it('rejects a value above the +24h ceiling', () => {
-			const at = new Date(FIXED_NOW + 25 * 60 * 60_000).toISOString()
+		it('accepts a weekly-limit reset several days out', () => {
+			const at = new Date(FIXED_NOW + 3 * 24 * 60 * 60_000).toISOString()
+			expect(
+				parseSubscriptionLimitReset({
+					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
+					now,
+				})?.resetAt.toISOString(),
+			).toBe(at)
+		})
+
+		it('rejects a value above the +8d ceiling', () => {
+			const at = new Date(FIXED_NOW + 9 * 24 * 60 * 60_000).toISOString()
 			expect(
 				parseSubscriptionLimitReset({
 					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -198,5 +209,80 @@ describe('parseCliResetBanner', () => {
 
 	it('returns null when nothing matches', () => {
 		expect(parseCliResetBanner('nothing to see here', FIXED_NOW)).toBeNull()
+	})
+})
+
+describe('parseCliResetBanner time zones', () => {
+	// 2026-10-22 09:07 UTC, the moment a real Copenhagen banner was missed.
+	const incidentNow = new Date('2026-10-22T09:07:00Z').getTime()
+
+	it('reads a named zone: 2pm Copenhagen on 22 Oct is 12:00 UTC', () => {
+		const result = parseCliResetBanner(
+			"You've hit your session limit · resets 2pm (Europe/Copenhagen)",
+			incidentNow,
+		)
+		expect(result?.toISOString()).toBe('2026-10-22T12:00:00.000Z')
+	})
+
+	it('uses winter time in the same zone after the clocks change', () => {
+		const winterNow = new Date('2026-12-10T09:00:00Z').getTime()
+		const result = parseCliResetBanner('resets 2pm (Europe/Copenhagen)', winterNow)
+		expect(result?.toISOString()).toBe('2026-12-10T13:00:00.000Z')
+	})
+
+	it('rolls to tomorrow when the time has passed in that zone', () => {
+		const lateNow = new Date('2026-10-22T13:00:00Z').getTime()
+		const result = parseCliResetBanner('resets 2pm (Europe/Copenhagen)', lateNow)
+		expect(result?.toISOString()).toBe('2026-10-23T12:00:00.000Z')
+	})
+
+	it('leaves an unknown zone unscheduled instead of guessing', () => {
+		expect(parseCliResetBanner('resets 2pm (Mars/Olympus)', incidentNow)).toBeNull()
+	})
+
+	it('still reads a UTC banner', () => {
+		const result = parseCliResetBanner('resets 3:20pm (UTC)', incidentNow)
+		expect(result?.toISOString()).toBe('2026-10-22T15:20:00.000Z')
+	})
+})
+
+describe('parseRateLimitEventReset', () => {
+	const incidentNow = new Date('2026-10-22T09:07:00Z').getTime()
+	const event = (status: string, resetsAt: number) =>
+		JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status, resetsAt } })
+
+	it('reads the epoch from a rejected event', () => {
+		const result = parseRateLimitEventReset(`${event('rejected', 1792670400)}\n`, incidentNow)
+		expect(result?.toISOString()).toBe('2026-10-22T12:00:00.000Z')
+	})
+
+	it('ignores an event that was not rejected', () => {
+		expect(parseRateLimitEventReset(event('allowed', 1792670400), incidentNow)).toBeNull()
+	})
+
+	it('skips a line cut off at the start of the tail', () => {
+		const tail = `ed","resetsAt":1}}\n${event('rejected', 1792670400)}`
+		expect(parseRateLimitEventReset(tail, incidentNow)?.toISOString()).toBe(
+			'2026-10-22T12:00:00.000Z',
+		)
+	})
+
+	it('keeps a reset several days out (weekly limit)', () => {
+		const reset = parseRateLimitEventReset(event('rejected', 1793044800), incidentNow)
+		expect(reset?.toISOString()).toBe('2026-10-26T20:00:00.000Z')
+	})
+
+	it('returns null when the reset is beyond the 8d clamp', () => {
+		expect(parseRateLimitEventReset(event('rejected', 1793750400), incidentNow)).toBeNull()
+	})
+})
+
+describe('weekly-limit banner as the CLI prints it', () => {
+	const weeklyNow = new Date('2026-10-28T06:00:00Z').getTime()
+
+	it('reads a month-and-day reset with a comma and an IANA zone, inside a JSON line', () => {
+		const tail =
+			'{"type":"result","result":"You\'ve hit your weekly limit · resets Oct 31, 2pm (Europe/Copenhagen)"}'
+		expect(parseCliResetBanner(tail, weeklyNow)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
 	})
 })

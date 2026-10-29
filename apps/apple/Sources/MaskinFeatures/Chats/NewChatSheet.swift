@@ -12,7 +12,8 @@ struct NewChatSheet: View {
 	let currentActorID: String?
 	var prefill = ""
 	var initialRecipient: ChatParticipant?
-	let onCreated: (ConversationSummary) -> Void
+	/// `live` is true when the person chose Live: the caller opens the conversation straight into a call.
+	let onCreated: (ConversationSummary, _ live: Bool) -> Void
 
 	/// Where the unsent text lives between openings of the sheet.
 	static let draftKey = "new-conversation"
@@ -30,14 +31,15 @@ struct NewChatSheet: View {
 
 	init(
 		store: ConversationsStore, currentActorID: String?, prefill: String = "",
-		initialRecipient: ChatParticipant? = nil, onCreated: @escaping (ConversationSummary) -> Void
+		initialRecipient: ChatParticipant? = nil, uploader: (any ChatFileUploading)? = nil,
+		onCreated: @escaping (ConversationSummary, _ live: Bool) -> Void
 	) {
 		self.store = store
 		self.currentActorID = currentActorID
 		self.prefill = prefill
 		self.initialRecipient = initialRecipient
 		self.onCreated = onCreated
-		_composer = State(initialValue: ChatComposerModel(uploader: nil, selfActorID: currentActorID ?? ""))
+		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: currentActorID ?? ""))
 	}
 
 	private var recipients: [ChatParticipant] {
@@ -77,11 +79,14 @@ struct NewChatSheet: View {
 
 	// MARK: Composer
 
+	/// Live needs exactly one agent to talk to; the composer shows its waveform button while the field is empty.
+	private var liveLead: ChatParticipant? {
+		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
+	}
+
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
-			if composer.trimmedText.isEmpty {
-				StarterChips { composer.text = $0 }
-			} else if restoredDraft {
+			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
 					.foregroundStyle(MaskinColor.ink5)
@@ -91,6 +96,8 @@ struct NewChatSheet: View {
 				model: composer,
 				config: MaskinComposerConfig(
 					variant: .floating, placeholder: NewConversationCopy.placeholder(for: recipients),
+					// Live is the composer's own waveform button, as in every other chat.
+					goLive: liveLead == nil ? nil : { Task { await send(live: true) } },
 					suggestions: { query in
 						MentionTrigger.candidates(
 							query: query, participants: recipients, workspace: store.actors,
@@ -103,26 +110,31 @@ struct NewChatSheet: View {
 		.padding(.bottom, MaskinSpace.s4)
 	}
 
-	private func send() async {
+	private func send(live: Bool = false) async {
 		// @mentions in the text also join the conversation.
 		var ids = draft.recipientIDs
 		for mention in composer.mentions where !ids.contains(mention.id) && mention.id != currentActorID {
 			ids.append(mention.id)
 		}
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
-		guard !people.isEmpty, let message = composer.take()?.text else { return }
+		guard !people.isEmpty else { return }
+		// Live starts the call with no first message; the typed text stays in the composer.
+		let taken = live ? nil : composer.take()
+		let message = taken?.text
+		guard live || message != nil else { return }
 		isCreating = true
 		error = nil
 		defer { isCreating = false }
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: people.map(\.name)),
-				participantIDs: people.map(\.id), firstMessage: message)
+				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
+				participantIDs: people.map(\.id), firstMessage: message,
+				firstMessageMetadata: taken?.metadata)
 			MaskinHaptics.play(.success)
-			onCreated(created)
+			onCreated(created, live)
 			dismiss()
 		} catch {
-			composer.text = message
+			if let message { composer.text = message }
 			self.error = (error as? ChatsError)?.message ?? error.localizedDescription
 			MaskinHaptics.play(.error)
 		}
@@ -241,7 +253,7 @@ struct NewConversationForm: View {
 			let shown = showAll ? all : Array(all.prefix(Self.suggestedCount))
 			if !all.isEmpty {
 				sectionLabel("Suggested")
-				card(rows: shown, more: shown.count < all.count ? "Show all \(all.count)" : nil)
+				card(rows: shown, more: shown.count < all.count ? "Show all \(all.count)" : (showAll && all.count > Self.suggestedCount ? "Show fewer" : nil))
 			}
 		}
 	}
@@ -291,7 +303,7 @@ struct NewConversationForm: View {
 			}
 			if let more {
 				Button {
-					withAnimation(MaskinMotion.standard) { showAll = true }
+					withAnimation(MaskinMotion.standard) { showAll.toggle() }
 				} label: {
 					HStack {
 						Text(more)
@@ -301,6 +313,7 @@ struct NewConversationForm: View {
 						Image(systemName: "chevron.right")
 							.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 							.foregroundStyle(MaskinColor.inkPlaceholder)
+							.rotationEffect(.degrees(showAll ? -90 : 90))
 					}
 					.padding(.horizontal, MaskinSpace.s8 + 1)
 					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2)
@@ -344,34 +357,6 @@ struct NewConversationForm: View {
 			highlightedChip = last
 		}
 		return .handled
-	}
-}
-
-/// The three starter prompts above an empty message box; tapping one fills it.
-struct StarterChips: View {
-	let onPick: (String) -> Void
-
-	var body: some View {
-		FlowLayout(spacing: MaskinSpace.s4, alignment: .trailing) {
-			ForEach(NewConversationCopy.starters, id: \.self) { starter in
-				Button {
-					MaskinHaptics.play(.selection)
-					onPick(starter)
-				} label: {
-					Text(starter)
-						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink2)
-						.padding(.horizontal, MaskinSpace.s8 + 1)
-						.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s4)
-						.background(MaskinSurface.card, in: Capsule())
-						.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
-						.frame(minHeight: MaskinSpace.touchMin)
-						.contentShape(Capsule())
-				}
-				.buttonStyle(.maskinPressed(.shrink))
-			}
-		}
-		.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 }
 

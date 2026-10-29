@@ -62,11 +62,34 @@ public final class ChatStore {
 			}
 		}
 	}
+	/// False while the reader is parked above the newest message (a thread opened on its NEW
+	/// divider, or scrolled up). Read state only advances at the bottom, so a chat left half-read
+	/// keeps its unread badge in the list.
+	public var isAtBottom = true
+	/// True once the read cursor this visit opened with is known (from the saved thread or the
+	/// server), so the thread can choose its opening position once instead of correcting it later.
+	public private(set) var openPositionKnown = false
+	/// True once the newest messages came from the server this visit. A saved thread knows its read
+	/// cursor but not what arrived since, so choosing the opening position from it alone opens on
+	/// the old bottom and the new messages then land below the fold.
+	public private(set) var serverConfirmed = false
+	/// The newest message the reader has scrolled past; read state advances to it while they are
+	/// still above the bottom. Only the thread view feeds it.
+	public private(set) var seenThrough = 0
+	/// False until the thread has chosen its opening position: rows that happen to be on screen
+	/// while it is still hidden at the bottom have not been read.
+	public var countsSeen = false
+	@ObservationIgnored private var seenTask: Task<Void, Never>?
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
 	/// one-line status. Set by the screen that builds the store.
 	@ObservationIgnored public var trace: ActivityStore?
+	/// Session reads whose finished-turn history is still on its way to `trace`. Each turn that has
+	/// steps adds a one-line row to the thread, so the thread waits for this (briefly) before it shows
+	/// itself, instead of letting those rows appear under the reader.
+	public var isLoadingTrace: Bool { traceLoads > 0 }
+	@ObservationIgnored private var traceLoads = 0
 	/// Told after every successful session refresh (feeds the Live Activity).
 	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
 	/// The flow this conversation belongs to, when the opener knows it (the API does not link a
@@ -90,6 +113,12 @@ public final class ChatStore {
 	@ObservationIgnored private let knownLastMessageAt: Date?
 	@ObservationIgnored private let spawnGrace: TimeInterval
 	@ObservationIgnored private let staleSessionAfter: TimeInterval
+	/// Sessions the reader stopped, and when. The server's stop only tears the sandbox down for a
+	/// remote session; its row keeps saying `running` until a later settle, so a refresh straight
+	/// after Stop would show the same "working" state and Stop would look like it did nothing.
+	/// For `stopGrace` the session is treated as stopped; past it, the server's word wins again.
+	@ObservationIgnored private var stopRequested: [String: Date] = [:]
+	@ObservationIgnored private let stopGrace: TimeInterval = 90
 	@ObservationIgnored private let pollInterval: Duration?
 	@ObservationIgnored private let retryDelays: [Duration]
 	@ObservationIgnored private var retryTask: Task<Void, Never>?
@@ -109,7 +138,15 @@ public final class ChatStore {
 	@ObservationIgnored private var readSent = 0
 	/// A delivered message keeps the row id of the optimistic bubble, so SwiftUI never swaps it.
 	@ObservationIgnored private var aliases: [Int: String] = [:]
-	@ObservationIgnored private var deliveredClientIDs: Set<String> = []
+	/// The server id each delivered send got, by client id.
+	@ObservationIgnored private var deliveredServerIDs: [String: Int] = [:]
+	/// What this store sent, by client id, until the server's copy is in `confirmed`. The queue only
+	/// knows a send until the outbox drops it, which can be a moment before the confirmed copy is in
+	/// the thread (or, if the delivery hand-off is skipped, long before): in that window the bubble
+	/// would be in neither list and blink out. This keeps it on screen until its twin is here.
+	private var sentRows: [String: PendingChatSend] = [:]
+	/// A send nobody has confirmed after this long stops being drawn as "sending".
+	private static let sentRowLifetime: TimeInterval = 90
 
 	public init(
 		conversationID: String, currentActorID: String, currentActorName: String,
@@ -158,10 +195,20 @@ public final class ChatStore {
 	public var title: String { detail?.title ?? "Chat" }
 	public var lastServerID: Int? { confirmed.last?.serverID }
 
-	/// Server rows, then unconfirmed sends. Failed sends always show; a queued one is hidden once
-	/// its confirmed twin is in the list.
-	public var messages: [ChatMessage] {
-		let rows = queue.pending(in: conversationID)
+	/// The main timeline: server rows then unconfirmed sends, without thread replies (those live
+	/// in their thread) unless the author also sent them to the chat.
+	public var messages: [ChatMessage] { allMessages.filter(\.showsInTimeline) }
+
+	/// Server rows, then unconfirmed sends, thread replies included. Failed sends always show; a
+	/// queued one is hidden once its confirmed twin is in the list.
+	public var allMessages: [ChatMessage] {
+		var rows = queue.pending(in: conversationID)
+		let queued = Set(rows.map(\.id))
+		let current = now()
+		rows += sentRows.values.filter {
+			!queued.contains($0.id) && current.timeIntervalSince($0.createdAt) < Self.sentRowLifetime
+		}
+		rows.sort { $0.createdAt < $1.createdAt }
 		var consumed: Set<Int> = []
 		var shown: [ChatMessage] = []
 		for row in rows {
@@ -169,7 +216,9 @@ public final class ChatStore {
 				shown.append(row.asMessage(actorID: currentActorID, actorName: currentActorName))
 				continue
 			}
-			if deliveredClientIDs.contains(row.id) { continue }
+			// Hidden only once the server's copy is actually in the list (under this row's id, or as
+			// a twin), never merely because a delivery was announced.
+			if isConfirmed(row) { continue }
 			if let twin = confirmedTwin(of: row, excluding: consumed) {
 				consumed.insert(twin)
 				continue
@@ -179,13 +228,26 @@ public final class ChatStore {
 		return confirmed + shown
 	}
 
+	/// How far a server timestamp may trail the device clock and still count as "after the send".
+	private static let twinClockSkew: TimeInterval = 120
+
 	/// The confirmed row that is the server's copy of a queued send: mine, same text, and newer
-	/// than anything I had seen when I sent it.
+	/// than anything I had seen when I sent it. A send made before the thread had loaded (the
+	/// Chief of Staff sheet sends its opening message on appear) saw nothing, so an earlier
+	/// identical message of mine would match it and hide the queued bubble; for those the
+	/// copy must also have been created no earlier than the send.
 	private func confirmedTwin(of row: PendingChatSend, excluding consumed: Set<Int>) -> Int? {
 		confirmed.first { message in
 			guard let id = message.serverID, !consumed.contains(id) else { return false }
-			return message.actorID == currentActorID && message.content == row.content
-				&& id > (row.afterServerID ?? 0)
+			guard message.actorID == currentActorID, message.content == row.content,
+				id > (row.afterServerID ?? 0)
+			else { return false }
+			if row.afterServerID == nil, let created = message.createdAt,
+				created < row.createdAt.addingTimeInterval(-Self.twinClockSkew)
+			{
+				return false
+			}
+			return true
 		}?.serverID
 	}
 
@@ -199,6 +261,18 @@ public final class ChatStore {
 		var index: [Int: [ChatQuestionAnswer.Answer]] = [:]
 		for message in messages {
 			if let id = message.answeredQuestionID, index[id] == nil { index[id] = message.questionAnswers }
+		}
+		return index
+	}
+
+	/// For each card a person answered (by the card's message id): how. Read from every message,
+	/// since the answer itself is hidden from the timeline.
+	public var cardAnswerIndex: [Int: ChatCardAnswer.Outcome] {
+		var index: [Int: ChatCardAnswer.Outcome] = [:]
+		for message in allMessages {
+			if let answer = message.cardAnswer, index[answer.messageID] == nil {
+				index[answer.messageID] = answer.outcome
+			}
 		}
 		return index
 	}
@@ -217,12 +291,52 @@ public final class ChatStore {
 			?? ChatParticipant(id: actorID, name: "An agent", kind: .agent)
 	}
 
-	/// Live agent sessions, one per agent (the newest), ignoring ones that have gone quiet.
+	/// Live agent sessions, one per agent (the newest), ignoring ones that have gone quiet and ones
+	/// that are only waiting for the next message (`isIdle`).
 	public func liveSessions(at date: Date? = nil) -> [ChatAgentSession] {
 		let t = date ?? now()
+		return runningSessions(at: t).filter { !isIdle($0, at: t) }
+	}
+
+	/// An interactive session stays `running` between turns, so its status alone can't say whether
+	/// the agent is working. It is idle when its newest traced turn has finished, nothing is
+	/// awaited from it, and no one has written to the chat since that turn began (a message
+	/// newer than the turn gets `spawnGrace` for the next turn to show up). Without a loaded trace
+	/// nothing is known, so the session counts as working.
+	public func isIdle(_ session: ChatAgentSession, at date: Date? = nil) -> Bool {
+		let t = date ?? now()
+		guard awaitingReplySince == nil else { return false }
+		guard let turns = trace?.turnsBySession[session.id],
+			let last = turns.max(by: { $0.messageID < $1.messageID })
+		else { return finalOutputIsNewest(of: session, at: t) }
+		guard !last.isRunning else { return false }
+		let newerFromOthers = messages.contains { message in
+			guard message.kind == "message", message.actorID != session.actorID else { return false }
+			guard message.serverID == nil || (message.serverID ?? 0) > last.messageID else { return false }
+			guard let created = message.createdAt else { return message.serverID == nil }
+			return t.timeIntervalSince(created) < spawnGrace
+		}
+		return !newerFromOthers
+	}
+
+	/// No trace to read: the agent's `final_output` message being newer than anything anyone else
+	/// wrote means its last turn is over. Mirrors the web, which keys off that message.
+	private func finalOutputIsNewest(of session: ChatAgentSession, at t: Date) -> Bool {
+		guard let last = messages.last(where: { $0.kind == "message" }) else { return false }
+		return last.actorID == session.actorID && last.serverID != nil && last.isFinalOutput
+	}
+
+	/// Sessions that are open but between turns, kept so the user can still end one.
+	public func idleSessions(at date: Date? = nil) -> [ChatAgentSession] {
+		let t = date ?? now()
+		return runningSessions(at: t).filter { $0.status == .running && isIdle($0, at: t) }
+	}
+
+	private func runningSessions(at t: Date) -> [ChatAgentSession] {
 		var seen: Set<String> = []
 		return agentSessions.filter { session in
 			guard session.status.isLive else { return false }
+			if let stopped = stopRequested[session.id], t.timeIntervalSince(stopped) < stopGrace { return false }
 			if let touched = session.updatedAt ?? session.startedAt,
 				t.timeIntervalSince(touched) > staleSessionAfter
 			{
@@ -435,8 +549,13 @@ public final class ChatStore {
 				while !Task.isCancelled {
 					try? await Task.sleep(for: interval)
 					guard let self, !Task.isCancelled else { return }
-					if self.isActive, self.needsSessionPoll {
-						if self.hasLiveSpawnedSession { await self.sync(full: true) }
+					// Not gated on `isActive`: the app is "inactive" (not backgrounded) behind Control
+					// Center, a screen recording or a system sheet, and the thread is still on screen.
+					if self.needsSessionPoll {
+						// Messages normally arrive on the event stream. While a reply is owed, also ask for
+						// what is newer than the last row held (cheap, `after_id`), so a stream that
+						// dropped or stalled can't leave the reader looking at a frozen thread.
+						await self.sync(full: self.hasLiveSpawnedSession)
 						await self.refreshSessions()
 					}
 				}
@@ -446,6 +565,8 @@ public final class ChatStore {
 	}
 
 	public func stop() {
+		seenTask?.cancel()
+		seenTask = nil
 		listener?.cancel()
 		listener = nil
 		queueListener?.cancel()
@@ -463,7 +584,7 @@ public final class ChatStore {
 
 	/// Only poll sessions while something could change: an agent is running or a reply is due.
 	private var needsSessionPoll: Bool {
-		!liveSessions().isEmpty || awaitingReplySince != nil || hasLiveSpawnedSession
+		!runningSessions(at: now()).isEmpty || awaitingReplySince != nil || hasLiveSpawnedSession
 	}
 
 	/// A handoff row is still queued or working: its state only reaches us through the messages.
@@ -502,6 +623,8 @@ public final class ChatStore {
 		else { return }
 		detail = entry.value.detail
 		readSent = max(readSent, entry.value.detail.lastReadMessageID ?? 0)
+		if openedReadCursor == nil { openedReadCursor = entry.value.detail.lastReadMessageID }
+		openPositionKnown = true
 		merge(entry.value.messages.map(\.message))
 		hasEarlier = confirmed.count >= ChatCaching.threadMessageLimit
 		phase = .loaded
@@ -583,8 +706,10 @@ public final class ChatStore {
 			if let loadedDetail {
 				detail = loadedDetail
 				if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
+				openPositionKnown = true
 				readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
 			}
+			serverConfirmed = true
 			freshness.refreshed(at: cache?.now() ?? now())
 			writeCache()
 			// Independent reads: run together so the working indicator and trace don't wait on
@@ -692,13 +817,20 @@ public final class ChatStore {
 	}
 
 	public func refreshSessions() async {
-		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
+		traceLoads += 1
+		guard let sessions = try? await api.sessions(conversationID: conversationID) else {
+			traceLoads -= 1
+			return
+		}
 		let sorted = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
 		if sorted != agentSessions { agentSessions = sorted }
 		// Not awaited: fetching a finished turn's history must never delay the thread itself.
-		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
+		Task { [weak self, trace, sessions = agentSessions] in
+			await trace?.update(sessions: sessions)
+			self?.traceLoads -= 1
+		}
 		onSessionsRefreshed?(agentSessions)
 	}
 
@@ -707,13 +839,23 @@ public final class ChatStore {
 	/// Queue a message. The bubble appears at once (it is read from the queue, which is on disk),
 	/// and the outbox delivers it exactly once, now or when the network is back.
 	@discardableResult
-	public func send(_ text: String, metadata: ChatSendMetadata? = nil) -> String? {
+	public func send(
+		_ text: String, metadata: ChatSendMetadata? = nil, thread: ChatSendThread? = nil
+	) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !content.isEmpty else { return nil }
+		// The server refuses a message that holds a secret, so no entry point queues one: the main chat
+		// shows its own sheet first, and any other (a thread reply, a draft card) gets this notice
+		// instead of a failed row that would keep the key.
+		if SecretScanner.firstSecret(in: content) != nil {
+			notice = ChatsHTTPError.rawSecretMessage
+			return nil
+		}
 		do {
 			let pending = try queue.send(
 				conversationID: conversationID, content: content, metadata: metadata,
-				afterServerID: lastServerID)
+				afterServerID: lastServerID, thread: thread)
+			sentRows[pending.id] = pending
 			awaitingReplySince = now()
 			// Asking again lifts the "Stopped" marker: a new answer is on its way.
 			stoppedAgentIDs = []
@@ -732,6 +874,7 @@ public final class ChatStore {
 
 	/// Drop a message that never reached the server.
 	public func discard(_ id: String) {
+		sentRows[Self.clientID(of: id)] = nil
 		if !queue.discard(Self.clientID(of: id)) {
 			notice = "That message is already being sent."
 		}
@@ -746,7 +889,8 @@ public final class ChatStore {
 		case .delivered(let clientID, let message):
 			guard message.conversationID == conversationID, let serverID = message.serverID else { return }
 			// Already applied inline by the delivery observer; the stream repeats it.
-			guard deliveredClientIDs.insert(clientID).inserted else { return }
+			guard deliveredServerIDs[clientID] == nil else { return }
+			deliveredServerIDs[clientID] = serverID
 			aliases[serverID] = "local-\(clientID)"
 			merge([message])
 			awaitingReplySince = now()
@@ -871,6 +1015,8 @@ public final class ChatStore {
 			if let agentID, replyInFlight || liveSessions().contains(where: { $0.id == id }) {
 				stoppedAgentIDs.insert(agentID)
 			}
+			stopRequested[id] = now()
+			// The agent is no longer expected to answer: no spawn-grace "working" row either.
 			awaitingReplySince = nil
 		} catch {
 			notice = Self.message(error)
@@ -897,19 +1043,127 @@ public final class ChatStore {
 
 	// MARK: - Read state
 
-	/// Advance the read cursor to the newest confirmed message. Never regresses, never repeats.
+	/// Advance the read cursor. At the bottom that is the newest confirmed message; above it, the
+	/// newest message the reader has scrolled past (`noteSeen`). Never regresses, never repeats.
 	/// Only while the thread is visible and the app is active.
 	public func markReadIfNeeded() async {
-		guard isActive, let last = lastServerID, last > readSent else { return }
+		guard isActive, let last = lastServerID else { return }
+		var target = isAtBottom ? last : min(last, seenThrough)
+		// Past the last message the reader can still scroll to there is nothing left to read: their
+		// own messages and thread replies (shown in their thread, not here) are never scrolled past.
+		if target < last, !timelineHasUnseen(after: target) { target = last }
+		guard target > readSent else { return }
 		let previous = readSent
-		readSent = last
+		readSent = target
 		do {
-			try await api.markRead(conversationID: conversationID, lastMessageID: last)
-			detail?.unreadCount = 0
-			onMarkedRead?(conversationID, last)
+			try await api.markRead(conversationID: conversationID, lastMessageID: target)
+			detail?.lastReadMessageID = target
+			if target >= last {
+				detail?.unreadCount = 0
+				onMarkedRead?(conversationID, last)
+			}
+			// The saved thread must carry the new cursor, or the next open shows NEW over read messages.
+			writeCache()
 		} catch {
 			readSent = previous
 		}
+	}
+
+	/// Whether the main timeline still holds a message from someone else after `cursor`.
+	func timelineHasUnseen(after cursor: Int) -> Bool {
+		messages.contains { ($0.serverID ?? 0) > cursor && $0.actorID != currentActorID }
+	}
+
+	/// The reader has scrolled past message `serverID`: read state follows a moment later, so a
+	/// long thread reads down as it is read instead of staying unread until the very end.
+	public func noteSeen(_ serverID: Int) {
+		guard countsSeen, serverID > seenThrough else { return }
+		seenThrough = serverID
+		seenTask?.cancel()
+		seenTask = Task { [weak self] in
+			try? await Task.sleep(for: .milliseconds(350))
+			if Task.isCancelled { return }
+			await self?.markReadIfNeeded()
+		}
+	}
+
+	// MARK: - Reactions
+
+	/// Add or take back your `emoji` on a message. The chip changes at once; if the server refuses,
+	/// it goes back and the notice says why.
+	public func toggleReaction(_ emoji: String, on message: ChatMessage) async {
+		guard let serverID = message.serverID,
+			let index = confirmed.firstIndex(where: { $0.serverID == serverID })
+		else { return }
+		let before = confirmed[index].reactions
+		let adding = !(before.first { $0.emoji == emoji }?.reactedByMe ?? false)
+		confirmed[index].reactions = MessageReaction.toggling(
+			emoji, in: before, me: ChatParticipant(id: currentActorID, name: currentActorName, kind: .human))
+		do {
+			try await api.react(conversationID: conversationID, messageID: serverID, emoji: emoji, add: adding)
+		} catch {
+			// Roll back only if nothing newer replaced the row meanwhile.
+			if let now = confirmed.firstIndex(where: { $0.serverID == serverID }) {
+				confirmed[now].reactions = before
+			}
+			notice = Self.message(error)
+		}
+	}
+
+	// MARK: - Threads
+
+	/// The highest reply id the reader has opened each thread past, so a pill reads "read" the
+	/// moment the thread is opened rather than after the server round trip.
+	public private(set) var threadReadThrough: [Int: Int] = [:]
+
+	/// The replies of one thread, oldest first, unconfirmed ones last.
+	public func replies(to rootID: Int) -> [ChatMessage] {
+		allMessages.filter { $0.threadRootID == rootID && (!$0.isHiddenFromChat || $0.isFailed) }
+	}
+
+	/// What the pill under a root says: the server's summary plus replies that arrived since.
+	public func threadSummary(for root: ChatMessage) -> ThreadSummary? {
+		guard let rootID = root.serverID else { return nil }
+		return ThreadSummary.current(
+			base: root.thread, rootAuthor: participant(for: root.actorID),
+			replies: confirmed.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }, currentActorID: currentActorID,
+			readThrough: threadReadThrough[rootID])
+	}
+
+	/// Fetch every reply of a thread and fold them in (a root opened from the Threads list, or one
+	/// whose replies are older than the page held).
+	public func loadThread(_ rootID: Int) async {
+		do {
+			merge(try await api.threadReplies(conversationID: conversationID, rootID: rootID))
+		} catch {
+			notice = Self.message(error)
+		}
+	}
+
+	/// Reply inside a thread. `to` is who the reply is for: they are mentioned, which is what makes
+	/// an agent answer. Returns the local row id, nil when the text is empty.
+	@discardableResult
+	public func reply(
+		_ text: String, in rootID: Int, to recipient: ChatParticipant?, alsoInChannel: Bool,
+		metadata extra: ChatSendMetadata? = nil
+	) -> String? {
+		var metadata = extra
+		if let recipient {
+			metadata = ChatSendMetadata(
+				mentions: [recipient.id], questionAnswer: extra?.questionAnswer,
+				hiddenFromChat: extra?.hiddenFromChat, cardAnswer: extra?.cardAnswer)
+		}
+		return send(
+			text, metadata: metadata, thread: ChatSendThread(rootID: rootID, alsoInChannel: alsoInChannel))
+	}
+
+	/// The reader has the thread open: everything in it counts as read.
+	public func markThreadRead(_ rootID: Int) async {
+		guard let newest = confirmed.last(where: { $0.threadRootID == rootID })?.serverID,
+			newest > (threadReadThrough[rootID] ?? 0)
+		else { return }
+		threadReadThrough[rootID] = newest
+		try? await api.markThreadRead(conversationID: conversationID, rootID: rootID, lastMessageID: newest)
 	}
 
 	// MARK: - Merging
@@ -939,6 +1193,28 @@ public final class ChatStore {
 	private func publish(_ result: (rows: [ChatMessage], clearsReply: Bool)) {
 		if result.clearsReply { awaitingReplySince = nil }
 		if result.rows != confirmed { confirmed = result.rows }
+		pruneSentRows()
+	}
+
+	/// The server's copy of this send is in the list: under the bubble's own id, or by the server id
+	/// the delivery reported.
+	private func isConfirmed(_ row: PendingChatSend) -> Bool {
+		let delivered = deliveredServerIDs[row.id]
+		return confirmed.contains { $0.id == "local-\(row.id)" || (delivered != nil && $0.serverID == delivered) }
+	}
+
+	/// Forget sends whose confirmed copy has arrived.
+	private func pruneSentRows() {
+		guard !sentRows.isEmpty else { return }
+		var consumed: Set<Int> = []
+		for (id, row) in sentRows.sorted(by: { $0.value.createdAt < $1.value.createdAt }) {
+			if isConfirmed(row) {
+				sentRows[id] = nil
+			} else if let twin = confirmedTwin(of: row, excluding: consumed) {
+				consumed.insert(twin)
+				sentRows[id] = nil
+			}
+		}
 	}
 
 	private func merged(_ incoming: [ChatMessage], into base: [ChatMessage]) -> (rows: [ChatMessage], clearsReply: Bool) {
@@ -953,7 +1229,13 @@ public final class ChatStore {
 				if let alias = aliases[serverID] { message.id = alias }
 				rows.append(message)
 				// A fresh answer lifts the agent's "Stopped" marker; a re-read of old rows does not.
-				if message.author == .agent { stoppedAgentIDs.remove(message.actorID) }
+				if message.author == .agent {
+					stoppedAgentIDs.remove(message.actorID)
+					// It answered after the Stop, so its session is live again: no stop grace.
+					for session in agentSessions where session.actorID == message.actorID {
+						stopRequested[session.id] = nil
+					}
+				}
 			}
 			if message.author == .agent, awaitingReplySince != nil,
 				let sent = rows.last(where: { $0.actorID == currentActorID })?.serverID,

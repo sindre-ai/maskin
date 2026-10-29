@@ -59,17 +59,21 @@ describe('scripts/lib/docker-absent-guard.sh', () => {
 		},
 	)
 
-	it('leaves the flag unset when the socket exists', async () => {
-		const socket = join(dir, 'present.sock')
-		const server = createServer()
-		await new Promise<void>((done) => server.listen(socket, done))
-		try {
-			const out = runGuard({ DOCKER_HOST: `unix://${socket}` })
-			expect(out.status).toBe(0)
-			expect(out.stderr).toBe('')
-			expect(out.stdout).toContain('FLAG=unset')
-		} finally {
-			await new Promise((done) => server.close(done))
-		}
-	})
+	// Node cannot listen on a unix socket under the Windows temp dir (EACCES).
+	it.skipIf(process.platform === 'win32')(
+		'leaves the flag unset when the socket exists',
+		async () => {
+			const socket = join(dir, 'present.sock')
+			const server = createServer()
+			await new Promise<void>((done) => server.listen(socket, done))
+			try {
+				const out = runGuard({ DOCKER_HOST: `unix://${socket}` })
+				expect(out.status).toBe(0)
+				expect(out.stderr).toBe('')
+				expect(out.stdout).toContain('FLAG=unset')
+			} finally {
+				await new Promise((done) => server.close(done))
+			}
+		},
+	)
 })

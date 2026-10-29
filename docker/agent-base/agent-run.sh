@@ -244,55 +244,6 @@ build_context() {
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
 MCP_CONFIG_FILE=""
 
-CDP_RETRY_PROXY_PORT=9333
-
-# Start a local retry proxy in front of the real CDP endpoint and repoint
-# BROWSER_CDP_URL at it. @playwright/mcp's own CDP client gives up on a
-# single ECONNRESET (see cdp-retry-proxy.js for the full rationale); this
-# gives every CDP connection attempt from this session a few retries with
-# backoff instead of failing the whole browser tool call on one transient
-# guest<->host networking blip. Best-effort: if the proxy fails to start,
-# BROWSER_CDP_URL is left pointing at the real endpoint directly.
-setup_cdp_retry_proxy() {
-  [ -z "$BROWSER_CDP_URL" ] && return
-  local target_host target_port
-  target_host="${BROWSER_CDP_URL#http://}"
-  target_port="${target_host##*:}"
-  target_host="${target_host%%:*}"
-  if [ -z "$target_host" ] || [ -z "$target_port" ]; then
-    echo "[system] WARNING: could not parse BROWSER_CDP_URL ($BROWSER_CDP_URL), skipping retry proxy" >&2
-    return
-  fi
-  # tee, not a plain redirect: the startup poll below greps this log file,
-  # so the file must stay - but it lives in a VM that gets destroyed, so it
-  # is also mirrored to stderr, which `msb exec` carries back to the host
-  # and into agent-server logs as source='msb-exec' (guest-log-stream.ts).
-  # Process substitution (not a pipeline) keeps $! as node's own pid, which
-  # the kill -0 liveness check below depends on.
-  node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > >(tee "${TMPDIR:-/tmp}/cdp-retry-proxy.log" | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
-  local proxy_pid=$!
-  # Give it a moment to bind before handing out the local URL — a failed
-  # bind (port in use, node missing) means BROWSER_CDP_URL should still
-  # point at the real endpoint rather than a proxy that never came up.
-  local deadline=$(( $(date +%s) + 3 ))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    if ! kill -0 "$proxy_pid" 2>/dev/null; then
-      echo "[system] WARNING: cdp-retry-proxy exited immediately, using BROWSER_CDP_URL directly" >&2
-      cat "${TMPDIR:-/tmp}/cdp-retry-proxy.log" >&2 2>/dev/null || true
-      return
-    fi
-    grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null && break
-    sleep 0.2
-  done
-  if grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null; then
-    echo "[system] CDP retry proxy up, routing BROWSER_CDP_URL through 127.0.0.1:${CDP_RETRY_PROXY_PORT}"
-    BROWSER_CDP_URL="http://127.0.0.1:${CDP_RETRY_PROXY_PORT}"
-  else
-    echo "[system] WARNING: cdp-retry-proxy did not confirm startup, using BROWSER_CDP_URL directly" >&2
-  fi
-}
-
 STRIP_IMAGES_PROXY_PORT=9334
 
 # Start a local proxy in front of the model endpoint that replaces image blocks
@@ -304,8 +255,10 @@ STRIP_IMAGES_PROXY_PORT=9334
 setup_strip_images_proxy() {
   # `return 0`, not a bare `return`: that would pass on the failed test's status
   # (1), and `set -e` would abort the whole script for every non-stripping session.
-  [ "$MASKIN_STRIP_IMAGES" = "1" ] || return 0
-  [ -z "$ANTHROPIC_BASE_URL" ] && return
+  # Also needed when only provider exclusions are set: the proxy injects them.
+  # Also needed for the time-to-first-token guard (MASKIN_TTFT_TIMEOUT_MS).
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || [ -n "$MASKIN_PROVIDER_PREFS" ] || [ -n "$MASKIN_TTFT_TIMEOUT_MS" ] || return 0
+  [ -z "$ANTHROPIC_BASE_URL" ] && return 0
   node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
     > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
@@ -326,13 +279,73 @@ setup_strip_images_proxy() {
   fi
 }
 
-setup_mcps() {
-  # Skip if no MCP config provided and no browser CDP endpoint
-  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
-    return
+# --- Guarded MCP servers (BYO integrations) ----------------------------------
+# The API rewrites each custom-extension MCP server to run behind the guard
+# wrapper: `maskin-mcp-guard -- <real command>`. The wrapper is what enforces
+# the per-tool allowlist, so a guarded server must NEVER run without it. This
+# image is the only place that knows whether the wrapper is really here, so the
+# check lives here and fails closed: if the wrapper is missing or does not run,
+# the server is dropped from the MCP config and the reason is logged. The agent
+# then does not get that server at all; it never gets it unguarded.
+MCP_GUARD_NAME="maskin-mcp-guard"
+
+# True when the wrapper command exists and answers --version. The version run
+# catches a wrapper that is present but cannot execute (no node, bad file).
+# Returns the test's status on purpose: callers use it in an `if`.
+mcp_guard_runs() {
+  command -v "$1" > /dev/null 2>&1 && timeout 10 "$1" --version > /dev/null 2>&1
+}
+
+# Session-start log line: which wrapper version this session's image carries.
+# This line is the rollout evidence (a green image workflow proves nothing: the
+# restart step is continue-on-error), so grep a real session log for it.
+log_mcp_guard_version() {
+  local version
+  if command -v "$MCP_GUARD_NAME" > /dev/null 2>&1 \
+    && version=$(timeout 10 "$MCP_GUARD_NAME" --version 2>&1); then
+    # --version prints "maskin-mcp-guard 0.1.0"; log "version: 0.1.0", not the name twice.
+    version="${version//$'\n'/ }"
+    echo "[system] ${MCP_GUARD_NAME} version: ${version#"${MCP_GUARD_NAME}" }"
+  else
+    echo "[system] ${MCP_GUARD_NAME} not available in this image: guarded MCP servers will be dropped"
+  fi
+  return 0
+}
+
+# Takes a merged {"mcpServers": {...}} config and prints it with every guarded
+# server removed whose wrapper command is not usable here. Unguarded servers
+# are never touched. The reason for each drop goes to stderr, the config to
+# stdout.
+drop_unavailable_guarded_servers() {
+  local config="$1"
+  local guarded_filter='(.value.command // "" | tostring | split("/") | last) == $g'
+  local cmd bad='[]'
+  while IFS= read -r cmd; do
+    if [ -n "$cmd" ] && ! mcp_guard_runs "$cmd"; then
+      bad=$(jq -c --arg c "$cmd" '. + [$c]' <<< "$bad")
+    fi
+  done < <(printf '%s' "$config" | jq -r --arg g "$MCP_GUARD_NAME" \
+    "[.mcpServers | to_entries[] | select($guarded_filter) | .value.command | tostring] | unique[]")
+
+  if [ "$bad" = '[]' ]; then
+    printf '%s' "$config"
+    return 0
   fi
 
-  setup_cdp_retry_proxy
+  printf '%s' "$config" | jq -r --arg g "$MCP_GUARD_NAME" --argjson bad "$bad" \
+    ".mcpServers | to_entries[] | select($guarded_filter and ((.value.command | tostring) as \$c | \$bad | any(. == \$c))) | .key" \
+    | while IFS= read -r name; do
+      echo "[system] WARNING: MCP server '${name}' dropped: it must run behind ${MCP_GUARD_NAME}, which is missing or not runnable in this image (fail closed, server not started)" >&2
+    done
+  printf '%s' "$config" | jq -c --arg g "$MCP_GUARD_NAME" --argjson bad "$bad" \
+    ".mcpServers |= with_entries(select(($guarded_filter and ((.value.command | tostring) as \$c | \$bad | any(. == \$c))) | not))"
+}
+
+setup_mcps() {
+  # Skip if no MCP config provided
+  if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
+    return 0
+  fi
 
   local mcp_config="${TMPDIR:-/tmp}/mcp-config.json"
   local empty='{}'
@@ -345,34 +358,35 @@ setup_mcps() {
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
 
-  # Handle the browser CDP endpoint.
-  #
-  # The actor's MCP config may reference ${BROWSER_CDP_URL} as a literal
-  # placeholder (e.g. Playwright MCP configured with --cdp-endpoint
-  # "${BROWSER_CDP_URL}"). envsubst at the end of this function expands it.
-  #
-  # Two cases:
-  #   1. BROWSER_CDP_URL is SET: if the merged config already references the
-  #      literal placeholder, envsubst handles it — no extra entry needed.
-  #      If no existing entry uses it, inject a default @playwright/mcp entry
-  #      so the browser is reachable even without a pre-configured actor MCP.
-  #   2. BROWSER_CDP_URL is UNSET: strip any entry that still contains the
-  #      literal ${BROWSER_CDP_URL} placeholder. Without this, envsubst would
-  #      expand it to an empty string, causing Playwright to try to launch
-  #      Chrome locally instead of connecting to the CDP endpoint.
-  if [ -n "$BROWSER_CDP_URL" ]; then
-    if ! echo "$merged" | jq -e '[.mcpServers | to_entries[] | .value | tostring] | any(contains("${BROWSER_CDP_URL}"))' > /dev/null 2>&1; then
-      local browser_entry
-      browser_entry=$(jq -n --arg url "$BROWSER_CDP_URL" \
-        '{"mcpServers":{"@playwright/mcp":{"command":"npx","args":["@playwright/mcp","--cdp-endpoint",$url]}}}')
-      merged=$(echo "$merged" "$browser_entry" | jq -s '{ mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }')
-    fi
-  else
+  # Fail closed on guarded servers: drop any whose wrapper is not usable here.
+  merged=$(drop_unavailable_guarded_servers "$merged")
+
+  # Agents no longer get a browser sidecar (their computer replaces it), so
+  # nothing sets BROWSER_CDP_URL. Older agent configs may still carry a
+  # Playwright entry that references the literal ${BROWSER_CDP_URL} placeholder;
+  # envsubst would expand it to an empty string and Playwright would try to
+  # launch Chrome locally, so drop those entries. An operator who really did set
+  # BROWSER_CDP_URL on the agent keeps theirs.
+  if [ -z "$BROWSER_CDP_URL" ]; then
     merged=$(echo "$merged" | jq '
       .mcpServers = (.mcpServers | with_entries(
         select((.value | tostring | contains("${BROWSER_CDP_URL}")) | not)
       ))
     ')
+  fi
+
+  # Stdio tool servers inherit the whole container environment, Maskin API key
+  # and GitHub tokens included. Launch each one through env -u for the credential
+  # variables its own env block does not name (mcp-scrub-env.jq has the rules).
+  # MASKIN_MCP_ENV_SCRUB=off is the rollback: it skips the rewrite from the next
+  # session on, no image rebuild (apps/dev forwards it from its own environment).
+  local scrub_filter="${MCP_SCRUB_ENV_FILTER:-/mcp-scrub-env.jq}"
+  if [ "$MASKIN_MCP_ENV_SCRUB" != "off" ]; then
+    if [ -f "$scrub_filter" ]; then
+      merged=$(echo "$merged" | jq -f "$scrub_filter")
+    else
+      echo "[system] WARNING: $scrub_filter missing, stdio tool servers keep the full environment" >&2
+    fi
   fi
 
   # Only write if there are actual servers configured
@@ -456,25 +470,6 @@ setup_github_credential_helper() {
   git config --global --add credential."https://github.com".helper "/agent-github-credential-helper.sh"
 
   echo "[system] GitHub credential helper configured for github.com"
-}
-
-# Start the guest-side watcher that auto-relays dev-server ports the agent
-# starts on its own (see preview-port-watcher.js and POST
-# /sessions/:id/preview-ports in apps/agent-server). Only meaningful when
-# there's a browser sidecar to relay into (BROWSER_CDP_URL set) and a live
-# agent-server to call back into (AGENT_SERVER_URL resolved above,
-# SESSION_ID set) — a no-op session (local Docker path, no browser) skips
-# this entirely. Best-effort: failure to start just means auto-relay isn't
-# available this session, same posture as the CDP retry proxy above.
-start_preview_port_watcher() {
-  if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
-    return
-  fi
-  # Straight to stderr rather than a write-only /tmp file that dies with the
-  # VM - `msb exec` carries stderr back to agent-server's structured logs.
-  # Process substitution (not a pipeline) so $! stays node's own pid.
-  node /preview-port-watcher.js > >(sed -u 's/^/[preview-port-watcher] /' >&2) 2>&1 &
-  echo "[system] preview-port watcher started (pid $!)"
 }
 
 # Run the agent
@@ -594,14 +589,19 @@ run_agent() {
       if [ -n "$MCP_CONFIG_FILE" ]; then
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
-      # Effort is only set on the Claude-subscription route (apps/dev sets
-      # MASKIN_CLAUDE_EFFORT there). Other routes (e.g. the Maskin-funded
-      # DeepSeek fallback) leave it unset and keep the CLI default. Validated
-      # because the value is interpolated into the CLI's arguments.
+      # Effort is set on the Claude-subscription and Maskin-funded routes
+      # (apps/dev sets MASKIN_CLAUDE_EFFORT there). Other routes leave it unset
+      # and keep the CLI default. Validated because the value is interpolated
+      # into the CLI's arguments.
       local effort_args=()
       case "${MASKIN_CLAUDE_EFFORT:-}" in
         low|medium|high|xhigh|max) effort_args=(--effort "$MASKIN_CLAUDE_EFFORT") ;;
       esac
+      # The Maskin-funded route cannot run the CLI's server-side WebSearch.
+      local search_args=()
+      if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
+        search_args=(--disallowedTools=WebSearch)
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -632,6 +632,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -642,6 +643,7 @@ run_agent() {
             --verbose \
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
+            "${search_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -652,6 +654,7 @@ run_agent() {
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
+          "${search_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;
@@ -686,6 +689,7 @@ run_agent() {
 echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
 echo "[system] Runtime: $RUNTIME"
 
+log_mcp_guard_version
 install_runtime
 assert_skills_symlink
 build_context
@@ -694,6 +698,5 @@ setup_strip_images_proxy
 setup_claude_credentials
 setup_git_identity
 setup_github_credential_helper
-start_preview_port_watcher
 
 run_agent

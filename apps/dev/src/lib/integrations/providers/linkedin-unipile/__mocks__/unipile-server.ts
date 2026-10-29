@@ -6,6 +6,7 @@ import {
 import type { AddressInfo } from 'node:net'
 import { tryHandlePostsCrud } from './handlers/posts-crud'
 import { CANNED_POST_NOT_FOUND_ERROR } from './handlers/posts-crud'
+import { tryHandlePostsReads } from './handlers/posts-reads'
 export {
 	CANNED_EDIT_POST_RESPONSE,
 	CANNED_POST_NOT_FOUND_ERROR,
@@ -704,6 +705,15 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
 			return send(200, CANNED_SEARCH_RESPONSE())
+		}
+		// Warm-up surface (user posts, company profile, add reaction). Delegated to
+		// the `posts-reads` handler. Must run BEFORE the /users/:identifier and
+		// /posts/:id catch-alls so `/users/x/posts` is not read as a profile lookup.
+		// `/linkedin/company/pages` (enumeration, below) wins over the company route
+		// because it is matched first.
+		if (!/^\/v2\/[^/]+\/linkedin\/company\/pages(\?.*)?$/.test(url)) {
+			const reads = tryHandlePostsReads(method, url)
+			if (reads) return send(reads.status, reads.body)
 		}
 		// R11-A enumeration route: pages the connected member admins. Must
 		// be tested BEFORE the generic /users/:identifier catch-all below, and

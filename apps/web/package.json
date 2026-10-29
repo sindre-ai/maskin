@@ -6,7 +6,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsc -b tsconfig.build.json && vite build && node scripts/build-mcp.mjs",
+		"build": "tsc -b tsconfig.build.json && vite build && node scripts/assert-editor-chunk.mjs && node scripts/build-mcp.mjs",
 		"build:mcp": "node scripts/build-mcp.mjs",
 		"preview": "vite preview",
 		"lint": "biome check .",
@@ -26,6 +26,7 @@
 		"@maskin/shared": "workspace:*",
 		"@microsoft/fetch-event-source": "^2.0.1",
 		"@modelcontextprotocol/ext-apps": "^1.6.0",
+		"@novnc/novnc": "1.5.0",
 		"@radix-ui/react-checkbox": "^1.3.3",
 		"@radix-ui/react-collapsible": "^1.1.12",
 		"@radix-ui/react-dialog": "^1.1.15",

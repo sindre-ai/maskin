@@ -1,0 +1,40 @@
+[PlankTheme]
+#The roundness of the top corners.
+TopRoundness=16
+#The roundness of the bottom corners. 0: the bar sits flush on the screen edge.
+BottomRoundness=0
+#The thickness (in pixels) of lines drawn.
+LineWidth=1
+#The color (RGBA) of the outer stroke.
+OuterStrokeColor=255;;255;;255;;190
+#The starting color (RGBA) of the fill gradient.
+FillStartColor=255;;255;;255;;175
+#The ending color (RGBA) of the fill gradient.
+FillEndColor=236;;236;;240;;150
+#The color (RGBA) of the inner stroke.
+InnerStrokeColor=255;;255;;255;;90
+
+[PlankDockTheme]
+HorizPadding=2.5
+TopPadding=2.5
+BottomPadding=2.5
+ItemPadding=2.5
+IndicatorSize=5
+IconShadowSize=0
+UrgentBounceHeight=1.6666666666666667
+LaunchBounceHeight=0.625
+FadeOpacity=1
+ClickTime=300
+UrgentBounceTime=600
+LaunchBounceTime=600
+ActiveTime=300
+SlideTime=300
+FadeTime=250
+HideTime=250
+CascadeHide=true
+GlowSize=30
+GlowTime=10000
+GlowPulseTime=2000
+UrgentHueShift=150
+ItemMoveTime=450
+BadgeColor=0;;0;;0;;0

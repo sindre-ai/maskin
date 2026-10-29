@@ -8,7 +8,6 @@ import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cach
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 import {
 	getConnectedLinkedInIdentityCount,
 	resolveLinkedInIdentityAddon,
@@ -30,7 +29,7 @@ import {
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -66,6 +65,8 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -85,6 +86,7 @@ const checkoutResponseSchema = z.object({
 const checkoutRoute = createRoute({
 	method: 'post',
 	path: '/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a Maskin subscription',
 	request: {
@@ -119,9 +121,8 @@ const checkoutRoute = createRoute({
 })
 
 // The LinkedIn Identity add-on line — $49/connected-identity/month, gated on
-// the `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
-// credential. Null in both the flag-off and zero-identities cases; see
-// `../lib/linkedin-addon.ts`.
+// ≥1 connected `linkedin-unipile` credential. Null when no identities are
+// connected or the workspace is enterprise; see `../lib/linkedin-addon.ts`.
 const linkedinIdentityAddonSchema = z
 	.object({
 		count: z.number().int().nonnegative(),
@@ -170,7 +171,7 @@ const usageRoute = createRoute({
 })
 
 // The uncached usage read. Returns null when the workspace does not exist.
-async function readBillingUsage(db: Database, workspaceId: string, actorId: string) {
+async function readBillingUsage(db: Database, workspaceId: string) {
 	const [workspace] = await db
 		.select({
 			id: workspaces.id,
@@ -239,12 +240,11 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 			? Math.floor(billing.credit_balance_cents)
 			: 0
 
-	// LinkedIn Identity add-on line. Gated on the actor-scoped
-	// `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
-	// credential row. Deliberately DOES NOT touch `usdCentsUsed` — the $49
+	// LinkedIn Identity add-on line. Shown when ≥1 `linkedin-unipile`
+	// credential row is connected. Deliberately DOES NOT touch `usdCentsUsed` — the $49
 	// per-connected-identity/month price is a separate SKU line that must not
-	// flow into the inference-token ledger (see bet §Pricing). Short-circuited
-	// on flag-off so a non-tester actor never hits the count query.
+	// flow into the inference-token ledger (see bet §Pricing). Enterprise
+	// workspaces skip the count query.
 	//
 	// Enterprise workspaces are exempt: connected identities are free for them,
 	// so there is no line and `syncLinkedInAddonQuantity` creates no Stripe
@@ -257,13 +257,11 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 	// on the same predicate that does the billing is what keeps the two from
 	// disagreeing.
 	const linkedinExempt = isEnterprise(workspace)
-	const linkedinFlagOn =
-		resolveFlags(actorId, getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
-	const linkedinConnectedCount =
-		linkedinFlagOn && !linkedinExempt ? await getConnectedLinkedInIdentityCount(db, workspaceId) : 0
+	const linkedinConnectedCount = !linkedinExempt
+		? await getConnectedLinkedInIdentityCount(db, workspaceId)
+		: 0
 	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
 		connectedCount: linkedinConnectedCount,
-		flagOn: linkedinFlagOn,
 		exempt: linkedinExempt,
 	})
 
@@ -298,7 +296,7 @@ app.openapi(usageRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const usage = await cachedBillingUsage(actorId, workspaceId, () =>
-		readBillingUsage(db, workspaceId, actorId),
+		readBillingUsage(db, workspaceId),
 	)
 	if (!usage) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
@@ -401,6 +399,7 @@ const buyCreditsBodySchema = z.object({
 const buyCreditsRoute = createRoute({
 	method: 'post',
 	path: '/credits/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
 	request: {
@@ -551,6 +550,7 @@ app.openapi(buyCreditsRoute, async (c) => {
 const cancelRoute = createRoute({
 	method: 'post',
 	path: '/cancel',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
 	request: { headers: workspaceIdHeader },
@@ -594,6 +594,9 @@ app.openapi(cancelRoute, async (c) => {
 	// predate `billing_owner_id`; those fall back to the human admin/owner
 	// check rather than being left open to every member.
 	const callerId = c.get('actorId')
+	// The billing owner branch below ignores the role, so a viewer who holds billing ownership
+	// (transfer-ownership does not look at the new owner's role) would pass it.
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const authorized = workspace.billingOwnerId
 		? workspace.billingOwnerId === callerId
 		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)

@@ -1,5 +1,7 @@
-﻿import { CompactEmpty } from '@/mcp-apps/shared/compact-empty'
-import { useToolResult, useWebAppContext } from '@/mcp-apps/shared/mcp-app-provider'
+﻿import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { Button } from '@/components/ui/button'
+import { CompactEmpty } from '@/mcp-apps/shared/compact-empty'
+import { useCallTool, useToolResult, useWebAppContext } from '@/mcp-apps/shared/mcp-app-provider'
 import { renderMcpApp } from '@/mcp-apps/shared/render'
 import { type WorkspaceSchema, useWorkspaceSchema } from '@/mcp-apps/shared/use-workspace-schema'
 import {
@@ -8,8 +10,9 @@ import {
 	type WebAppTarget,
 	useWebAppHref,
 } from '@/mcp-apps/shared/web-app-link'
+import type { ObjectPreview } from '@maskin/shared'
 import { ExternalLink, User } from 'lucide-react'
-import { Component, type ErrorInfo, type ReactNode, useMemo } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useMemo, useState } from 'react'
 
 interface HeroCardActor {
 	id: string
@@ -25,6 +28,7 @@ interface HeroCardObject {
 	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
+	preview?: ObjectPreview
 }
 
 type HeroCardKind = 'single' | 'list' | 'empty'
@@ -133,6 +137,7 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
 				{object.contextLine}
 			</p>
+			{object.preview ? <DraftReview objectId={object.id} preview={object.preview} /> : null}
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 				{object.driver?.name &&
 					(object.driver.type !== 'agent' ? (
@@ -168,6 +173,73 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 				</a>
 			) : (
 				content
+			)}
+		</div>
+	)
+}
+
+/**
+ * A drafted email or message, with who it goes to, the exact text, and the person's
+ * Approve. Approving calls `approve_object_draft`, a tool only this card can reach (the
+ * model never sees it), bound to the content hash shown so a draft that changed since is
+ * refused. The agent sends it afterwards; this card never sends.
+ */
+function DraftReview({ objectId, preview }: { objectId: string; preview: ObjectPreview }) {
+	const callTool = useCallTool()
+	const ctx = useWebAppContext()
+	const [state, setState] = useState<'idle' | 'working' | 'approved'>(
+		preview.delivery?.state === 'draft' || !preview.delivery ? 'idle' : 'approved',
+	)
+	const [error, setError] = useState<string | null>(null)
+	const sent = preview.delivery?.state === 'sent'
+
+	const approve = async () => {
+		setState('working')
+		setError(null)
+		try {
+			const result = await callTool('approve_object_draft', {
+				object_id: objectId,
+				content_hash: preview.content_hash,
+				...(ctx ? { workspace_id: ctx.workspaceId } : {}),
+			})
+			if ((result as { isError?: boolean }).isError) {
+				const text = (result as { content?: Array<{ text?: string }> }).content?.[0]?.text
+				throw new Error(text || 'Could not approve')
+			}
+			setState('approved')
+		} catch (err) {
+			setState('idle')
+			setError(err instanceof Error ? err.message : 'Could not approve')
+		}
+	}
+
+	return (
+		<div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+			<span className="eyebrow">{preview.label}</span>
+			<ObjectPreviewMeta preview={preview} />
+			<p className="m-0 whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">
+				{preview.body}
+			</p>
+			{sent ? (
+				<p className="m-0 text-xs text-muted-foreground">Sent</p>
+			) : state === 'approved' ? (
+				<p className="m-0 text-xs text-muted-foreground">Approved. The agent can now send it.</p>
+			) : (
+				<div className="flex items-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						disabled={state === 'working' || preview.missing.length > 0}
+						onClick={approve}
+					>
+						Approve
+					</Button>
+					{error ? (
+						<span role="alert" className="text-xs text-destructive">
+							{error}
+						</span>
+					) : null}
+				</div>
 			)}
 		</div>
 	)

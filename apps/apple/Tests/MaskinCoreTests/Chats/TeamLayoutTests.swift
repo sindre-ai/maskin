@@ -56,7 +56,7 @@ struct TeamLayoutTests {
 		#expect(layout.section("unread")?.count == 1)
 		#expect(layout.sections.map(\.kind) == [.unread, .time, .time])
 		#expect(layout.sections.dropFirst().flatMap { $0.rows.map(\.id) } == ["read", "old"])
-		#expect(layout.unreadCount == 3, "the chip count includes the pinned unread")
+		#expect(layout.unreadCount == 1, "the chip counts unread rows that are not pinned")
 		#expect(layout.empty == nil)
 		#expect(layout.showsArchived == false)
 	}
@@ -105,7 +105,20 @@ struct TeamLayoutTests {
 		}
 		let layout = build(rows, options: TeamDisplayOptions(grouping: .byPerson))
 		#expect(layout.section("people")?.rows.count == 5)
-		#expect(layout.section("people")?.moreLabel == "All 6 people")
+		#expect(layout.section("people")?.moreLabel == "All 6 people & agents")
+	}
+
+	@Test("newest first caps at five with an All-n conversations row, and shows fewer once opened")
+	func newestFirstCap() {
+		let rows = (1...7).map { chatConvo("c\($0)", last: ago(hours: Double($0))) }
+		let options = TeamDisplayOptions(grouping: .newestFirst)
+		let capped = build(rows, options: options)
+		#expect(capped.section("people")?.rows.count == 5)
+		#expect(capped.section("people")?.moreLabel == "All 7 conversations")
+		#expect(capped.section("people")?.canCollapse == false)
+		let open = build(rows, options: options, expanded: ["people"])
+		#expect(open.section("people")?.rows.count == 7)
+		#expect(open.section("people")?.canCollapse == true)
 	}
 
 	@Test("newest first: every read conversation on its own row, in one section")
@@ -241,12 +254,13 @@ struct ConversationRowStatusTests {
 		#expect(ConversationRowStatus.workingLabel(3) == "3 working")
 	}
 
-	@Test("your latest message gets a tick, and the preview drops the author")
+	@Test("your latest message reads You: …; a sending or failed one keeps its mark")
 	func ticks() {
 		var c = convo
 		c.snippetActorName = "Me"
-		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).prefix == .tick(.sent))
-		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).preview == "Done. PR is up")
+		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).prefix == nil)
+		#expect(ConversationRowStatus.make(conversation: c, tick: .sent).preview == "You: Done. PR is up")
+		#expect(ConversationRowStatus.make(conversation: c, tick: .failed).prefix == .tick(.failed))
 		#expect(ConversationRowStatus.make(conversation: c, tick: .failed).accessibilityText == "not sent, Done. PR is up")
 		#expect(ConversationRowStatus.Tick.read.symbol == "✓✓")
 		#expect(ConversationRowStatus.Tick.sending.symbol == "…")
@@ -289,9 +303,9 @@ struct NewConversationCopyTests {
 
 	@Test("placeholder: first names for people, full names for agents, +n after two")
 	func placeholder() {
-		#expect(NewConversationCopy.placeholder(for: []) == "Message")
+		#expect(NewConversationCopy.placeholder(for: []) == "Pick someone first")
 		#expect(NewConversationCopy.placeholder(for: [sam]) == "Message Sam")
-		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam, Chief of Staff")
+		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam and Chief of Staff")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief, ida, forge]) == "Message Sam, Chief of Staff +2")
 	}
 
@@ -333,5 +347,99 @@ struct TeamPreferencesTests {
 		#expect(TeamPreferences(defaults: defaults, actorID: "a", workspaceID: "w").pinnedFlowIDs == ["f"])
 		#expect(b.displayOptions == .default)
 		#expect(b.pinOrder.isEmpty)
+	}
+}
+
+@Suite("TeamLayout needs you and working")
+struct TeamLayoutPriorityTests {
+	private func layout(
+		_ conversations: [ConversationSummary], working: Set<String> = [], mentioned: Set<String> = []
+	) -> TeamLayout {
+		TeamLayout.build(
+			TeamLayout.Input(
+				conversations: conversations, currentActorID: "me", workingAgentIDs: working,
+				mentionedConversationIDs: mentioned, now: now, calendar: cal))
+	}
+
+	@Test("an unread question or mention is plain Unread, never a Needs you section")
+	func unreadIsNotNeedsYou() {
+		let result = layout(
+			[
+				chatConvo("ask", last: ago(hours: 1), unread: 1, snippet: "Ship it today?", participants: [chatMe, forge]),
+				chatConvo("ping", last: ago(hours: 2), unread: 1, snippet: "FYI", participants: [chatMe, forge]),
+				chatConvo("read", last: ago(hours: 4), snippet: "Okay?", participants: [chatMe, forge]),
+			], mentioned: ["ping"])
+		#expect(result.sections.first?.kind == .unread)
+		#expect(result.sections.first?.rows.map(\.id) == ["ask", "ping"])
+		#expect(result.conversationIDs.filter { $0 == "ask" }.count == 1)
+	}
+
+	@Test("the Pinned chip lists pinned chats as rows and hides the tiles")
+	func pinnedChip() {
+		var pinned = chatConvo("pin", last: ago(hours: 1), participants: [chatMe, forge])
+		pinned.pinned = true
+		let other = chatConvo("other", last: ago(hours: 2), participants: [chatMe, ida])
+		let result = TeamLayout.build(
+			TeamLayout.Input(
+				conversations: [pinned, other], chip: .pinned, currentActorID: "me", now: now, calendar: cal))
+		#expect(result.tiles.isEmpty)
+		#expect(result.sections.first?.rows.map(\.id) == ["pin"])
+	}
+
+	@Test("a conversation with a running agent lists under Working, after Needs you")
+	func working() {
+		let result = layout(
+			[
+				chatConvo("run", last: ago(hours: 5), participants: [chatMe, forge]),
+				chatConvo("idle", last: ago(hours: 1), participants: [chatMe, ida]),
+			], working: ["forge"])
+		#expect(result.sections.map(\.kind) == [.working, .time])
+		#expect(result.rowIDs("working") == ["run"])
+	}
+}
+
+@Suite("ConversationRowStatus working text")
+struct WorkingTextTests {
+	private let convo = chatConvo("c", snippet: "Done", participants: [chatMe, chatRelay])
+
+	@Test("one agent is named, two are joined, more fall back to a count")
+	func names() {
+		func text(_ names: [String]) -> String {
+			ConversationRowStatus.make(conversation: convo, workingAgents: names.count, workingNames: names).workingText
+		}
+		#expect(text(["Forge"]) == "Forge is working")
+		#expect(text(["Forge", "Ida"]) == "Forge and Ida are working")
+		#expect(text(["Forge", "Ida", "Relay"]) == "3 working")
+		#expect(ConversationRowStatus.make(conversation: convo, workingAgents: 1).workingText == "Working")
+	}
+}
+
+@Suite("ConversationRowStatus links") struct ConversationRowStatusLinkTests {
+	private func convo(_ snippet: String, who: String? = "Developer") -> ConversationSummary {
+		ConversationSummary(id: "c", title: "t", snippet: snippet, snippetActorName: who)
+	}
+
+	@Test("the author lead is unchanged and a bare address reads link in a muted run")
+	func bareAddressAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("https://maskin.io/ws/objects/abc"))
+		#expect(status.preview == "Developer: link")
+		#expect(
+			status.previewPieces == [
+				ChatPreviewText.Piece("Developer: "), ChatPreviewText.Piece("link", isLink: true),
+			])
+	}
+
+	@Test("a cut link shows its words after the lead")
+	func cutLinkAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("[Chat preview cards for every li"))
+		#expect(status.preview == "Developer: Chat preview cards for every li")
+		#expect(status.previewPieces == nil)
+	}
+
+	@Test("assigning a new preview drops the old runs")
+	func assigningPreviewResetsRuns() {
+		var status = ConversationRowStatus.make(conversation: convo("https://x.io/a"))
+		status.preview = "2 conversations · Title"
+		#expect(status.previewPieces == nil)
 	}
 }

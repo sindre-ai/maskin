@@ -64,7 +64,7 @@ describe('parseMcpInit', () => {
 })
 
 describe('registerMcpInit', () => {
-	// The shape that actually reached production: sidecar attached, browser
+	// The shape that actually reached production: browser attached
 	// running, playwright still booting, agent told the server "did not connect".
 	it('reports pending and failed as two distinct states', () => {
 		const { health, lines } = register([

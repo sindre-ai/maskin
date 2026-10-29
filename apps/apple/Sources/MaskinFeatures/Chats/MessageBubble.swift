@@ -73,7 +73,7 @@ struct MessageHeader: View {
 	}
 }
 
-/// The quote at the top of a reply: a 3pt `sigHi` rule, the name in bold 14pt, the text on two lines.
+/// The quote at the top of a reply: a 3pt `sigHi` rule, the name in bold 14pt, the quoted text in full.
 struct QuoteBlock: View {
 	let author: String
 	let text: String
@@ -85,10 +85,10 @@ struct QuoteBlock: View {
 				.fill(MaskinColor.sigHi).frame(width: MaskinSpace.s1 + 1)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(author).font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
-				Text(text).font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline)).lineLimit(2)
-					.opacity(0.78)
+					.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.ink3)
+				Text(text).font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+					.foregroundStyle(onInverse ? MaskinSurface.onInverse.opacity(0.78) : MaskinColor.ink4)
 			}
-			.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.ink2)
 		}
 		.fixedSize(horizontal: false, vertical: true)
 		.padding(.bottom, MaskinSpace.s3)

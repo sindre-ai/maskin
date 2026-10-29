@@ -58,6 +58,7 @@ const ALL_TOOL_NAMES = [
 	'get_comments',
 	'create_comment',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'post_conversation_message',
 	'create_trigger',
@@ -70,14 +71,26 @@ const ALL_TOOL_NAMES = [
 	'get_loop',
 	'delete_loop',
 	'create_session',
+	'create_sub_chat',
+	'create_chat',
+	'add_chat_participant',
+	'remove_chat_participant',
+	'get_chat_activity',
+	'stop_chat_agent',
 	'list_sessions',
 	'get_session',
+	'get_session_activity',
 	'get_session_logs',
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'send_session_message',
+	'ask_user_question',
+	'gmail_send_email',
+	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
+	'list_for_you',
 	'get_notification',
 	'update_notification',
 	'delete_notification',
@@ -86,11 +99,29 @@ const ALL_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
+	'request_keychain_credential',
+	'list_keychain_credentials',
+	'request_keychain_access',
+	'request_integration_access',
+	'add_mcp_server',
+	'show_computer',
+	'update_integration_access',
 	'disconnect_integration',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'desktop_screenshot',
+	'desktop_click',
+	'desktop_move',
+	'desktop_drag',
+	'desktop_scroll',
+	'desktop_type',
+	'desktop_key',
+	'desktop_run',
+	'desktop_expose_port',
+	'desktop_list_ports',
+	'desktop_close_port',
 	// No linkedin__* entries: those three tools moved to the provider's own MCP
 	// server (apps/dev/src/lib/integrations/providers/linkedin-unipile/
 	// mcp-server.ts) so they appear only when LinkedIn is connected. Their
@@ -655,10 +686,8 @@ describe('create_session schema', () => {
 		}
 	})
 
-	it('accepts notify_on_complete and leaves it undefined when omitted', () => {
-		expect(schema.parse({ ...base, notify_on_complete: true }).notify_on_complete).toBe(true)
-		expect(schema.parse(base).notify_on_complete).toBeUndefined()
-		expect(() => schema.parse({ ...base, notify_on_complete: 'yes' })).toThrow()
+	it('has no notify_on_complete parameter: the return is always sent, with no opt-out', () => {
+		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
 	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
@@ -778,6 +807,30 @@ describe('create_notification schema', () => {
 				source_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('list_for_you schema', () => {
+	const schema = tools.list_for_you.inputSchema
+
+	it('requires an actor id and defaults limit to 10', () => {
+		expect(() => schema.parse({})).toThrow()
+		expect(schema.parse({ actor_id: uuid }).limit).toBe(10)
+	})
+
+	it('rejects a limit above 50', () => {
+		expect(() => schema.parse({ actor_id: uuid, limit: 51 })).toThrow()
+	})
+
+	it('defaults offset to 0 and rejects a negative or fractional offset', () => {
+		expect(schema.parse({ actor_id: uuid }).offset).toBe(0)
+		expect(schema.parse({ actor_id: uuid, offset: 50 }).offset).toBe(50)
+		expect(() => schema.parse({ actor_id: uuid, offset: -1 })).toThrow()
+		expect(() => schema.parse({ actor_id: uuid, offset: 1.5 })).toThrow()
+	})
+
+	it('points list_notifications readers at list_for_you', () => {
+		expect(tools.list_notifications.description).toContain('list_for_you')
 	})
 })
 
@@ -1013,6 +1066,24 @@ describe('create_loop schema', () => {
 		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
 	})
 
+	it('accepts closed_when rules as field=value strings', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			name: 'Candidate loop',
+			closed_when: { insight: ['loop_stage=live'] },
+		})
+		expect(result.closed_when).toEqual({ insight: ['loop_stage=live'] })
+	})
+
+	it.each(['loop_stage', '=live', 'loop_stage=', 'bad field=live', '1stage=live'])(
+		'rejects the malformed closed_when rule %j',
+		(rule) => {
+			expect(() =>
+				schema.parse({ workspace_id: uuid, name: 'X', closed_when: { insight: [rule] } }),
+			).toThrow()
+		},
+	)
+
 	it('rejects a step with an invalid event action', () => {
 		expect(() =>
 			schema.parse({
@@ -1033,6 +1104,29 @@ describe('create_loop schema', () => {
 	it('rejects an unknown loop status', () => {
 		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
 	})
+
+	describe('targets', () => {
+		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
+		const base = { workspace_id: uuid, name: 'X' }
+
+		it('accepts a list of rows and keeps them', () => {
+			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
+		})
+
+		it('accepts [] to clear', () => {
+			expect(schema.parse({ ...base, targets: [] }).targets).toEqual([])
+		})
+
+		it('rejects a string', () => {
+			expect(() => schema.parse({ ...base, targets: JSON.stringify([row]) })).toThrow()
+		})
+
+		it('names the bad row and field', () => {
+			const result = schema.safeParse({ ...base, targets: [row, { ...row, actual: 'three' }] })
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.error.issues[0]?.path).toEqual(['targets', 1, 'actual'])
+		})
+	})
 })
 
 describe('update_loop schema', () => {
@@ -1050,6 +1144,29 @@ describe('update_loop schema', () => {
 
 	it('requires a uuid loop id', () => {
 		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+
+	describe('targets', () => {
+		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
+		const base = { id: uuid }
+
+		it('accepts a list of rows and keeps them', () => {
+			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
+		})
+
+		it('accepts [] to clear', () => {
+			expect(schema.parse({ ...base, targets: [] }).targets).toEqual([])
+		})
+
+		it('rejects a string', () => {
+			expect(() => schema.parse({ ...base, targets: JSON.stringify([row]) })).toThrow()
+		})
+
+		it('names the bad row and field', () => {
+			const result = schema.safeParse({ ...base, targets: [row, { ...row, actual: 'three' }] })
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.error.issues[0]?.path).toEqual(['targets', 1, 'actual'])
+		})
 	})
 })
 
@@ -1397,6 +1514,19 @@ describe('list_actors schema', () => {
 	it('rejects invalid workspace_id', () => {
 		expect(() => schema.parse({ workspace_id: 'not-a-uuid' })).toThrow()
 	})
+
+	const allowedIncludes = ['triggers', 'loops', 'triggers,loops', 'loops, triggers']
+	it.each(allowedIncludes)('accepts include=%s', (include) => {
+		expect(schema.parse({ include }).include).toBe(include)
+	})
+
+	it('rejects an unknown include value and lists the allowed values', () => {
+		const result = schema.safeParse({ include: 'triggers,skills' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.message).toContain('triggers, loops')
+		}
+	})
 })
 
 describe('get_actor schema', () => {
@@ -1457,6 +1587,13 @@ describe('workspace_id optional on most tools', () => {
 		'list_triggers',
 		'list_integrations',
 		'connect_integration',
+		'request_keychain_credential',
+		'list_keychain_credentials',
+		'request_keychain_access',
+		'request_integration_access',
+		'add_mcp_server',
+		'show_computer',
+		'update_integration_access',
 		'disconnect_integration',
 		'get_actor',
 	]

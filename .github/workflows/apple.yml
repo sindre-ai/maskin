@@ -7,10 +7,10 @@ name: Apple
 # the paths below will never report it and will block — keep it non-required, or
 # add a path-aware aggregator job first.
 #
-# Triggers only on changes under apps/apple (plus this file). Consequence: token and
-# OpenAPI drift checks below do NOT run when only the backend, packages/shared,
-# packages/db or the design-system CSS change — drift surfaces on the next apps/apple
-# change instead.
+# Triggers only on changes under apps/apple (plus this file). Consequence: token drift
+# does NOT run when only the design-system CSS changes — it surfaces on the next apps/apple
+# change instead. OpenAPI snapshot drift from backend changes is caught by the
+# apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
 #
 # What each step guards against, cheapest first so a drift failure costs seconds,
 # not a 20-minute Xcode build:
@@ -27,8 +27,21 @@ name: Apple
 #                         against MaskinKit. A change that is fine on iOS but uses
 #                         an unavailable API on watchOS/tvOS only shows up here.
 #
-# Toolchain: the project needs Xcode 26 / Swift 6.x. The job runs on macos-26 and
-# selects the newest installed Xcode 26.x explicitly; it fails loudly if none is
+# Two jobs, because one job was too long: checks + swift test run in `apple`, and the
+# four platform builds run in parallel in `apple-build`. Run in one job, the steps
+# added up to 35-47 minutes against the 45 minute job limit (swift test 6-22 min,
+# setup 7-20 min, builds 19-30 min depending on the runner), and the job was
+# cancelled while the last platform was still compiling. The builds need only Xcode
+# and xcodegen: Tokens.swift and Sources/MaskinAPI/Generated are checked in and
+# verified by `apple`, so the build jobs skip node, pnpm and the OpenAPI steps.
+#
+# Job limits (60 for `apple`, 50 for `apple-build`) are a hang guard, not a budget.
+# After the split, healthy runs took 14-16 min for `apple` and up to 27 min for the
+# slowest platform (iOS), with slow-runner days of 40+ min for `apple` on record. Keep
+# the limit well above the slowest healthy job so a slow runner is not a false red.
+#
+# Toolchain: the project needs Xcode 26 / Swift 6.x. The jobs run on macos-26 and
+# select the newest installed Xcode 26.x explicitly; they fail loudly if none is
 # installed rather than silently building with an older SDK. Builds use generic
 # simulator destinations, so no simulator runtimes need to be installed.
 
@@ -51,7 +64,7 @@ concurrency:
 jobs:
   apple:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -127,7 +140,44 @@ jobs:
         # in serial: 657 tests, 0 failures, ~23 s). Serial is deterministic and still fast.
         run: swift test --no-parallel
 
-      # --- 4. Platform builds ---
+  # --- 4. Platform builds, one runner per platform ---
+  apple-build:
+    name: apple-build (${{ matrix.platform }})
+    runs-on: macos-26
+    timeout-minutes: 50
+    strategy:
+      # Let the other platforms finish: one failing platform should not hide a second one.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: iOS
+            scheme: Maskin
+            destination: 'generic/platform=iOS Simulator'
+          - platform: macOS
+            scheme: Maskin
+            destination: 'generic/platform=macOS'
+          - platform: watchOS
+            scheme: MaskinWatch
+            destination: 'generic/platform=watchOS Simulator'
+          - platform: tvOS
+            scheme: MaskinTV
+            destination: 'generic/platform=tvOS Simulator'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
       - name: Install xcodegen
         run: brew install xcodegen
 
@@ -135,30 +185,25 @@ jobs:
         working-directory: apps/apple
         run: xcodegen generate
 
-      - name: xcodebuild (iOS, macOS, watchOS, tvOS)
+      - name: xcodebuild (${{ matrix.platform }})
         working-directory: apps/apple
         run: |
           set -euo pipefail
-          build() { # scheme, destination
-            echo "==> $1 ($2)"
-            xcodebuild build \
-              -project Maskin.xcodeproj -scheme "$1" \
-              -destination "$2" \
-              -derivedDataPath "$RUNNER_TEMP/dd" \
-              -skipPackagePluginValidation -skipMacroValidation \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-              2>&1 | tee -a "$RUNNER_TEMP/xcodebuild.log" | tail -n 25
-            test "${PIPESTATUS[0]}" -eq 0
-          }
-          build Maskin 'generic/platform=iOS Simulator'
-          build Maskin 'generic/platform=macOS'
-          build MaskinWatch 'generic/platform=watchOS Simulator'
-          build MaskinTV 'generic/platform=tvOS Simulator'
+          echo "==> ${{ matrix.scheme }} (${{ matrix.destination }})"
+          xcodebuild build \
+            -project Maskin.xcodeproj -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
 
+      # failure() alone skips on a timeout cancel, which is exactly when the log is needed.
       - name: Upload build log
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: apple-xcodebuild-log
+          name: apple-xcodebuild-log-${{ matrix.platform }}
           path: ${{ runner.temp }}/xcodebuild.log
           retention-days: 7

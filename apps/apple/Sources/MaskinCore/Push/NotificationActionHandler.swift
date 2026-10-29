@@ -19,10 +19,9 @@ import MaskinAPI
 // and the answer, so a double tap, an OS retry, or this attempt timing out on the wire and then
 // being replayed from the outbox cannot post the answer twice.
 //
-// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app is running in the
-// foreground at the same moment AND offline, its own in-memory queue could overwrite that file;
-// the window is a few milliseconds on a device that just lost the network, and the worst case
-// is the answer is lost (the notification stays, the user retries) rather than sent twice.
+// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app process is still alive
+// (suspended or running), its own outbox adopts entries it did not write the next time it saves or
+// drains, so the answer is neither overwritten nor left unsent until the process dies.
 
 public enum NotificationActionOutcome: Sendable, Equatable {
 	/// The answer was posted and the thread marked read.
@@ -31,6 +30,8 @@ public enum NotificationActionOutcome: Sendable, Equatable {
 	case queued(String)
 	/// The server refused it, or it could not even be saved. The notification stays.
 	case failed(String)
+	/// Deferred on this device with Later (the string says until when). Nothing was sent.
+	case deferred(String)
 	/// No stored session; the user has to open the app and sign in.
 	case notSignedIn
 }
@@ -52,6 +53,9 @@ public protocol DecisionQueueing: Sendable {
 	func enqueue(_ write: QueuedDecision) async throws
 }
 
+/// `UserDefaults` is thread-safe; this only says so to the compiler.
+private struct DefaultsBox: @unchecked Sendable { let value: UserDefaults }
+
 public struct NotificationActionHandler: Sendable {
 	public typealias BackendFactory = @Sendable (_ session: StoredSession, _ workspaceId: String) -> any DecisionBackend
 
@@ -61,11 +65,16 @@ public struct NotificationActionHandler: Sendable {
 	/// ONE budget for the whole tap (comment + mark-read), not per write: two sequential 20 s
 	/// attempts could outlast the ~30 s background window.
 	private let attemptTimeout: Duration
+	private let now: @Sendable () -> Date
+	private let laterDefaults: DefaultsBox
 
 	public init(
 		secrets: any SecretStore, backend: @escaping BackendFactory, queue: any DecisionQueueing,
-		attemptTimeout: Duration = .seconds(20)
+		attemptTimeout: Duration = .seconds(20), now: @escaping @Sendable () -> Date = { Date() },
+		laterDefaults: UserDefaults = .standard
 	) {
+		self.now = now
+		self.laterDefaults = DefaultsBox(value: laterDefaults)
 		self.secrets = secrets
 		self.backend = backend
 		self.queue = queue
@@ -85,6 +94,14 @@ public struct NotificationActionHandler: Sendable {
 			guard !text.isEmpty else { return .failed("Type a reply first.") }
 			content = text
 		case .open: return .failed("Nothing to send.")
+		case .later:
+			// No network and no sign-in needed: it is saved on this device, and the For you list
+			// reads it the next time the app is up.
+			let preset = LaterPreset.suggested(at: now())
+			LaterStore.record(
+				entityId: payload.objectId, workspace: payload.workspaceId, preset: preset,
+				now: now(), defaults: laterDefaults.value)
+			return .deferred(preset.label)
 		}
 
 		guard let data = try? secrets.read(),

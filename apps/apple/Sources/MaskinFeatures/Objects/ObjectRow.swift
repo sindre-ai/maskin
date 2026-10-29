@@ -68,7 +68,7 @@ struct ObjectDriverAvatar: View {
 						.maskinSymbol(MaskinFontSize.t10, weight: .semibold)
 						.foregroundStyle(MaskinColor.ink5)
 				}
-				.accessibilityLabel("No driver")
+				.accessibilityLabel("No owner")
 		}
 	}
 }
@@ -98,7 +98,7 @@ struct ObjectWorkingBars: View {
 }
 
 /// One object in the list or on the board, to the handoff's anatomy (`specs/8-Objects.md`):
-/// - line 1: type glyph (only when the list mixes types) + title (2 lines) + unseen dot
+/// - line 1: type glyph (only when the list mixes types) + title (2 lines) + favourite star + unseen dot
 /// - line 2: the ask in Patina, "Strategist: …", only when it needs you
 /// - line 3: driver avatar 18 (Patina ring while an agent works) · working bars · status · time
 /// No type tag, mono id, flow, due or priority: those live on the object page.
@@ -138,6 +138,13 @@ struct ObjectRow: View {
 						.lineLimit(2)
 						.multilineTextAlignment(.leading)
 						.frame(maxWidth: .infinity, alignment: .leading)
+					if object.isStarred {
+						Image(systemName: "star.fill")
+							.maskinSymbol(MaskinFontSize.t13, weight: .regular)
+							.foregroundStyle(MaskinColor.sigInk)
+							.padding(.top, MaskinSpace.s1)
+							.accessibilityHidden(true)
+					}
 					if unseen {
 						Circle()
 							.fill(MaskinColor.sig)
@@ -204,9 +211,10 @@ struct ObjectRow: View {
 
 	private var accessibilityLabel: String {
 		var parts = [typeName, object.displayTitle]
+		if object.isStarred { parts.append("Favourite") }
 		if unseen { parts.append("Changed since you last looked") }
 		if let ask { parts.append("Needs you. \(ask.line)") } else if needsYou { parts.append("Needs you") }
-		if let ownerName, showsDriver { parts.append("driven by \(ownerName)") }
+		if let ownerName, showsDriver { parts.append("owned by \(ownerName)") }
 		if object.hasActiveSession { parts.append("Agent working") }
 		parts.append(MaskinStatus.sentenceLabel(for: object.status))
 		return parts.joined(separator: ", ")

@@ -1,40 +1,55 @@
 import type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
+	FileUploadSession,
+	FromSuggestedStep,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
+	NeededTool,
+	ObjectFacetsResponse,
 	SafeMetadata,
+	SearchResponse,
 	SendRoundInput,
 	SendRoundResponse,
+	SuggestedStep,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 } from '@maskin/shared'
 
 export type {
+	AccountDeletionPreview,
 	ActorListItem,
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
-	ListLoopStepsResponse,
 	ListLoopsResponse,
-	LoopStep,
 	LoopSummary,
 	SendRoundInput,
 	SendRoundResponse,
 	TriggerResponse,
 	UpdateFileCommentInput,
+	WorkspaceDeletionPreview,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
+
+import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+
+export interface DesktopConnectResponse {
+	ticket: string
+	// Path of the stream WebSocket on the API origin; the ticket goes in `?ticket=`.
+	path: string
+	password: string
+}
 
 export interface PlanCapContext {
 	plan: string
@@ -49,6 +64,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Populated on a 429 whose body carries `retry_after_seconds` (voice session mint). */
+	retryAfterSeconds?: number
 	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
@@ -69,6 +86,9 @@ export class ApiError extends Error {
 	}
 }
 
+const SERVICE_UNAVAILABLE_MESSAGE = 'Service unavailable. Please try again in a minute.'
+const SERVICE_UNAVAILABLE_STATUSES = new Set([502, 503, 504])
+
 type RequestOptions = {
 	method?: string
 	body?: unknown
@@ -78,10 +98,12 @@ type RequestOptions = {
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
 	 *  requires it back to prove the same browser started the flow. */
 	credentials?: RequestCredentials
+	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
+	signal?: AbortSignal
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -111,11 +133,17 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
+			...(signal ? { signal } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		if (err instanceof TypeError) {
+			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
+			unavailable.code = 'NETWORK_ERROR'
+			throw unavailable
+		}
 		throw err
 	}
 
@@ -160,9 +188,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
+		// A gateway answering for a down backend (502/503/504) usually carries an
+		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
+		// blank toast. Those statuses always get the friendly message.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+			message = SERVICE_UNAVAILABLE_MESSAGE
+		}
+
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		if (res.status === 429 && typeof data.retry_after_seconds === 'number') {
+			err.retryAfterSeconds = data.retry_after_seconds
+		}
 		err.retryAfterMs = retryAfterMs
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
@@ -249,11 +287,161 @@ function uploadFileWithProgress(
 }
 
 // Objects
+// ── Custom extensions ─────────────────────────────────────────────────────
+
+export type ExtensionStatus = 'active' | 'disabled' | 'draft'
+
+export interface ExtensionResponse {
+	id: string
+	workspaceId: string
+	slug: string
+	name: string
+	status: ExtensionStatus
+	mcpConfig: unknown | null
+	webhookConfig: ExtensionWebhookConfig | null
+	webhookToken: string | null
+	webhookUrl: string | null
+	/** True when a signing secret is stored. The secret itself is never returned. */
+	hasSigningSecret: boolean
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: boolean
+	toolGrants: ExtensionToolGrants
+	mcpLastError: string | null
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+	/** Most recent committed delivery in the last 14 days. */
+	lastDeliveryAt: string | null
+	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
+}
+
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+
+export type LiteralOrPath = { literal: string } | { path: string }
+
+/** The stdio server V1 runs: npx mcp-remote <url>, key passed as an Authorization header. */
+export interface ExtensionMcpConfig {
+	envKey: string
+	server:
+		| { type: 'stdio'; command: string; args: string[]; envFromCredential?: string }
+		| { type: 'http'; url: string }
+	autoInject: boolean
+	credentialProvider: string
+	tools: ExtensionTool[]
+}
+
+export type ExtensionMcpProbeResult =
+	| { ok: true; tools: ExtensionTool[] }
+	| {
+			ok: false
+			reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'
+			message: string
+	  }
+
+export interface ExtensionWebhookConfig {
+	signatureScheme: ExtensionSignatureScheme
+	signatureHeader: string
+	signaturePrefix?: string
+	timestampHeader?: string
+	timestampBodyTemplate?: string
+	maxAgeSeconds?: number
+	secretSource?: 'env' | 'credential'
+	eventMap: {
+		externalIdPath: string
+		entityType: LiteralOrPath
+		action: LiteralOrPath
+		dataPath?: string
+	}
+	rateLimit?: { perMinute: number }
+}
+
+export interface VendorRecipe {
+	slug: string
+	displayName: string
+	mcpConfig?: ExtensionMcpConfig
+	webhookConfig?: Partial<ExtensionWebhookConfig>
+	docsUrl: string
+}
+
+export interface CreateExtensionInput {
+	slug: string
+	name: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface UpdateExtensionInput {
+	name?: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface ExtensionDeliveries {
+	windowDays: number
+	committed: number
+	deliveries: { id: string; externalId: string; receivedAt: string; processedAt: string }[]
+}
+
+export type ExtensionSampleResult =
+	| {
+			ok: true
+			event: { externalId: string; entityType: string; action: string; data: unknown }
+	  }
+	| { ok: false; field: string; message: string }
+
 export const api = {
+	// The unified search endpoint: all five sources, true counts, AND matching.
+	search: {
+		query: (
+			workspaceId: string,
+			params: Record<string, string>,
+			opts?: { signal?: AbortSignal },
+		) => {
+			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
+			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
+		},
+	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		// Exact totals under the list's filters — tab counts, group headers, filter chips.
+		facets: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<ObjectFacetsResponse>(`/objects/facets${qs}`, { workspaceId })
 		},
 		board: (workspaceId: string, params: Record<string, string>) => {
 			const qs = `?${new URLSearchParams(params)}`
@@ -268,6 +456,15 @@ export const api = {
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
+		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
+		// hash is the preview's `content_hash`, so a draft that changed since is refused.
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
+			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
+				method: 'POST',
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
+			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
 				method: 'POST',
@@ -304,9 +501,35 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
+	account: {
+		deletionPreview: (deleteSoleWorkspaces = false) =>
+			request<AccountDeletionPreview>(
+				`/account/deletion-preview${deleteSoleWorkspaces ? '?delete_sole_workspaces=true' : ''}`,
+			),
+		delete: (data: { password: string; delete_sole_workspaces?: boolean }) =>
+			request<{ deleted: true }>('/account/delete', { method: 'POST', body: data }),
+	},
+
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
+	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
+	// run as the signed-in person and carry no workspace, like the invite calls below.
+	deviceAuth: {
+		preview: (userCode: string) =>
+			request<DeviceAuthPreview>(`/device-auth/preview?user_code=${encodeURIComponent(userCode)}`),
+		approve: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/approve', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
+		deny: (userCode: string) =>
+			request<{ ok: true }>('/device-auth/deny', {
+				method: 'POST',
+				body: { user_code: userCode },
+			}),
 	},
 
 	// Email invites. `preview` and `accept` are mounted outside the membership
@@ -350,6 +573,9 @@ export const api = {
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
+		/** What the actor can use: integrations (level, server attached) and saved credentials. */
+		access: (id: string, workspaceId: string) =>
+			request<AgentAccessView>(`/actors/${id}/access`, { workspaceId }),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
@@ -428,6 +654,13 @@ export const api = {
 					method: 'DELETE',
 				}),
 		},
+		deletionPreview: (workspaceId: string) =>
+			request<WorkspaceDeletionPreview>(`/workspaces/${workspaceId}/deletion-preview`),
+		delete: (workspaceId: string, confirmName: string) =>
+			request<{ deleted: true }>(`/workspaces/${workspaceId}/delete`, {
+				method: 'POST',
+				body: { confirm_name: confirmName },
+			}),
 		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
 			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
 				method: 'POST',
@@ -457,8 +690,6 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
-		steps: (id: string, workspaceId: string) =>
-			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -480,8 +711,132 @@ export const api = {
 			}),
 	},
 
+	/** Custom MCP servers: a workspace's own tool servers, shared with agents through grants. */
+	customMcpServers: {
+		get: (id: string, workspaceId: string) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, { workspaceId }),
+		create: (workspaceId: string, body: { name: string; server: CustomMcpServerSpec }) =>
+			request<CustomMcpServerResponse>('/custom-mcp-servers', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		update: (
+			id: string,
+			workspaceId: string,
+			body: { name: string; server: CustomMcpServerSpec },
+		) =>
+			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
+		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
+			request<ChatCaptureResponse>('/integrations/chat-capture', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		createByoApiKey: (workspaceId: string, body: { displayName: string; rawSecret: string }) =>
+			request<{ integrationId: string }>('/integrations/byo-apikey', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		createByoLogin: (
+			workspaceId: string,
+			body: { displayName: string; username: string; password: string },
+		) =>
+			request<{ integrationId: string }>('/integrations/byo-login', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		updateCredential: (
+			id: string,
+			workspaceId: string,
+			body: {
+				displayName?: string
+				rawSecret?: string
+				username?: string
+				password?: string
+			},
+		) =>
+			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
+				`/integrations/${id}/update`,
+				{ method: 'POST', body, workspaceId },
+			),
+		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
+			request<CredentialAuditLogPage>(
+				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
+				{ workspaceId },
+			),
+		getGrants: (id: string, workspaceId: string) =>
+			request<IntegrationGrants>(`/integrations/${id}/grants`, { workspaceId }),
+		/** Replaces every explicit grant on an integration in one step. */
+		replaceGrants: (id: string, workspaceId: string, grants: AgentGrant[]) =>
+			request<{ grants: AgentGrant[] }>(`/integrations/${id}/grants`, {
+				method: 'PUT',
+				body: { grants },
+				workspaceId,
+			}),
+		setGrant: (id: string, workspaceId: string, actorId: string, access: AgentGrantAccess) =>
+			request<AgentGrant>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'PUT',
+				body: { access },
+				workspaceId,
+			}),
+		/** Allow the agent whose session asked in a chat to use a saved credential, and restart it. */
+		allowFromChat: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			scope: 'chat' | 'always' = 'always',
+		) =>
+			request<{ actorId: string; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-from-chat`,
+				{ method: 'POST', body: { sessionId, scope }, workspaceId },
+			),
+		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
+		allowAccess: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			level: 'read' | 'read_write',
+		) =>
+			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-access`,
+				{ method: 'POST', body: { sessionId, level }, workspaceId },
+			),
+		removeGrant: (id: string, workspaceId: string, actorId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		setDefaultAccess: (id: string, workspaceId: string, defaultAgentAccess: DefaultAgentAccess) =>
+			request<{ defaultAgentAccess: DefaultAgentAccess }>(`/integrations/${id}/default-access`, {
+				method: 'PUT',
+				body: { defaultAgentAccess },
+				workspaceId,
+			}),
+		undo: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(`/integrations/${id}/undo`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(
+				`/integrations/${id}/remove`,
+				{ method: 'POST', workspaceId },
+			),
+		relaunch: (id: string, workspaceId: string) =>
+			request<{ relaunch: 'stopped' | 'failed' }>(`/integrations/${id}/relaunch`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (
 			workspaceId: string,
@@ -625,6 +980,18 @@ export const api = {
 			request<{ ok: true }>(`/sessions/${id}/input`, {
 				method: 'POST',
 				body,
+				workspaceId,
+			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
 				workspaceId,
 			}),
 		stop: (id: string, workspaceId: string) =>
@@ -872,10 +1239,108 @@ export const api = {
 		},
 	},
 
+	desktop: {
+		// Idempotent: starts the workspace desktop if needed (slow the first time) and
+		// returns a one-time ticket for the stream WebSocket plus the VNC password.
+		// Every agent has its own computer: say whose.
+		connect: (workspaceId: string, agentId: string) =>
+			request<DesktopConnectResponse>(`/desktop/connect?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		remove: (workspaceId: string, agentId: string) =>
+			request<{ removed: boolean }>(`/desktop?agent_id=${encodeURIComponent(agentId)}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		// Which agents have a computer and whether it is asleep. Never wakes one.
+		list: (workspaceId: string) =>
+			request<{ desktops: Array<{ agent_id: string; status: 'running' | 'suspended' }> }>(
+				'/desktop',
+				{ workspaceId },
+			),
+		// "Teach a task": hands a recorded demonstration to the chosen agent, which
+		// writes a draft skill from it.
+		teach: (workspaceId: string, body: TeachRequest) =>
+			request<TeachResponse>('/desktop/teach', { method: 'POST', body, workspaceId }),
+		// The recording is an input; the page deletes it once the agent's session ends.
+		deleteTeaching: (workspaceId: string, recordingId: string, agentId: string) =>
+			request<{ deleted: number }>(
+				`/desktop/teach/${recordingId}?agent_id=${encodeURIComponent(agentId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
+	},
+
+	forYou: {
+		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+	},
+
+	webPush: {
+		// Per-actor, not per-workspace — no workspaceId. `public_key` is the VAPID application
+		// server key (public by design); `enabled` is false when the server has no VAPID keys.
+		config: () => request<{ enabled: boolean; public_key: string | null }>('/web-push/config'),
+		subscribe: (body: {
+			endpoint: string
+			keys: { p256dh: string; auth: string }
+			user_agent?: string
+		}) => request<{ id: string }>('/web-push/subscriptions', { method: 'POST', body }),
+		unsubscribe: (id: string) =>
+			request<{ deleted: boolean }>(`/web-push/subscriptions/${id}`, { method: 'DELETE' }),
+	},
+
 	featureFlags: {
 		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
 		// booleans; the tester actor id list never reaches the browser.
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
+	transcriptions: {
+		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
+		// so the workspace header is required (a read-only viewer is refused).
+		create: (workspaceId: string, body: { audio: string; language?: string }) =>
+			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
+	},
+
+	voiceSessions: {
+		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
+		// credential comes back: the connection to the vendor is made by the
+		// server when the offer below is posted.
+		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+			request<{ voice_session_id: string }>('/voice-sessions', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		// Hands the browser's WebRTC offer to the server, which connects it to the
+		// vendor and attaches its own tool connection. tools_available is false when
+		// that attach failed; the call still runs, and the agent says tools are down.
+		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
+				`/voice-sessions/${voiceSessionId}/offer`,
+				{ method: 'POST', body: { sdp }, workspaceId },
+			),
+		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
+		// Idempotent, so a double hangup (End button then dialog close) is harmless.
+		// Audio seconds are what this client measured; the server clamps them to
+		// the call length.
+		hangup: (
+			workspaceId: string,
+			voiceSessionId: string,
+			body: {
+				reason: 'user_hangup' | 'network_error'
+				input_audio_seconds?: number
+				output_audio_seconds?: number
+			},
+		) =>
+			request<{
+				voice_session_id: string
+				status: string
+				ended_reason: string | null
+				ended_at: string | null
+				duration_ms: number
+				total_cost_usd: number | null
+				conversation_id: string | null
+			}>(`/voice-sessions/${voiceSessionId}/hangup`, { method: 'POST', body, workspaceId }),
 	},
 
 	userDisplaySettings: {
@@ -891,6 +1356,65 @@ export const api = {
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ method: 'PUT', body: { settings }, workspaceId },
 			),
+	},
+
+	extensions: {
+		list: (workspaceId: string) => request<ExtensionResponse[]>('/extensions', { workspaceId }),
+		get: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateExtensionInput) =>
+			request<ExtensionResponse>('/extensions', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateExtensionInput) =>
+			request<ExtensionResponse>(`/extensions/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		recipes: (workspaceId: string) =>
+			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		probeMcp: (workspaceId: string, data: { server_url: string; api_key?: string }) =>
+			request<ExtensionMcpProbeResult>('/extensions/mcp/probe', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		generateSecret: (workspaceId: string) =>
+			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
+		regenerateToken: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}/regenerate-token`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		deliveries: (workspaceId: string, id: string) =>
+			request<ExtensionDeliveries>(`/extensions/${id}/deliveries`, { workspaceId }),
+		sample: (
+			workspaceId: string,
+			id: string,
+			data: { payload: string; webhook_config?: ExtensionWebhookConfig },
+		) =>
+			request<ExtensionSampleResult>(`/extensions/${id}/sample`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
 	},
 
 	workspaceSkills: {
@@ -1044,12 +1568,26 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
 			const { ids, ...rest } = params
@@ -1071,6 +1609,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -1207,9 +1764,8 @@ export interface BillingUsageResponse {
 	// "Buy usage credits" entry points are hidden in that case.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
-	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
-	// `linkedin-addon-visible` flag is off OR the workspace has no connected
-	// linkedin-unipile credentials. Deliberately separate from
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
+	// connected linkedin-unipile credentials or is enterprise. Deliberately separate from
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
@@ -1246,6 +1802,9 @@ export interface ObjectResponse {
 	// endpoints — create / update / verify / undo-write / bulk — omit it, so
 	// the field is optional here and every reader defaults to `false`.
 	is_starred_by_me?: boolean
+	// Detail endpoint only: present when `metadata.kind` is something an integration
+	// delivers (an email, a LinkedIn message). Computed on read, never stored.
+	preview?: ObjectPreview | null
 }
 
 export interface StarToggleResponse {
@@ -1288,12 +1847,36 @@ export interface UnreadItem {
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
 	latest_mention?: LatestMention
+	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
+	// shows when there is no source comment to lead with.
+	curated?: { headline: string; rationale: string | null }
 }
 
 export interface LatestMentionDecisionOption {
 	label: string
 	consequences: string[]
 	recommended?: boolean
+	/** The option that sends or otherwise reaches real people. */
+	destructive?: boolean
+}
+
+/**
+ * The text an agent proposes to send, shown above the buttons. The feed fills
+ * `body` from the draft object's current description, so it is always present
+ * here; `object_id` says which object it came from.
+ */
+export interface LatestMentionDecisionDraft {
+	/** The projection of the object behind the draft, when it is a kind an integration delivers. */
+	preview?: ObjectPreview
+	/** Only in `drafts`: the agent's key for this message, echoed back in the reply. */
+	id?: string
+	object_id?: string
+	/** The card is about a file (an HTML page, a document, a picture); the card draws the file. */
+	file_id?: string
+	file?: { id: string; name: string; mime_type: string; size_bytes: number }
+	label?: string
+	to?: string
+	body?: string
 }
 
 export interface LatestMentionDecision {
@@ -1301,6 +1884,9 @@ export interface LatestMentionDecision {
 	summary: string
 	ask: string
 	options: LatestMentionDecisionOption[]
+	draft?: LatestMentionDecisionDraft
+	/** One card, several messages: each shows as its own preview with Send and Skip. */
+	drafts?: LatestMentionDecisionDraft[]
 }
 
 export interface LatestMention {
@@ -1317,6 +1903,28 @@ export interface LatestMention {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+/** One item on the Chief of Staff's For You list (`GET /api/for-you`). */
+export interface ForYouItem {
+	/** Null for a decision card an agent addressed to the person directly. */
+	notification_id: string | null
+	source: 'curated' | 'decision'
+	rank: number
+	/** What marking the item read moves the read position to. Null when there is nothing to mark. */
+	latest_event_id: number | null
+	headline: string
+	rationale: string | null
+	created_at: string | null
+	entity_type: 'object' | null
+	entity_id: string | null
+	session_id: string | null
+	object?: ObjectResponse
+	latest_mention?: LatestMention
+}
+
+export interface ForYouResponse {
+	items: ForYouItem[]
 }
 
 export interface BriefingResponse {
@@ -1372,6 +1980,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -1501,6 +2117,12 @@ export interface CreateInviteInput {
 export type CreateInviteResponse =
 	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
 	| { status: 'pending'; invite: InviteSummary }
+
+export interface DeviceAuthPreview {
+	client: 'tvos'
+	device_name: string | null
+	created_at: string
+}
 
 export interface InvitePreview {
 	status: 'pending'
@@ -1637,6 +2259,87 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Keychain: where the credential came from. Never the value. */
+	source?: string
+	/** Keychain: for source chat_capture, the session the key was pasted into. */
+	originSessionId?: string | null
+	/** Keychain: how the credential is held. Absent from a server that predates it. */
+	providerMode?: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+	/** Keychain: the name the member gave it. Null for the registered providers. */
+	displayName?: string | null
+	/** What an agent with no grant of its own may do. Keychain credentials are always 'none'. */
+	defaultAgentAccess?: DefaultAgentAccess
+	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
+	agentGrants?: AgentGrant[]
+	/** Saved credentials shared with an agent for one chat only. */
+	chatGrants?: Array<{ actorId: string; conversationId: string }>
+}
+
+/** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+/** What an agent with no grant of its own gets. */
+export type DefaultAgentAccess = 'read' | 'read_write' | 'none'
+
+export interface AgentGrant {
+	actorId: string
+	access: AgentGrantAccess
+}
+
+export interface IntegrationGrants {
+	integrationId: string
+	mode: 'keychain' | 'standard'
+	defaultAgentAccess: DefaultAgentAccess
+	grants: AgentGrant[]
+}
+
+export interface CredentialAuditEntry {
+	id: string
+	actorId: string
+	sessionId: string | null
+	outboundTarget: string | null
+	action: 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated' | 'scope_changed'
+	source: string
+	readAt: string
+}
+
+export interface CredentialAuditLogPage {
+	integrationId: string
+	source: string
+	originSessionId: string | null
+	entries: CredentialAuditEntry[]
+	nextBeforeId: string | null
+}
+
+export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
+
+interface ChatCaptureBase {
+	sessionId: string
+	displayName: string
+	/** Agents that may use it. Omit for the default (the session's agent). [] means unassigned. */
+	agentIds?: string[]
+	/** The secret was typed into a card an agent asked for, not the composer. */
+	fromCard?: boolean
+}
+
+export type ChatCaptureInput = ChatCaptureBase &
+	(
+		| {
+				providerMode: 'byo_apikey'
+				/** manual: the user typed the ! prefix, so nothing was detected. */
+				detectedProvider: ChatCaptureProvider | 'manual'
+				rawSecret: string
+		  }
+		| { providerMode: 'byo_login'; username: string; password: string }
+	)
+
+export interface ChatCaptureResponse {
+	integrationId: string
+	/** Null for a capture from an agent's card: active straight away, nothing to undo. */
+	undoExpiresAt: string | null
+	undoUrl: string | null
+	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
+	relaunch: 'stopped' | 'failed'
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -1798,6 +2501,8 @@ export interface FileListItem {
 	workspaceId: string
 	name: string
 	description: string | null
+	/** What the file is for. `briefing` puts an HTML page in the For you row. */
+	kind?: 'briefing' | null
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
@@ -1820,6 +2525,12 @@ export interface FileDetail extends FileListItem {
 	encoding: 'base64' | 'utf8'
 	url: string
 	annotations: FileAnnotation[]
+	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
+	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
@@ -1837,6 +2548,8 @@ export interface UpdateFileInput {
 	content?: string
 	encoding?: 'base64' | 'utf8'
 	annotations?: FileAnnotation[]
+	/** The contentHash the caller loaded; a mismatch is refused with 409 and nothing is written. */
+	if_match?: string
 }
 
 // Conversation entity fields are camelCase (Drizzle column names passed
@@ -1929,6 +2642,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -1961,6 +2676,131 @@ export interface MessageQuestionItem {
 export interface MessageQuestion {
 	session_id: string
 	questions: MessageQuestionItem[]
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+}
+
+/** An agent's request to connect an integration, surfaced into chat as a Connect card. */
+export interface MessageIntegrationConnect {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	provider: string
+}
+
+/** A custom MCP server definition. Env and header values come back masked on read. */
+export interface CustomMcpServerSpec {
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	env?: Record<string, string>
+	url?: string
+	headers?: Record<string, string>
+}
+
+export interface CustomMcpServerResponse {
+	id: string
+	name: string
+	server: CustomMcpServerSpec
+}
+
+/** An agent's request for a credential, surfaced into chat as a Keychain card. */
+export interface MessageKeychainRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	kind: 'api_key' | 'login'
+	suggested_name?: string
+	hint?: string
+}
+
+/** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
+/** What an agent can use: the one description every screen and the launch prompt share. */
+export interface AgentAccessView {
+	/** The Maskin MCP server: on every agent, read & write, and not changeable. */
+	maskin_mcp: { name: string; access: 'read_write'; locked: true }
+	integrations: Array<{
+		integration_id: string
+		provider: string
+		name: string
+		access: 'none' | 'read' | 'read_write'
+		source: 'grant' | 'default'
+		default_access: DefaultAgentAccess
+		server_attached: boolean
+		created_by: string
+		/** 'tool_server': a custom MCP server, which is on or off for an agent. */
+		kind: 'integration' | 'tool_server'
+		/** Tool server Maskin sits in front of: Read / Read & write / No access, not just on or off. */
+		gated: boolean
+	}>
+	credentials: Array<{
+		integration_id: string
+		name: string
+		kind: 'api_key' | 'login'
+		has_access: boolean
+		/** What an agent without its own entry gets: 'read' is every agent (Full access). */
+		default_access: 'read' | 'none'
+		/** 'always': a grant. 'this_chat': an Allow for the chat asked from. */
+		scope: 'always' | 'this_chat' | null
+		/** In how many chats it is shared with this agent, apart from any grant. */
+		chat_count: number
+		created_by: string
+	}>
+}
+
+export interface MessageKeychainAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	credential_name: string
+	kind: 'api_key' | 'login'
+	hint?: string
+}
+
+/** An agent asking for more access to an integration that is connected, surfaced as a card. */
+export interface MessageIntegrationAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	provider: string
+	display_name: string
+	level: 'read' | 'read_write'
+	reason?: string
+}
+
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
+/** An agent asking the person to act on its own computer (the card opens it). */
+export interface MessageComputerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -1978,8 +2818,11 @@ export interface MessageMetadata {
 	 * Backend-owned; stripped from anything a client sends. 'final_output'
 	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
 	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 * 'voice' marks a transcript line written by the voice tool-proxy.
 	 */
-	source?: 'final_output'
+	source?: 'final_output' | 'voice'
+	/** Backend-owned: the voice call a 'voice' message was transcribed from. */
+	voice_session_id?: string
 	final_output?: MessageFinalOutput
 	/**
 	 * Backend-owned; stripped from anything a client sends, so a forged message
@@ -1988,6 +2831,34 @@ export interface MessageMetadata {
 	question?: MessageQuestion
 	/** Client-supplied: pairs a human's reply back to the question it answers. */
 	question_answer?: MessageQuestionAnswer
+	/**
+	 * Backend-owned; stripped from anything a client sends. An agent's request to
+	 * connect an integration, rendered as a Connect card.
+	 */
+	integration_connect?: MessageIntegrationConnect
+	/** Backend-owned: an agent's request for a credential, rendered as a Keychain card. */
+	keychain_request?: MessageKeychainRequest
+	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
+	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
+	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
+	computer_request?: MessageComputerRequest
+	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
+	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: MessageCardAnswer
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
+	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
+	suggested_steps?: SuggestedStep[]
+	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
+	needed_tools?: NeededTool[]
+	/** Backend-owned: how many trailing paragraphs of an intro the web drops when it draws the steps and tool rows. */
+	plain_tail?: number
+	/** Client-supplied: the intro step a message was sent from. */
+	from_suggested_step?: FromSuggestedStep
 }
 
 export interface MessageResponse {
@@ -2008,6 +2879,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2021,12 +2925,18 @@ export interface SpawnedSession {
 	actorId: string
 	actorName: string
 	actionPrompt: string
+	/** When the session was created: where its card sits in the chat's timeline. */
+	createdAt: string | null
 	startedAt: string | null
 	completedAt: string | null
 	durationMs: number | null
 	result: unknown
 	currentActivity: string | null
 	depends_on_session_ids: string[]
+	/** What the session is waiting on the person for; null when it is not waiting. */
+	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**
@@ -2050,6 +2960,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	/** Handoffs no message carries yet; present on the newest page only. */
+	pending_handoffs?: SpawnedSession[]
 }
 
 export interface CreateConversationInput {
@@ -2074,6 +2986,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {
@@ -2094,6 +3010,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {
@@ -2129,6 +3047,8 @@ export interface SessionInputAttachment {
 export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
+	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

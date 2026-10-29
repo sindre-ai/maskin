@@ -29,11 +29,13 @@ public struct WorkingAgent: Codable, Hashable, Sendable, Identifiable {
 	/// Where Open goes: the object being worked on, else the conversation, else the agent.
 	public var objectId: String?
 	public var conversationId: String?
+	/// The conversation's title, when the work happens in a chat: what the card says it is about.
+	public var topic: String?
 
 	public init(
 		id: String, sessionId: String, name: String, doing: String? = nil, startedAt: Date,
 		expectedFinishAt: Date? = nil, touchesCustomersOrProduction: Bool = false,
-		objectId: String? = nil, conversationId: String? = nil
+		objectId: String? = nil, conversationId: String? = nil, topic: String? = nil
 	) {
 		self.id = id
 		self.sessionId = sessionId
@@ -44,6 +46,16 @@ public struct WorkingAgent: Codable, Hashable, Sendable, Identifiable {
 		self.touchesCustomersOrProduction = touchesCustomersOrProduction
 		self.objectId = objectId
 		self.conversationId = conversationId
+		self.topic = Self.clampTopic(topic)
+	}
+
+	public static let maxTopicLength = 60
+
+	/// Blank titles are no topic; long ones are cut so a push stays inside APNs' 4 KB limit.
+	static func clampTopic(_ text: String?) -> String? {
+		guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
+		else { return nil }
+		return trimmed.count > maxTopicLength ? String(trimmed.prefix(maxTopicLength - 1)) + "\u{2026}" : trimmed
 	}
 
 	/// Up to two letters for the avatar tile, the same rule as `ActorIdentity.initials` in
@@ -238,10 +250,12 @@ public struct LiveTurn: Equatable, Sendable {
 	public var step: String?
 	public var startedAt: Date
 	public var status: Status
+	/// The conversation's title.
+	public var topic: String?
 
 	public init(
 		sessionId: String, workspaceId: String, conversationId: String, actorId: String,
-		agentName: String, step: String? = nil, startedAt: Date, status: Status
+		agentName: String, step: String? = nil, startedAt: Date, status: Status, topic: String? = nil
 	) {
 		self.sessionId = sessionId
 		self.workspaceId = workspaceId
@@ -251,6 +265,7 @@ public struct LiveTurn: Equatable, Sendable {
 		self.step = step
 		self.startedAt = startedAt
 		self.status = status
+		self.topic = topic
 	}
 
 	/// The row this turn contributes to the aggregate; nil unless the agent is working. A turn
@@ -259,7 +274,7 @@ public struct LiveTurn: Equatable, Sendable {
 		guard status == .running else { return nil }
 		return WorkingAgent(
 			id: actorId, sessionId: sessionId, name: agentName, doing: step, startedAt: startedAt,
-			conversationId: conversationId)
+			conversationId: conversationId, topic: topic)
 	}
 
 	/// A chat session that has not been touched for this long is idle, not working: the same
@@ -272,7 +287,7 @@ public struct LiveTurn: Equatable, Sendable {
 	/// reads "Agent", never an id.
 	public static func turns(
 		from sessions: [ChatAgentSession], workspaceId: String, conversationId: String,
-		agentName: (String) -> String?, now: Date, replyInFlight: Bool = true,
+		agentName: (String) -> String?, topic: String? = nil, now: Date, replyInFlight: Bool = true,
 		staleAfter: TimeInterval = LiveTurn.staleAfter
 	) -> [LiveTurn] {
 		sessions.compactMap { session in
@@ -285,12 +300,15 @@ public struct LiveTurn: Equatable, Sendable {
 			case .paused: status = .needsYou
 			case .completed: status = .done
 			case .failed, .timeout: status = .failed
+			// A user stop is a finished turn: left unmapped, the overlay keeps the agent working.
+			case .other("user_stopped"): status = .done
 			case .other: return nil
 			}
 			return LiveTurn(
 				sessionId: session.id, workspaceId: workspaceId, conversationId: conversationId,
 				actorId: session.actorID, agentName: agentName(session.actorID) ?? "Agent",
-				step: session.currentActivity, startedAt: session.startedAt ?? now, status: status)
+				step: session.currentActivity, startedAt: session.startedAt ?? now, status: status,
+				topic: topic)
 		}
 	}
 }

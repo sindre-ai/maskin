@@ -25,7 +25,6 @@ struct CardExpansionTests {
 
 	@Test(arguments: [
 		CardExpansion.Engagement(composerFocused: true),
-		.init(hasDraft: true),
 		.init(threadOpen: true),
 	])
 	func engagementOpensACompactCard(_ engagement: CardExpansion.Engagement) {
@@ -37,11 +36,22 @@ struct CardExpansionTests {
 	@Test func engagedCardCannotBeCollapsed() {
 		let expansion = CardExpansion()
 		expansion.expand("a")
-		let engaged = CardExpansion.Engagement(hasDraft: true)
+		let engaged = CardExpansion.Engagement(composerFocused: true)
 		#expect(expansion.canCollapse("a", engagement: engaged) == false)
 		expansion.collapse("a")
 		#expect(expansion.isExpanded("a", engagement: engaged))
 		#expect(expansion.isExpanded("a") == false)
+	}
+
+	@Test func typedTextDoesNotHoldACardOpen() {
+		// Show less folds the card and keeps the text; the folded card shows a Draft tag.
+		let expansion = CardExpansion()
+		expansion.expand("a")
+		let typed = CardExpansion.Engagement(hasDraft: true)
+		#expect(typed.isEngaged == false)
+		#expect(expansion.canCollapse("a", engagement: typed))
+		expansion.collapse("a")
+		#expect(expansion.isExpanded("a", engagement: typed) == false)
 	}
 
 	@Test func pruneDropsCardsThatLeftTheFeed() {

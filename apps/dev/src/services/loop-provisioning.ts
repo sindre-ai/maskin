@@ -1,4 +1,3 @@
-import { generateApiKey } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	actors,
@@ -10,7 +9,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
-import { expandBrowserCapability } from '../lib/marketplace-loops/loop-snapshot'
+import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -451,11 +450,11 @@ export function buildActorInsert(
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
 ): typeof actors.$inferInsert {
-	// Always mint a fresh apiKey. The snapshot is untrusted input from the
-	// publishing workspace — honoring `snapshot.apiKey` would either copy the
-	// publisher's bearer token into the installer's workspace (auth leak) or
-	// collide on the unique index. apiKey is a real auth credential; it must
-	// be generated locally via the cryptographically-secure helper.
+	// Never carry an apiKey over. The snapshot is untrusted input from the
+	// publishing workspace — honoring `snapshot.apiKey` would copy the
+	// publisher's bearer token into the installer's workspace (auth leak). The
+	// installed agent gets no stored key at all: every session launch mints its
+	// own (see SessionManager.buildLaunchSpec).
 	return {
 		type: (snapshot.type as string) ?? 'agent',
 		name: (snapshot.name as string) ?? 'Untitled agent',
@@ -466,11 +465,9 @@ export function buildActorInsert(
 			(snapshot.llmConfig as Record<string, unknown>) ??
 			(snapshot.llm_config as Record<string, unknown>) ??
 			null,
-		// expandBrowserCapability turns the snapshot's secret-free `tools.browser`
-		// flag back into a real @playwright/mcp entry — without it, an installed
-		// agent whose prompt promises a browser never gets a Chromium sidecar.
-		tools: (expandBrowserCapability(snapshot.tools) as Record<string, unknown>) ?? null,
-		apiKey: generateApiKey().key,
+		// Old snapshots may carry a `tools.browser` flag from the browser-sidecar
+		// era; it is meaningless now, so it does not reach the installed actor.
+		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,
 		metadata,
 		createdBy,
 	}

@@ -33,7 +33,7 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 	return trigger.type
 }
 
-const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
+export const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
 	event: Zap,
 	cron: Clock,
 	reminder: Bell,
@@ -68,7 +68,7 @@ export function TriggerRow({
 	isToggling?: boolean
 	/** v4 row parity: state label sized to match the LoopRow state pill and no
 	 *  trailing chevron, so the right rail reads as `state label + toggle`.
-	 *  Composed at the route boundary from the `loops-v4-polish` umbrella flag. */
+	 *  The loops page opts in; other surfaces keep the original row. */
 	v4Polish?: boolean
 }) {
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap

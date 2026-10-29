@@ -211,7 +211,7 @@ export const KNOWLEDGE_CORPUS: readonly CorpusEntry[] = [
 			'When adding column/property visibility controls to a subsection of a page (e.g., the Files table), prefer a ghost Button size=icon trigger next to the subsection heading over reusing the page-level Display panel. The files-table has 5 properties (Size, Created, Modified, Kind, Uploaded by) plus a locked-on Filename — enough to warrant its own control. The popover menu uses checkboxes with an inline metadata layout (`Size · Created Jun 9 · Modified 2d ago`) rather than a tabular grid, keeping row density consistent.',
 	},
 	{
-		fixtureId: 'github-deployment-status-signal',
+		fixtureId: 'github-deployment-status-opportunity',
 		title: 'GitHub deployment_status is the production-deploy signal source for Maskin',
 		content:
 			'Maskin uses GitHub deployment_status webhooks (state=success, environment=production) as the single production-deploy signal source for bet/task attribution. Two-pass SHA matching: Pass 1 matches SHA to merge-commit SHAs from push/pull_request.merged events. Pass 2 uses branch-name or PR-head-SHA fallback for squash-merges and umbrella PRs. bet.metadata.deployed_at is the canonical field, clearing metadata.awaiting_deploy atomically.',
@@ -404,7 +404,7 @@ export const EVAL_PAIRS: readonly EvalPair[] = [
 	},
 	{
 		question: 'Which GitHub event tells us a change is actually live in production?',
-		expectedFixtureId: 'github-deployment-status-signal',
+		expectedFixtureId: 'github-deployment-status-opportunity',
 		expectedExcerpt: 'deployment_status',
 	},
 	{

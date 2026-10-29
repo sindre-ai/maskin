@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
@@ -8,6 +9,7 @@ import { Link } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
+import { ReplyThreadList } from './replies/reply-thread-list'
 
 interface ConversationListProps {
 	workspaceId: string
@@ -16,11 +18,6 @@ interface ConversationListProps {
 	/** True when the list owns the whole content width (no thread open) — the
 	 *  rows then centre on a 900px column instead of stretching edge to edge. */
 	expanded?: boolean
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
-	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.list`
-	 *  sub-flag. Off keeps the pre-v4 list, which ends on the last row with no
-	 *  footer. */
-	v4Polish?: boolean
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -40,14 +37,30 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 		title: 'Nothing archived yet',
 		description: 'Archived chats stay searchable — they just leave the main list.',
 	},
+	// Threads has its own list (`ReplyThreadList`); this entry only satisfies the record.
+	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
 }
 
-export function ConversationList({
+export function ConversationList(props: ConversationListProps) {
+	// Threads are not conversations: they list from another endpoint, so they get their own list.
+	// Split here, above the hooks, so the hook order never changes within one mounted list.
+	if (props.filter === 'threads') {
+		return (
+			<ReplyThreadList
+				workspaceId={props.workspaceId}
+				className={props.className}
+				expanded={props.expanded}
+			/>
+		)
+	}
+	return <ChatConversationList {...props} />
+}
+
+function ChatConversationList({
 	workspaceId,
 	filter = 'all',
 	className,
 	expanded,
-	v4Polish = false,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -69,6 +82,16 @@ export function ConversationList({
 	})
 
 	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
+	// Unread thread replies per chat, from the same list the Threads filter shows. A chat that
+	// reads as caught up can still hold an unread thread; the row says so.
+	const { data: replyThreads } = useReplyThreads(workspaceId)
+	const threadUnreadByChat = new Map<string, number>()
+	for (const t of replyThreads?.threads ?? []) {
+		threadUnreadByChat.set(
+			t.conversationId,
+			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
+		)
+	}
 	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'default',
 	})
@@ -151,7 +174,12 @@ export function ConversationList({
 								<div key={group.key} className="flex flex-col gap-px">
 									<div className="eyebrow px-2 pt-2.5 pb-1">{group.label}</div>
 									{group.items.map((c) => (
-										<ConversationListRow key={c.id} workspaceId={workspaceId} conversation={c} />
+										<ConversationListRow
+											key={c.id}
+											workspaceId={workspaceId}
+											conversation={c}
+											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+										/>
 									))}
 								</div>
 							))}
@@ -180,11 +208,11 @@ export function ConversationList({
 										'Older conversations load as you scroll'
 									)}
 								</div>
-							) : v4Polish ? (
+							) : (
 								<div className="flex items-center justify-center px-3 pt-4 pb-2.5 text-center text-[11px] text-muted-foreground">
 									That's the whole history — {conversations.length} in this workspace.
 								</div>
-							) : null}
+							)}
 						</>
 					)}
 				</div>

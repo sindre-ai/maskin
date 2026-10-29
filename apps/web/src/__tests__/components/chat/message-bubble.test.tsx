@@ -8,7 +8,13 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspace: { settings: { statuses: { bet: ['active', 'done'] } } } }),
+}))
+
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
+
+const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({
@@ -16,17 +22,41 @@ vi.mock('@/hooks/use-objects', () => ({
 			id: 'obj-1',
 			workspaceId: 'ws-1',
 			type: 'bet',
-			title: 'Retry window',
+			title: objectState.title,
 			status: 'active',
+			content: 'The retry window text.',
+			metadata: { channel: 'linkedin_dm', priority: 'P1' },
+			// A draft an integration can deliver: only those get a card in chat.
+			preview: {
+				kind: 'linkedin_message',
+				label: 'LinkedIn message',
+				provider: 'linkedin-unipile',
+				recipients: [],
+				subject: null,
+				details: [],
+				body: 'The retry window text.',
+				maxLength: null,
+				missing: [],
+				warnings: [],
+				content_hash: 'hash-1',
+				delivery: { state: 'draft', at: null },
+			},
 		},
 		isLoading: false,
 	}),
+	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), error: null }),
+	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
 	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
+	useSendMessage: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-object-type-label', () => ({
+	useObjectTypeLabel: () => (type: string) => type,
 }))
 
 vi.mock('@/hooks/use-actors', async () => {
@@ -61,8 +91,8 @@ function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse
 	}
 }
 
-function renderBubble(message: MessageResponse, v4Polish = false) {
-	return render(<MessageBubble workspaceId="ws-1" message={message} v4Polish={v4Polish} />, {
+function renderBubble(message: MessageResponse) {
+	return render(<MessageBubble workspaceId="ws-1" message={message} />, {
 		wrapper: TestWrapper,
 	})
 }
@@ -82,11 +112,81 @@ const CHART_MESSAGE = [
 ].join('\n')
 
 describe('MessageBubble', () => {
+	it('shows the card of a linked object right after the paragraph that links it', () => {
+		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+		renderBubble(
+			buildMessage({
+				content: `Before the link.\n\nThe draft is [here](/ws-1/objects/${id}) for you.\n\nAfter the link.`,
+			}),
+		)
+		const before = screen.getByText('Before the link.')
+		// A draft starts open, so its title (not the contracted subtitle) marks the card.
+		const card = screen.getByText('Retry window')
+		const after = screen.getByText('After the link.')
+		expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
 	it('renders an own message as an ink plate with no avatar or name', () => {
 		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		const body = screen.getByText('Here is what I found.')
 		expect(body.parentElement?.className).toContain('bg-primary')
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
+	})
+
+	it('draws a link to an object in your own message inline, as a chip with its title', () => {
+		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+		const address = `https://maskin.io/ws-1/objects/${id}`
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `is this done? ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Retry window' })
+		// Inside the same plate and the same line of words, not a box under it.
+		const plate = container.querySelector('.bg-primary')
+		expect(plate).toContainElement(chip)
+		expect(plate?.textContent).toContain('is this done?')
+	})
+
+	it('draws a GitHub pull request and issue in your own message as chips that open GitHub', () => {
+		const pull = 'https://github.com/sindre-ai/maskin/pull/2637'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `can you check ${pull} and https://github.com/sindre-ai/maskin/issues/12?`,
+			}),
+		)
+		expect(screen.queryByText(pull, { exact: false })).not.toBeInTheDocument()
+		const pullChip = screen.getByRole('link', { name: 'Pull request maskin #2637, opens GitHub' })
+		expect(pullChip).toHaveAttribute('href', pull)
+		expect(pullChip).toHaveAttribute('target', '_blank')
+		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
+		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
+	})
+
+	it('cuts the title in a chip at 30 characters', () => {
+		objectState.title = 'A very long title for an object that goes on and on'
+		try {
+			const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
+			renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `https://maskin.io/ws-1/objects/${id}`,
+				}),
+			)
+			expect(screen.getByText('A very long title for an objec…')).toBeInTheDocument()
+		} finally {
+			objectState.title = 'Retry window'
+		}
 	})
 
 	it('renders another actor as an avatar + name with no card wrapper', () => {
@@ -104,7 +204,6 @@ describe('MessageBubble', () => {
 				actorType: 'human',
 				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
 			}),
-			true,
 		)
 		// Raw source string is uppercase — the .eyebrow class only renders visual
 		// case, but v4 fixes the DOM text so it's semantically an eyebrow too.
@@ -112,23 +211,6 @@ describe('MessageBubble', () => {
 		expect(label.className).toContain('eyebrow')
 		// The chips row is a sibling of the plate, not a child of it.
 		expect(label.closest('div')?.className).not.toContain('bg-primary')
-	})
-
-	it('keeps the pre-v4 sentence-case label and no Retry action when v4Polish is off', () => {
-		// Rollback state for the chats-v4-polish bet: the flag off must render the
-		// pre-bet bubble exactly — "You attached" as prose and no v4 Retry action.
-		// Copy is a bug fix, not a v4 delta, so it is deliberately not flag-gated.
-		renderBubble(
-			buildMessage({
-				actorId: 'me',
-				actorName: 'Me',
-				actorType: 'human',
-				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
-			}),
-		)
-		expect(screen.getByText('You attached')).toBeInTheDocument()
-		expect(screen.queryByText('YOU ATTACHED')).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 
 	it('renders a REFERENCED rail under an agent message body', () => {
@@ -189,13 +271,13 @@ describe('MessageBubble — agent hover row (v4)', () => {
 	})
 
 	it('renders Copy and Retry buttons on an agent message', () => {
-		renderBubble(buildMessage(), true)
+		renderBubble(buildMessage())
 		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
 	})
 
 	it('deliberately does NOT render Rate up / Rate down on the agent hover row', () => {
-		renderBubble(buildMessage(), true)
+		renderBubble(buildMessage())
 		expect(screen.queryByRole('button', { name: /rate up/i })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /rate down/i })).not.toBeInTheDocument()
 	})
@@ -206,15 +288,30 @@ describe('MessageBubble — agent hover row (v4)', () => {
 			configurable: true,
 			value: { writeText },
 		})
-		renderBubble(buildMessage({ content: 'Hello from the agent.' }), true)
+		renderBubble(buildMessage({ content: 'Hello from the agent.' }))
 		fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
 		expect(writeText).toHaveBeenCalledWith('Hello from the agent.')
 	})
 
 	it('triggers the existing regenerate mutation with the message id when Retry is clicked', () => {
-		renderBubble(buildMessage({ id: 42 }), true)
+		renderBubble(buildMessage({ id: 42 }))
 		fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-		expect(retryMutate).toHaveBeenCalledWith({ messageId: 42 })
+		expect(retryMutate).toHaveBeenCalledWith(
+			{ messageId: 42 },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+	})
+
+	it('tells the thread about the redo once the retry is accepted', () => {
+		const onRetried = vi.fn()
+		const message = buildMessage({ id: 42 })
+		retryMutate.mockImplementation((_variables, options) => options?.onSuccess?.())
+		render(<MessageBubble workspaceId="ws-1" message={message} onRetried={onRetried} />, {
+			wrapper: TestWrapper,
+		})
+		expect(onRetried).not.toHaveBeenCalled()
+		fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+		expect(onRetried).toHaveBeenCalledWith(message)
 	})
 
 	it('adds Copy to the user branch alongside Edit + Retry', async () => {
@@ -231,7 +328,6 @@ describe('MessageBubble — agent hover row (v4)', () => {
 				id: 7,
 				content: 'My own words.',
 			}),
-			true,
 		)
 		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Ask agents to respond again/ })).toBeInTheDocument()
@@ -239,19 +335,8 @@ describe('MessageBubble — agent hover row (v4)', () => {
 		expect(writeText).toHaveBeenCalledWith('My own words.')
 	})
 
-	it('offers Copy on own and agent messages when v4Polish is off, but no Retry on the agent row', () => {
-		const own = renderBubble(
-			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', id: 8 }),
-		)
-		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
-		own.unmount()
-		renderBubble(buildMessage({ id: 9 }))
-		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
-	})
-
 	it('does not render the hover row on an optimistic bubble (id ≤ 0)', () => {
-		renderBubble(buildMessage({ id: -1 }), true)
+		renderBubble(buildMessage({ id: -1 }))
 		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
@@ -264,5 +349,52 @@ describe('MessageBubble — agent data-viz', () => {
 		// The caption belongs to the rendered figure, not to a code block.
 		expect(screen.getByText('Drop-off concentrates on step two.')).toBeInTheDocument()
 		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — Reply in thread', () => {
+	function renderWithReply(message: MessageResponse, onReplyInThread = vi.fn()) {
+		render(
+			<MessageBubble workspaceId="ws-1" message={message} onReplyInThread={onReplyInThread} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
+		return onReplyInThread
+	}
+
+	it('has no Reply action without an onReplyInThread handler', () => {
+		renderBubble(buildMessage())
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('calls the handler when Reply is clicked on an agent message', () => {
+		const onReply = renderWithReply(buildMessage())
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('offers Reply on your own message too', () => {
+		const onReply = renderWithReply(
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }),
+		)
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('has no Reply on an optimistic (unsent) message', () => {
+		renderWithReply(buildMessage({ id: -1, actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('has no Reply on a system row', () => {
+		renderWithReply(buildMessage({ kind: 'system' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('hides Reply on your own message while it is being edited', () => {
+		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
 	})
 })

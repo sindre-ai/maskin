@@ -9,8 +9,10 @@ import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
 // Plain-language "what happened last" line, derived purely from the loop's live
 // state (no fixtures). The read schema carries no per-activity feed, so this
 // surfaces the most useful real signal: whether the operator is needed, and how
-// much of the loop's work is still moving through it.
-function lastActivityText(loop: LoopSummary): string {
+// much of the loop's work is still moving through it. Null for a live loop with
+// nothing in progress or completed. The chat card for a linked loop reads the
+// same line, so the two cannot drift.
+export function loopActivityLine(loop: LoopSummary): string | null {
 	switch (loop.pill) {
 		case 'waiting_on_you':
 			return 'Waiting on you'
@@ -23,10 +25,14 @@ function lastActivityText(loop: LoopSummary): string {
 				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} in progress`
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
-			// Live but idle: name the rung of the autonomy ladder it sits on
-			// rather than a generic "Running", which no longer exists.
-			return LOOP_PILL_STYLES[loop.pill].label
+			return null
 	}
+}
+
+function lastActivityText(loop: LoopSummary): string {
+	// Live but idle: name the rung of the autonomy ladder it sits on
+	// rather than a generic "Running", which no longer exists.
+	return loopActivityLine(loop) ?? LOOP_PILL_STYLES[loop.pill].label
 }
 
 export function LoopRow({
@@ -41,8 +47,7 @@ export function LoopRow({
 	/** How many of this loop's agents have a live session right now — drives the
 	 *  green "busy" line under the stage label (mockup 1536). */
 	busyAgentCount?: number
-	/** Route-level composite from `useFeatureFlag('loops-v4-polish')` + the
-	 *  workspace's `credit_balance_cents`. When true and the loop's `pill` is
+	/** Derived from the workspace's `credit_balance_cents`. When true and the loop's `pill` is
 	 *  `paused`, the row renders the NO CREDITS overlay next to the state
 	 *  label — parity with the Objects PAUSED · NO CREDITS pill. */
 	showNoCreditsPill?: boolean
@@ -56,7 +61,7 @@ export function LoopRow({
 		.filter((a): a is ActorListItem => Boolean(a))
 	const lastActor = agentCards[0]
 	const activity = lastActivityText(loop)
-	// Route-level flag + workspace-credits check already gate this; a per-row
+	// The route's workspace-credits check already gates this; a per-row
 	// `loop.pill === 'paused'` is the last predicate that keeps the overlay off
 	// live and draft rows. Keeping it here (rather than in the parent) means the
 	// route hands one boolean per workspace, not one per row.

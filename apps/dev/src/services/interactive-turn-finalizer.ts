@@ -5,9 +5,14 @@ import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } fro
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
-import { classifyTurnError } from '../lib/turn-error-classifier'
+import {
+	classifyTurnError,
+	extractCloudflareRayId,
+	isProviderBlockPage,
+} from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
 
@@ -112,6 +117,22 @@ const RETRY_EXHAUSTED_MESSAGE =
  */
 const RETRY_UNAVAILABLE_MESSAGE =
 	"I hit a temporary error from the Claude API and couldn't finish that. Send the message again and I'll pick it up."
+
+/**
+ * What the human reads when the provider's edge blocked the request (a 403
+ * Cloudflare page) and the replays did not get past it. Kept short on purpose
+ * and free of the CLI's own wording ("Failed to authenticate"), which points at
+ * a key problem that does not exist. The detail stays in the session log.
+ */
+const PROVIDER_BLOCKED_MESSAGE = 'Something went wrong. Try again in a minute.'
+
+/**
+ * The provider's display name for the session log. Only the Maskin-funded route
+ * is known to be OpenRouter; any other route is the user's own endpoint, which
+ * the session does not record, so it is named generically rather than guessed.
+ */
+const providerDisplayName = (llmRoute: string): string =>
+	llmRoute === LLM_ROUTE_MASKIN_PLAN ? 'OpenRouter' : 'Your model provider'
 
 /** What the human reads when the replay could not reach a session that has gone. */
 const RETRY_UNDELIVERABLE_MESSAGE =
@@ -218,7 +239,7 @@ const permanentErrorMessage = (detail: string): string =>
  * see what happened, not to prompt any action.
  */
 const subscriptionMovedMessage = (detail: string): string =>
-	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and I'm picking your message back up on the new subscription.\n\nThe error was:\n\n${detail}`
 
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
@@ -283,6 +304,10 @@ type SessionGate = {
 	workspaceId: string
 	/** `config.llm_route`, for tagging empty-completion telemetry. '' when unrecorded. */
 	llmRoute: string
+	/** A helper another agent started: it ends when it returns its result. */
+	stopOnResult: boolean
+	/** The helper has asked the person a question and is waiting on the answer. */
+	awaiting: boolean
 }
 
 /** What the backwards scan of a blank-`result` turn concluded. */
@@ -327,6 +352,19 @@ export type InteractiveTurnFinalizerOptions = {
 	 */
 	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 	/**
+	 * Called once the spent session is stopped after a subscription move, to
+	 * answer the human's unanswered message on the new subscription without
+	 * making them send it again. Injected for the same reason as the options
+	 * above. Best-effort: a failure is logged and the notice already tells the
+	 * human to send their message again.
+	 */
+	onResumeAfterMove?: (args: {
+		sessionId: string
+		conversationId: string
+		workspaceId: string
+		agentId: string
+	}) => Promise<void>
+	/**
 	 * Switches the running CLI onto another model for its next turns. Injected
 	 * for the same reason as the options above. Without it an empty turn can
 	 * only be retried on the model that produced it.
@@ -338,6 +376,20 @@ export type InteractiveTurnFinalizerOptions = {
 	 * the retries and the visible message still apply.
 	 */
 	fallbackModel?: string | null
+	/**
+	 * Called when a turn has genuinely ended from the human's point of view:
+	 * its closing message was posted (or it ended with nothing to post).
+	 * NOT called while a replay or correction is pending, because the turn is
+	 * still going — the replay's own writeInput starts the next one. Drives the
+	 * iOS Live Activity lifecycle. Must not throw; errors are swallowed.
+	 */
+	onTurnFinished?: (sessionId: string, outcome: 'done' | 'failed') => void
+	/**
+	 * Called when a helper session (config.stop_on_result) closes a turn with a
+	 * result and is not waiting on an answer: the session is done. Injected for
+	 * the same reason as the options above — no session-manager import here.
+	 */
+	onHelperResult?: (sessionId: string, outcome: { isError: boolean; text: string }) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -389,6 +441,9 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
+	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
+	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -398,7 +453,10 @@ export class InteractiveTurnFinalizer {
 		this.setModel = options.setModel
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
+		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
+		this.onResumeAfterMove = options.onResumeAfterMove
+		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -446,6 +504,14 @@ export class InteractiveTurnFinalizer {
 					`Interactive turn finalizer failed to post final output for session ${sessionId} (log ${logId}): ${describeError(err)}`,
 				)
 			}
+		}
+	}
+
+	private turnFinished(sessionId: string, outcome: 'done' | 'failed'): void {
+		try {
+			this.onTurnFinished?.(sessionId, outcome)
+		} catch (err) {
+			logger.warn(`onTurnFinished failed for session ${sessionId}: ${describeError(err)}`)
 		}
 	}
 
@@ -512,6 +578,12 @@ export class InteractiveTurnFinalizer {
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
 		if (!gate.interactive) return
+		// A helper has no chat of its own to post into: its result goes back to
+		// whoever started it, and the session ends here unless it is mid-question.
+		if (gate.stopOnResult) {
+			await this.finishHelperTurn(sessionId, gate, result, logId)
+			return
+		}
 		if (!gate.conversationId) {
 			logger.warn(
 				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
@@ -572,6 +644,7 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Interactive session ${sessionId} closed a turn with no postable text (log ${logId}, subtype ${result.subtype ?? 'none'}); nothing to post`,
 			)
+			this.turnFinished(sessionId, 'done')
 			return
 		}
 
@@ -611,6 +684,34 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A helper closed a turn. If it asked the person something, keep it alive for
+	 * the answer; otherwise this was its last turn, so end the session.
+	 *
+	 * Acts only on the newest turn: the agent-server replays a session's stdout
+	 * after a restart, and an old result must not end a session that has since
+	 * been answered and is mid-way through a later turn.
+	 */
+	private async finishHelperTurn(
+		sessionId: string,
+		gate: SessionGate,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<void> {
+		if (gate.awaiting) return
+		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+		if (this.seen.has(dedupeKey)) return
+		if (!(await this.isNewestTurn(sessionId, logId))) return
+		this.rememberKey(dedupeKey)
+		try {
+			await this.onHelperResult?.(sessionId, { isError: result.isError, text: result.text })
+		} catch (err) {
+			logger.error(
+				`Helper session ${sessionId} could not be ended after its result: ${describeError(err)}`,
+			)
+		}
 	}
 
 	/**
@@ -1031,11 +1132,13 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
+		const threadRootId = await this.resolveThreadRootId(turnMessageId)
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
 			workspaceId: gate.workspaceId,
 			actorId: gate.actorId,
+			threadRootId,
 			content,
 			metadata: {
 				source: 'final_output',
@@ -1077,7 +1180,11 @@ export class InteractiveTurnFinalizer {
 			logger.info(
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
+			return
 		}
+		const failed =
+			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
+		this.turnFinished(sessionId, failed ? 'failed' : 'done')
 	}
 
 	/**
@@ -1146,7 +1253,13 @@ export class InteractiveTurnFinalizer {
 				.set({ spawnedByMessageId: messageId })
 				.where(
 					and(
-						eq(sessions.sourceSessionId, primarySessionId),
+						// REST `create_session` records the spawner as
+						// `spawned_by_session_id` (from the X-Maskin-Session-Id header);
+						// `source_session_id` is only set when the agent passes it.
+						or(
+							eq(sessions.sourceSessionId, primarySessionId),
+							eq(sessions.spawnedBySessionId, primarySessionId),
+						),
 						isNull(sessions.spawnedByMessageId),
 						gte(sessions.createdAt, lowerBound),
 						lte(sessions.createdAt, currentLog.createdAt),
@@ -1201,6 +1314,33 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
+	 * Leave a trace of a provider block in the session's own log, so a block can
+	 * be traced to the rule that fired: provider, status and the Cloudflare Ray ID
+	 * when the page text carries one. Never throws, since it sits ahead of the
+	 * retry and a failed write must not cost the human their reply.
+	 */
+	private async recordProviderBlock(
+		sessionId: string,
+		gate: SessionGate,
+		raw: string,
+		logId: number,
+	): Promise<void> {
+		const provider = providerDisplayName(gate.llmRoute)
+		const rayId = extractCloudflareRayId(raw)
+		const note = `provider_block provider="${provider}" route=${gate.llmRoute || 'unknown'} status=403 cf_ray=${rayId ?? 'not_in_page'} source_log=${logId}`
+		logger.warn(`Interactive session ${sessionId} hit a provider block page: ${note}`)
+		try {
+			await this.db
+				.insert(sessionLogs)
+				.values({ sessionId, stream: 'system', content: `${note}\n` })
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} could not log a provider block: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
 	 *
@@ -1226,6 +1366,8 @@ export class InteractiveTurnFinalizer {
 
 		const detail = result.text.trim() || 'no detail reported'
 		const kind = classifyTurnError(detail)
+		const providerBlock = isProviderBlockPage(detail)
+		if (providerBlock) await this.recordProviderBlock(sessionId, gate, result.raw, logId)
 
 		if (kind === 'permanent') {
 			logger.warn(
@@ -1264,6 +1406,23 @@ export class InteractiveTurnFinalizer {
 					)
 				}
 			}
+			// Answer the unanswered message on the new subscription ourselves. Only
+			// reached when the pointer actually moved, so a spent chain (movedTo
+			// null) cannot loop: each resume consumes one slot of the chain.
+			if (movedTo && this.onResumeAfterMove) {
+				try {
+					await this.onResumeAfterMove({
+						sessionId,
+						conversationId,
+						workspaceId: gate.workspaceId,
+						agentId: gate.actorId,
+					})
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not resume the chat after subscription move: ${describeError(err)}`,
+					)
+				}
+			}
 			return
 		}
 
@@ -1280,7 +1439,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_UNAVAILABLE_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
 					retry: 'unavailable',
@@ -1306,7 +1465,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_EXHAUSTED_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_EXHAUSTED_MESSAGE,
 				{
 					error_kind: 'transient',
 					retries: spent,
@@ -1416,6 +1575,8 @@ export class InteractiveTurnFinalizer {
 				logger.warn(
 					`Interactive session ${sessionId} ${reason} notice was suppressed as a duplicate (dedupe_key ${dedupeKey}-${reason})`,
 				)
+			} else {
+				this.turnFinished(sessionId, 'failed')
 			}
 		} catch (err) {
 			logger.error(
@@ -1652,8 +1813,11 @@ export class InteractiveTurnFinalizer {
 			actorId: row.actorId,
 			workspaceId: row.workspaceId,
 			llmRoute: typeof config?.llm_route === 'string' ? config.llm_route : '',
+			stopOnResult: config?.stop_on_result === true,
+			awaiting: Boolean(config?.awaiting),
 		}
-		if (gate.interactive && !gate.conversationId) return gate
+		// Uncached: a helper's `awaiting` flips with every question and answer.
+		if (gate.interactive && (!gate.conversationId || gate.stopOnResult)) return gate
 		this.gates.set(sessionId, gate)
 		return gate
 	}
@@ -1760,6 +1924,28 @@ export class InteractiveTurnFinalizer {
 	 * envelope can share a Docker chunk with its neighbours, and parsing the
 	 * whole row would throw and silently yield an unanchored message.
 	 */
+	/**
+	 * A reply to a message posted inside a thread answers in that thread. The turn's
+	 * triggering message is either the thread's root (which starts the thread) or one
+	 * of its replies; only a reply carries a root, so an agent answering a top-level
+	 * message still posts to the main timeline. Best-effort: a lookup failure posts
+	 * the reply top-level rather than losing it.
+	 */
+	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		if (turnMessageId === null) return null
+		try {
+			const [row] = await this.db
+				.select({ threadRootId: messages.threadRootId })
+				.from(messages)
+				.where(eq(messages.id, turnMessageId))
+				.limit(1)
+			return row?.threadRootId ?? null
+		} catch (err) {
+			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
+			return null
+		}
+	}
+
 	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		const [row] = await this.db
 			.select({ content: sessionLogs.content })

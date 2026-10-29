@@ -5,7 +5,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
-import { useState } from 'react'
+import { capture } from '@/lib/posthog'
+import type { MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
+import { Suspense, lazy, useCallback, useState } from 'react'
+
+// Dynamic-imported so Tiptap never bundles into a read-only route (pulse
+// notifications render through this file). The Vite chunk-name CI assertion
+// enforces the split.
+const MarkdownEditor = lazy(() =>
+	import('@maskin/markdown/react/editor').then((m) => ({ default: m.MarkdownEditor })),
+)
 
 interface InputOption {
 	label: string
@@ -67,6 +76,14 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 	const question = metadata.question as string | undefined
 	const options = coerceOptions(metadata.options)
 	const placeholder = metadata.placeholder as string | undefined
+	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
+		capture('editor_markdown_parse_error', {
+			error_message: info.errorMessage,
+			variant: info.variant,
+			surface: info.surface,
+			object_id: info.objectId,
+		})
+	}, [])
 
 	const [singleValue, setSingleValue] = useState('')
 	const [multiValues, setMultiValues] = useState<Set<string>>(new Set())
@@ -160,13 +177,31 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 				{inputType === 'text' && (
 					<>
 						{(metadata.multiline as boolean) ? (
-							<Textarea
-								value={textValue}
-								onChange={(e) => setTextValue(e.target.value)}
-								placeholder={placeholder ?? 'Type your response...'}
-								className="mb-3"
-								rows={3}
-							/>
+							<div className="mb-3 rounded-md border bg-background px-3 py-2 text-sm">
+								<Suspense
+									fallback={
+										<Textarea
+											value={textValue}
+											onChange={(e) => setTextValue(e.target.value)}
+											placeholder={placeholder ?? 'Type your response...'}
+											rows={3}
+										/>
+									}
+								>
+									{/* Submit is a button, not a blur, so the text is kept in step on every
+									    edit through onChangeInternal; onChange covers the blur emit. */}
+									<MarkdownEditor
+										value={textValue}
+										variant="notification"
+										surface="notification"
+										placeholder={placeholder ?? 'Type your response...'}
+										onChange={setTextValue}
+										onChangeInternal={setTextValue}
+										onParseError={handleParseError}
+										className="[&>[contenteditable]]:min-h-[4.5rem] [&>[contenteditable]]:outline-none"
+									/>
+								</Suspense>
+							</div>
 						) : (
 							<Input
 								value={textValue}

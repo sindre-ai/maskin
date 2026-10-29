@@ -14,7 +14,8 @@ struct AgentsLiveActivity: Widget {
 	var body: some WidgetConfiguration {
 		ActivityConfiguration(for: MaskinAgentsAttributes.self) { context in
 			LockScreenAgentsView(identity: context.attributes.identity, state: context.state)
-				.padding(MaskinSpace.s9)
+				.padding(.horizontal, MaskinSpace.s9)
+				.padding(.vertical, MaskinSpace.s7)
 				.activityBackgroundTint(MaskinSurface.card)
 				.widgetURL(tapURL(context.attributes.identity, context.state))
 		} dynamicIsland: { context in
@@ -183,6 +184,8 @@ private struct TimeLabel: View {
 /// closest to finishing; none gets the finished line.
 private struct AgentsBody: View {
 	let state: AgentsActivityState
+	/// The Lock Screen card gets about 160 pt in all, so its rows run tighter than the island's.
+	var compact = false
 
 	var body: some View {
 		switch state.count {
@@ -201,15 +204,17 @@ private struct AgentsBody: View {
 				}
 			}
 		default:
-			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-				ForEach(state.top) { agent in AgentRow(agent: agent) }
+			VStack(alignment: .leading, spacing: compact ? MaskinSpace.s1 : MaskinSpace.s3) {
+				ForEach(state.top) { agent in AgentRow(agent: agent, compact: compact) }
 			}
 		}
 	}
 
 	private func progressLine(_ agent: WorkingAgent) -> String {
-		if let left = agent.timeLeftText(now: Date()) { return "Started \(started(agent)) · \(left)" }
-		return "Started \(started(agent))"
+		var parts = ["Started \(started(agent))"]
+		if let left = agent.timeLeftText(now: Date()) { parts.append(left) }
+		if let topic = agent.topic { parts.append(topic) }
+		return parts.joined(separator: " · ")
 	}
 
 	private func started(_ agent: WorkingAgent) -> String {
@@ -243,9 +248,10 @@ private struct ProgressBar: View {
 
 private struct AgentRow: View {
 	let agent: WorkingAgent
+	var compact = false
 	var body: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			AvatarTile(agent: agent, size: MaskinSpace.s12, ring: false)
+			AvatarTile(agent: agent, size: compact ? MaskinSpace.s11 : MaskinSpace.s12, ring: false)
 			Text(agent.sentence)
 				.maskinText(.subhead)
 				.lineLimit(1)
@@ -262,6 +268,7 @@ private struct AgentRow: View {
 private struct AgentsActions: View {
 	let identity: AgentsActivityIdentity
 	let state: AgentsActivityState
+	var compact = false
 
 	var body: some View {
 		if state.isEmpty {
@@ -271,31 +278,39 @@ private struct AgentsActions: View {
 				Button(
 					intent: PauseAgentsIntent(sessionIds: state.agents.map(\.sessionId), workspaceId: identity.workspaceId)
 				) {
-					InkLabel(state.pauseLabel)
+					InkLabel(state.pauseLabel, quiet: true, compact: compact)
 				}
 				.buttonStyle(.plain)
 				if state.count == 1, let agent = state.agents.first {
-					Link(destination: agent.openURL(workspaceId: identity.workspaceId)) { InkLabel("Open") }
+					Link(destination: agent.openURL(workspaceId: identity.workspaceId)) { InkLabel("Open", compact: compact) }
 				} else {
-					Link(destination: identity.seeAllURL) { InkLabel("See all \(state.count)") }
+					Link(destination: identity.seeAllURL) { InkLabel("See all \(state.count)", compact: compact) }
 				}
 			}
 		}
 	}
 }
 
-/// The ink capsule: inverse surface with its label colour, 44 pt tall on the Lock Screen.
+/// The ink capsule: inverse surface with its label colour, 44 pt tall (32 pt on the Lock Screen,
+/// where the whole card has to fit in about 160 pt).
 private struct InkLabel: View {
 	let text: String
-	init(_ text: String) { self.text = text }
+	/// Pause is the quiet grey capsule; Open and See all are the white (inverse) ones.
+	let quiet: Bool
+	let compact: Bool
+	init(_ text: String, quiet: Bool = false, compact: Bool = false) {
+		self.text = text
+		self.quiet = quiet
+		self.compact = compact
+	}
 	var body: some View {
 		Text(text)
 			.maskinText(.caption)
 			.lineLimit(1)
-			.foregroundStyle(MaskinSurface.onInverse)
+			.foregroundStyle(quiet ? MaskinColor.ink3 : MaskinSurface.onInverse)
 			.padding(.horizontal, MaskinSpace.s9)
-			.frame(minHeight: MaskinSpace.touchMin)
-			.background(MaskinSurface.inverse, in: Capsule())
+			.frame(minHeight: compact ? MaskinSpace.s14 : MaskinSpace.touchMin)
+			.background(quiet ? MaskinSurface.fill : MaskinSurface.inverse, in: Capsule())
 	}
 }
 
@@ -305,12 +320,12 @@ private struct LockScreenAgentsView: View {
 	let state: AgentsActivityState
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			HStack(alignment: .center, spacing: MaskinSpace.s5) {
 				if state.isEmpty {
 					DoneMark().font(.title3)
 				} else {
-					AvatarStack(agents: state.agents, size: MaskinSpace.s14)
+					AvatarStack(agents: state.agents, size: MaskinSpace.s12)
 				}
 				Headline(state: state)
 				if state.count == 1, let agent = state.agents.first {
@@ -319,9 +334,12 @@ private struct LockScreenAgentsView: View {
 					LevelBars()
 				}
 			}
-			AgentsBody(state: state)
-			AgentsActions(identity: identity, state: state)
+			AgentsBody(state: state, compact: true)
+			AgentsActions(identity: identity, state: state, compact: true)
 		}
+		// iOS crops the card at ~160 pt rather than growing it, so large Dynamic Type would push
+		// the header and the buttons off the edges.
+		.dynamicTypeSize(...DynamicTypeSize.large)
 		.accessibilityElement(children: .contain)
 	}
 }

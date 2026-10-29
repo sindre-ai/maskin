@@ -15,7 +15,7 @@ test.describe('Attached image rendering', () => {
 		const obj = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Bet with image attachment',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		const file = await account.api.createFile(account.workspaceId, {

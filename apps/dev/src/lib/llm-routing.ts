@@ -15,6 +15,7 @@ import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth
 import { isEnterprise } from './enterprise'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
+import { SecretUnreadableError, openSecret } from './workspace-secrets'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	anthropic: 'claude-haiku-4-5-20251001',
@@ -24,13 +25,24 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 
 /**
  * Every session on the Claude-subscription route runs this model at this
- * effort, whatever the agent's own `llm_config.model` says. Other routes (the
- * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
- * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
- * turned into `--effort`.
+ * effort, whatever the agent's own `llm_config.model` says. Other routes
+ * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
+ * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
+ * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
  */
 export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
 export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
+/**
+ * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
+ * of a session's output was hidden reasoning (Claude: about 30%), one think
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
+ */
+export const MASKIN_PLAN_EFFORT = 'low'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -100,6 +112,40 @@ export interface FallbackConfig {
 	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
 	 */
 	zdr: boolean
+	/**
+	 * The only OpenRouter providers allowed to serve a funded request, sent as
+	 * provider.only. From MASKIN_FALLBACK_PROVIDER_ONLY (comma separated); unset
+	 * uses DEFAULT_ONLY_PROVIDERS, empty or "none" lifts the restriction.
+	 */
+	onlyProviders: string[]
+	/**
+	 * OpenRouter provider names that must never serve a funded request, sent as
+	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
+	 */
+	ignoreProviders: string[]
+	/**
+	 * Cancel and retry a funded streamed request whose first token takes longer
+	 * than this many milliseconds (strip-images-proxy.js, in the agent container).
+	 * From MASKIN_FALLBACK_TTFT_TIMEOUT_MS; unset uses DEFAULT_TTFT_TIMEOUT_MS,
+	 * 0 or "none" turns the guard off. Undefined here means off.
+	 */
+	ttftTimeoutMs?: number
+}
+
+/** The subset of OpenRouter's request-body "provider" object Maskin sends. */
+export interface ProviderPrefs {
+	zdr?: true
+	only?: string[]
+	ignore?: string[]
+}
+
+/** Undefined when no preference is configured, so callers send no "provider" at all. */
+export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
+	const prefs: ProviderPrefs = {}
+	if (fallback.zdr) prefs.zdr = true
+	if (fallback.onlyProviders?.length) prefs.only = fallback.onlyProviders
+	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
+	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
 
 export interface AgentLlmConfig {
@@ -116,6 +162,44 @@ export interface AgentLlmConfig {
  * "none" is the kill switch that turns stripping off.
  */
 export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+/**
+ * OpenRouter providers (slugs, as OpenRouter spells them in provider.only) that
+ * may serve a funded request. Chosen on measured time to first token and tok/s:
+ * most other hosts of the fallback model were 10-30s to first token at 5-25
+ * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
+ * "none" lifts the restriction. A model neither host serves fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host.
+ */
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+
+/**
+ * A funded request that has produced no token after this long is cancelled and
+ * retried once, then sent to the other allowed provider (two tries there). The
+ * last try has no timeout, so a request that is slow everywhere is still served.
+ * Measured first tokens on the allowed providers:
+ * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
+ * 8s leaves headroom for both and still catches the stalls.
+ */
+export const DEFAULT_TTFT_TIMEOUT_MS = 8000
+
+function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
+	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()
+	if (raw === undefined || raw === '') return DEFAULT_TTFT_TIMEOUT_MS
+	if (raw.toLowerCase() === 'none') return 0
+	const ms = Number(raw)
+	return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0
+}
+
+function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
+	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim())
+		.filter(Boolean)
+}
 
 function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
 	const raw = env.MASKIN_TEXT_ONLY_MODELS
@@ -143,6 +227,12 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			'deepseek/deepseek-v4.1-flash',
 		textOnlyModels: readTextOnlyModels(env),
 		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		onlyProviders: readOnlyProviders(env),
+		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter(Boolean),
+		ttftTimeoutMs: readTtftTimeoutMs(env),
 	}
 }
 
@@ -421,9 +511,12 @@ export async function checkPlanCap(params: {
 function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<string, string> | null {
 	if (!custom?.enabled) return null
 	const baseUrl = custom.base_url?.trim()
-	const apiKey = custom.api_key?.trim()
+	const storedKey = custom.api_key?.trim()
 	const model = custom.model?.trim()
-	if (!baseUrl || !apiKey || !model) return null
+	if (!baseUrl || !storedKey || !model) return null
+	// Opened only once the config is complete, so a workspace that is not using
+	// this route never needs the encryption key. Throws SecretUnreadableError.
+	const apiKey = openSecret(storedKey, 'custom_llm.api_key').trim()
 	const smallModel = custom.small_fast_model?.trim() || model
 	return {
 		ANTHROPIC_BASE_URL: baseUrl,
@@ -463,12 +556,30 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_API_KEY: '',
 		ANTHROPIC_MODEL: model,
 		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
+		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
+		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
+		// does not run: the call dies with "search was cut off" and the turn ends
+		// with no visible output. Without it the model uses WebFetch or the browser.
+		MASKIN_DISABLE_WEB_SEARCH: '1',
 	}
 	// Decided on the main model only: the small-fast model can differ, and the
 	// proxy strips for the whole session either way.
 	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
 	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
 		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	// The Claude CLI builds its own request body, so the agent-container proxy
+	// injects these into each /v1/messages call (strip-images-proxy.js). Only
+	// routing (allow and block lists) goes here: zdr stays chat-only, as it was
+	// before.
+	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
+	if (only || ignore) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
+	}
+	// The same proxy cancels and retries a request whose first token is slow.
+	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
+		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
 	}
 	return env
 }
@@ -497,7 +608,9 @@ function buildMaskinPlanEnv(
  * `enterprise` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
- * (the routes that don't already carry an explicit model of their own). Route
+ * (the routes that don't already carry an explicit model of their own). When it
+ * is unset they get CLAUDE_SUBSCRIPTION_MODEL instead: the Claude CLI's own
+ * default is not Sonnet, and an API key bills per token. Route
  * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
  * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
  * workspace/operator config and are left as-is.
@@ -513,7 +626,7 @@ function buildMaskinPlanEnv(
  * pre-flight and the post-hoc "the OAuth route produced nothing" check below
  * go through here so the two can't drift apart.
  */
-function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
 	return isClaudeFailoverEnabled(env)
 		? Boolean(resolveActiveSlot(claudeOauth))
 		: Boolean(readSlots(claudeOauth).primary)
@@ -560,9 +673,9 @@ export async function resolveLlmRoute(params: {
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
 			if (enterprise) {
-				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
-				if (agent.model) {
-					envVars.ANTHROPIC_MODEL = agent.model
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: agent.apiKey,
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 				}
 				return { route: LLM_ROUTE_AGENT, envVars }
 			}
@@ -670,20 +783,29 @@ export async function resolveLlmRoute(params: {
 			})
 		}
 
-		// 3. Workspace custom_llm
-		const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
-		if (customEnv) {
-			return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
-		}
-
-		// 4. Workspace anthropic api key
-		const wsAnthropic = wsSettings.llm_keys?.anthropic
-		if (wsAnthropic) {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
+		// Routes 3 and 4 read stored secrets, which are sealed at rest. A value
+		// that cannot be opened ends the lookup here: carrying on to a later
+		// route would quietly run the session on credentials the workspace did
+		// not choose, on a different bill.
+		try {
+			// 3. Workspace custom_llm
+			const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
+			if (customEnv) {
+				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 			}
-			return { route: LLM_ROUTE_API_KEY, envVars }
+
+			// 4. Workspace anthropic api key
+			const storedAnthropic = wsSettings.llm_keys?.anthropic
+			if (storedAnthropic) {
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+				}
+				return { route: LLM_ROUTE_API_KEY, envVars }
+			}
+		} catch (err) {
+			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+			throw err
 		}
 	}
 
@@ -741,11 +863,40 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly transient: boolean
 
-	constructor(detail: string, transient = false) {
+	/**
+	 * True when a key is saved for the workspace but cannot be read back (the
+	 * encryption key is missing or changed). The fix is to enter the key again,
+	 * not to connect a Claude subscription, so the user is told that.
+	 */
+	readonly storedKeyUnreadable: boolean
+
+	/** Name of the workspace that has no working credentials, so the message can say which one. */
+	readonly workspaceName: string | null
+
+	/**
+	 * True when the workspace has nothing configured at all (no subscription,
+	 * endpoint or key), as opposed to a credential that exists but was rejected.
+	 * Only this case has no retry worth making: nothing changes until someone
+	 * connects a credential, so the trigger runner pauses it for longer.
+	 */
+	readonly noCredentialsConfigured: boolean
+
+	constructor(
+		detail: string,
+		transient = false,
+		options?: {
+			storedKeyUnreadable?: boolean
+			workspaceName?: string | null
+			noCredentialsConfigured?: boolean
+		},
+	) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
 		this.detail = detail
 		this.transient = transient
+		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
+		this.workspaceName = options?.workspaceName?.trim() || null
+		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -761,18 +912,35 @@ export class LlmCredentialsUnavailableError extends Error {
 	static readonly transientHumanMessage =
 		'This session could not start because Maskin could not reach Anthropic to verify the credentials for this workspace. This is usually temporary — try starting the session again in a few minutes.'
 
+	/** Shown when a saved key exists but Maskin cannot read it back. */
+	static readonly unreadableKeyHumanMessage =
+		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
+
 	toFailureReason(): SessionResultFailureReason {
 		return {
 			provider: 'maskin',
 			reason_code: 'not_logged_in',
-			human_message: this.transient
-				? LlmCredentialsUnavailableError.transientHumanMessage
-				: LlmCredentialsUnavailableError.humanMessage,
+			human_message: this.storedKeyUnreadable
+				? LlmCredentialsUnavailableError.unreadableKeyHumanMessage
+				: this.transient
+					? LlmCredentialsUnavailableError.transientHumanMessage
+					: this.workspaceName
+						? `This session could not start because no working LLM credentials are connected for the workspace "${this.workspaceName}". Connect a Claude subscription in that workspace's Settings → Keys, then start a new session.`
+						: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
 			verbatim_output: this.detail,
 		}
 	}
+}
+
+/** The terminal error for a saved key that cannot be opened. Names the field, never the value. */
+export function unreadableKeyError(err: SecretUnreadableError): LlmCredentialsUnavailableError {
+	return new LlmCredentialsUnavailableError(
+		`The saved ${err.field} for this workspace cannot be decrypted (the encryption key is missing or has changed). Enter the key again to replace it.`,
+		false,
+		{ storedKeyUnreadable: true },
+	)
 }
 
 /**
@@ -893,7 +1061,7 @@ export interface ChatCredentials {
 	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
 	 * can reject unknown body fields with a 400.
 	 */
-	providerPrefs?: { zdr: true }
+	providerPrefs?: ProviderPrefs
 }
 
 /**
@@ -945,24 +1113,39 @@ export function resolveChatCredentials(params: {
 		}
 	}
 
-	const custom = wsSettings.custom_llm
-	if (
-		custom?.enabled &&
-		custom.base_url?.trim() &&
-		custom.api_key?.trim() &&
-		custom.model?.trim()
-	) {
-		return {
-			provider: 'openai',
-			apiKey: custom.api_key.trim(),
-			baseUrl: custom.base_url.trim(),
-			model: custom.small_fast_model?.trim() || custom.model.trim(),
+	// Stored keys are sealed at rest. This path is a best-effort heuristic, so a
+	// key that cannot be opened is logged and reported as "unavailable" (null),
+	// never thrown: only resolveLlmRoute raises the credentials error.
+	try {
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return {
+				provider: 'openai',
+				apiKey: openSecret(custom.api_key.trim(), 'custom_llm.api_key').trim(),
+				baseUrl: custom.base_url.trim(),
+				model: custom.small_fast_model?.trim() || custom.model.trim(),
+			}
 		}
-	}
 
-	const wsAnthropic = wsSettings.llm_keys?.anthropic
-	if (wsAnthropic) {
-		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
+		const wsAnthropic = wsSettings.llm_keys?.anthropic
+		if (wsAnthropic) {
+			return {
+				provider: 'anthropic',
+				apiKey: openSecret(wsAnthropic, 'llm_keys.anthropic'),
+				model: DEFAULT_CHAT_MODEL.anthropic,
+			}
+		}
+	} catch (err) {
+		if (!(err instanceof SecretUnreadableError)) throw err
+		logger.warn('Saved LLM key cannot be decrypted; chat credentials unavailable', {
+			field: err.field,
+		})
+		return null
 	}
 
 	// System fallback — Maskin's own funded OpenRouter account. Only workspaces
@@ -982,6 +1165,7 @@ export function resolveChatCredentials(params: {
 	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
 	return {
 		provider: 'openai',
 		apiKey: fallback.apiKey,
@@ -991,6 +1175,23 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
-		...(fallback.zdr && { providerPrefs: { zdr: true as const } }),
+		...(providerPrefs && { providerPrefs }),
 	}
+}
+
+/**
+ * OpenAI Realtime (gpt-realtime) audio rates for Voice v1, in USD per second of
+ * audio. Anchors from the tech spec §Cost pipeline: $0.06/min in, $0.24/min
+ * out. Voice is billed to the operator's MASKIN_VOICE_OPENAI_API_KEY, not to a
+ * workspace route, so these sit beside the model pricing rather than in it.
+ */
+export const VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND = 0.001
+export const VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND = 0.004
+
+/** Dollar cost of one voice call, rounded to the 6 decimals voice_sessions.total_cost_usd stores. */
+export function computeVoiceCostUsd(inputAudioSeconds: number, outputAudioSeconds: number): number {
+	const usd =
+		inputAudioSeconds * VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND +
+		outputAudioSeconds * VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND
+	return Math.round(usd * 1e6) / 1e6
 }

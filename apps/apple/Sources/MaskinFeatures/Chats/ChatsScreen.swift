@@ -53,7 +53,9 @@ private struct ChatsContainer: View {
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var newChat: NewChatRequest?
+	@State private var showThreads = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.liveMeeting) private var liveMeeting
 	@Binding var requestedConversationId: String?
 
 	private struct NewChatRequest: Identifiable {
@@ -71,7 +73,6 @@ private struct ChatsContainer: View {
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
 				events: environment.events, cache: environment.snapshotCache,
-				flowRooms: LoopFlowRoomsSource(api: APILoopsSource(client: environment.client, workspaceID: workspaceID)),
 				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
 	}
 
@@ -85,14 +86,17 @@ private struct ChatsContainer: View {
 				isLive: environment.events.connection != .failed,
 				sendTick: sendTick,
 				onNewChat: { recipient in newChat = NewChatRequest(recipient: recipient) },
-				onSearchEverywhere: { _ in runtime?.selectedTab = .search }
+				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
+				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } },
+				onThreads: { showThreads = true }
 			)
 			.shellToolbar(
 				environment: environment, title: "Team",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
-					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault))
+					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
+					hidesAvatar: true, newAlwaysVisible: true))
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
@@ -119,6 +123,15 @@ private struct ChatsContainer: View {
 			runtime?.newConversationRequested = false
 			newChat = NewChatRequest()
 		}
+		.onChange(of: runtime?.agentChatRequest, initial: true) {
+			guard let request = runtime?.agentChatRequest else { return }
+			runtime?.agentChatRequest = nil
+			if request.live {
+				Task { await startLive(with: request.agent) }
+			} else {
+				newChat = NewChatRequest(recipient: request.agent)
+			}
+		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
 			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
 			guard let draft = runtime?.chatDraft else { return }
@@ -127,12 +140,23 @@ private struct ChatsContainer: View {
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
+		.sheet(isPresented: $showThreads) {
+			ThreadsSheet(environment: environment, conversations: store)
+		}
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
-				initialRecipient: request.recipient
-			) { created in
+				initialRecipient: request.recipient,
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+			) { created, live in
 				selection = created.id
+				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
+					// The cover opens once the sheet has finished dismissing.
+					Task {
+						try? await Task.sleep(for: .milliseconds(450))
+						liveMeeting.present(.conversation(id: created.id, lead: lead))
+					}
+				}
 			}
 			.presentationDetents([.large])
 		}
@@ -157,6 +181,20 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
+	/// A live call with `agent` from its page: a fresh one-to-one chat the call runs in. Falls back
+	/// to the new-chat sheet addressed to the agent if the chat can't be created.
+	fileprivate func startLive(with agent: ChatParticipant) async {
+		do {
+			let created = try await store.create(
+				title: ThreadLayout.newChatTitle(for: [agent.name], startsLiveCall: true), participantIDs: [agent.id],
+				firstMessage: nil)
+			selection = created.id
+			liveMeeting.present(.conversation(id: created.id, lead: agent))
+		} catch {
+			newChat = NewChatRequest(recipient: agent)
+		}
+	}
+
 	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the
 	/// person and creates them. Opens a chat with it, or the new-chat sheet with the text filled in
 	/// when the workspace has no Chief of Staff (or the chat can't be created).
@@ -230,6 +268,76 @@ private struct FlowRoomHost: View {
 }
 
 /// Builds the `ChatStore` for one conversation and hosts the thread plus its participants sheet.
+/// The Threads screen over the Team list: a row opens its thread, which lives in a chat of its
+/// own (loaded here for that one conversation, with the same stores the chat itself uses).
+private struct ThreadsSheet: View {
+	let environment: AppEnvironment
+	let conversations: ConversationsStore
+	@Environment(\.dismiss) private var dismiss
+	@State private var route: ThreadsRoute?
+
+	struct ThreadsRoute: Hashable {
+		let conversationID: String
+		let rootID: Int
+	}
+
+	var body: some View {
+		NavigationStack {
+			ThreadsListScreen(store: conversations) { item in
+				guard let rootID = item.root.serverID else { return }
+				route = ThreadsRoute(conversationID: item.conversationID, rootID: rootID)
+			}
+			.toolbar {
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+			}
+			.navigationDestination(item: $route) { route in
+				if let item = conversations.threads.first(where: {
+					$0.conversationID == route.conversationID && $0.root.serverID == route.rootID
+				}) {
+					ThreadHost(environment: environment, conversations: conversations, item: item)
+				}
+			}
+		}
+		.presentationDetents([.large])
+	}
+}
+
+/// One thread opened from the Threads list. Builds the chat store for the thread's conversation
+/// once and stops it when the thread closes.
+private struct ThreadHost: View {
+	let environment: AppEnvironment
+	let conversations: ConversationsStore
+	let item: ThreadListItem
+	@State private var holder = Holder()
+
+	@MainActor
+	private final class Holder { var chat: ChatStore? }
+
+	private func make() -> ChatStore {
+		let session = environment.auth.session
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let chat = ChatStore(
+			conversationID: item.conversationID, currentActorID: session?.actorId ?? "",
+			currentActorName: session?.name ?? "You", api: source,
+			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
+			cache: environment.snapshotCache,
+			knownLastMessageAt: conversations.conversation(id: item.conversationID)?.lastMessageAt)
+		// A thread open on screen has nothing to say about the chat's own read marker.
+		chat.isActive = false
+		return chat
+	}
+
+	var body: some View {
+		let chat = holder.chat ?? make()
+		let _ = { holder.chat = chat }()
+		ThreadScreen(store: chat, root: item.root)
+			.onDisappear {
+				chat.stop()
+				Task { await conversations.refreshThreads() }
+			}
+	}
+}
+
 private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
@@ -273,16 +381,19 @@ private struct ChatThreadHost: View {
 		chat.onMarkedRead = { [conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}
-		chat.onSessionsRefreshed = { [weak chat, weak environment] sessions in
+		chat.onSessionsRefreshed = { [weak chat, weak environment, conversations] sessions in
 			// Foreground fallback for the Live Activity; background updates come from APNs.
 			guard let coordinator = TurnActivityCoordinator.shared, let chat,
 				let workspaceId = environment?.workspaceId
 			else { return }
 			let turns = LiveTurn.turns(
-				from: sessions, workspaceId: workspaceId, conversationId: conversationID,
+				from: sessions.filter { !chat.isIdle($0) }, workspaceId: workspaceId, conversationId: conversationID,
 				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
-				now: Date())
-			Task { await coordinator.reconcile(turns) }
+				topic: conversations.conversation(id: conversationID)?.title, now: Date())
+			Task {
+				await coordinator.reconcile(turns, conversationId: conversationID)
+				await coordinator.sweep()
+			}
 		}
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
 		composer.bind(conversationID: conversationID)

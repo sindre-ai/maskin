@@ -355,6 +355,31 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
+// Mobile switcher bug (taps register, menu doesn't open): the two events below
+// split "the tap never reached the trigger" (no `open_attempted`) from "the
+// menu opened and closed again before the user could see it" (`open_attempted`
+// then `dismissed_immediately`), which have different fixes. `pointerType`
+// ('touch' | 'mouse' | 'pen') lets mobile and desktop be compared directly.
+export function trackSidebarWorkspaceSwitcherOpenAttempted(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.open_attempted', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
+}
+
+export function trackSidebarWorkspaceSwitcherDismissedImmediately(p: {
+	workspaceId: string
+	openMs: number
+}): void {
+	trackEvent('sidebar.workspace_switcher.dismissed_immediately', {
+		workspaceId: p.workspaceId,
+		openMs: p.openMs,
+	})
+}
+
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
@@ -568,7 +593,17 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
-export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'objects' | 'automations'
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
+
+// Which search UI produced the event. Events from the old page and launcher carry
+// 'legacy' (or nothing, when they predate the field), so the two stay comparable.
+export type SearchUiVersion = 'legacy' | 'v2'
+
+// How a v2 search began: typed in the field, restored from the URL, handed over
+// from the launcher, or picked from the recent searches.
+export type SearchEntry = 'typed' | 'url' | 'palette_handover' | 'recent'
+
+export type SearchSortKey = 'rel' | 'recent' | 'az'
 
 // Fires once per settled query on either surface. Never carries the query text
 // (queries can name customers and PostHog is a third party): only its length
@@ -584,8 +619,14 @@ export function trackSearchPerformed(p: {
 	words_count: number
 	type_filter: string | null
 	status_filter: string | null
+	// Added by the v2 page. The names above are frozen; these are new and optional.
+	ui_version?: SearchUiVersion
+	entry?: SearchEntry
+	pill_count?: number
+	filter_count?: number
+	sort?: SearchSortKey
 }): void {
-	trackEvent('search_performed', { ...p, source: 'web' })
+	trackEvent('search_performed', { ...p, ui_version: p.ui_version ?? 'legacy', source: 'web' })
 }
 
 // Fires for every result row on both surfaces. `search_id` joins the open to
@@ -601,10 +642,12 @@ export function trackSearchResultOpened(
 		result_count: number
 		position: number
 		result_group: SearchResultGroup
+		ui_version?: SearchUiVersion
 	},
 ): void {
 	trackEvent('search_result_opened', {
 		...fillBase(p),
+		ui_version: p.ui_version ?? 'legacy',
 		surface: p.surface,
 		search_id: p.search_id,
 		has_query: p.has_query,
@@ -612,6 +655,26 @@ export function trackSearchResultOpened(
 		position: p.position,
 		result_group: p.result_group,
 	})
+}
+
+export type SearchFilterDimension = 'type' | 'status' | 'updated' | 'sort' | 'clear'
+export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
+export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
+export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
+
+// Fires when a person changes a search filter on the v2 page: a chip, a pill, the
+// Display menu or Clear filters. Never fires for a change that comes from the URL
+// (a reload, back, a hand-over). `value` is a type key, a status group key or a
+// sort / updated key, empty for a clear. Never carries the query text.
+export function trackSearchFilterChanged(p: {
+	surface: SearchSurface
+	dimension: SearchFilterDimension
+	action: SearchFilterAction
+	value: string
+	kind: SearchFilterKind
+	via: SearchFilterVia
+}): void {
+	trackEvent('search_filter_changed', { ...p, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when
@@ -739,26 +802,6 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 		trigger_id: p.trigger_id,
 		channel_id: p.channel_id,
 		time_since_pause_ms: p.time_since_pause_ms,
-	})
-}
-
-// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
-// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
-// container into view — exactly once per depth per mount. Wired to the parent
-// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
-// event as load-bearing). `depth` is the four-value union rather than a raw
-// number so a typo can't invent a fifth bucket, and `loopId` is the
-// `objects.id` for taxonomy joins on the standard `entity_id` field.
-export function trackLoopsDetailFlowScrollDepth(p: {
-	depth: 25 | 50 | 75 | 100
-	loopId: string
-}): void {
-	trackEvent('loops.detail.flow_scroll_depth', {
-		depth: p.depth,
-		loopId: p.loopId,
-		entity_id: p.loopId,
-		entity_type: 'loop',
-		source: 'web',
 	})
 }
 

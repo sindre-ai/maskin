@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'paused'])
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'user_stopped', 'paused'])
 
 interface MentionSessionCardProps {
 	session: SessionResponse
@@ -273,5 +273,7 @@ function getTerminalStatus(status: SessionResponse['status']): {
 	if (status === 'timeout') return { Icon: Clock, label: 'Timed out', iconClass: 'text-error' }
 	if (status === 'paused')
 		return { Icon: Clock, label: 'Paused', iconClass: 'text-muted-foreground' }
+	if (status === 'user_stopped')
+		return { Icon: XCircle, label: 'Stopped', iconClass: 'text-muted-foreground' }
 	return { Icon: CheckCircle2, label: 'Finished', iconClass: 'text-success' }
 }

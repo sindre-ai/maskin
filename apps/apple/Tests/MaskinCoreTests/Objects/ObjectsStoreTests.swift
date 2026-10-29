@@ -230,7 +230,7 @@ struct ObjectsStoreTests {
 		let task = await store.create(ObjectDraft(type: "task", title: "Elsewhere", status: "todo"))
 		#expect(task != nil)
 		#expect(!store.objects.contains { $0.title == "Elsewhere" })
-		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "signal"))
+		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "opportunity"))
 		#expect(store.objects.first?.id == bet?.id)
 	}
 
@@ -345,7 +345,18 @@ struct ObjectsStoreScopeTests {
 		await store.load()
 		#expect(store.inventory.count == ObjectsStore.inventoryLimit)
 		#expect(store.inventoryCapped)
-		#expect(store.typeSummaries.first?.countLabel == "100+")
+		#expect(store.typeSummaries.first { $0.id == "task" }?.countLabel == "100+")
+	}
+
+	@Test("a full inventory keeps every configured type on offer, even one older than the newest page")
+	func cappedInventoryKeepsConfiguredTypes() async {
+		let many = (0..<120).map {
+			WorkObject(id: "o\($0)", type: "task", title: "Task \($0)", status: "todo", updatedAt: Fixtures.date($0))
+		}
+		let (store, _) = makeStore(FakeObjectsRemote(objects: many))
+		await store.load()
+		#expect(store.inventoryCapped)
+		#expect(store.presentTypes == ["bet", "insight", "task"])
 	}
 
 	@Test("needs you comes from an open ask or the data's own signals, and the Needs you scope shows only those")

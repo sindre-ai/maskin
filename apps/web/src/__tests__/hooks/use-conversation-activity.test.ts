@@ -227,6 +227,25 @@ describe('useConversationActivity', () => {
 		})
 	})
 
+	it('shows one live turn per session when untagged steps sit before the tagged turn', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: toolUse('update_objects') }),
+			buildLog({ id: 2, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 3, content: toolUse('search_repositories') }),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toHaveLength(1)
+		expect(result.current.fallback).toEqual([])
+	})
+
 	it('does not add a fallback entry once the session goes idle with no in-progress turn', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
 		vi.mocked(api.sessions.logs).mockResolvedValue([
@@ -311,6 +330,34 @@ describe('useConversationActivity', () => {
 		])
 		// Logs are never fetched for a session that never ran.
 		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('surfaces a user_stopped session as a neutral stopped turn, not a failure', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'user_stopped',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { exit_code: 143 },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		const turn = result.current.byTriggerMessageId.get(10)?.[0]
+		expect(turn).toMatchObject({
+			sessionId: 'sess-1',
+			inProgress: false,
+			interrupted: true,
+			steps: [{ kind: 'error', text: 'Stopped — send another message (or retry) to continue.' }],
+		})
+		expect(turn?.failed).toBeUndefined()
 	})
 
 	it('shows nothing for a timed-out session that already replied — the 2h backstop is expected, not an error', async () => {

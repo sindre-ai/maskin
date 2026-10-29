@@ -570,6 +570,80 @@ describe('ViewerStage — thumbnail rail (Slice 2b)', () => {
 	})
 })
 
+describe('ViewerStage — on-stage page controls (below xl)', () => {
+	function getDeckFile(): FileDetail {
+		return buildHtmlFile({ name: 'deck.deck.html' })
+	}
+
+	function getDeckFrame(): HTMLIFrameElement {
+		return screen.getByTitle('Preview of deck.deck.html') as HTMLIFrameElement
+	}
+
+	function reportPage(iframe: HTMLIFrameElement, index: number, total: number) {
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: { type: VIEWER_PAGE_MESSAGE, index, total, w: 1440, h: 900 },
+				}),
+			)
+		})
+	}
+
+	beforeEach(() => {
+		vi.mocked(trackFileViewerPageNavigated).mockClear()
+	})
+
+	it('is absent for a non-paged doc and a single-page deck', () => {
+		const { unmount } = render(<ViewerStage file={buildHtmlFile()} />)
+		expect(screen.queryByTestId('viewer-page-controls')).not.toBeInTheDocument()
+		unmount()
+		render(<ViewerStage file={getDeckFile()} />)
+		reportPage(getDeckFrame(), 0, 1)
+		expect(screen.queryByTestId('viewer-page-controls')).not.toBeInTheDocument()
+	})
+
+	it('shows the page count and is hidden at xl, where the thumbnail rail takes over', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		reportPage(getDeckFrame(), 1, 4)
+		const controls = screen.getByTestId('viewer-page-controls')
+		expect(controls).toHaveTextContent('2 / 4')
+		expect(controls.className).toContain('xl:hidden')
+	})
+
+	it('next and previous post the goto-page message and fire the page-navigated event', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		reportPage(frame, 1, 4)
+		const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
+
+		fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 2 }, '*')
+		expect(trackFileViewerPageNavigated).toHaveBeenLastCalledWith({
+			file_id: 'file-1',
+			from_page: 2,
+			to_page: 3,
+			total_pages: 4,
+		})
+		expect(screen.getByTestId('viewer-page-controls')).toHaveTextContent('3 / 4')
+
+		fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 1 }, '*')
+		expect(trackFileViewerPageNavigated).toHaveBeenCalledTimes(2)
+	})
+
+	it('disables previous on the first page and next on the last', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		reportPage(frame, 0, 3)
+		expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Next page' })).toBeEnabled()
+		reportPage(frame, 2, 3)
+		expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+	})
+})
+
 describe('ViewerStage — annotate mode (Slice 3)', () => {
 	it('stops the sandboxed iframe from swallowing clicks so pins can be placed on the document', () => {
 		const { rerender } = render(<ViewerStage file={buildHtmlFile()} />)
@@ -601,5 +675,46 @@ describe('ViewerStage — annotate mode (Slice 3)', () => {
 			key: 'Escape',
 		})
 		expect(outerHandler).not.toHaveBeenCalled()
+	})
+})
+
+describe('ViewerStage — PDF and unsupported types', () => {
+	beforeEach(() => {
+		vi.stubGlobal(
+			'URL',
+			Object.assign(URL, {
+				createObjectURL: vi.fn(() => 'blob:pdf-url'),
+				revokeObjectURL: vi.fn(),
+			}),
+		)
+	})
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('shows an application/pdf file in an unsandboxed frame, not the empty state', () => {
+		const file = buildHtmlFile({
+			name: 'brief.pdf',
+			mimeType: 'application/pdf',
+			encoding: 'base64',
+			content: btoa('%PDF-1.4'),
+		})
+		render(<ViewerStage file={file} />)
+		const frame = screen.getByTitle('Preview of brief.pdf') as HTMLIFrameElement
+		expect(frame.getAttribute('src')).toBe('blob:pdf-url')
+		expect(frame.hasAttribute('sandbox')).toBe(false)
+		expect(screen.getByRole('button', { name: /open in new tab/i })).toBeInTheDocument()
+		expect(screen.queryByText('Preview not available')).toBeNull()
+	})
+
+	it('still shows "Preview not available" for other binary types', () => {
+		const file = buildHtmlFile({
+			name: 'archive.zip',
+			mimeType: 'application/zip',
+			encoding: 'base64',
+			content: btoa('PK'),
+		})
+		render(<ViewerStage file={file} />)
+		expect(screen.getByText('Preview not available')).toBeInTheDocument()
 	})
 })

@@ -28,7 +28,7 @@ struct QuickQuestionChips: View {
 							.font(MaskinTypeface.sans(MaskinFontSize.t13_5, weight: .semibold))
 							.foregroundStyle(MaskinColor.ink)
 							.padding(.horizontal, MaskinSpace.s7)
-							.frame(minHeight: MaskinSpace.s14)
+							.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s1)
 							.background(MaskinSurface.fill, in: Capsule())
 					}
 					.buttonStyle(.maskinPressed(.shrink))
@@ -69,6 +69,8 @@ struct ChiefOfStaffSheet: View {
 			currentActorName: session?.name ?? "You", api: source,
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
+		chat.trace = ActivityStore(
+			source: HTTPSessionActivitySource(environment: environment), cache: environment.snapshotCache)
 		chat.onMarkedRead = { [conversations = desk.conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}

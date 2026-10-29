@@ -40,31 +40,6 @@ describe('GET /api/feature-flags', () => {
 		expect(await res.json()).toEqual({ flags: ALL_OFF })
 	})
 
-	it('turns a registered flag on for a listed tester', async () => {
-		setEnv({ FF_TESTER_FEATURES: FLAGS.LINKEDIN_ADDON_VISIBLE, FF_TESTER_ACTOR_IDS: TESTER })
-		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
-
-		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({
-			flags: { ...ALL_OFF, [FLAGS.LINKEDIN_ADDON_VISIBLE]: true },
-		})
-	})
-
-	// Task 5 acceptance criterion 1 — the LinkedIn autosend flag defaults OFF
-	// and only turns ON via the same tester-scoped env pair as any other flag.
-	it('turns SALES_REP_LINKEDIN_AUTOSEND on for a listed tester', async () => {
-		setEnv({
-			FF_TESTER_FEATURES: FLAGS.SALES_REP_LINKEDIN_AUTOSEND,
-			FF_TESTER_ACTOR_IDS: TESTER,
-		})
-		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
-
-		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({
-			flags: { ...ALL_OFF, [FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: true },
-		})
-	})
-
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
 		setEnv({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)

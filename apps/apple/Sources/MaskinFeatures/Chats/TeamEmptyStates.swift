@@ -7,11 +7,23 @@ import SwiftUI
 /// `TeamLayout.Empty` and a 44pt ink pill; the action is the screen's.
 struct TeamEmptyState: View {
 	let empty: TeamLayout.Empty
+	var onSuggestion: (String) -> Void = { _ in }
 	let action: () -> Void
+
+	/// First messages for a workspace with no conversations yet; they go to the Chief of Staff.
+	static let suggestions = ["What should I focus on today?", "Help me set up my first agent"]
 
 	var body: some View {
 		EmptyState(symbol: symbol, title: empty.title, message: empty.message, style: .circled) {
-			Button(empty.action, action: action).buttonStyle(InkPillButtonStyle())
+			VStack(spacing: MaskinSpace.s5) {
+				Button(empty.action, action: action).buttonStyle(InkPillButtonStyle())
+				if empty == .nothing {
+					ForEach(Self.suggestions, id: \.self) { text in
+						Button(text) { onSuggestion(text) }
+							.buttonStyle(.secondaryAction)
+					}
+				}
+			}
 		}
 	}
 

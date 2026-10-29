@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -40,6 +39,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -92,6 +92,11 @@ type ActorSpec = {
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
 	tools: Record<string, unknown> | null
+	// Passed through to `actors.metadata` on insert. Currently only carries
+	// `voice_enabled` for Chief of Staff (Voice v1 bet 16bd0042); left as an
+	// open record so future default-agent metadata (e.g. per-agent voice
+	// picker in v2) can land here without another schema change.
+	metadata: Record<string, unknown> | null
 }
 
 function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
@@ -105,6 +110,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
 			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
+			metadata: null,
 		}
 	}
 	if (agentId === 'chief_of_staff') {
@@ -117,6 +123,9 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
 			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
+			// Voice v1: not read by POST /api/voice-sessions, which only checks that
+			// the target is an agent. Chief of Staff is the only default-on candidate.
+			metadata: { ...(CHIEF_OF_STAFF_DEFAULT.metadata ?? {}) },
 		}
 	}
 	const agent = DEFAULT_WORKSPACE_AGENTS.find((a) => a.$id === agentId)
@@ -130,6 +139,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 		llmProvider: null,
 		llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
 		tools: (agent.tools ?? null) as Record<string, unknown> | null,
+		metadata: null,
 	}
 }
 
@@ -181,7 +191,7 @@ export async function seedDefaultAgentActors(
 					llmProvider: spec.llmProvider,
 					llmConfig: spec.llmConfig,
 					tools: spec.tools,
-					apiKey: generateApiKey().key,
+					metadata: spec.metadata,
 					createdBy,
 				})
 				.returning()
@@ -244,7 +254,7 @@ export async function ensureChiefOfStaffActor(
 			llmProvider: chiefSpec.llmProvider,
 			llmConfig: chiefSpec.llmConfig,
 			tools: chiefSpec.tools,
-			apiKey: generateApiKey().key,
+			metadata: chiefSpec.metadata,
 			createdBy,
 		})
 		.returning()
@@ -454,7 +464,6 @@ export async function bootstrapDefaultAgents(
 					systemPrompt,
 					tools: (agent.tools ?? null) as Record<string, unknown> | null,
 					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
@@ -768,7 +777,10 @@ export async function provisionWorkspace(params: {
 			: params.settings
 
 	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
-	const settings = applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules)
+	// The request may carry LLM keys in plain text; the row only ever holds sealed ones.
+	const settings = sealWorkspaceLlmSecrets(
+		applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules),
+	)
 
 	let chiefOfStaffId: string | undefined
 

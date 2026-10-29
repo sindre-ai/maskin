@@ -114,13 +114,13 @@ public struct AuthView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 			BrandMark(size: 56)
 				.padding(.bottom, MaskinSpace.s3)
-			Text(model.mode == .signIn ? "Sign in to Maskin" : "Create your account")
+			Text(model.mode == .signIn ? "Your agents, one decision away." : "Create your account")
 				.maskinText(.largeTitle)
 				.foregroundStyle(MaskinColor.ink)
 				.accessibilityAddTraits(.isHeader)
 			Text(
 				model.mode == .signIn
-					? "Your workspace and agents, where you left them."
+					? "Sign in to see what needs you."
 					: "You get a workspace and agents ready to work."
 			)
 			.maskinText(.body)
@@ -143,6 +143,37 @@ public struct AuthView: View {
 					.autocorrectionDisabled()
 					#if os(iOS)
 						.textContentType(.name)
+						.textInputAutocapitalization(.words)
+					#endif
+					.disabled(busy)
+			}
+		case .organization:
+			AuthField(
+				label: "Organization", problem: model.message(for: .organization),
+				isFocused: focus == .organization
+			) {
+				TextField("Company name", text: $model.organization)
+					.focused($focus, equals: .organization)
+					.submitLabel(.next)
+					.onSubmit { advance(from: .organization) }
+					.autocorrectionDisabled()
+					#if os(iOS)
+						.textContentType(.organizationName)
+						.textInputAutocapitalization(.words)
+					#endif
+					.disabled(busy)
+			}
+		case .role:
+			AuthField(
+				label: "Role", problem: model.message(for: .role), isFocused: focus == .role
+			) {
+				TextField("What you do", text: $model.role)
+					.focused($focus, equals: .role)
+					.submitLabel(.next)
+					.onSubmit { advance(from: .role) }
+					.autocorrectionDisabled()
+					#if os(iOS)
+						.textContentType(.jobTitle)
 						.textInputAutocapitalization(.words)
 					#endif
 					.disabled(busy)
@@ -183,6 +214,30 @@ public struct AuthView: View {
 				.buttonStyle(.maskinPressed)
 				.accessibilityLabel(showPassword ? "Hide password" : "Show password")
 			}
+		case .confirmPassword:
+			AuthField(
+				label: "Confirm password", problem: model.message(for: .confirmPassword),
+				isFocused: focus == .confirmPassword
+			) {
+				Group {
+					if showPassword {
+						TextField("Repeat your password", text: $model.confirmPassword)
+							.autocorrectionDisabled()
+							#if os(iOS)
+								.textInputAutocapitalization(.never)
+							#endif
+					} else {
+						SecureField("Repeat your password", text: $model.confirmPassword)
+					}
+				}
+				.focused($focus, equals: .confirmPassword)
+				.submitLabel(.done)
+				.onSubmit(submit)
+				#if os(iOS)
+					.textContentType(.newPassword)
+				#endif
+				.disabled(busy)
+			}
 		}
 	}
 
@@ -201,8 +256,8 @@ public struct AuthView: View {
 			}
 		}
 		.focused($focus, equals: .password)
-		.submitLabel(model.mode == .signIn ? .go : .done)
-		.onSubmit(submit)
+		.submitLabel(model.mode == .signIn ? .go : .next)
+		.onSubmit { advance(from: .password) }
 		#if os(iOS)
 			.textContentType(model.mode == .signIn ? .password : .newPassword)
 		#else

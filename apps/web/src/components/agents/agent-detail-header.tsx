@@ -1,3 +1,5 @@
+import { isCurrentActorAdmin } from '@/components/agents/agent-avatar-upload'
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Input } from '@/components/ui/input'
@@ -8,12 +10,15 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
-import { useUpdateActor } from '@/hooks/use-actors'
+import { Spinner } from '@/components/ui/spinner'
+import { useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
+import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ACTOR_DESCRIPTION_MAX_LENGTH } from '@maskin/shared'
-import { useState } from 'react'
+import { Camera } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export function AgentDetailHeader({
@@ -27,6 +32,10 @@ export function AgentDetailHeader({
 }) {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
+	const uploadAvatar = useUploadActorAvatar(workspaceId)
+	const { data: members } = useWorkspaceMembers(workspaceId)
+	const canChangeAvatar = isCurrentActorAdmin(members)
+	const avatarInputRef = useRef<HTMLInputElement>(null)
 	// A loop-managed agent's identity is owned by its loop — fork to edit.
 	const isManaged = !!agent.installedLoopId
 
@@ -41,16 +50,52 @@ export function AgentDetailHeader({
 	return (
 		<header className="flex flex-col gap-3">
 			<div className="flex flex-wrap items-center gap-3">
-				{/* Read-only until POST /api/actors/:id/avatar exists — there is no
-				    backend to accept an upload yet. */}
-				<ActorAvatar
-					name={agent.name}
-					type={agent.type}
-					size="xl"
-					tone="strong"
-					className="size-14 rounded-2xl text-[22px] font-bold"
-					id={agent.id}
-				/>
+				<div className="relative shrink-0">
+					<ActorAvatar
+						name={agent.name}
+						type={agent.type}
+						size="xl"
+						tone="strong"
+						className="size-14 rounded-2xl text-[22px] font-bold [&>img]:rounded-2xl"
+						id={agent.id}
+						imageUrl={agent.avatar_url ?? undefined}
+					/>
+					{canChangeAvatar && (
+						<>
+							{/* Always visible, not a hover reveal: there is no hover on touch. */}
+							<button
+								type="button"
+								onClick={() => avatarInputRef.current?.click()}
+								disabled={uploadAvatar.isPending}
+								aria-label={`Change profile picture for ${agent.name}`}
+								className="absolute inset-0 flex items-end justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
+							>
+								<span className="-mb-1 -mr-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+									{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
+								</span>
+							</button>
+							<input
+								ref={avatarInputRef}
+								type="file"
+								accept="image/png,image/jpeg"
+								className="hidden"
+								onChange={(e) => {
+									const file = e.target.files?.[0]
+									e.target.value = ''
+									if (!file) return
+									if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+										toast.error('Only PNG or JPG images are supported.')
+										return
+									}
+									uploadAvatar.mutate(
+										{ id: agent.id, file },
+										{ onError: (err) => toast.error(err.message || "Couldn't upload the picture") },
+									)
+								}}
+							/>
+						</>
+					)}
+				</div>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
 						{/* Named explicitly: the heading's only child is the edit button,
@@ -107,6 +152,9 @@ export function AgentDetailHeader({
 						/>
 					</p>
 				</div>
+				{/* Voice call entry point. Sits right of the identity block on the same
+				    row. */}
+				<AgentCallButton agent={agent} />
 			</div>
 		</header>
 	)

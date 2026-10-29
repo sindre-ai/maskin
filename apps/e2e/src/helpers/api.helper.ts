@@ -86,6 +86,7 @@ interface FileDetailResponse {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	contentHash?: string | null
 }
 
 interface RelationshipResponse {
@@ -130,6 +131,9 @@ interface MessageResponse {
 	metadata: Record<string, unknown> | null
 	sessionId: string | null
 	createdAt: string | null
+	threadRootId?: number | null
+	threadAlsoInChannel?: boolean
+	thread?: { replyCount: number; unreadCount: number } | null
 }
 
 interface SessionResponse {
@@ -209,6 +213,8 @@ export class TestAPI {
 			status: string
 			content?: string
 			metadata?: Record<string, unknown>
+			/** The actor who owns it. */
+			driver?: string
 		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
@@ -349,6 +355,7 @@ export class TestAPI {
 	async updateActor(
 		id: string,
 		data: {
+			name?: string
 			system_prompt?: string | null
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
@@ -404,6 +411,29 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async getFile(workspaceId: string, id: string): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getFile failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** PATCH a file the way an agent's update_file does: no if_match unless given. */
+	async updateFile(
+		workspaceId: string,
+		id: string,
+		data: { content: string; encoding?: 'base64' | 'utf8'; if_match?: string },
+	): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ encoding: 'utf8', ...data }),
+		})
+		if (!res.ok) throw new Error(`updateFile failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createRelationship(
 		workspaceId: string,
 		data: {
@@ -437,6 +467,21 @@ export class TestAPI {
 			body: JSON.stringify({ type: 'agent', name, workspace_id: targetWorkspaceId }),
 		})
 		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Adds a custom MCP server to the workspace. It reaches no agent until it is granted. */
+	async createCustomMcpServer(
+		workspaceId: string,
+		name: string,
+		server: Record<string, unknown>,
+	): Promise<{ id: string; name: string }> {
+		const res = await fetch(`${this.baseURL}/api/custom-mcp-servers`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ name, server }),
+		})
+		if (!res.ok) throw new Error(`createCustomMcpServer failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -524,7 +569,12 @@ export class TestAPI {
 	async postConversationMessage(
 		id: string,
 		workspaceId: string,
-		data: { content: string; metadata?: Record<string, unknown> },
+		data: {
+			content: string
+			metadata?: Record<string, unknown>
+			thread_root_id?: number
+			also_in_channel?: boolean
+		},
 	): Promise<MessageResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
 			method: 'POST',
@@ -532,6 +582,18 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Newest-first page of a conversation's messages, replies included (as the web client receives them). */
+	async listConversationMessages(
+		id: string,
+		workspaceId: string,
+	): Promise<{ messages: MessageResponse[]; has_more: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listConversationMessages failed: ${res.status}`)
 		return res.json()
 	}
 

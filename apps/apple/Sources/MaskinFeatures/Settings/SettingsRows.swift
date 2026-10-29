@@ -83,14 +83,16 @@ struct SettingsRow: View {
 	let symbol: String
 	let title: String
 	var detail: String?
+	/// Irreversible actions (delete account / workspace) read in the danger colour.
+	var destructive = false
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s8) {
 			Image(systemName: symbol)
-				.foregroundStyle(MaskinColor.ink)
+				.foregroundStyle(destructive ? MaskinColor.dangerStrong : MaskinColor.ink)
 				.frame(width: MaskinSpace.s12)
 				.accessibilityHidden(true)
-			Text(title).foregroundStyle(MaskinColor.ink)
+			Text(title).foregroundStyle(destructive ? MaskinColor.dangerStrong : MaskinColor.ink)
 			Spacer(minLength: MaskinSpace.s4)
 			if let detail {
 				Text(detail).foregroundStyle(MaskinColor.ink4).lineLimit(1)
@@ -107,7 +109,7 @@ struct MemberRow: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s8) {
-			ActorAvatar(name: member.name, kind: member.isAgent ? .agent : .human)
+			ActorAvatar(name: member.name, kind: member.isAgent ? .agent : .human, seed: member.actorId)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(member.name).foregroundStyle(MaskinColor.ink).lineLimit(1)
 				Text(member.isAgent ? "Agent" : member.role.label)

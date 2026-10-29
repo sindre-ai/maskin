@@ -19,18 +19,24 @@ private let runningTurn = ActivityTurn(
 	sessionID: "s1", messageID: 4, startedAt: start, status: .running,
 	steps: [
 		ActivityStep(id: "1-0", kind: .thinking, label: "Thinking…", status: .completed),
-		ActivityStep(id: "2-0", kind: .toolUse, label: "Using Read", detail: "apps/web/src/routes/index.tsx"),
 		ActivityStep(
-			id: "3-0", kind: .toolUse, label: "Using Bash", detail: "pnpm --filter @maskin/web type-check",
-			status: .running),
+			id: "2-0", kind: .toolUse, label: "Read index.tsx", detail: "apps/web/src/routes/index.tsx",
+			category: .read, output: "import { createFileRoute } from '@tanstack/react-router'"),
+		ActivityStep(
+			id: "3-0", kind: .toolUse, label: "Created task “Fix login”", category: .create),
+		ActivityStep(
+			id: "4-0", kind: .toolUse, label: "Run the type-check", detail: "pnpm --filter @maskin/web type-check",
+			status: .running, category: .run),
 	])
 
 private let failedTurn = ActivityTurn(
 	sessionID: "s1", messageID: 4, startedAt: start, finishedAt: start.addingTimeInterval(9),
 	status: .failed, result: ActivityResult(text: "Credit balance too low", isError: true),
 	steps: [
-		ActivityStep(id: "1-0", kind: .toolUse, label: "Using Read", detail: "/x.ts"),
-		ActivityStep(id: "2-0", kind: .toolUse, label: "Using Bash", detail: "pnpm test", status: .failed),
+		ActivityStep(id: "1-0", kind: .toolUse, label: "Read x.ts", detail: "/x.ts", category: .read),
+		ActivityStep(
+			id: "2-0", kind: .toolUse, label: "Ran pnpm test", detail: "pnpm test", status: .failed,
+			category: .run, output: "Exit code 1: 3 tests failed"),
 	])
 
 private let doneTurn = ActivityTurn(

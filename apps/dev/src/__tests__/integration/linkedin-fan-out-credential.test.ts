@@ -71,6 +71,7 @@ async function insertLinkedInIntegration(
 			provider: 'linkedin-unipile',
 			status: INTEGRATION_STATUS_ACTIVE,
 			credentials: credentialsBlob,
+			// The grant migration 0088 writes to a connected row.
 			actorId,
 			createdBy: actorId,
 		})
@@ -120,7 +121,10 @@ function recordingClient(): LinkedInClient & { sendCalls: Array<{ account_id: st
 		searchPeople: vi.fn(),
 		getProfile: vi.fn(),
 		getManagedCompanyPages: vi.fn(),
+		getInmailCredits: vi.fn(),
 		sendConnectionRequest: vi.fn(),
+		listRelationRequests: vi.fn(),
+		cancelRelationRequest: vi.fn(),
 		publishPost: vi.fn(),
 		commentOnPost: vi.fn(),
 		replyToComment: vi.fn(),

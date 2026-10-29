@@ -1,24 +1,41 @@
 import type { Database } from '@maskin/db'
-import {
-	deletePostInputShape,
-	editPostInputShape,
-	linkedinAttachmentsArraySchema,
-} from '@maskin/mcp'
+import { deletePostInputShape, editPostInputShape } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
-import { isLinkedInIntegrationError } from './errors'
+import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
 import {
+	type ActionFields,
+	type ActionLogContext,
+	type ActionRecorder,
+	LinkedInActionRefusal,
+	type LinkedInToolKind,
+	withActionLog,
+} from './action-log'
+import type { CapSpec } from './caps'
+import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
+import { INMAIL_DAILY_CAP } from './inmail'
+import {
+	REINVITE_LOCK_DAYS,
+	WITHDRAW_DAILY_CAP,
+	addDays,
+	findRecentWithdrawalOfPerson,
+} from './invitation-withdrawal'
+import {
+	ATTACHMENTS_REFUSED_MESSAGE,
 	commentOnLinkedInPost,
 	deleteLinkedInPost,
 	editLinkedInPost,
+	getLinkedInInmailBalance,
 	getLinkedInPostEngagement,
 	getLinkedInProfile,
 	listLinkedInConnections,
 	listLinkedInConversations,
 	listLinkedInMessages,
+	listLinkedInSentInvitations,
 	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
@@ -26,7 +43,12 @@ import {
 	searchLinkedInPeople,
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
+	withdrawLinkedInInvitation,
 } from './operations'
+import { POST_ID_DESCRIPTION } from './post-id'
+import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
+import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
+import { sendApprovedLinkedInObject } from './send-object'
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
@@ -60,6 +82,10 @@ export interface LinkedInMcpContext {
 	/** Calling actor — used as the ledger key by the operations layer. */
 	actorId: string
 	workspaceId: string
+	/** The Maskin session making the call (X-Maskin-Session-Id), for the tool-call event only. */
+	sessionId?: string | null
+	/** Where workspace files are read from, for an approved message that carries one. */
+	storage?: StorageProvider
 }
 
 /**
@@ -101,6 +127,51 @@ function jsonResult(payload: unknown) {
 	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
 }
 
+/** What a caller gets for passing the removed raw `attachments` to publish_post. */
+const PUBLISH_ATTACHMENTS_REFUSED_MESSAGE =
+	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG files, which the server reads. Nothing was posted.'
+
+const sendObjectIdSchema = z
+	.string()
+	.uuid()
+	.optional()
+	.describe(
+		'The task or draft this send carries out. Once LinkedIn accepts the message, the server records the send on it and moves a task to done, so do not update it yourself. Refused, with nothing sent, if that object was already sent.',
+	)
+
+/**
+ * Runs a send and, when the caller named the object it carries out, ends that object with
+ * the send: the object is checked before anything goes out (it exists, it was not sent
+ * before) and the send is recorded on it afterwards. Without `object_id` the send behaves
+ * exactly as before.
+ */
+async function sendForObject<T extends object>(
+	ctx: LinkedInMcpContext,
+	objectId: string | undefined,
+	send: () => Promise<T>,
+	eventData: (sent: T) => Record<string, unknown>,
+) {
+	if (!objectId) return jsonResult(await send())
+	let target: Awaited<ReturnType<typeof assertSendable>>
+	try {
+		target = await assertSendable(ctx.db, { workspaceId: ctx.workspaceId, objectId })
+	} catch (err) {
+		if (err instanceof SendTargetError) {
+			throw new LinkedInIntegrationError('INVALID_INPUT', err.message)
+		}
+		throw err
+	}
+	const sent = await send()
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target,
+		provider: 'linkedin',
+		data: eventData(sent),
+	})
+	return jsonResult({ ...sent, object: { id: target.id, ...outcome } })
+}
+
 /**
  * Per-identity description templating. `displayName` and `identitySlug` land
  * into every description at register-time so `tools/list` names the identity
@@ -131,38 +202,99 @@ export function registerLinkedInMcpInstance(
 	ctx: LinkedInMcpContext,
 ): void {
 	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg))
-	const opCtx = { db: ctx.db, actorId: ctx.actorId, workspaceId: ctx.workspaceId, identity: cfg }
+	const opCtx = {
+		db: ctx.db,
+		actorId: ctx.actorId,
+		workspaceId: ctx.workspaceId,
+		identity: cfg,
+		storage: ctx.storage,
+	}
+	const logCtx: ActionLogContext = {
+		db: ctx.db,
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		integrationId: cfg.integrationId,
+		identityType: cfg.identityType,
+		sessionId: ctx.sessionId,
+	}
+	/**
+	 * Every handler below runs inside this: one linkedin_actions row and one linkedin_tool_called
+	 * event per call, whatever the outcome. `target` is the person or company known before the
+	 * call; `run` adds what the call learns through the recorder.
+	 */
+	const logged = <T>(
+		verb: LinkedInVerb,
+		kind: LinkedInToolKind,
+		target: string | undefined,
+		run: (rec: ActionRecorder) => Promise<T>,
+		cap?: CapSpec,
+	) => withActionLog(logCtx, { tool: verb, kind, targetProviderId: target, cap }, run)
+	/**
+	 * A handle or slug that list_user_posts must turn into a provider id is a profile view of its
+	 * own: it takes a slot from the same daily budget and is logged as a get_profile or
+	 * get_company row.
+	 */
+	const viewLookup: PostsToolDeps['lookup'] = (tool, run) =>
+		withActionLog(logCtx, { tool, kind: 'read', cap: PROFILE_VIEW_CAP }, async (rec) => {
+			const author = await run()
+			rec.set({ targetProviderId: author.provider_id })
+			return author
+		})
+	/** Records what a finished call learned, and that a replay or already-gone result changed nothing. */
+	const learned = <T extends object>(rec: ActionRecorder, result: T, fields: ActionFields): T => {
+		rec.set(fields)
+		const flags = result as { replayed?: unknown; already_deleted?: unknown }
+		if (flags.replayed === true || flags.already_deleted === true) rec.markNoop()
+		return result
+	}
 
 	if (allowed.has('publish_post')) {
 		server.registerTool(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription('Publish a LinkedIn post', cfg),
-				inputSchema: {
-					text: z
-						.string()
-						.min(1)
-						.max(3000)
-						.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
-					attachments: linkedinAttachmentsArraySchema
-						.optional()
-						.describe(
-							'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
-						),
-					can_read: z
-						.string()
-						.optional()
-						.describe('Post visibility, e.g. "connections", "public".'),
-					can_comment: z
-						.string()
-						.optional()
-						.describe('Who can comment, e.g. "connections", "anyone", "none".'),
-					quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
-				},
+				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
+				// is refused by name, instead of the field being dropped and the post going out text-only.
+				inputSchema: z
+					.object({
+						text: z
+							.string()
+							.min(1)
+							.max(3000)
+							.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
+						attachment_file_ids: z
+							.array(z.string().uuid())
+							.max(9)
+							.optional()
+							.describe(
+								'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
+							),
+						can_read: z
+							.string()
+							.optional()
+							.describe('Post visibility, e.g. "connections", "public".'),
+						can_comment: z
+							.string()
+							.optional()
+							.describe('Who can comment, e.g. "connections", "anyone", "none".'),
+						quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
+					})
+					.passthrough(),
 			},
 			async (args) => {
 				try {
-					return jsonResult(await publishLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('publish_post', 'write', undefined, async (rec) => {
+							if ((args as { attachments?: unknown }).attachments !== undefined) {
+								throw new LinkedInIntegrationError(
+									'INVALID_INPUT',
+									PUBLISH_ATTACHMENTS_REFUSED_MESSAGE,
+								)
+							}
+							const result = await publishLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.post_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'publish_post'), err)
 				}
@@ -176,14 +308,18 @@ export function registerLinkedInMcpInstance(
 			{
 				description: scopedDescription('Read comments on a LinkedIn post', cfg),
 				inputSchema: {
-					post_id: z.string().min(1).describe('Post id.'),
+					post_id: z.string().min(1).describe(POST_ID_DESCRIPTION),
 					limit: z.number().int().min(1).max(100).optional(),
 					cursor: z.string().optional(),
 				},
 			},
 			async (args) => {
 				try {
-					return jsonResult(await readLinkedInPostComments(opCtx, args))
+					return jsonResult(
+						await logged('read_post_comments', 'read', undefined, () =>
+							readLinkedInPostComments(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'read_post_comments'), err)
 				}
@@ -203,7 +339,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await commentOnLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('comment_on_post', 'write', undefined, async (rec) => {
+							const result = await commentOnLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.comment_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'comment_on_post'), err)
 				}
@@ -223,7 +364,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await replyToLinkedInComment(opCtx, args))
+					return jsonResult(
+						await logged('reply_to_comment', 'write', undefined, async (rec) => {
+							const result = await replyToLinkedInComment(opCtx, args)
+							return learned(rec, result, { refId: result.comment_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply_to_comment'), err)
 				}
@@ -243,7 +389,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await editLinkedInPost(opCtx, args))
+					// No ref id: the same post can be edited many times and each edit is a real action,
+					// so it must not collide on the one-ok-row-per-ref index.
+					return jsonResult(
+						await logged('edit_post', 'write', undefined, () => editLinkedInPost(opCtx, args)),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'edit_post'), err)
 				}
@@ -263,7 +413,12 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await deleteLinkedInPost(opCtx, args))
+					return jsonResult(
+						await logged('delete_post', 'write', undefined, async (rec) => {
+							const result = await deleteLinkedInPost(opCtx, args)
+							return learned(rec, result, { refId: result.post_id })
+						}),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'delete_post'), err)
 				}
@@ -279,11 +434,15 @@ export function registerLinkedInMcpInstance(
 					'Fetch engagement metrics (reactions + comments) for a LinkedIn post',
 					cfg,
 				),
-				inputSchema: { post_id: z.string().min(1) },
+				inputSchema: { post_id: z.string().min(1).describe(POST_ID_DESCRIPTION) },
 			},
 			async (args) => {
 				try {
-					return jsonResult(await getLinkedInPostEngagement(opCtx, args))
+					return jsonResult(
+						await logged('get_post_engagement', 'read', undefined, () =>
+							getLinkedInPostEngagement(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_post_engagement'), err)
 				}
@@ -295,21 +454,44 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'send_message'),
 			{
-				description: scopedDescription('Send a LinkedIn direct message', cfg),
-				inputSchema: {
-					recipient_urn: z.string().min(1),
-					body: z.string().min(1).max(8000),
-					attachments: linkedinAttachmentsArraySchema
-						.optional()
-						.describe(
-							'Optional messaging attachments. Each entry carries `send_mode` (native vs file) — LinkedIn inlines "native" attachments in the DM and delivers "file" attachments as a hosted file link. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
-						),
-					idempotency_key: z.string().min(1).max(128),
-				},
+				description: scopedDescription(
+					'Send a LinkedIn direct message. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. Then recipient_urn, body and idempotency_key are not used. Without object_id, pass recipient_urn, body and idempotency_key; plain text only, this tool takes no attachments',
+					cfg,
+				),
+				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
+				// is refused by name, instead of the field being dropped and the text going out alone.
+				inputSchema: z
+					.object({
+						recipient_urn: z.string().min(1).optional(),
+						body: z.string().min(1).max(8000).optional(),
+						idempotency_key: z.string().min(1).max(128).optional(),
+						object_id: sendObjectIdSchema,
+					})
+					.passthrough(),
 			},
 			async (args) => {
 				try {
-					return jsonResult(await sendLinkedInMessage(opCtx, args))
+					return await logged('send_message', 'send', args.recipient_urn, async (rec) => {
+						if ((args as { attachments?: unknown }).attachments !== undefined) {
+							throw new LinkedInIntegrationError('INVALID_INPUT', ATTACHMENTS_REFUSED_MESSAGE)
+						}
+						if (args.object_id) {
+							rec.set({ objectId: args.object_id })
+							if (args.body !== undefined || args.recipient_urn !== undefined) {
+								throw new LinkedInIntegrationError(
+									'INVALID_INPUT',
+									'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the approved object.',
+								)
+							}
+							const sent = await sendApprovedLinkedInObject(opCtx, {
+								object_id: args.object_id,
+								onResolved: (resolved) => rec.set(resolved),
+							})
+							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						}
+						const sent = await sendLinkedInMessage(opCtx, args)
+						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_message'), err)
 				}
@@ -321,16 +503,52 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'reply'),
 			{
-				description: scopedDescription('Reply in an existing LinkedIn conversation thread', cfg),
+				description: scopedDescription(
+					'Reply in an existing LinkedIn conversation thread. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. Then thread_id is optional when the object has metadata.thread_id, and body and idempotency_key are not used. Without object_id, pass thread_id, body and idempotency_key',
+					cfg,
+				),
 				inputSchema: {
-					thread_id: z.string().min(1),
-					body: z.string().min(1).max(8000),
-					idempotency_key: z.string().min(1).max(128),
+					object_id: sendObjectIdSchema,
+					thread_id: z.string().min(1).optional(),
+					body: z.string().min(1).max(8000).optional(),
+					in_reply_to_message_id: z
+						.string()
+						.min(1)
+						.optional()
+						.describe(
+							'Id of the inbound message you are answering. The server builds the idempotency key from the thread and this id, so a webhook reply and a sweep reply to the same message send once. On the webhook path this is message_id from the event data; on the sweep path it is the last inbound message id from list_messages. Any idempotency_key you also pass is ignored. Not used with object_id.',
+						),
+					idempotency_key: z
+						.string()
+						.min(1)
+						.max(128)
+						.optional()
+						.describe(
+							'Legacy. Only used when in_reply_to_message_id is absent, and logs a warning. Prefer in_reply_to_message_id.',
+						),
 				},
 			},
 			async (args) => {
 				try {
-					return jsonResult(await replyToLinkedInThread(opCtx, args))
+					return await logged('reply', 'send', undefined, async (rec) => {
+						if (args.object_id) {
+							rec.set({ objectId: args.object_id })
+							if (args.body !== undefined) {
+								throw new LinkedInIntegrationError(
+									'INVALID_INPUT',
+									'Do not pass body with object_id: the text sent is the approved text on the object.',
+								)
+							}
+							const sent = await sendApprovedLinkedInObject(opCtx, {
+								object_id: args.object_id,
+								thread_id: args.thread_id,
+								onResolved: (resolved) => rec.set(resolved),
+							})
+							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						}
+						const sent = await replyToLinkedInThread(opCtx, args)
+						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply'), err)
 				}
@@ -350,7 +568,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInConversations(opCtx, args))
+					return jsonResult(
+						await logged('list_conversations', 'read', undefined, () =>
+							listLinkedInConversations(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_conversations'), err)
 				}
@@ -371,7 +593,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInMessages(opCtx, args))
+					return jsonResult(
+						await logged('list_messages', 'read', undefined, () =>
+							listLinkedInMessages(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_messages'), err)
 				}
@@ -391,9 +617,73 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await listLinkedInConnections(opCtx, args))
+					return jsonResult(
+						await logged('list_connections', 'read', undefined, () =>
+							listLinkedInConnections(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'list_connections'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('list_sent_invitations')) {
+		server.registerTool(
+			toolName(cfg, 'list_sent_invitations'),
+			{
+				description: scopedDescription(
+					"List the connection invitations this account sent that are still pending, in the order LinkedIn lists them. Each row has invitation_id, recipient_provider_id, public_identifier, name, headline, sent_at, age_days and message. sent_at and age_days are null when LinkedIn gave no date. older_than_days keeps rows at least that many days old and never matches a row with no date; rows_without_date says how many rows on the page had none. Page with next_offset (null on the last page): it counts rows on LinkedIn's list, so it moves the same with or without older_than_days. total_pending is null when LinkedIn gave no total.",
+					cfg,
+				),
+				inputSchema: {
+					limit: z.number().int().min(1).max(100).optional(),
+					offset: z.number().int().min(0).optional(),
+					older_than_days: z.number().int().min(0).max(3650).optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged('list_sent_invitations', 'read', undefined, () =>
+							listLinkedInSentInvitations(opCtx, args),
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'list_sent_invitations'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('withdraw_invitation')) {
+		server.registerTool(
+			toolName(cfg, 'withdraw_invitation'),
+			{
+				description: scopedDescription(
+					"Withdraw one pending connection invitation this account sent. Pass the invitation_id from list_sent_invitations. Only an invitation that is in this account's sent list and at least 14 days old can be withdrawn; where LinkedIn gave no send date, the age counts from the first time list_sent_invitations showed it. Anything else is refused with INVALID_INPUT and nothing is withdrawn. At most 30 withdrawals per rolling 24 hours (RATE_LIMITED_LINKEDIN, with the time a slot frees up). Returns invitation_id, recipient_provider_id, withdrawn, already_withdrawn (true when it was withdrawn before or is already gone; that costs nothing against the limit) and can_reinvite_after: LinkedIn blocks a new invitation to the same person for up to 21 days after a withdrawal, and send_connection_request refuses until then.",
+					cfg,
+				),
+				inputSchema: { invitation_id: z.string().min(1) },
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'withdraw_invitation',
+							'write',
+							undefined,
+							(rec) =>
+								withdrawLinkedInInvitation(opCtx, args, {
+									integrationId: cfg.integrationId,
+									recorder: rec,
+								}),
+							WITHDRAW_DAILY_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'withdraw_invitation'), err)
 				}
 			},
 		)
@@ -413,7 +703,11 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await searchLinkedInPeople(opCtx, args))
+					return jsonResult(
+						await logged('search_people', 'read', undefined, () =>
+							searchLinkedInPeople(opCtx, args),
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'search_people'), err)
 				}
@@ -429,11 +723,38 @@ export function registerLinkedInMcpInstance(
 				inputSchema: {
 					user_id: z.string().min(1),
 					message: z.string().optional(),
+					object_id: sendObjectIdSchema,
 				},
 			},
 			async (args) => {
 				try {
-					return jsonResult(await sendLinkedInConnectionRequest(opCtx, args))
+					return await logged('send_connection_request', 'send', args.user_id, async (rec) => {
+						rec.set({ objectId: args.object_id })
+						// LinkedIn blocks a new invite to someone whose invite was withdrawn, and the
+						// sweep that withdraws is automated, so the rule is enforced here, not in prompts.
+						const withdrawnAt = await findRecentWithdrawalOfPerson(
+							ctx.db,
+							cfg.integrationId,
+							args.user_id.trim(),
+							new Date(),
+						)
+						if (withdrawnAt) {
+							throw new LinkedInActionRefusal(
+								'refused_rule',
+								'INVALID_INPUT',
+								`This account withdrew its invitation to this person on ${withdrawnAt.toISOString()}. LinkedIn blocks a new invitation to the same person for up to ${REINVITE_LOCK_DAYS} days after a withdrawal, so nothing was sent. Invite again after ${addDays(withdrawnAt, REINVITE_LOCK_DAYS).toISOString()}.`,
+							)
+						}
+						return sendForObject(
+							ctx,
+							args.object_id,
+							async () => {
+								const sent = await sendLinkedInConnectionRequest(opCtx, args)
+								return learned(rec, sent, { refId: sent.invitation_id })
+							},
+							(sent) => ({ invitation_id: sent.invitation_id, sent_at: sent.sent_at }),
+						)
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_connection_request'), err)
 				}
@@ -456,9 +777,182 @@ export function registerLinkedInMcpInstance(
 			},
 			async (args) => {
 				try {
-					return jsonResult(await getLinkedInProfile(opCtx, args))
+					return jsonResult(
+						await logged(
+							'get_profile',
+							'read',
+							undefined,
+							async (rec) => {
+								const profile = await getLinkedInProfile(opCtx, args)
+								return learned(rec, profile, { targetProviderId: profile.recipient_urn })
+							},
+							PROFILE_VIEW_CAP,
+						),
+					)
 				} catch (err) {
 					return toolError(toolName(cfg, 'get_profile'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('list_user_posts')) {
+		server.registerTool(
+			toolName(cfg, 'list_user_posts'),
+			{
+				description: scopedDescription(
+					'List the recent posts of one person or one company. Pass exactly one of person (public handle, provider id or member URN) or company (numeric id, slug or company URL). Returns author (provider_id, type, name, public_identifier), posts (post_id, posted_at, text cut to 500 characters, is_repost, reactions, comments, already_liked, url) and next_cursor. Use post_id exactly as returned for react_to_post and read_post_comments. A handle or slug costs two profile views, a provider id or numeric company id costs one; profile views share a budget of 100 a day with get_profile and get_company.',
+					cfg,
+				),
+				inputSchema: {
+					person: z.string().min(1).optional(),
+					company: z.string().min(1).optional(),
+					limit: z.number().int().min(1).max(20).optional(),
+					cursor: z.string().optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'list_user_posts',
+							'read',
+							undefined,
+							async (rec) => {
+								const result = await listLinkedInUserPosts(opCtx, args, viewLookup)
+								return learned(rec, result, { targetProviderId: result.author.provider_id })
+							},
+							PROFILE_VIEW_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'list_user_posts'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('get_company')) {
+		server.registerTool(
+			toolName(cfg, 'get_company'),
+			{
+				description: scopedDescription(
+					'Look up one LinkedIn company: company_id, name, public_identifier, industry, size_band, headcount, headquarters, website, follower_count, description (cut to 500 characters) and url. Pass company as a numeric id, a slug or a linkedin.com/company URL. Costs one profile view of the 100 a day shared with get_profile and list_user_posts.',
+					cfg,
+				),
+				inputSchema: { company: z.string().min(1) },
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'get_company',
+							'read',
+							undefined,
+							async (rec) => {
+								const company = await getLinkedInCompany(opCtx, args)
+								return learned(rec, company, { targetProviderId: company.company_id })
+							},
+							PROFILE_VIEW_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'get_company'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('react_to_post')) {
+		server.registerTool(
+			toolName(cfg, 'react_to_post'),
+			{
+				description: scopedDescription(
+					'Like one LinkedIn post. Pass post_id exactly as list_user_posts returned it and author_provider_id (author.provider_id from the same call). Only a like is supported. Limits: 15 likes a day, and one like per author per 7 days; a post this account already liked returns already_liked: true and sends nothing.',
+					cfg,
+				),
+				inputSchema: {
+					post_id: z.string().trim().min(1),
+					author_provider_id: z.string().trim().min(1),
+					reaction: z.enum(['like']).optional(),
+				},
+			},
+			async (args) => {
+				try {
+					return jsonResult(
+						await logged(
+							'react_to_post',
+							'write',
+							args.author_provider_id,
+							async (rec) => {
+								const result = await reactToLinkedInPost(opCtx, logCtx, args)
+								rec.set({ refId: result.post_id })
+								if (result.already_liked) rec.markNoop()
+								return result
+							},
+							REACT_TO_POST_CAP,
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'react_to_post'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('send_inmail')) {
+		server.registerTool(
+			toolName(cfg, 'send_inmail'),
+			{
+				description: scopedDescription(
+					'Send a LinkedIn InMail to someone you are not connected to, spending exactly one InMail credit. Pass only object_id: the task or object that holds a linkedin_inmail draft (recipient_provider_id, body of at most 1900 characters, no subject, optional attachment_file_id). The text, recipient and file sent are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been sent. Refused with nothing sent when the recipient is already a 1st-degree connection (use send_message), when classic credits are 2 or fewer (LINKEDIN_INMAIL_UNAVAILABLE: stop drafting InMails for this account and use another channel; check get_inmail_balance first), or after 5 InMails in a rolling 24 hours (RATE_LIMITED_LINKEDIN). Returns message_id, chat_id, sent_at, credits_before and credits_after.',
+					cfg,
+				),
+				inputSchema: { object_id: z.string().uuid() },
+			},
+			async (args) => {
+				try {
+					return await logged(
+						'send_inmail',
+						'send',
+						undefined,
+						async (rec) => {
+							rec.set({ objectId: args.object_id })
+							const sent = await sendApprovedLinkedInObject(opCtx, {
+								object_id: args.object_id,
+								onResolved: (resolved) => rec.set(resolved),
+								inmail: { onCredits: (data) => rec.set({ data }) },
+							})
+							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						},
+						INMAIL_DAILY_CAP,
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'send_inmail'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('get_inmail_balance')) {
+		server.registerTool(
+			toolName(cfg, 'get_inmail_balance'),
+			{
+				description: scopedDescription(
+					'Read the InMail credits of this account. Returns seat (premium, sales_navigator, recruiter, free or unknown when the credits call failed), credits_classic, credits_sales_navigator, and sendable_now: classic credits above the 2 we always keep back, never below 0. Check it before drafting an InMail; at sendable_now 0 do not draft one.',
+					cfg,
+				),
+				inputSchema: {},
+			},
+			async () => {
+				try {
+					return jsonResult(
+						await logged('get_inmail_balance', 'read', undefined, () =>
+							getLinkedInInmailBalance(opCtx),
+						),
+					)
+				} catch (err) {
+					return toolError(toolName(cfg, 'get_inmail_balance'), err)
 				}
 			},
 		)
@@ -476,8 +970,11 @@ export function registerLinkedInMcpInstance(
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,
 	instances: LinkedInMcpInstanceConfig[],
+	/** Called before any tool is registered, e.g. to gate tools on the caller's access. */
+	onServer?: (server: McpServer) => void,
 ): McpServer {
 	const server = new McpServer({ name: 'maskin-linkedin', version: '0.2.0' })
+	onServer?.(server)
 	for (const cfg of instances) {
 		registerLinkedInMcpInstance(server, cfg, ctx)
 	}

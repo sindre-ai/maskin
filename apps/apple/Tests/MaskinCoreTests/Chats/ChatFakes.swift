@@ -55,6 +55,12 @@ actor FakeChatAPI: ChatAPI {
 	/// Runs inside `messages` before it answers: lets a test look at the store mid-request.
 	var messagesGate: (@Sendable () async -> Void)?
 	var persistedByKey: [String: ChatMessage] = [:]
+	/// Make the send response name another conversation (the stored row keeps the real one).
+	var responseConversationID: String?
+	var sentThreads: [ChatSendThread?] = []
+	var threadMarks: [(root: Int, last: Int)] = []
+	var reactCalls: [(id: Int, emoji: String, add: Bool)] = []
+	var failReact = false
 
 	init(server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1")) {
 		self.server = server
@@ -73,6 +79,7 @@ actor FakeChatAPI: ChatAPI {
 	func setSessions(_ s: [ChatAgentSession]) { sessionList = s }
 	func setActors(_ a: [ChatActor]) { actorList = a }
 	func setMessagesGate(_ f: (@Sendable () async -> Void)?) { messagesGate = f }
+	func setResponseConversationID(_ id: String?) { responseConversationID = id }
 	func setAfterSend(_ f: (@Sendable () async -> Void)?) { afterSend = f }
 
 	func detail(conversationID: String) async throws -> ConversationSummary {
@@ -111,11 +118,57 @@ actor FakeChatAPI: ChatAPI {
 			throw URLError(.networkConnectionLost)
 		}
 		if let afterSend { await afterSend() }
+		guard let responseConversationID else { return saved }
+		var response = saved
+		response.conversationID = responseConversationID
+		return response
+	}
+
+	func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
+	) async throws -> ChatMessage {
+		guard let thread else {
+			return try await send(
+				conversationID: conversationID, content: content, metadata: metadata,
+				idempotencyKey: idempotencyKey)
+		}
+		sentKeys.append(idempotencyKey)
+		sentContents.append(content)
+		sentMetadata.append(metadata)
+		sentThreads.append(thread)
+		if !sendErrors.isEmpty { throw sendErrors.removeFirst() }
+		if let existing = persistedByKey[idempotencyKey] { return existing }
+		let next = (server.compactMap(\.serverID).max() ?? 0) + 1
+		var saved = chatMsg(next, by: "me", content, at: 1000 + TimeInterval(next), metadata: metadata?.jsonValue)
+		saved.threadRootID = thread.rootID
+		saved.alsoInChannel = thread.alsoInChannel
+		server.append(saved)
+		persistedByKey[idempotencyKey] = saved
 		return saved
 	}
 
+	func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage] {
+		server.filter { $0.threadRootID == rootID }.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
+	}
+
+	func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws {
+		if failReact { throw ChatsError("Couldn't add the reaction.") }
+		reactCalls.append((messageID, emoji, add))
+	}
+	func setFailReact(_ v: Bool) { failReact = v }
+
+	func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws {
+		threadMarks.append((rootID, lastMessageID))
+	}
+
 	func sessions(conversationID: String) async throws -> [ChatAgentSession] { sessionList }
-	func stopSession(sessionID: String) async throws { stopped.append(sessionID) }
+	private var stopFails = false
+	func failStop(_ fails: Bool) { stopFails = fails }
+	func stopSession(sessionID: String) async throws {
+		if stopFails { throw URLError(.notConnectedToInternet) }
+		stopped.append(sessionID)
+	}
 	func resumeSession(sessionID: String) async throws { resumed.append(sessionID) }
 	func removeParticipant(conversationID: String, actorID: String) async throws {
 		if failMutations { throw ChatsError("nope") }
@@ -182,6 +235,18 @@ actor FakeListAPI: ConversationsAPI {
 	{
 		created.append((title, participantIDs, initialMessage))
 		return chatConvo("new", title: title, participants: [chatMe])
+	}
+
+	var createdMetadata: [ChatSendMetadata?] = []
+
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		createdMetadata.append(initialMetadata)
+		return try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
 	}
 
 	func updateState(
@@ -253,7 +318,7 @@ final class ChatHarness {
 	init(
 		server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1"), online: Bool = true,
 		events: EventHub? = nil, file: URL? = nil, pageSize: Int = 50, failedFile: URL? = nil,
-		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [],
+		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [], pollInterval: Duration? = nil,
 		pinStore: any ChatPinStoring = MemoryChatPinStore()
 	) {
 		let api = existing ?? FakeChatAPI(server: server, detail: detail)
@@ -275,7 +340,7 @@ final class ChatHarness {
 		outbox.start()
 		store = ChatStore(
 			conversationID: "c1", currentActorID: "me", currentActorName: "Me", api: api, queue: queue,
-			events: events, pageSize: pageSize, pollInterval: nil, retryDelays: retryDelays, pinStore: pinStore,
+			events: events, pageSize: pageSize, pollInterval: pollInterval, retryDelays: retryDelays, pinStore: pinStore,
 			now: { chatT0 })
 	}
 

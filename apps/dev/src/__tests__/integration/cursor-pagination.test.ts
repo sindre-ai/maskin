@@ -113,7 +113,10 @@ describe('Cursor pagination — snapshot consistency (AC-T3, T3.1 follow-up)', (
 				type: 'insight',
 				status: 'new',
 			})
-			const tgt = await insertObject(db, ws.id, getTestActorId(), { type: 'bet', status: 'signal' })
+			const tgt = await insertObject(db, ws.id, getTestActorId(), {
+				type: 'bet',
+				status: 'opportunity',
+			})
 
 			const baseMs = new Date('2026-03-02T00:00:00.000Z').getTime()
 			const seeded: Array<{ id: string; createdAt: Date }> = []

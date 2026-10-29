@@ -47,13 +47,13 @@ public protocol FlowRoomsSource: Sendable {
 public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 	public enum Layout: String, Codable, CaseIterable, Sendable {
 		case sections, oneList
-		public var label: String { self == .sections ? "Sections" : "One list" }
+		public var label: String { self == .sections ? "Grouped" : "Single list" }
 	}
 	public enum Grouping: String, Codable, CaseIterable, Sendable {
 		case byTime, byPerson, newestFirst
 		public var label: String {
 			switch self {
-			case .byTime: "By time period"
+			case .byTime: "By date"
 			case .byPerson: "By person"
 			case .newestFirst: "Newest first"
 			}
@@ -75,12 +75,13 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 }
 
 public enum TeamFilterChip: String, CaseIterable, Sendable, Codable {
-	case all, unread, people, agents, groups, flows
+	case all, unread, pinned, people, agents, groups, flows
 
 	public var label: String {
 		switch self {
 		case .all: "All"
 		case .unread: "Unread"
+		case .pinned: "Pinned"
 		case .people: "People"
 		case .agents: "Agents"
 		case .groups: "Groups"
@@ -109,6 +110,10 @@ public struct TeamLayout: Equatable, Sendable {
 		public var pinnedFlowIDs: Set<String>
 		/// Capped sections ("All 9 flows") the user has opened; their rows are not sliced.
 		public var expandedSectionIDs: Set<String>
+		/// Agents running right now: their conversations list under "Working".
+		public var workingAgentIDs: Set<String>
+		/// Conversations whose unread messages mention you; with a trailing question they need you.
+		public var mentionedConversationIDs: Set<String>
 		public var now: Date
 		public var calendar: Calendar
 
@@ -117,6 +122,7 @@ public struct TeamLayout: Equatable, Sendable {
 			archived: [ConversationSummary] = [], options: TeamDisplayOptions = .default,
 			chip: TeamFilterChip = .all, query: String = "", currentActorID: String? = nil,
 			pinOrder: [String] = [], pinnedFlowIDs: Set<String> = [], expandedSectionIDs: Set<String> = [],
+			workingAgentIDs: Set<String> = [], mentionedConversationIDs: Set<String> = [],
 			now: Date = Date(), calendar: Calendar = .current
 		) {
 			self.conversations = conversations
@@ -129,6 +135,8 @@ public struct TeamLayout: Equatable, Sendable {
 			self.pinOrder = pinOrder
 			self.pinnedFlowIDs = pinnedFlowIDs
 			self.expandedSectionIDs = expandedSectionIDs
+			self.workingAgentIDs = workingAgentIDs
+			self.mentionedConversationIDs = mentionedConversationIDs
 			self.now = now
 			self.calendar = calendar
 		}
@@ -185,7 +193,7 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
-		public enum Kind: Equatable, Sendable { case unread, flows, people, time, all, filtered }
+		public enum Kind: Equatable, Sendable { case working, unread, flows, people, time, all, filtered }
 		public var id: String
 		public var kind: Kind
 		public var label: String
@@ -194,9 +202,11 @@ public struct TeamLayout: Equatable, Sendable {
 		public var showsMarkAllRead = false
 		/// "All 9 flows" when the section is capped and the rest can be shown.
 		public var moreLabel: String?
+		/// The section is open past its cap, so the footer reads "Show fewer".
+		public var canCollapse = false
 		public init(
 			id: String, kind: Kind, label: String, count: Int, rows: [Row], showsMarkAllRead: Bool = false,
-			moreLabel: String? = nil
+			moreLabel: String? = nil, canCollapse: Bool = false
 		) {
 			self.id = id
 			self.kind = kind
@@ -205,6 +215,7 @@ public struct TeamLayout: Equatable, Sendable {
 			self.rows = rows
 			self.showsMarkAllRead = showsMarkAllRead
 			self.moreLabel = moreLabel
+			self.canCollapse = canCollapse
 		}
 		/// The conversations behind the section, for "Mark all read".
 		public var unreadConversationIDs: [String] {
@@ -226,7 +237,7 @@ public struct TeamLayout: Equatable, Sendable {
 
 		public var title: String {
 			switch self {
-			case .nothing: "Nothing here yet"
+			case .nothing: "No conversations yet"
 			case .noResults(let q): "No results for “\(q)”"
 			case .caughtUp: "You're all caught up"
 			case .noKind(.groups): "No group chats yet"
@@ -235,11 +246,11 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		public var message: String {
 			switch self {
-			case .nothing: "Start a conversation with an agent or a teammate."
+			case .nothing: "Ask your Chief of Staff to get started, or message a teammate."
 			case .noResults: "Check the spelling, or search everything in Maskin."
 			case .caughtUp: "Nothing unread. New messages show up here first."
 			case .noKind(.groups): "Start one from New conversation by adding two or more people."
-			case .noKind: "They'll appear here as soon as there are some."
+			case .noKind: "They'll show up here once you have some."
 			}
 		}
 		public var action: String {
@@ -308,7 +319,8 @@ public struct TeamLayout: Equatable, Sendable {
 			switch input.chip {
 			case .all: return true
 			case .unread: return tile.unreadCount > 0
-			case .groups: return false
+			// The Pinned chip lists the pinned chats as rows (below), not as tiles above them.
+			case .groups, .pinned: return false
 			case .flows: if case .flow = tile.kind { return true } else { return false }
 			case .people, .agents:
 				guard case .conversation(let c) = tile.kind else { return false }
@@ -318,7 +330,8 @@ public struct TeamLayout: Equatable, Sendable {
 
 		let unpinned = active.filter { !$0.pinned }
 		let flows = input.flowRooms.filter { !pinnedFlowKeys.contains($0.pinKey) }
-		let totalUnread = active.reduce(0) { $0 + $1.unreadCount } + input.flowRooms.reduce(0) { $0 + $1.unreadCount }
+		// The Unread chip counts unread rows, not messages, and never the pinned tiles (they have their own badge).
+		let totalUnread = unpinned.filter { $0.unreadCount > 0 }.count + flows.filter { $0.unreadCount > 0 }.count
 
 		var sections: [Section]
 		switch input.chip {
@@ -334,6 +347,11 @@ public struct TeamLayout: Equatable, Sendable {
 					id: "unread", kind: .unread, label: "Unread", count: rows.count, rows: byRecency(rows),
 					showsMarkAllRead: !rows.isEmpty)
 			]
+		case .pinned:
+			let rows = byRecency(
+				active.filter(\.pinned).map(conversationRow)
+					+ input.flowRooms.filter { pinnedFlowKeys.contains($0.pinKey) }.map(flowRow))
+			sections = [Section(id: "pinned", kind: .filtered, label: "Pinned", count: rows.count, rows: rows)]
 		case .people, .agents:
 			let wanted: ParticipantKind = input.chip == .people ? .person : .agent
 			let rows = personRows(unpinned.filter { kind(of: $0, me: me) == wanted }, me: me)
@@ -384,6 +402,18 @@ public struct TeamLayout: Equatable, Sendable {
 		var sections: [Section] = []
 		let me = input.currentActorID
 
+		// WORKING first: each conversation lives in the first section it fits, so it never repeats
+		// below in UNREAD or the time groups. An unread chat is not "needing you" on its own.
+		let working = conversations.filter { isWorking($0, workingAgentIDs: input.workingAgentIDs) }
+		let placed = Set(working.map(\.id))
+		let conversations = conversations.filter { !placed.contains($0.id) }
+		if !working.isEmpty {
+			sections.append(
+				Section(
+					id: "working", kind: .working, label: "Working", count: working.count,
+					rows: byRecency(working.map(conversationRow))))
+		}
+
 		// UNREAD: conversations (or people, when grouping by person) and flows with unread.
 		let unreadConversations = conversations.filter(\.isUnread)
 		let unreadRows: [Row]
@@ -407,7 +437,8 @@ public struct TeamLayout: Equatable, Sendable {
 			sections.append(
 				Section(
 					id: "flows", kind: .flows, label: "Flows", count: restFlows.count, rows: capped,
-					moreLabel: capped.count < restFlows.count ? "All \(restFlows.count) flows" : nil))
+					moreLabel: capped.count < restFlows.count ? "All \(restFlows.count) flows" : nil,
+					canCollapse: !isFiltering && open && restFlows.count > sectionCap))
 		}
 
 		// Everything read, by the chosen grouping.
@@ -423,15 +454,27 @@ public struct TeamLayout: Equatable, Sendable {
 				sections.append(
 					Section(
 						id: "people", kind: .people, label: "People", count: rows.count, rows: capped,
-						moreLabel: capped.count < rows.count ? "All \(rows.count) people" : nil))
+						moreLabel: capped.count < rows.count ? "All \(rows.count) people & agents" : nil,
+						canCollapse: !isFiltering && open && rows.count > sectionCap))
 			}
 		case .newestFirst:
 			let rows = byRecency(read.map(conversationRow))
 			if !rows.isEmpty {
-				sections.append(Section(id: "people", kind: .people, label: "People", count: rows.count, rows: rows))
+				let open = isFiltering || input.expandedSectionIDs.contains("people")
+				let capped = open ? rows : Array(rows.prefix(sectionCap))
+				sections.append(
+					Section(
+						id: "people", kind: .people, label: "Conversations", count: rows.count, rows: capped,
+						moreLabel: capped.count < rows.count ? "All \(rows.count) conversations" : nil,
+						canCollapse: !isFiltering && open && rows.count > sectionCap))
 			}
 		}
 		return sections
+	}
+
+	/// An agent in the conversation is running right now.
+	public static func isWorking(_ c: ConversationSummary, workingAgentIDs: Set<String>) -> Bool {
+		c.participants.contains { $0.kind == .agent && workingAgentIDs.contains($0.id) }
 	}
 
 	/// One list: an ALL card mixing flows and conversations, newest first.
@@ -547,14 +590,13 @@ public struct TeamLayout: Equatable, Sendable {
 // MARK: - New conversation copy
 
 public enum NewConversationCopy {
-	/// "Message Sam, Chief of Staff +2": first names for people, full names for agents, "+n"
-	/// after two. "Message" alone with nobody picked.
+	/// "Message Sam and Chief of Staff", "Message Sam, Chief of Staff +2": first names for people,
+	/// full names for agents, "A and B" for two, "+n" after two. "Pick someone first" with nobody.
 	public static func placeholder(for recipients: [ChatParticipant]) -> String {
-		guard !recipients.isEmpty else { return "Message" }
+		guard !recipients.isEmpty else { return "Pick someone first" }
 		let names = recipients.map { $0.kind == .agent ? $0.name : TeamLayout.firstName($0.name) }
-		let shown = names.prefix(2).joined(separator: ", ")
-		let extra = names.count - min(names.count, 2)
-		return "Message \(shown)" + (extra > 0 ? " +\(extra)" : "")
+		if names.count <= 2 { return "Message " + names.joined(separator: " and ") }
+		return "Message \(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
 	}
 
 	/// Shown with two or more recipients.
@@ -562,12 +604,6 @@ public enum NewConversationCopy {
 		guard recipientCount >= 2 else { return nil }
 		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
 	}
-
-	public static let starters = [
-		"Brief me on what changed today",
-		"What's blocked and who can unblock it?",
-		"Draft a follow-up to the latest customer thread",
-	]
 
 	/// Candidates for the To field, matched on name and role.
 	public static func matches(_ query: String, in actors: [ChatActor], excluding: Set<String>) -> [ChatActor] {

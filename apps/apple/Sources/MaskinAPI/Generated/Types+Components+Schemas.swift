@@ -11,5 +11,285 @@ public import struct Foundation.Date
 #endif
 extension Components {
     /// Types generated from the `#/components/schemas` section of the OpenAPI document.
-    public enum Schemas {}
+    public enum Schemas {
+        /// - Remark: Generated from `#/components/schemas/CreateVoiceSessionResponse`.
+        public struct CreateVoiceSessionResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/CreateVoiceSessionResponse/voice_session_id`.
+            public var voice_session_id: Swift.String
+            /// Creates a new `CreateVoiceSessionResponse`.
+            ///
+            /// - Parameters:
+            ///   - voice_session_id:
+            public init(voice_session_id: Swift.String) {
+                self.voice_session_id = voice_session_id
+            }
+            public enum CodingKeys: String, CodingKey {
+                case voice_session_id
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/CreateVoiceSessionBody`.
+        public struct CreateVoiceSessionBody: Codable, Hashable, Sendable {
+            /// Actor id of the agent to call. Must be an agent that is a workspace member.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateVoiceSessionBody/agent_actor_id`.
+            public var agent_actor_id: Swift.String
+            /// The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateVoiceSessionBody/conversation_id`.
+            public var conversation_id: Swift.String?
+            /// Creates a new `CreateVoiceSessionBody`.
+            ///
+            /// - Parameters:
+            ///   - agent_actor_id: Actor id of the agent to call. Must be an agent that is a workspace member.
+            ///   - conversation_id: The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise.
+            public init(
+                agent_actor_id: Swift.String,
+                conversation_id: Swift.String? = nil
+            ) {
+                self.agent_actor_id = agent_actor_id
+                self.conversation_id = conversation_id
+            }
+            public enum CodingKeys: String, CodingKey {
+                case agent_actor_id
+                case conversation_id
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferResponse`.
+        public struct VoiceSessionOfferResponse: Codable, Hashable, Sendable {
+            /// The SDP answer to set as the remote description.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferResponse/sdp`.
+            public var sdp: Swift.String
+            /// False when the server could not attach its tool connection to the call. The browser then answers every tool call with an "unavailable" result so the agent says so.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferResponse/tools_available`.
+            public var tools_available: Swift.Bool
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferResponse/persist_transcripts`.
+            public var persist_transcripts: Swift.Bool
+            /// Creates a new `VoiceSessionOfferResponse`.
+            ///
+            /// - Parameters:
+            ///   - sdp: The SDP answer to set as the remote description.
+            ///   - tools_available: False when the server could not attach its tool connection to the call. The browser then answers every tool call with an "unavailable" result so the agent says so.
+            ///   - persist_transcripts:
+            public init(
+                sdp: Swift.String,
+                tools_available: Swift.Bool,
+                persist_transcripts: Swift.Bool
+            ) {
+                self.sdp = sdp
+                self.tools_available = tools_available
+                self.persist_transcripts = persist_transcripts
+            }
+            public enum CodingKeys: String, CodingKey {
+                case sdp
+                case tools_available
+                case persist_transcripts
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited`.
+        public struct VoiceSessionRateLimited: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/error`.
+            public struct errorPayload: Codable, Hashable, Sendable {
+                /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/error/code`.
+                @frozen public enum codePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case RATE_LIMITED = "RATE_LIMITED"
+                }
+                /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/error/code`.
+                public var code: Components.Schemas.VoiceSessionRateLimited.errorPayload.codePayload
+                /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/error/message`.
+                public var message: Swift.String
+                /// Creates a new `errorPayload`.
+                ///
+                /// - Parameters:
+                ///   - code:
+                ///   - message:
+                public init(
+                    code: Components.Schemas.VoiceSessionRateLimited.errorPayload.codePayload,
+                    message: Swift.String
+                ) {
+                    self.code = code
+                    self.message = message
+                }
+                public enum CodingKeys: String, CodingKey {
+                    case code
+                    case message
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/error`.
+            public var error: Components.Schemas.VoiceSessionRateLimited.errorPayload
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionRateLimited/retry_after_seconds`.
+            public var retry_after_seconds: Swift.Double
+            /// Creates a new `VoiceSessionRateLimited`.
+            ///
+            /// - Parameters:
+            ///   - error:
+            ///   - retry_after_seconds:
+            public init(
+                error: Components.Schemas.VoiceSessionRateLimited.errorPayload,
+                retry_after_seconds: Swift.Double
+            ) {
+                self.error = error
+                self.retry_after_seconds = retry_after_seconds
+            }
+            public enum CodingKeys: String, CodingKey {
+                case error
+                case retry_after_seconds
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody`.
+        public struct VoiceSessionOfferBody: Codable, Hashable, Sendable {
+            /// The browser’s WebRTC SDP offer.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/sdp`.
+            public var sdp: Swift.String
+            /// Creates a new `VoiceSessionOfferBody`.
+            ///
+            /// - Parameters:
+            ///   - sdp: The browser’s WebRTC SDP offer.
+            public init(sdp: Swift.String) {
+                self.sdp = sdp
+            }
+            public enum CodingKeys: String, CodingKey {
+                case sdp
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse`.
+        public struct HangupVoiceSessionResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/voice_session_id`.
+            public var voice_session_id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/status`.
+            public var status: Swift.String
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/ended_reason`.
+            public var ended_reason: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/ended_at`.
+            public var ended_at: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/duration_ms`.
+            public var duration_ms: Swift.Double
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/total_cost_usd`.
+            public var total_cost_usd: Swift.Double?
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse/conversation_id`.
+            public var conversation_id: Swift.String?
+            /// Creates a new `HangupVoiceSessionResponse`.
+            ///
+            /// - Parameters:
+            ///   - voice_session_id:
+            ///   - status:
+            ///   - ended_reason:
+            ///   - ended_at:
+            ///   - duration_ms:
+            ///   - total_cost_usd:
+            ///   - conversation_id:
+            public init(
+                voice_session_id: Swift.String,
+                status: Swift.String,
+                ended_reason: Swift.String? = nil,
+                ended_at: Swift.String? = nil,
+                duration_ms: Swift.Double,
+                total_cost_usd: Swift.Double? = nil,
+                conversation_id: Swift.String? = nil
+            ) {
+                self.voice_session_id = voice_session_id
+                self.status = status
+                self.ended_reason = ended_reason
+                self.ended_at = ended_at
+                self.duration_ms = duration_ms
+                self.total_cost_usd = total_cost_usd
+                self.conversation_id = conversation_id
+            }
+            public enum CodingKeys: String, CodingKey {
+                case voice_session_id
+                case status
+                case ended_reason
+                case ended_at
+                case duration_ms
+                case total_cost_usd
+                case conversation_id
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionBody`.
+        public struct HangupVoiceSessionBody: Codable, Hashable, Sendable {
+            /// Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionBody/reason`.
+            @frozen public enum reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case user_hangup = "user_hangup"
+                case network_error = "network_error"
+            }
+            /// Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionBody/reason`.
+            public var reason: Components.Schemas.HangupVoiceSessionBody.reasonPayload
+            /// Seconds of microphone audio the client sent. Clamped to the call length.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionBody/input_audio_seconds`.
+            public var input_audio_seconds: Swift.Int?
+            /// Seconds of agent audio the client received. Clamped to the call length.
+            ///
+            /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionBody/output_audio_seconds`.
+            public var output_audio_seconds: Swift.Int?
+            /// Creates a new `HangupVoiceSessionBody`.
+            ///
+            /// - Parameters:
+            ///   - reason: Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection.
+            ///   - input_audio_seconds: Seconds of microphone audio the client sent. Clamped to the call length.
+            ///   - output_audio_seconds: Seconds of agent audio the client received. Clamped to the call length.
+            public init(
+                reason: Components.Schemas.HangupVoiceSessionBody.reasonPayload,
+                input_audio_seconds: Swift.Int? = nil,
+                output_audio_seconds: Swift.Int? = nil
+            ) {
+                self.reason = reason
+                self.input_audio_seconds = input_audio_seconds
+                self.output_audio_seconds = output_audio_seconds
+            }
+            public enum CodingKeys: String, CodingKey {
+                case reason
+                case input_audio_seconds
+                case output_audio_seconds
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscribeResponse`.
+        public struct TranscribeResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/TranscribeResponse/text`.
+            public var text: Swift.String
+            /// Creates a new `TranscribeResponse`.
+            ///
+            /// - Parameters:
+            ///   - text:
+            public init(text: Swift.String) {
+                self.text = text
+            }
+            public enum CodingKeys: String, CodingKey {
+                case text
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscribeBody`.
+        public struct TranscribeBody: Codable, Hashable, Sendable {
+            /// Base64 of a WAV file (16 kHz mono recommended).
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/audio`.
+            public var audio: Swift.String
+            /// Optional language hint, e.g. "en" or "nb-NO".
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/language`.
+            public var language: Swift.String?
+            /// Creates a new `TranscribeBody`.
+            ///
+            /// - Parameters:
+            ///   - audio: Base64 of a WAV file (16 kHz mono recommended).
+            ///   - language: Optional language hint, e.g. "en" or "nb-NO".
+            public init(
+                audio: Swift.String,
+                language: Swift.String? = nil
+            ) {
+                self.audio = audio
+                self.language = language
+            }
+            public enum CodingKeys: String, CodingKey {
+                case audio
+                case language
+            }
+        }
+    }
 }

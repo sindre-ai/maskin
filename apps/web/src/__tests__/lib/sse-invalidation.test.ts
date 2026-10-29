@@ -132,6 +132,20 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes a draft card when it is approved or sent, whatever its object type', () => {
+		for (const action of ['approved', 'delivered']) {
+			const qc = createMockQueryClient()
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'content',
+				entity_id: entityId,
+				action,
+			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: queryKeys.objects.detail(entityId),
+			})
+		}
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -190,6 +204,22 @@ describe('invalidateFromSSE', () => {
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.actors.all(workspaceId),
 		})
+	})
+
+	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'integration',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.integrations.all(workspaceId),
+		})
+		// The per-agent access query lives under that same key, so one invalidation covers it.
+		expect(queryKeys.integrations.agentAccess(workspaceId, 'agent-1').slice(0, 2)).toEqual(
+			queryKeys.integrations.all(workspaceId),
+		)
 	})
 
 	it('invalidates workspaces for workspace entity', () => {
@@ -425,6 +455,18 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.billing)).toBe(false)
 	})
 
+	it('leaves another session’s detail and logs alone', () => {
+		const { qc, keys, invalidated } = seededClient()
+		const other = queryKeys.sessions.detail('sess-2')
+		const otherLogs = queryKeys.sessions.logs('sess-2')
+		qc.setQueryData(other, {})
+		qc.setQueryData(otherLogs, [])
+		invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		expect(invalidated(keys.detail)).toBe(true)
+		expect(invalidated(other)).toBe(false)
+		expect(invalidated(otherLogs)).toBe(false)
+	})
+
 	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
 		const { qc, keys, invalidated } = seededClient()
 		for (let i = 0; i < 25; i++) {
@@ -436,7 +478,7 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.paged)).toBe(true)
 	})
 
-	it.each(['session_credit_debited', 'session_budget_stopped'])(
+	it.each(['session_credit_debited', 'session_budget_stopped', 'session_stopped'])(
 		'%s still refetches billing usage',
 		(action) => {
 			const { qc, keys, invalidated } = seededClient()

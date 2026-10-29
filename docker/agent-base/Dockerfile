@@ -7,9 +7,29 @@ FROM ghcr.io/github/github-mcp-server:v1.13.0@sha256:15b28878c7d46edf07e16c373e4
 
 FROM node:22-slim
 
-# System tools
+# System tools. fontconfig + DejaVu + Liberation give headless Chromium glyphs
+# to paint when it rasterises inside the session sandbox (qa-deck.sh); without
+# them text renders blank. Add fonts-noto-color-emoji only if emoji are needed.
+# ffmpeg (with ffprobe) is for the Video Producer cut/subtitle/end-card
+# pipeline; it comes from the Debian repo, so the version follows the
+# node:22-slim base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq ca-certificates openssh-client gettext-base \
+    git curl jq ca-certificates openssh-client gettext-base ffmpeg \
+    fontconfig fonts-dejavu-core fonts-liberation \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -1 && ffprobe -version | head -1
+
+# Shared libraries headless Chromium needs to start. Sessions run as a
+# non-root user and cannot apt-get, so a Chromium that a session downloads
+# itself (playwright install chromium) exits at launch without these. Libraries
+# only, no browser binary: the session fetches the version the repo under test
+# pins. This is Playwright's chromium list for Debian 12 (the node:22-slim
+# base); recheck it if the base distro changes. Fonts are installed separately.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+    libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+    libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pnpm (avoids corepack runtime download stalling sessions)
@@ -22,14 +42,24 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 # after re-validating the stream-json fixtures.
 RUN npm install -g @anthropic-ai/claude-code@2.1.285
 
-# Pre-install Playwright MCP server (connects to external browser via CDP)
-RUN npm install -g @playwright/mcp
-
 # Pre-install GitHub MCP server (static Go binary from the github-mcp stage).
 # Baked in because sessions are microVMs with no Docker daemon. The --version
 # run fails the image build if the binary is the wrong architecture.
 COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-server
 RUN github-mcp-server --version
+
+# Per-tool default-deny guard for customer-declared MCP servers. Single-file
+# node script, no dependencies. The session launch config starts it in front of
+# each guarded server: maskin-mcp-guard -- <real server command>. The --version
+# run fails the image build if the script is missing or broken. The image label
+# carries the wrapper version (read it without running the image: docker
+# inspect), and the build fails if the label and the script's own version differ,
+# so bump MASKIN_MCP_GUARD_VERSION together with VERSION in maskin-mcp-guard.js.
+ARG MASKIN_MCP_GUARD_VERSION=0.1.0
+LABEL io.maskin.mcp-guard.version=$MASKIN_MCP_GUARD_VERSION
+COPY maskin-mcp-guard.js /usr/local/bin/maskin-mcp-guard
+RUN chmod +x /usr/local/bin/maskin-mcp-guard \
+    && test "$(maskin-mcp-guard --version)" = "maskin-mcp-guard ${MASKIN_MCP_GUARD_VERSION}"
 
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
@@ -43,22 +73,12 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
-COPY cdp-retry-proxy.js /cdp-retry-proxy.js
+COPY mcp-scrub-env.jq /mcp-scrub-env.jq
+COPY github-mcp-supervisor.cjs /github-mcp-supervisor.cjs
 COPY strip-images-proxy.js /strip-images-proxy.js
-COPY preview-port-watcher.js /preview-port-watcher.js
 COPY input-stream.js /input-stream.js
 COPY output-stream.js /output-stream.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
-
-# PostToolUse hook that surfaces a newly-relayed dev-server preview port to
-# Claude automatically — see preview-port-watcher.js (writes the mappings
-# file this hook reads) and hooks/preview-ports-changed.sh (the hook
-# itself; PostToolUse is used because it's the hook event that actually
-# supports hookSpecificOutput.additionalContext — FileChanged does not).
-# Baked into every session's default settings so no per-task configuration
-# is needed for the auto-relay flow to reach the agent.
-COPY hooks/preview-ports-changed.sh /agent-hooks/preview-ports-changed.sh
-RUN chmod +x /agent-hooks/preview-ports-changed.sh
 
 # PreToolUse hook on AskUserQuestion. The headless CLI has no TTY to render
 # that tool on, so it fails the call outright; the hook redirects the question

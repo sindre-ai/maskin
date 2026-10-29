@@ -1,5 +1,5 @@
 import { NotificationInput } from '@/components/pulse/notification-input'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 describe('NotificationInput', () => {
@@ -102,13 +102,6 @@ describe('NotificationInput', () => {
 			await user.type(screen.getByPlaceholderText('Type your response...'), 'hello world')
 			await user.click(screen.getByRole('button', { name: 'Submit' }))
 			expect(onSubmit).toHaveBeenCalledWith('hello world')
-		})
-
-		it('renders textarea for multiline text', () => {
-			const metadata = { input_type: 'text', multiline: true }
-			render(<NotificationInput metadata={metadata} onSubmit={vi.fn()} />)
-			const textarea = screen.getByPlaceholderText('Type your response...')
-			expect(textarea.tagName).toBe('TEXTAREA')
 		})
 	})
 
@@ -247,5 +240,25 @@ describe('NotificationInput', () => {
 			await user.click(screen.getByRole('button', { name: 'Confirm' }))
 			expect(onSubmit).toHaveBeenCalledWith(expect.arrayContaining(['one', 'three']))
 		})
+	})
+})
+
+describe('NotificationInput multiline text', () => {
+	it('mounts the notification-variant editor for multiline text', async () => {
+		const { container } = render(
+			<NotificationInput metadata={{ input_type: 'text', multiline: true }} onSubmit={vi.fn()} />,
+		)
+		await waitFor(() => expect(container.querySelector('.ProseMirror')).not.toBeNull(), {
+			timeout: 10000,
+		})
+		expect(container.querySelector('textarea')).toBeNull()
+	})
+
+	it('leaves the single-line input alone', () => {
+		const { container } = render(
+			<NotificationInput metadata={{ input_type: 'text' }} onSubmit={vi.fn()} />,
+		)
+		expect(screen.getByPlaceholderText('Type your response...').tagName).toBe('INPUT')
+		expect(container.querySelector('.ProseMirror')).toBeNull()
 	})
 })

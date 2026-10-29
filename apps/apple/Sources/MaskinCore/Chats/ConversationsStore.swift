@@ -33,6 +33,10 @@ public final class ConversationsStore {
 	public private(set) var hasMore = false
 	public private(set) var isLoadingMore = false
 	public private(set) var actors: [ChatActor] = []
+	/// Threads you are in, newest activity first (the Threads screen and its chip count).
+	public private(set) var threads: [ThreadListItem] = []
+	@ObservationIgnored private var refreshingThreads = false
+	public var threadSections: ThreadListSections { ThreadListSections(threads) }
 	/// Last mutation error (pin/archive/read), surfaced by the screen as a transient notice.
 	public var notice: String?
 	public var scope: Scope = .active {
@@ -177,7 +181,8 @@ public final class ConversationsStore {
 				conversations: ConversationGrouping.filter(conversations, agentID: agentFilterID), flowRooms: rooms,
 				archived: archivedConversations, options: displayOptions,
 				chip: displayOptions.showsFilterChips ? chip : .all, query: query, currentActorID: currentActorID,
-				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs, now: now))
+				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs,
+				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs, now: now))
 	}
 
 	/// Agents running right now, from the workspace actor list.
@@ -190,10 +195,10 @@ public final class ConversationsStore {
 	public func status(
 		for conversation: ConversationSummary, draft: String? = nil, tick: ConversationRowStatus.Tick? = nil
 	) -> ConversationRowStatus {
-		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }.count
+		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }
 		return ConversationRowStatus.make(
 			conversation: conversation, draft: draft, typing: typingConversationIDs.contains(conversation.id),
-			workingAgents: working, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
+			workingAgents: working.count, workingNames: working.map { TeamLayout.firstName($0.name) }, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no
@@ -235,8 +240,10 @@ public final class ConversationsStore {
 					case .reconnected:
 						await self.refresh()
 						await self.refreshArchived()
+						await self.refreshThreads()
 					case .event(let event) where event.entityType == .conversation:
 						await self.refresh()
+						await self.refreshThreads()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
 						await self.refreshActors()
@@ -251,7 +258,8 @@ public final class ConversationsStore {
 		async let archived: Void = refreshArchived()
 		async let flows: Void = refreshFlowRooms()
 		async let people: Void = refreshActors()
-		_ = await (main, archived, flows, people)
+		async let threadRows: Void = refreshThreads()
+		_ = await (main, archived, flows, people, threadRows)
 	}
 
 	public func stop() {
@@ -317,6 +325,14 @@ public final class ConversationsStore {
 		await refreshActors()
 	}
 
+	/// Reload the Threads screen's rows. A failure keeps what is shown; the screen is secondary.
+	public func refreshThreads() async {
+		guard !refreshingThreads else { return }
+		refreshingThreads = true
+		defer { refreshingThreads = false }
+		if let rows = try? await api.threads(limit: 50) { threads = rows }
+	}
+
 	public func refreshActors() async {
 		if let fresh = try? await api.actors() { actors = fresh }
 	}
@@ -339,14 +355,16 @@ public final class ConversationsStore {
 	/// Creates the conversation and puts it at the top of the list. Throws so the sheet can show
 	/// the failure and keep the user's input.
 	@discardableResult
-	public func create(title: String, participantIDs: [String], firstMessage: String?) async throws
-		-> ConversationSummary
-	{
+	public func create(
+		title: String, participantIDs: [String], firstMessage: String?,
+		firstMessageMetadata: ChatSendMetadata? = nil
+	) async throws -> ConversationSummary {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let hasMessage = !(message?.isEmpty ?? true)
 		let created = try await api.create(
-			title: trimmed, participantIDs: participantIDs,
-			initialMessage: (message?.isEmpty ?? true) ? nil : message, idempotencyKey: IdempotencyKey.make())
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
 		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
 			conversations.insert(created, at: 0)
 		}

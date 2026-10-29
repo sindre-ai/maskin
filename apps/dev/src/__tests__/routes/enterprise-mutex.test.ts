@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { cancelMock, getStripeClientMock } = vi.hoisted(() => {
 	const cancel = vi.fn()
@@ -33,6 +33,7 @@ vi.mock('../../lib/claude-oauth', async () => {
 
 import type Stripe from 'stripe'
 import { verifyStripeWebhook } from '../../lib/stripe'
+import { openSecret } from '../../lib/workspace-secrets'
 import { buildWorkspaceMember } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -57,7 +58,15 @@ const clearStripeEnv = () => {
 
 const wsId = '11111111-1111-1111-1111-111111111111'
 
+// Keys in a PATCH body are sealed before they are written.
+const TEST_ENCRYPTION_KEY = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+
+afterEach(() => {
+	vi.unstubAllEnvs()
+})
+
 beforeEach(() => {
+	vi.stubEnv('INTEGRATION_ENCRYPTION_KEY', TEST_ENCRYPTION_KEY)
 	cancelMock.mockReset()
 	cancelMock.mockResolvedValue({})
 	getStripeClientMock.mockClear()
@@ -80,7 +89,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('cancels live Stripe sub and writes billing.plan=enterprise when setting llm_keys.anthropic', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -110,7 +119,6 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		expect(cancelMock).toHaveBeenCalledWith('sub_live')
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings).toMatchObject({
-			llm_keys: { anthropic: 'sk-ant-byo' },
 			billing: {
 				plan: 'enterprise',
 				status: 'canceled',
@@ -118,12 +126,15 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 				stripe_customer_id: 'cus_live',
 			},
 		})
+		const stored = (update.settings.llm_keys as Record<string, string>).anthropic
+		expect(stored).not.toContain('sk-ant-byo')
+		expect(openSecret(stored)).toBe('sk-ant-byo')
 	})
 
 	it('cancels live Stripe sub when enabling custom_llm with an api_key', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -158,15 +169,18 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		expect(cancelMock).toHaveBeenCalledWith('sub_starter')
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings).toMatchObject({
-			custom_llm: { enabled: true, api_key: 'sk-or-byo' },
+			custom_llm: { enabled: true },
 			billing: { plan: 'enterprise', status: 'canceled', stripe_subscription_id: null },
 		})
+		const stored = (update.settings.custom_llm as Record<string, string>).api_key
+		expect(stored).not.toContain('sk-or-byo')
+		expect(openSecret(stored)).toBe('sk-or-byo')
 	})
 
 	it('does NOT call Stripe when llm_keys.anthropic is being deleted (null)', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -204,7 +218,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('does NOT call Stripe when a PATCH re-sends the stored llm_keys.anthropic unchanged', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'caller' }], // isWorkspaceMember(caller)
+			[{ actorId: 'caller', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -238,7 +252,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('skips Stripe call when there is no live subscription to cancel', async () => {
 		const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -264,7 +278,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		cancelMock.mockRejectedValue(Object.assign(new Error('rate_limited'), { code: 'rate_limit' }))
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,
@@ -298,7 +312,7 @@ describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		)
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+			[{ actorId: 'test-actor-id', role: 'owner' }], // isWorkspaceWriter(caller)
 			[
 				{
 					id: wsId,

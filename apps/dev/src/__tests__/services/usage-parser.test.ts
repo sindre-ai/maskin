@@ -4,7 +4,12 @@ const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn()
 
 vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
 
-import { parseUsageFromLogChunks, resolveSessionCostUsd } from '../../services/usage-parser'
+import {
+	parseAssistantUsageFromLogChunks,
+	parseUsageFromLogChunks,
+	resolveSessionCostUsd,
+	sumResultUsageFromLogChunks,
+} from '../../services/usage-parser'
 import type { SessionUsage } from '../../services/usage-parser'
 
 const RESULT_SUCCESS = JSON.stringify({
@@ -103,6 +108,119 @@ describe('parseUsageFromLogChunks', () => {
 	})
 })
 
+describe('sumResultUsageFromLogChunks', () => {
+	const turn = (cost: number, usage: Record<string, number>, durationMs: number) =>
+		JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			duration_ms: durationMs,
+			total_cost_usd: cost,
+			usage,
+		})
+
+	it('adds tokens and duration across turns and takes the last running cost', () => {
+		const chunk = [
+			turn(0.1, { input_tokens: 10, output_tokens: 100, cache_read_input_tokens: 1000 }, 1000),
+			turn(0.3, { input_tokens: 20, output_tokens: 200, cache_creation_input_tokens: 50 }, 2000),
+			turn(0.6, { input_tokens: 30, output_tokens: 300, cache_read_input_tokens: 3000 }, 3000),
+		].join('\n')
+		expect(sumResultUsageFromLogChunks([`${chunk}\n`])).toEqual({
+			totalCostUsd: 0.6,
+			inputTokens: 60,
+			outputTokens: 600,
+			cacheCreationInputTokens: 50,
+			cacheReadInputTokens: 4000,
+			durationMs: 6000,
+		})
+	})
+
+	it('matches the last-line parse when there is a single turn', () => {
+		expect(sumResultUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`])).toEqual(
+			parseUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`]),
+		)
+	})
+
+	it('skips sub-agent results and non-result lines', () => {
+		const subAgent = JSON.stringify({
+			type: 'result',
+			parent_tool_use_id: 'toolu_1',
+			total_cost_usd: 9,
+			usage: { input_tokens: 999, output_tokens: 999 },
+		})
+		const chunk = `${subAgent}\n{"type":"assistant"}\nnot json\n${RESULT_SUCCESS}\n`
+		const result = sumResultUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(820)
+		expect(result?.outputTokens).toBe(120)
+		expect(result?.totalCostUsd).toBe(0.00091)
+	})
+
+	it('reassembles a result line split across chunks', () => {
+		const half = Math.floor(RESULT_SUCCESS.length / 2)
+		const result = sumResultUsageFromLogChunks([
+			RESULT_SUCCESS.slice(0, half),
+			`${RESULT_SUCCESS.slice(half)}\n`,
+		])
+		expect(result?.inputTokens).toBe(820)
+	})
+
+	it('keeps a field null when no turn reported it', () => {
+		const result = sumResultUsageFromLogChunks([`${RESULT_SUCCESS}\n`])
+		expect(result?.cacheCreationInputTokens).toBeNull()
+		expect(result?.cacheReadInputTokens).toBeNull()
+	})
+
+	it('returns null when there is no result envelope', () => {
+		expect(sumResultUsageFromLogChunks([])).toBeNull()
+		expect(sumResultUsageFromLogChunks(['{"type":"assistant"}\nplain output\n'])).toBeNull()
+	})
+})
+
+const assistantLine = (id: string, usage: Record<string, number>) =>
+	JSON.stringify({ type: 'assistant', message: { id, usage } })
+
+describe('parseAssistantUsageFromLogChunks', () => {
+	it('sums assistant usage with cost and duration left null', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 5 })}\n${assistantLine('msg_2', { input_tokens: 20, output_tokens: 7, cache_read_input_tokens: 100 })}\n`
+		expect(parseAssistantUsageFromLogChunks([chunk])).toEqual({
+			totalCostUsd: null,
+			inputTokens: 30,
+			outputTokens: 12,
+			cacheCreationInputTokens: 0,
+			cacheReadInputTokens: 100,
+			durationMs: null,
+		})
+	})
+
+	it('counts a message id once when its usage repeats across content-block lines', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 2 })}\n${assistantLine('msg_1', { input_tokens: 10, output_tokens: 9 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(10)
+		expect(result?.outputTokens).toBe(9)
+	})
+
+	it('restarts counting after the last result envelope', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 500, output_tokens: 500 })}\n${RESULT_SUCCESS}\n${assistantLine('msg_2', { input_tokens: 3, output_tokens: 4 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(3)
+		expect(result?.outputTokens).toBe(4)
+	})
+
+	it('ignores sub-agent assistant lines and lines without a message id', () => {
+		const subAgent = JSON.stringify({
+			type: 'assistant',
+			parent_tool_use_id: 'toolu_1',
+			message: { id: 'msg_sub', usage: { input_tokens: 99, output_tokens: 99 } },
+		})
+		const noId = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 1 } } })
+		expect(parseAssistantUsageFromLogChunks([`${subAgent}\n${noId}\n`])).toBeNull()
+	})
+
+	it('returns null when the log has no assistant usage', () => {
+		expect(parseAssistantUsageFromLogChunks([])).toBeNull()
+		expect(parseAssistantUsageFromLogChunks(['[INFO] starting...\n'])).toBeNull()
+	})
+})
+
 const DEEPSEEK_PRICING = {
 	prompt: 0.00000007,
 	completion: 0.00000014,
@@ -150,6 +268,26 @@ describe('resolveSessionCostUsd', () => {
 		// 1000*7e-8 + 500*1.4e-7 + 10000*1.4e-8 = 0.00028, ignoring the CLI figure.
 		expect(resolved).toBeCloseTo(0.00028, 12)
 		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash')
+	})
+
+	it('prices a workspace_custom session from the table, and keeps the CLI figure when the model is unlisted', async () => {
+		getModelPricingMock.mockResolvedValueOnce(DEEPSEEK_PRICING)
+		const priced = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'deepseek/deepseek-v4.1-flash',
+			usage: usage({ totalCostUsd: 1.91, inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1000*7e-8 + 500*1.4e-7 = 0.00014, ignoring the CLI's $1.91.
+		expect(priced).toBeCloseTo(0.00014, 12)
+		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4.1-flash')
+
+		getModelPricingMock.mockResolvedValueOnce(null)
+		const unlisted = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'my-company/private-model',
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(unlisted).toBe(0.5)
 	})
 
 	it('falls back to the legacy token rate on input+output when the model is unknown', async () => {

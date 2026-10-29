@@ -64,18 +64,38 @@ describe('ListRow select affordance', () => {
 		expect(checkbox.className).toContain('opacity-0')
 	})
 
-	// Touch: a 16px visible box (no touch-size primitive) with a 44px pseudo-element
-	// tap area, and the star stays visible beside it instead of standing down.
+	// Touch: a 16px visible box (no touch-size primitive) with a 44px tap area made
+	// of real padding (a wrapper for the checkbox, the button itself for the star),
+	// and the star stays visible beside it instead of standing down.
 	it('keeps the checkbox at 16px with a 44px tap area and the star visible on touch', () => {
 		renderRow({ anySelected: false, isSelected: false })
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-size', 'sm')
 		expect(checkbox.className).toContain('h-4')
-		expect(checkbox.className).toContain('max-[1024.02px]:after:-inset-3.5')
+		expect(checkbox.className).not.toContain('after:')
+		const wrapper = checkbox.parentElement
+		expect(wrapper?.className).toContain('max-[1024.02px]:p-3.5')
+		expect(wrapper?.className).toContain('max-[1024.02px]:-m-3.5')
 		const star = screen.getByRole('button', { name: 'Star this object' })
 		expect(star.className).not.toContain('max-[1024.02px]:hidden')
 		expect(star.className).not.toContain('pointer-coarse:hidden')
-		expect(star.className).toContain('max-[1024.02px]:after:-inset-3.5')
+		expect(star.className).not.toContain('after:')
+		expect(star.className).toContain('max-[1024.02px]:p-3.5')
+		expect(star.className).toContain('max-[1024.02px]:-m-3.5')
+	})
+
+	// The padding around the 16px box is part of the tap area, so a tap there
+	// selects the row without opening it.
+	it('selects the row, and does not open it, on a tap in the checkbox tap area', () => {
+		const onSelect = vi.fn()
+		const onOpen = vi.fn()
+		renderRow({ onSelect, onOpen, isSelected: false })
+		const wrapper = screen.getByRole('checkbox', { name: 'Select row' }).parentElement
+		expect(wrapper).not.toBeNull()
+		if (!wrapper) return
+		fireEvent.click(wrapper)
+		expect(onSelect).toHaveBeenCalledWith(true)
+		expect(onOpen).not.toHaveBeenCalled()
 	})
 
 	it('draws a filled star and offers to remove it once the row is starred', () => {

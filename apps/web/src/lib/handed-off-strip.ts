@@ -1,3 +1,4 @@
+import { sessionTitleFromPrompt } from '@maskin/shared'
 import type { SpawnedSession } from './api'
 
 /**
@@ -15,6 +16,14 @@ import type { SpawnedSession } from './api'
  * design.
  */
 export type StripPill = 'QUEUED' | 'WORKING' | 'DONE' | 'FAILED'
+
+/** Pill colours, shared by the strip rows and the handoff cards. */
+export const STRIP_PILL_CLASSES: Record<StripPill, string> = {
+	QUEUED: 'bg-[var(--st-todo-bg)] text-[var(--st-todo-text)]',
+	WORKING: 'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
+	DONE: 'bg-[var(--st-active-bg)] text-[var(--st-active-text)]',
+	FAILED: 'bg-destructive/10 text-destructive',
+}
 
 /**
  * Backend `sessions.status` value → strip pill. Any status the spec doesn't
@@ -87,4 +96,70 @@ export function failureText(result: unknown): string {
 		}
 	}
 	return 'Sub-agent stopped before finishing'
+}
+
+/**
+ * Group a handoff lands in on the Threads pane. Reuses the strip's pill mapping
+ * so a row can never be "Done" in one place and "Working" in another. A session
+ * that has asked the person something is "waiting" while it is otherwise live;
+ * FAILED gets its own group because a failed handoff is one a human has to act on.
+ */
+export type ThreadGroup = 'waiting' | 'working' | 'failed' | 'done'
+
+export function statusToThreadGroup(
+	status: string | null | undefined,
+	awaiting = false,
+): ThreadGroup | null {
+	const pill = statusToPill(status)
+	if (awaiting && (pill === 'QUEUED' || pill === 'WORKING')) return 'waiting'
+	switch (pill) {
+		case 'QUEUED':
+		case 'WORKING':
+			return 'working'
+		case 'FAILED':
+			return 'failed'
+		case 'DONE':
+			return 'done'
+		default:
+			return null
+	}
+}
+
+const WAITING_PILL_CLASSES = 'bg-warning/15 text-warning'
+
+/** The pill a handoff shows: the strip's, except a session waiting on the person. */
+export function threadPill(
+	status: string | null | undefined,
+	awaiting = false,
+): { label: StripPill | 'WAITING'; className: string } | null {
+	const pill = statusToPill(status)
+	if (!pill) return null
+	if (statusToThreadGroup(status, awaiting) === 'waiting') {
+		return { label: 'WAITING', className: WAITING_PILL_CLASSES }
+	}
+	return { label: pill, className: STRIP_PILL_CLASSES[pill] }
+}
+
+/** One-line title for a handoff, from what it was asked to do (see sessionTitleFromPrompt). */
+export function handoffTitle(actionPrompt: string, actorName: string): string {
+	return sessionTitleFromPrompt(actionPrompt) ?? actorName
+}
+
+/**
+ * Place each handoff in the chat's timeline: keyed by the first message written
+ * after its session was created, or `'end'` when nothing has been written since.
+ * Messages must be oldest-first.
+ */
+export function groupHandoffsByNextMessage<T extends { createdAt: string | null }>(
+	handoffs: readonly T[],
+	messages: readonly { id: number; createdAt: string | null }[],
+): Map<number | 'end', T[]> {
+	const byMessage = new Map<number | 'end', T[]>()
+	for (const handoff of handoffs) {
+		const at = handoff.createdAt ? Date.parse(handoff.createdAt) : Number.POSITIVE_INFINITY
+		const next = messages.find((m) => (m.createdAt ? Date.parse(m.createdAt) : 0) > at)
+		const key = next ? next.id : 'end'
+		byMessage.set(key, [...(byMessage.get(key) ?? []), handoff])
+	}
+	return byMessage
 }

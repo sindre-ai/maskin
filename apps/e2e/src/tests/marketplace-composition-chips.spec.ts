@@ -86,18 +86,31 @@ test.describe('Marketplace composition chip row', () => {
 			).toHaveCount(0)
 
 			// Where the kind chip row does render, it reads as a label and wraps
-			// inside its card rather than overflowing it.
-			const kindRows = page.locator('[data-testid="kind-chip-row"]')
-			const kindRowCount = await kindRows.count()
-			for (let i = 0; i < kindRowCount; i++) {
-				const row = kindRows.nth(i)
-				await expect(row).toBeVisible()
-				await expect(row).toContainText(/Agent|Trigger|Skill|Integration/)
-				const overflow = await row.evaluate((el) => ({
-					scroll: (el as HTMLElement).scrollWidth,
-					client: (el as HTMLElement).clientWidth,
-				}))
-				expect(overflow.scroll).toBeLessThanOrEqual(overflow.client + 1)
+			// inside its card rather than overflowing it. The cards re-render as the
+			// catalog loads, so read every row in one snapshot instead of locator by locator.
+			const readKindRows = () =>
+				page.locator('[data-testid="kind-chip-row"]').evaluateAll((els) =>
+					els.map((el) => ({
+						text: el.textContent ?? '',
+						shown: (el as HTMLElement).offsetParent !== null,
+						scroll: (el as HTMLElement).scrollWidth,
+						client: (el as HTMLElement).clientWidth,
+					})),
+				)
+			// The app holds an event stream open, so the network never goes idle; settle on two
+			// identical reads in a row instead.
+			let kindRows = await readKindRows()
+			for (let tries = 0; tries < 10; tries++) {
+				await page.waitForTimeout(500)
+				const next = await readKindRows()
+				const settled = JSON.stringify(next) === JSON.stringify(kindRows)
+				kindRows = next
+				if (settled) break
+			}
+			for (const row of kindRows) {
+				expect(row.shown).toBe(true)
+				expect(row.text).toMatch(/Agent|Trigger|Skill|Integration/)
+				expect(row.scroll).toBeLessThanOrEqual(row.client + 1)
 			}
 		})
 	}

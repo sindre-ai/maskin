@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { buildCreateSessionBody, buildSession, buildSessionLog } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp } from '../setup'
@@ -6,15 +7,25 @@ const { default: sessionsRoutes } = await import('../../routes/sessions')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
+// createSessionTestApp calls as 'test-actor-id', so this session was started by the caller.
+const buildOwnSession = (overrides?: Record<string, unknown>) =>
+	buildSession({ workspaceId: wsId, createdBy: 'test-actor-id', ...overrides })
+
 describe('Sessions Routes', () => {
 	describe('POST /api/sessions', () => {
 		it('creates a session and returns 201', async () => {
 			const session = buildSession({ workspaceId: wsId })
-			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+			const createBody = buildCreateSessionBody()
+			// startSession() checks the agent is a member of the workspace first.
+			mockResults.selectQueue = [[{ id: createBody.actor_id }]]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/sessions', buildCreateSessionBody(), {
+				jsonRequest('POST', '/api/sessions', createBody, {
 					'x-workspace-id': wsId,
 				}),
 			)
@@ -27,19 +38,20 @@ describe('Sessions Routes', () => {
 
 		it('persists entry_agent_role onto sessions.config for downstream analytics', async () => {
 			const session = buildSession({ workspaceId: wsId })
-			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+			const createBody = buildCreateSessionBody({
+				config: { interactive: true },
+				entry_agent_role: 'chief-of-staff',
+			})
+			// startSession() checks the agent is a member of the workspace first.
+			mockResults.selectQueue = [[{ id: createBody.actor_id }]]
 
 			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/sessions',
-					buildCreateSessionBody({
-						config: { interactive: true },
-						entry_agent_role: 'chief-of-staff',
-					}),
-					{ 'x-workspace-id': wsId },
-				),
+				jsonRequest('POST', '/api/sessions', createBody, { 'x-workspace-id': wsId }),
 			)
 
 			expect(res.status).toBe(201)
@@ -53,20 +65,62 @@ describe('Sessions Routes', () => {
 
 		it('leaves config untouched when entry_agent_role is omitted', async () => {
 			const session = buildSession({ workspaceId: wsId })
-			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(session)
+			const createBody = buildCreateSessionBody({ config: { interactive: true } })
+			// startSession() checks the agent is a member of the workspace first.
+			mockResults.selectQueue = [[{ id: createBody.actor_id }]]
 
 			await app.request(
-				jsonRequest(
-					'POST',
-					'/api/sessions',
-					buildCreateSessionBody({ config: { interactive: true } }),
-					{ 'x-workspace-id': wsId },
-				),
+				jsonRequest('POST', '/api/sessions', createBody, { 'x-workspace-id': wsId }),
 			)
 
 			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
 			expect(createArgs?.[1]?.config).not.toHaveProperty('entry_agent_role')
+		})
+
+		it('returns 404 and starts nothing when the agent is not a member of the workspace', async () => {
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			// The membership lookup finds no row for the agent in this workspace.
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/sessions', buildCreateSessionBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and starts nothing when the conversation is not in the workspace', async () => {
+			const { app, sessionManager, mockResults } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			// The conversation lookup, scoped to this workspace, finds nothing.
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					buildCreateSessionBody({
+						config: { conversation: { conversation_id: randomUUID(), message_id: 1 } },
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
@@ -165,6 +219,30 @@ describe('Sessions Routes', () => {
 			expect(body[0].id).toBe(s1.id)
 			expect(body[0].title).toBe('Investigate the flaky login test')
 			expect(body[0].status).toBe('running')
+		})
+
+		it('titles a comment-started session by the comment, not the sender line', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				actionPrompt:
+					'Sent by PMM, another agent. Treat it as a request from a colleague.\n\nComment content:\n"""\nDraft the launch post\n"""',
+				status: 'running',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: null,
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			const body = await res.json()
+			expect(body[0].title).toBe('Draft the launch post')
 		})
 
 		it('synthesizes the title from the trigger name when trigger_id is set', async () => {
@@ -332,7 +410,7 @@ describe('Sessions Routes', () => {
 
 	describe('GET /api/sessions/:id', () => {
 		it('returns 200 when session found', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
 
@@ -358,7 +436,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('includes currentActivity in response', async () => {
-			const session = buildSession({ workspaceId: wsId, currentActivity: 'Running tests' })
+			const session = buildOwnSession({ currentActivity: 'Running tests' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
 
@@ -374,7 +452,7 @@ describe('Sessions Routes', () => {
 
 	describe('PATCH /api/sessions/:id', () => {
 		it('writes currentActivity, fires session_updated event, and returns updated session', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const updated = { ...session, currentActivity: 'Searching codebase' }
 			const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
@@ -402,7 +480,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('clears currentActivity to null', async () => {
-			const session = buildSession({ workspaceId: wsId, currentActivity: 'Old activity' })
+			const session = buildOwnSession({ currentActivity: 'Old activity' })
 			const updated = { ...session, currentActivity: null }
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [session]
@@ -420,6 +498,119 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.currentActivity).toBeNull()
+		})
+
+		describe('who may change current_activity', () => {
+			const patchActivity = (sessionId: string) =>
+				jsonRequest(
+					'PATCH',
+					`/api/sessions/${sessionId}`,
+					{ current_activity: 'Searching codebase' },
+					{ 'x-workspace-id': wsId },
+				)
+
+			it('lets the agent running the session write it with its own key', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+					'test-actor-id',
+					'agent',
+				)
+				mockResults.selectQueue = [[session]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+				expect((await res.json()).currentActivity).toBe('Searching codebase')
+			})
+
+			it('lets the person who started the session write it', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'test-actor-id',
+				})
+				const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+			})
+
+			it('lets a human admin or owner write it', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], [{ role: 'owner', type: 'human' }]]
+				mockResults.update = [{ ...session, currentActivity: 'Searching codebase' }]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(200)
+			})
+
+			it('refuses a member who is neither the actor nor the starter, and stores nothing', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+					currentActivity: 'Original line',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], [{ role: 'member', type: 'human' }]]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
+
+			it('refuses an agent holding an admin role that is not the session actor', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+					'test-actor-id',
+					'agent',
+				)
+				mockResults.selectQueue = [[session], [{ role: 'admin', type: 'agent' }]]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
+
+			it('applies the same rule to a session started by a trigger', async () => {
+				const session = buildSession({
+					workspaceId: wsId,
+					actorId: 'some-agent',
+					triggerId: 'some-trigger',
+					createdBy: 'someone-else',
+				})
+				const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+				mockResults.selectQueue = [[session], []]
+
+				const res = await app.request(patchActivity(session.id))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toEqual([])
+			})
 		})
 
 		it('returns 404 when session not found', async () => {
@@ -493,7 +684,7 @@ describe('Sessions Routes', () => {
 
 	describe('POST /api/sessions/:id/stop', () => {
 		it('returns 200 when session stopped', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'completed' })
+			const session = buildOwnSession({ status: 'completed' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -524,7 +715,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 400 when sessionManager throws', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -548,7 +739,7 @@ describe('Sessions Routes', () => {
 
 	describe('POST /api/sessions/:id/pause', () => {
 		it('returns 200 when session paused', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'paused' })
+			const session = buildOwnSession({ status: 'paused' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -578,7 +769,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 400 when pauseSession throws', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -602,7 +793,7 @@ describe('Sessions Routes', () => {
 
 	describe('POST /api/sessions/:id/resume', () => {
 		it('returns 200 when session resumed', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const session = buildOwnSession({ status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -620,7 +811,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 400 when sessionManager throws', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -643,10 +834,6 @@ describe('Sessions Routes', () => {
 	})
 
 	describe('POST /api/sessions/:id/input', () => {
-		// createSessionTestApp calls as 'test-actor-id', so this session was started by the caller.
-		const buildOwnSession = (overrides?: Record<string, unknown>) =>
-			buildSession({ workspaceId: wsId, createdBy: 'test-actor-id', ...overrides })
-
 		it('returns 200 and forwards formatted payload when session is interactive + running', async () => {
 			const session = buildOwnSession({ interactive: true, status: 'running' })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
@@ -675,6 +862,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'hello workspace coach' },
 				},
 				undefined,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -720,6 +909,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'what about this?' },
 				},
 				attachments,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -733,7 +924,8 @@ describe('Sessions Routes', () => {
 				sessionsRoutes,
 				'/api/sessions',
 			)
-			mockResults.selectQueue = [[session]]
+			// The session, then who started it: a person, so it is theirs alone.
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -780,7 +972,7 @@ describe('Sessions Routes', () => {
 				createdBy: 'someone-else',
 			})
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
-			mockResults.selectQueue = [[session]]
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -895,7 +1087,7 @@ describe('Sessions Routes', () => {
 
 	describe('GET /api/sessions/:id/logs', () => {
 		it('returns 200 with session logs', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const log1 = buildSessionLog({ sessionId: session.id })
 			const log2 = buildSessionLog({ sessionId: session.id })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
@@ -926,7 +1118,7 @@ describe('Sessions Routes', () => {
 
 	describe('GET /api/sessions/:id (with include_logs)', () => {
 		it('include_logs=true returns a logs array and honors log_limit', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const log1 = buildSessionLog({ sessionId: session.id })
 			const log2 = buildSessionLog({ sessionId: session.id })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
@@ -947,7 +1139,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('include_logs omitted returns session without a logs key (bug fix regression pin)', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.selectQueue = [[session]]
 
@@ -963,7 +1155,7 @@ describe('Sessions Routes', () => {
 
 	describe('GET /api/sessions/:id/logs/deep', () => {
 		it('direction=newest_first returns rows in id DESC order (NOT reversed)', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			// Rows returned by the DB in DESC order — the handler must NOT
 			// reverse them (deliberate break from /:id/logs at 712-798).
 			const log100 = buildSessionLog({ sessionId: session.id, id: 100, content: 'newest' })
@@ -984,7 +1176,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('direction=oldest_first returns rows in id ASC order (jump to boot)', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const log10 = buildSessionLog({ sessionId: session.id, id: 10, content: 'boot' })
 			const log50 = buildSessionLog({ sessionId: session.id, id: 50, content: 'mid' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
@@ -1003,7 +1195,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('honors before_id, after_id, stream and limit (parses without error)', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.selectQueue = [[session], []]
 
@@ -1032,7 +1224,7 @@ describe('Sessions Routes', () => {
 
 	describe('Session re-fetch null safety', () => {
 		it('POST /stop returns 404 when session disappears after stop', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -1051,7 +1243,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('POST /pause returns 404 when session disappears after pause', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -1069,7 +1261,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('POST /resume returns 404 when session disappears after resume', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
 				'/api/sessions',
@@ -1089,7 +1281,7 @@ describe('Sessions Routes', () => {
 
 	describe('GET /api/sessions/:id/logs/stream (SSE)', () => {
 		it('returns 400 when x-workspace-id header is missing', async () => {
-			const session = buildSession({ workspaceId: wsId })
+			const session = buildOwnSession()
 			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 
 			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs/stream`))
@@ -1112,7 +1304,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('returns 200 with text/event-stream content-type for active session', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const session = buildOwnSession({ status: 'running' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			// First select: auth check, second select: session status check (running)
 			mockResults.selectQueue = [[session], [session]]
@@ -1132,7 +1324,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('replays all logs and sends done event for completed session', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'completed' })
+			const session = buildOwnSession({ status: 'completed' })
 			const log1 = buildSessionLog({ sessionId: session.id, content: 'line 1' })
 			const log2 = buildSessionLog({ sessionId: session.id, content: 'line 2' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
@@ -1156,7 +1348,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('replays all logs and sends done event for failed session', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'failed' })
+			const session = buildOwnSession({ status: 'failed' })
 			const log1 = buildSessionLog({ sessionId: session.id, content: 'error output' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.selectQueue = [[session], [session], [log1]]
@@ -1176,7 +1368,7 @@ describe('Sessions Routes', () => {
 		})
 
 		it('replays missed logs when Last-Event-ID is provided for active session', async () => {
-			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const session = buildOwnSession({ status: 'running' })
 			const missedLog = buildSessionLog({ sessionId: session.id, id: 10, content: 'missed line' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			// Auth check, session status check (running), missed logs query

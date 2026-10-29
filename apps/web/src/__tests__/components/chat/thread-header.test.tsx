@@ -16,6 +16,7 @@ const {
 	mockUseConversation,
 	mockUseConversationMessages,
 	mockUseLoop,
+	mockUseActors,
 } = vi.hoisted(() => ({
 	mockNavigate: vi.fn(),
 	mockToastSuccess: vi.fn(),
@@ -25,6 +26,7 @@ const {
 	mockUseConversation: vi.fn(),
 	mockUseConversationMessages: vi.fn(),
 	mockUseLoop: vi.fn(),
+	mockUseActors: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -66,6 +68,19 @@ vi.mock('@/hooks/use-conversation', async () => {
 		useConversationMessages: (...args: unknown[]) => mockUseConversationMessages(...args),
 	}
 })
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: (...args: unknown[]) => mockUseActors(...args),
+}))
+
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: () => true,
+}))
+
+// The dialog only matters once it opens; the header suite just needs the trigger.
+vi.mock('@/components/agents/voice-call-dialog', () => ({
+	VoiceCallDialog: () => null,
+}))
 
 vi.mock('@/hooks/use-loops', () => ({
 	useLoop: (...args: unknown[]) => mockUseLoop(...args),
@@ -151,23 +166,10 @@ function TestWrapper({ children }: { children: ReactNode }) {
 	)
 }
 
-// Every test below asserts v4-only chrome, so the flag boundary defaults on;
-// the rollback test at the end opts back out with `false`.
-function renderHeader(
-	v4Polish = true,
-	producedProps: Partial<React.ComponentProps<typeof ThreadHeader>> = {},
-) {
-	return render(
-		<ThreadHeader
-			workspaceId="ws-1"
-			conversationId="conv-1"
-			v4Polish={v4Polish}
-			{...producedProps}
-		/>,
-		{
-			wrapper: TestWrapper,
-		},
-	)
+function renderHeader(producedProps: Partial<React.ComponentProps<typeof ThreadHeader>> = {}) {
+	return render(<ThreadHeader workspaceId="ws-1" conversationId="conv-1" {...producedProps} />, {
+		wrapper: TestWrapper,
+	})
 }
 
 describe('ThreadHeader — v4 actions', () => {
@@ -181,6 +183,8 @@ describe('ThreadHeader — v4 actions', () => {
 		mockUseConversationMessages.mockReset()
 		mockUseLoop.mockReset()
 		mockUseLoop.mockReturnValue({ data: undefined })
+		mockUseActors.mockReset()
+		mockUseActors.mockReturnValue({ data: [] })
 		mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
 	})
 
@@ -283,91 +287,92 @@ describe('ThreadHeader — v4 actions', () => {
 		})
 	})
 
-	describe('rollback (v4Polish off)', () => {
-		it('drops the loop chip, Copy, Mark-unread and the mobile overflow menu', async () => {
-			// The pre-v4 header kept the loop link inside the title meta only — no
-			// chip, no Copy-whole-conversation, no Mark-as-unread, and Pin/Archive
-			// inline at every width rather than collapsed into a ⋯ menu.
-			mockUseConversation.mockReturnValue({
-				data: buildConversation({ loop_id: 'loop-1' }),
-			})
-			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: 'Growth loop' }) })
-			renderHeader(false)
-
-			expect(screen.queryByRole('button', { name: /^Loop:/ })).not.toBeInTheDocument()
-			expect(
-				screen.queryByRole('button', { name: 'Copy whole conversation' }),
-			).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: 'Mark as unread' })).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument()
-			// Pin and Archive stay inline, regardless of viewport width.
-			expect(screen.getByRole('button', { name: 'Pin conversation' })).toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Archive conversation' })).toBeInTheDocument()
-			// The loop lookup is skipped entirely rather than fetched and wasted.
-			expect(mockUseLoop).toHaveBeenLastCalledWith('', 'ws-1')
-		})
-	})
-
-	// S2 · bet 34706e2f, task 5 — the Produced toggle mounts only when the
-	// route resolves `graph-provenance-writes` on. Count is a `<span>` with
-	// `aria-label` so screen readers hear "N items produced" rather than the
-	// pill glyph, and the toggle carries aria-pressed for open/closed state.
-	describe('Produced toggle (S2 · graph-provenance-writes)', () => {
-		it('renders the toggle with the count pill when producedEnabled', () => {
+	// The Overview toggle is the single entry point to the right rail's Threads
+	// and Produced tabs. It mounts only when the route passes a handler (either
+	// tab's flag is on), carries aria-pressed for open/closed, and pulses a dot
+	// while something has changed since the pane was last open.
+	describe('Overview toggle', () => {
+		function setup() {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
 			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
 			mockUseLoop.mockReturnValue({ data: null })
-			renderHeader(true, {
-				producedEnabled: true,
-				producedCount: 4,
-				producedOpen: false,
-				onToggleProduced: vi.fn(),
-			})
-			const toggle = screen.getByRole('button', { name: /Open Produced pane/i })
-			expect(toggle).toBeInTheDocument()
+		}
+
+		it('renders the toggle when the route passes a handler', () => {
+			setup()
+			renderHeader({ overviewOpen: false, onToggleOverview: vi.fn() })
+			const toggle = screen.getByRole('button', { name: /Open Overview/i })
 			expect(toggle).toHaveAttribute('aria-pressed', 'false')
-			expect(screen.getByLabelText('4 items produced')).toHaveTextContent('4')
+			expect(screen.queryByRole('status', { name: 'New activity' })).not.toBeInTheDocument()
 		})
 
-		it('does not render the toggle when producedEnabled is false', () => {
-			mockUseConversation.mockReturnValue({ data: buildConversation() })
-			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
-			mockUseLoop.mockReturnValue({ data: null })
-			renderHeader(true, { producedEnabled: false, producedCount: 4 })
-			expect(screen.queryByRole('button', { name: /Produced pane/i })).not.toBeInTheDocument()
+		it('does not render the toggle without a handler', () => {
+			setup()
+			renderHeader({})
+			expect(screen.queryByRole('button', { name: /Overview/i })).not.toBeInTheDocument()
 		})
 
-		it('calls onToggleProduced when clicked and flips aria-pressed', async () => {
+		it('shows the new-activity dot when overviewHasNew', () => {
+			setup()
+			renderHeader({ onToggleOverview: vi.fn(), overviewHasNew: true })
+			expect(screen.getByRole('status', { name: 'New activity' })).toBeInTheDocument()
+		})
+
+		it('calls onToggleOverview when clicked and flips aria-pressed', async () => {
 			const user = userEvent.setup()
 			const onToggle = vi.fn()
-			mockUseConversation.mockReturnValue({ data: buildConversation() })
-			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
-			mockUseLoop.mockReturnValue({ data: null })
-			const { rerender } = renderHeader(true, {
-				producedEnabled: true,
-				producedCount: 2,
-				producedOpen: false,
-				onToggleProduced: onToggle,
-			})
-			await user.click(screen.getByRole('button', { name: /Open Produced pane/i }))
+			setup()
+			const { rerender } = renderHeader({ overviewOpen: false, onToggleOverview: onToggle })
+			await user.click(screen.getByRole('button', { name: /Open Overview/i }))
 			expect(onToggle).toHaveBeenCalledOnce()
 			rerender(
 				<ThreadHeader
 					workspaceId="ws-1"
 					conversationId="conv-1"
-					v4Polish={true}
-					producedEnabled={true}
-					producedCount={2}
-					producedOpen={true}
-					onToggleProduced={onToggle}
+					overviewOpen={true}
+					onToggleOverview={onToggle}
 				/>,
 			)
 			await waitFor(() =>
-				expect(screen.getByRole('button', { name: /Close Produced pane/i })).toHaveAttribute(
+				expect(screen.getByRole('button', { name: /Close Overview/i })).toHaveAttribute(
 					'aria-pressed',
 					'true',
 				),
 			)
 		})
+	})
+})
+
+describe('ThreadHeader — Call button', () => {
+	const agentParticipant = (actorId: string, actorName: string) => ({
+		actorId,
+		actorName,
+		actorType: 'agent' as const,
+		joinedAt: null,
+		addedBy: null,
+	})
+
+	beforeEach(() => {
+		mockUseLoop.mockReturnValue({ data: undefined })
+		mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
+	})
+
+	it('mounts when the thread has exactly one agent participant', () => {
+		mockUseConversation.mockReturnValue({ data: buildConversation() })
+		renderHeader()
+		expect(screen.getByRole('button', { name: 'Call Billing Agent' })).toBeInTheDocument()
+	})
+
+	it('does not mount with two agents (multi-agent calls are v2)', () => {
+		mockUseConversation.mockReturnValue({
+			data: buildConversation({
+				participants: [
+					...buildConversation().participants,
+					agentParticipant('agent-2', 'Sales Coach'),
+				],
+			}),
+		})
+		renderHeader()
+		expect(screen.queryByRole('button', { name: /^Call / })).not.toBeInTheDocument()
 	})
 })

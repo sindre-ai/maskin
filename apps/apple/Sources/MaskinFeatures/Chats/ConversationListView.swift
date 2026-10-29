@@ -23,10 +23,13 @@ struct ConversationListView: View {
 	/// New conversation, optionally with someone already in the To field.
 	let onNewChat: (ChatParticipant?) -> Void
 	var onSearchEverywhere: (String) -> Void = { _ in }
+	/// A suggested first message from the empty state, sent to the Chief of Staff.
+	var onSuggestion: (String) -> Void = { _ in }
+	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
+	var onThreads: (() -> Void)?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
-	@State private var searchPresented = false
 	@State private var expandedPeople: Set<String> = []
 	@State private var expandedSections: Set<String> = []
 	@State private var archivedExpanded = false
@@ -59,8 +62,14 @@ struct ConversationListView: View {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
 			if store.displayOptions.showsFilterChips, !picking.isActive {
-				TeamFilterChips(chip: $store.chip, unreadCount: layout.unreadCount)
+				TeamFilterChips(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
 					.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
+			}
+			if let onThreads, !store.displayOptions.showsFilterChips, !store.threads.isEmpty, !picking.isActive {
+				ThreadsEntryRow(unread: store.threadSections.unreadCount, onOpen: onThreads)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 			}
 			if !layout.tiles.isEmpty {
 				Section {
@@ -80,7 +89,7 @@ struct ConversationListView: View {
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
-					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
+					TeamSectionHeader(label: "Pinned", count: nil)
 				}
 			}
 			ForEach(layout.sections) { section in
@@ -88,18 +97,21 @@ struct ConversationListView: View {
 					ForEach(section.rows) { row in
 						rowView(row, now: now)
 					}
-					if let more = section.moreLabel {
+					if let footer = section.canCollapse ? "Show fewer" : section.moreLabel {
 						Button {
-							withAnimation(MaskinMotion.standard) { _ = expandedSections.insert(section.id) }
+							withAnimation(MaskinMotion.standard) {
+								if section.canCollapse { expandedSections.remove(section.id) } else { expandedSections.insert(section.id) }
+							}
 						} label: {
 							HStack(spacing: MaskinSpace.s5) {
-								Text(more)
+								Text(footer)
 									.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
 									.foregroundStyle(MaskinColor.ink2)
 								Spacer()
 								Image(systemName: "chevron.right")
 									.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 									.foregroundStyle(MaskinColor.inkPlaceholder)
+									.rotationEffect(.degrees(section.canCollapse ? -90 : 90))
 							}
 							.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s12)
 							.contentShape(Rectangle())
@@ -125,7 +137,7 @@ struct ConversationListView: View {
 				}
 			}
 			if let empty = layout.empty, store.phase == .loaded {
-				TeamEmptyState(empty: empty) { act(on: empty, query: search) }.plainRow()
+				TeamEmptyState(empty: empty, onSuggestion: onSuggestion) { act(on: empty, query: search) }.plainRow()
 			}
 			if layout.showsArchived, !picking.isActive {
 				ArchivedRow(
@@ -148,13 +160,13 @@ struct ConversationListView: View {
 		#endif
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
+		.teamSearch(text: $search)
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
-		.teamSearch(text: $search, isPresented: $searchPresented)
 		.teamRowMenu($menuTarget)
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",
@@ -371,13 +383,24 @@ struct ConversationListView: View {
 		Task { _ = await action(ids) }
 	}
 
+	/// Plain wording for people; debug builds add the underlying error so a bad response is findable.
+	private static func failureMessage(_ reason: String) -> String {
+		let plain = "Check your connection and try again."
+		#if DEBUG
+			return "\(plain)\n\(reason)"
+		#else
+			return plain
+		#endif
+	}
+
 	@ViewBuilder
 	private var overlay: some View {
 		switch store.phase {
 		case .idle, .loading:
 			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
-		case .failed(let message):
-			EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: message) {
+		case .failed(let reason):
+			EmptyState(
+				symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: Self.failureMessage(reason)) {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
@@ -393,17 +416,17 @@ struct ChatsDisplayMenu: View {
 	@Bindable var store: ConversationsStore
 
 	var body: some View {
-		Picker("Layout", selection: $store.displayOptions.layout) {
+		Picker("Show as", selection: $store.displayOptions.layout) {
 			ForEach(TeamDisplayOptions.Layout.allCases, id: \.self) { Text($0.label).tag($0) }
 		}
 		.pickerStyle(.inline)
 		if store.displayOptions.layout == .sections {
-			Picker("Conversations", selection: $store.displayOptions.grouping) {
+			Picker("Group by", selection: $store.displayOptions.grouping) {
 				ForEach(TeamDisplayOptions.Grouping.allCases, id: \.self) { Text($0.label).tag($0) }
 			}
 			.pickerStyle(.inline)
 		}
-		Picker("Filter chips", selection: $store.displayOptions.showsFilterChips) {
+		Picker("Quick filters", selection: $store.displayOptions.showsFilterChips) {
 			Text("Show").tag(true)
 			Text("Hide").tag(false)
 		}
@@ -433,14 +456,14 @@ extension View {
 /// A section header in the Team list: a mono label, its count and an optional action.
 struct TeamSectionHeader<Trailing: View>: View {
 	let label: String
-	let count: Int
+	let count: Int?
 	var countColor: Color = MaskinColor.inkPlaceholder
 	@ViewBuilder var trailing: Trailing
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			MonoLabel(label, color: MaskinColor.ink5, size: .section)
-			MonoLabel("\(count)", color: countColor, size: .section)
+			if let count { MonoLabel("\(count)", color: countColor, size: .section) }
 			Spacer(minLength: 0)
 			trailing
 		}
@@ -451,7 +474,7 @@ struct TeamSectionHeader<Trailing: View>: View {
 }
 
 extension TeamSectionHeader where Trailing == EmptyView {
-	init(label: String, count: Int, countColor: Color = MaskinColor.inkPlaceholder) {
+	init(label: String, count: Int?, countColor: Color = MaskinColor.inkPlaceholder) {
 		self.init(label: label, count: count, countColor: countColor) { EmptyView() }
 	}
 }
@@ -471,7 +494,7 @@ struct TeamConversationRow: View {
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(1)
-				Text(preview).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				preview.maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
@@ -488,11 +511,11 @@ struct TeamConversationRow: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private var preview: String {
-		if let draft, !draft.isEmpty { return "Draft: \(draft)" }
-		let text = conversation.snippet.map(ChatPreviewText.plain) ?? ""
-		guard !text.isEmpty else { return ConversationRowStatus.noMessages }
-		if let who = conversation.snippetActorName, !who.isEmpty { return "\(who): \(text)" }
-		return text
+	private var preview: Text {
+		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
+		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
+		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
+		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }

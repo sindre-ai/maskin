@@ -115,16 +115,15 @@ struct LoopDetailView: View {
 	}
 }
 
-/// The loop page's three tabs.
+/// The loop page's two tabs.
 enum LoopDetailTab: String, CaseIterable, Identifiable {
 	case outcome = "Outcome"
-	case actions = "Actions"
 	case activity = "Activity"
 	var id: String { rawValue }
 }
 
 /// The loop detail body without its scroll view (so it can be rendered offscreen in tests): a
-/// header, then Outcome / Actions / Activity. "Under the hood" swaps the tabs for the loop's
+/// header, then Outcome / Activity. "Under the hood" swaps the tabs for the loop's
 /// plumbing (flow, conditions, stats, steps).
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
@@ -164,15 +163,15 @@ struct LoopDetailContent: View {
 				.pickerStyle(.segmented)
 				switch tab {
 				case .outcome:
+					LoopNeedsYouSection(store: store)
+					LoopBriefingsSection(loopID: store.loop.id)
+					LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
 					LoopTargetsSection(
 						cards: LoopOutcomes.cards(for: store.loop), directory: store.directory)
-					LoopBriefingsSection(loopID: store.loop.id)
-					LoopQualitySection(loop: store.loop, failedSteps: store.failedSteps())
 					OutcomesSection(
 						outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
-				case .actions:
-					LoopActionsSection(store: store)
+					LoopInMotionSection(store: store)
 				case .activity:
 					if let timeline {
 						FlowTimelineView(model: timeline)

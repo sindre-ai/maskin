@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { onTestFinished } from 'vitest'
+import { openSecret } from '../../lib/workspace-secrets'
 import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
@@ -126,7 +128,7 @@ describe('Workspaces Routes', () => {
 		// Each queue entry is one db.select() in route order: isWorkspaceMember,
 		// the workspace row, then (only when name / llm_keys / custom_llm actually
 		// change) isWorkspaceHumanAdminOrOwner.
-		const MEMBER = [{ actorId: 'caller' }]
+		const MEMBER = [{ actorId: 'caller', role: 'member' }]
 		const HUMAN_OWNER = [{ role: 'owner', type: 'human' }]
 		const HUMAN_ADMIN = [{ role: 'admin', type: 'human' }]
 		const PLAIN_MEMBER = [{ role: 'member', type: 'human' }]
@@ -377,7 +379,12 @@ describe('Workspaces Routes', () => {
 				expect(calls.updates[0]).toMatchObject({ name: 'Renamed' })
 			})
 
-			it('lets a human admin change an llm_keys value', async () => {
+			it('lets a human admin change an llm_keys value, stored sealed', async () => {
+				vi.stubEnv(
+					'INTEGRATION_ENCRYPTION_KEY',
+					'1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+				)
+				onTestFinished(() => vi.unstubAllEnvs())
 				const ws = buildByoWorkspace()
 				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
@@ -390,9 +397,10 @@ describe('Workspaces Routes', () => {
 				)
 
 				expect(res.status).toBe(200)
-				expect(calls.updates[0]).toMatchObject({
-					settings: { llm_keys: { anthropic: 'sk-ant-rotated' } },
-				})
+				const stored = (calls.updates[0] as { settings: { llm_keys: { anthropic: string } } })
+					.settings.llm_keys.anthropic
+				expect(stored).not.toContain('sk-ant-rotated')
+				expect(openSecret(stored)).toBe('sk-ant-rotated')
 			})
 
 			it('lets a plain member pin files (a member-level settings key)', async () => {
@@ -998,6 +1006,32 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('CONFLICT')
 			// The guard trips before the delete, so no audit event is written.
 			expect(calls.inserts).toHaveLength(0)
+		})
+	})
+
+	describe('workspace deletion', () => {
+		const wsId = randomUUID()
+
+		it('POST /{id}/delete rejects a body without confirm_name with 400', async () => {
+			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const res = await app.request(jsonRequest('POST', `/api/workspaces/${wsId}/delete`, {}))
+			expect(res.status).toBe(400)
+		})
+
+		it('POST /{id}/delete returns 404 to a caller who is not a member', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]] // membership check
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/delete`, { confirm_name: 'Acme' }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('GET /{id}/deletion-preview returns 404 to a caller who is not a member', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]]
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/deletion-preview`))
+			expect(res.status).toBe(404)
 		})
 	})
 })

@@ -4,7 +4,11 @@ import { conversations, files, objects, relationships, sessions } from '@maskin/
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
 import { resolveEndpointTitles } from '../lib/graph/endpoint-titles'
@@ -41,6 +45,7 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const createRelationshipRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Create relationship',
 	request: {
@@ -286,8 +291,8 @@ app.openapi(listRelationshipsRoute, (async (c) => {
 	const cursorOn = Boolean(query.snapshot_at)
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(relationships.createdAt), asc(relationships.id)]
-			: [desc(relationships.createdAt), asc(relationships.id)]
+			? [asc(msCreatedAt(relationships.createdAt)), asc(relationships.id)]
+			: [desc(msCreatedAt(relationships.createdAt)), asc(relationships.id)]
 		: [relationships.createdAt]
 
 	const skipOffset = useKeysetSeek(query)
@@ -373,6 +378,7 @@ function bucket(
 const deleteRelationshipRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['relationships'],
 	summary: 'Delete relationship',
 	request: {

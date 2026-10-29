@@ -17,7 +17,9 @@ public struct MainShell: View {
 	private let environment: AppEnvironment
 	@Bindable private var runtime: AppRuntime
 	@State private var badges = ShellBadges()
-	@State private var liveMeeting: LiveMeetingRequest?
+	@State private var liveCalls = LiveCallCenter()
+	@State private var pictures = ActorPicturesStore()
+	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
@@ -42,13 +44,44 @@ public struct MainShell: View {
 		}
 		.environment(runtime)
 		.environment(runtime.router)
+		.environment(liveCalls)
 		.environment(
-			\.liveMeeting, LiveMeetingPresenter { request in liveMeeting = request }
+			\.liveMeeting,
+			LiveMeetingPresenter { [environment, liveCalls] request in
+				liveCalls.present(request, environment: environment)
+			}
 		)
 		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
-		.liveMeetingCover(item: $liveMeeting) { request in
-			LiveMeetingScreen(request: request, environment: environment) { liveMeeting = nil }
+		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
+		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
+		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
+		.onChange(of: scenePhase) { _, phase in
+			if phase == .active { Task { await pictures.load(environment: environment) } }
 		}
+		.onAppear {
+			// A call keeps running wherever you are; this returns you to its thread.
+			liveCalls.openConversation = { [runtime] id in
+				runtime.presentation = nil
+				runtime.selectedTab = .chats
+				runtime.requestedConversationId = id
+			}
+		}
+		// While a call runs, every screen where its own panel is not on show carries a pill to get
+		// back to it. The pill follows the panel itself, not a marker for which thread is open.
+		.safeAreaInset(edge: .bottom, spacing: 0) {
+			if let call = liveCalls.current, liveCalls.showsPill {
+				LiveCallPill(
+					session: call, onOpen: { liveCalls.openConversation(call.chat.conversationID) },
+					onEnd: { liveCalls.end() }
+				)
+				.padding(.bottom, MaskinSpace.s4)
+				.transition(.move(edge: .bottom).combined(with: .opacity))
+			}
+		}
+		.animation(MaskinMotion.standard, value: liveCalls.current != nil)
+		.alert(
+			"Can't start the call", isPresented: Binding(get: { liveCalls.problem != nil }, set: { if !$0 { liveCalls.problem = nil } }),
+			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.safeAreaInset(edge: .top, spacing: 0) {
 			OfflineBanner(isVisible: !runtime.isOnline, message: offlineMessage) {
@@ -59,6 +92,23 @@ public struct MainShell: View {
 			}
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: runtime.isOnline)
+		}
+		// A decision is on screen: the moment to explain notifications (never at first launch).
+		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
+			if count > 0 { runtime.valueMomentSeen() }
+		}
+		.onChange(of: runtime.presentation) { _, presentation in
+			if presentation == nil, runtime.forYou.store.needsCount > 0 { runtime.valueMomentSeen() }
+		}
+		.background {
+			if let prompt = runtime.notificationPrompt {
+				Color.clear.sheet(
+					isPresented: Binding(get: { prompt.isPresented }, set: { if !$0 { prompt.notNow() } })
+				) {
+					NotificationPromptSheet(
+						onTurnOn: { Task { await prompt.accept() } }, onNotNow: { prompt.notNow() })
+				}
+			}
 		}
 		.sheet(item: $runtime.presentation) { presentation in
 			PresentationContent(
@@ -111,14 +161,16 @@ private struct AdaptiveTabs: View {
 		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
 		// The profile lives at the foot of the sidebar too (4-iPad.md).
 		.tabViewSidebarFooter {
-			SidebarProfileRow(name: environment.auth.session?.name) { runtime.showProfile = true }
+			SidebarProfileRow(
+				name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
+			) { runtime.showProfile = true }
 		}
 		.sheet(isPresented: $showWorkspaces) {
 			WorkspaceSwitcher(environment: environment)
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.minimizeTabBarOnScroll()
+		.keepTabBarExpanded()
 	}
 }
 
@@ -147,13 +199,14 @@ private struct SidebarWorkspaceHeader: View {
 /// The signed-in person at the foot of the iPad sidebar; opens the profile.
 private struct SidebarProfileRow: View {
 	let name: String?
+	let actorID: String?
 	let open: () -> Void
 
 	var body: some View {
 		if let name {
 			Button(action: open) {
 				HStack(spacing: MaskinSpace.s5) {
-					ShellNavAvatar(name: name)
+					ShellNavAvatar(name: name, actorID: actorID)
 					Text(name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Spacer(minLength: 0)
 				}
@@ -236,22 +289,12 @@ extension ShellTab {
 }
 
 extension View {
-	/// The live meeting covers the whole screen on iPhone and iPad; a sheet on the Mac.
-	fileprivate func liveMeetingCover<Item: Identifiable, Content: View>(
-		item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content
-	) -> some View {
-		#if os(iOS)
-			return fullScreenCover(item: item, content: content)
-		#else
-			return sheet(item: item, content: content)
-		#endif
-	}
-
-	/// iOS 26: the tab bar collapses while scrolling down. No-op elsewhere.
-	fileprivate func minimizeTabBarOnScroll() -> some View {
+	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
+	/// No-op elsewhere.
+	fileprivate func keepTabBarExpanded() -> some View {
 		#if os(iOS)
 			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.onScrollDown))
+				return AnyView(tabBarMinimizeBehavior(.never))
 			}
 		#endif
 		return AnyView(self)

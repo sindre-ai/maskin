@@ -46,6 +46,7 @@ function toDto(row: typeof fileComments.$inferSelect): z.infer<typeof fileCommen
 		page: row.page,
 		positionDoc: row.positionDoc as { x: number; y: number },
 		selector: row.selector,
+		textAnchor: row.textAnchor ?? null,
 		authorId: row.authorId,
 		body: row.body,
 		parentId: row.parentId,
@@ -162,6 +163,7 @@ app.openapi(getFileCommentsRoute, (async (c) => {
 const createFileCommentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/comments',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Create a draft comment on a file (no roundId until sent).',
 	request: {
@@ -218,6 +220,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 			page: body.page ?? null,
 			positionDoc: body.positionDoc,
 			selector: body.selector ?? null,
+			textAnchor: body.textAnchor ?? null,
 			authorId: actorId,
 			body: body.body,
 			parentId: body.parentId ?? null,
@@ -236,6 +239,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 const patchFileCommentRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/comments/{cid}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Update a comment body, or resolve / reopen it.',
 	request: {
@@ -319,6 +323,7 @@ app.openapi(patchFileCommentRoute, (async (c) => {
 const sendRoundRoute = createRoute({
 	method: 'post',
 	path: '/{id}/comments/rounds',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Send a batched review round to the attaching object driver.',
 	request: {

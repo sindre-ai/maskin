@@ -12,6 +12,8 @@ struct ChatSendPayload: Codable, Sendable, Equatable {
 	/// already on the server" from an older identical one when a refetch races the response.
 	var afterServerID: Int?
 	var createdAt: Date
+	/// Set for a reply inside a thread. Absent in payloads queued before threads existed.
+	var thread: ChatSendThread?
 }
 
 /// A message the user sent that the server has not confirmed yet.
@@ -32,6 +34,7 @@ public struct PendingChatSend: Identifiable, Equatable, Sendable {
 	public var afterServerID: Int?
 	public var createdAt: Date
 	public var state: State
+	public var thread: ChatSendThread?
 
 	/// The row as the thread renders it.
 	public func asMessage(actorID: String, actorName: String) -> ChatMessage {
@@ -44,7 +47,8 @@ public struct PendingChatSend: Identifiable, Equatable, Sendable {
 		return ChatMessage(
 			id: "local-\(id)", conversationID: conversationID, actorID: actorID, actorName: actorName,
 			author: .human, content: content, createdAt: createdAt, metadata: metadata?.jsonValue,
-			status: status, idempotencyKey: id)
+			status: status, idempotencyKey: id, threadRootID: thread?.rootID,
+			alsoInChannel: thread?.alsoInChannel ?? false)
 	}
 }
 
@@ -118,7 +122,7 @@ public final class ChatSendQueue {
 			return PendingChatSend(
 				id: payload.clientID, conversationID: conversationID, content: payload.content,
 				metadata: payload.metadata, afterServerID: payload.afterServerID,
-				createdAt: payload.createdAt, state: state(of: entry))
+				createdAt: payload.createdAt, state: state(of: entry), thread: payload.thread)
 		}
 		return (failed.filter { $0.conversationID == conversationID } + queued)
 			.sorted { $0.createdAt < $1.createdAt }
@@ -140,19 +144,19 @@ public final class ChatSendQueue {
 	@discardableResult
 	public func send(
 		conversationID: String, content: String, metadata: ChatSendMetadata? = nil,
-		afterServerID: Int? = nil, clientID: String = UUID().uuidString
+		afterServerID: Int? = nil, thread: ChatSendThread? = nil, clientID: String = UUID().uuidString
 	) throws -> PendingChatSend {
 		let payload = ChatSendPayload(
 			clientID: clientID, conversationID: conversationID, content: content,
 			metadata: metadata?.isEmpty == true ? nil : metadata, afterServerID: afterServerID,
-			createdAt: now())
+			createdAt: now(), thread: thread)
 		try outbox.enqueue(
 			kind: Self.sendKind, lane: "chat:\(conversationID)", groupId: clientID,
 			summary: "Message to a conversation", payload: payload)
 		return pending(in: conversationID).first { $0.id == clientID }
 			?? PendingChatSend(
 				id: clientID, conversationID: conversationID, content: content, metadata: metadata,
-				afterServerID: afterServerID, createdAt: payload.createdAt, state: .sending)
+				afterServerID: afterServerID, createdAt: payload.createdAt, state: .sending, thread: thread)
 	}
 
 	/// Re-queue a failed send as a fresh message (the server never accepted the old one).
@@ -162,7 +166,7 @@ public final class ChatSendQueue {
 		saveFailed()
 		_ = try? send(
 			conversationID: row.conversationID, content: row.content, metadata: row.metadata,
-			afterServerID: row.afterServerID, clientID: clientID)
+			afterServerID: row.afterServerID, thread: row.thread, clientID: clientID)
 	}
 
 	/// Drop a send the user no longer wants. A queued one is cancelled unless it is already on
@@ -209,11 +213,15 @@ public final class ChatSendQueue {
 			let payload = try? JSONDecoder().decode(ChatSendPayload.self, from: entry.payload)
 		else { return }
 		failed.removeAll { $0.id == payload.clientID }
+		// A refused secret must not sit on disk in a failed row: keep the person's words, not the key.
+		let kept =
+			message == ChatsHTTPError.rawSecretMessage
+			? SecretScanner.withoutSecrets(payload.content, SecretScanner.scan(payload.content)) : payload.content
 		failed.append(
 			PendingChatSend(
-				id: payload.clientID, conversationID: payload.conversationID, content: payload.content,
+				id: payload.clientID, conversationID: payload.conversationID, content: kept,
 				metadata: payload.metadata, afterServerID: payload.afterServerID,
-				createdAt: payload.createdAt, state: .failed(message)))
+				createdAt: payload.createdAt, state: .failed(message), thread: payload.thread))
 		saveFailed()
 		for continuation in subscribers.values {
 			continuation.yield(.failed(clientID: payload.clientID, reason: message))
@@ -261,7 +269,8 @@ public final class ChatSendQueue {
 		init(_ row: PendingChatSend) {
 			payload = ChatSendPayload(
 				clientID: row.id, conversationID: row.conversationID, content: row.content,
-				metadata: row.metadata, afterServerID: row.afterServerID, createdAt: row.createdAt)
+				metadata: row.metadata, afterServerID: row.afterServerID, createdAt: row.createdAt,
+				thread: row.thread)
 			if case .failed(let message) = row.state { reason = message } else { reason = "Not sent" }
 		}
 
@@ -269,7 +278,7 @@ public final class ChatSendQueue {
 			PendingChatSend(
 				id: payload.clientID, conversationID: payload.conversationID, content: payload.content,
 				metadata: payload.metadata, afterServerID: payload.afterServerID,
-				createdAt: payload.createdAt, state: .failed(reason))
+				createdAt: payload.createdAt, state: .failed(reason), thread: payload.thread)
 		}
 	}
 }
@@ -306,7 +315,7 @@ public struct ChatSendExecutor: OutboxExecuting {
 		do {
 			let saved = try await makeAPI().send(
 				conversationID: send.conversationID, content: send.content, metadata: send.metadata,
-				idempotencyKey: key)
+				thread: send.thread, idempotencyKey: key)
 			await onDelivered(send.clientID, saved)
 		} catch {
 			throw Self.classify(error)

@@ -7,6 +7,7 @@ import SwiftUI
 /// when a running flow needs the viewer a "{n} need you ›" pill appears under it and filters the
 /// list to those flows (handoff `7-Chat.md` §10). Flows carry no tags, so there is no filter bar.
 struct LoopsListView: View {
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	let store: LoopsStore
 	@Binding var selection: String?
 	let search: String
@@ -15,7 +16,6 @@ struct LoopsListView: View {
 	var isGrid = false
 	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
-	var onBrowse: () -> Void = {}
 
 	var body: some View {
 		let loops = store.filtered(query: search)
@@ -51,7 +51,9 @@ struct LoopsListView: View {
 					}
 				}
 				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
+					columns: sizeClass == .regular
+						? Array(repeating: GridItem(.flexible(), spacing: MaskinSpace.s9, alignment: .top), count: 2)
+						: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
 					alignment: .leading, spacing: MaskinSpace.s9
 				) {
 					ForEach(loops) { loop in
@@ -140,13 +142,9 @@ struct LoopsListView: View {
 				} else if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No flows running",
-						message: "A flow is a few agents working together. Describe one in chat, or pick one from the marketplace."
+						message: "Ask the Chief of Staff to set one up. Nothing runs until you approve it."
 					) {
-						VStack(spacing: MaskinSpace.s5) {
-							Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
-							Button("Browse marketplace", action: onBrowse).buttonStyle(.secondaryAction)
-						}
-						.frame(maxWidth: 320)
+						Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
 					}
 				} else {
 					ContentUnavailableView.search(text: search)

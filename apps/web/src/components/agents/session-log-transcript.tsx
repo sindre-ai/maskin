@@ -213,10 +213,10 @@ function isConversationReplyTool(name: string): boolean {
 	return name === 'post_conversation_message' || name.endsWith('__post_conversation_message')
 }
 
-function describeEvent(event: ChatEvent): string | null {
+export function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
-			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
+			return truncate(stripInlineMarkdown(event.text).replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
 			return isConversationReplyTool(event.name) ? CONVERSATION_REPLY_LABEL : `Using ${event.name}`
 		case 'thinking':
@@ -231,6 +231,21 @@ function describeEvent(event: ChatEvent): string | null {
 		case 'debug':
 			return null
 	}
+}
+
+/**
+ * The preview is a single plain-text line, so markdown markers would show up as
+ * literal stars and backticks. Strips them before the line is truncated, so a
+ * cut can't leave half a pair behind.
+ */
+function stripInlineMarkdown(text: string): string {
+	return text
+		.replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+		.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+		.replace(/\*(?=\S)([^*\n]*?\S)\*/g, '$1')
+		.replace(/\b_(?=\S)([^_\n]*?\S)_\b/g, '$1')
+		.replace(/`([^`\n]+)`/g, '$1')
 }
 
 function truncate(text: string, max: number): string {

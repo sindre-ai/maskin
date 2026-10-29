@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
 } from '@maskin/shared'
@@ -72,6 +73,9 @@ export const objectResponseSchema = z.object({
 	// caller just mutated — can omit it without lying about the schema; the
 	// star toggle endpoints carry their own scalar in the response body.
 	is_starred_by_me: z.boolean().optional(),
+	// Present only on the detail endpoint, and only for an object whose
+	// `metadata.kind` an integration declares as deliverable (see lib/object-preview.ts).
+	preview: objectPreviewSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({
@@ -96,6 +100,13 @@ export const actorResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
+	// Projected from actors.metadata->>'voice_enabled' — read-only surface,
+	// writes go through POST /actors/:id/voice-mode. Mirrors installedLoopId
+	// above so agents doing read-modify-write via MCP never accidentally
+	// overwrite the raw metadata JSONB. Optional at the type level so
+	// existing fixtures + callers that pre-date the voice bet don't need to
+	// synthesise a value.
+	voice_enabled: z.boolean().optional(),
 	skills: z.array(actorSkillSchema).optional(),
 	// Populated only when X-Workspace-Id is provided — the actor's membership
 	// role in that specific workspace (mirrors the `role` field on the
@@ -123,6 +134,13 @@ export const workspaceResponseSchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
+	// Whether a BYO key is stored, for every caller. Only a human admin or owner
+	// gets llm_keys, custom_llm, claude_oauth and billing inside settings.
+	llm_configured: z.object({
+		anthropic: z.boolean(),
+		openai: z.boolean(),
+		custom_llm: z.boolean(),
+	}),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
 	// column OR an enterprise billing owner), not the raw column. Derived, so it
@@ -218,6 +236,16 @@ export const traverseGraphResponseSchema = z.object({
 	truncated_reason: z.enum(['max_nodes', 'max_depth']).nullable(),
 })
 
+export const agentGrantAccessSchema = z.enum(['none', 'read', 'read_write'])
+
+/** What an agent with no grant row of its own gets. */
+export const defaultAgentAccessSchema = z.enum(['read', 'read_write', 'none'])
+
+export const agentGrantSchema = z.object({
+	actorId: z.string().uuid(),
+	access: agentGrantAccessSchema,
+})
+
 export const integrationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -241,6 +269,22 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Keychain. Where the credential came from, and for source chat_capture the
+	// session the key was pasted into. Never the value or the wrapped data key.
+	source: z.string().optional(),
+	originSessionId: z.string().uuid().nullable().optional(),
+	// Keychain. How the credential is held, its display name (null for the
+	// registered providers) and who may read it. Never the value.
+	providerMode: z.enum(['registered', 'byo_apikey', 'byo_login', 'byo_oauth']).optional(),
+	displayName: z.string().nullable().optional(),
+	// Agent grants. defaultAgentAccess is what an agent with no row of its own gets;
+	// agentGrants are the explicit rows. Keychain credentials are explicit-only.
+	defaultAgentAccess: defaultAgentAccessSchema.optional(),
+	agentGrants: z.array(agentGrantSchema).optional(),
+	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
+	chatGrants: z
+		.array(z.object({ actorId: z.string().uuid(), conversationId: z.string().uuid() }))
+		.optional(),
 })
 
 export const providerEventSchema = z.object({
@@ -308,6 +352,8 @@ export const conversationListItemResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	title: z.string(),
+	subjectType: z.enum(['object', 'loop']).nullable(),
+	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
@@ -324,11 +370,18 @@ export const conversationListItemResponseSchema = z.object({
 	// the viewer said it.
 	snippet_actor_id: z.string().uuid().nullable(),
 	snippet_actor_name: z.string().nullable(),
+	// True when the caller wrote the snippet.
+	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
+	.omit({
+		snippet: true,
+		snippet_actor_id: true,
+		snippet_actor_name: true,
+		snippet_is_caller: true,
+	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})
@@ -351,6 +404,59 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Root message id when this is a thread reply; null for top-level messages. */
+	threadRootId: z.number().nullable(),
+	/** A thread reply also shown in the main timeline. */
+	threadAlsoInChannel: z.boolean(),
+})
+
+export const threadParticipantSchema = z.object({
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+})
+
+export const threadSummarySchema = z.object({
+	replyCount: z.number(),
+	lastReplyId: z.number(),
+	lastReplyAt: z.string().nullable(),
+	unreadCount: z.number(),
+	participants: z.array(threadParticipantSchema),
+})
+
+/**
+ * One row of the caller's Threads list: the root, its summary and the newest
+ * reply, with the conversation's title so the row can name where it lives.
+ */
+export const threadListItemSchema = z.object({
+	conversationId: z.string().uuid(),
+	conversationTitle: z.string(),
+	root: messageResponseSchema,
+	thread: threadSummarySchema,
+	lastReply: messageResponseSchema.nullable(),
+})
+
+// POST /conversations/:id/messages only: best-effort warning when some
+// `metadata.mentions` ids are neither participants nor workspace members. The
+// message still posts, but nobody was pulled in or woken for those ids.
+export const postMessageResponseSchema = messageResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	// A thread reply that reached the sub-chat the thread holds: how it got there.
+	delivered_to_session: z
+		.discriminatedUnion('mode', [
+			z.object({ mode: z.literal('live'), session_id: z.string().uuid() }),
+			z.object({
+				mode: z.literal('continued'),
+				session_id: z.string().uuid(),
+				previous_session_id: z.string().uuid(),
+			}),
+			z.object({
+				mode: z.literal('not_delivered'),
+				session_id: z.string().uuid(),
+				reason: z.string(),
+			}),
+		])
+		.optional(),
 })
 
 /**
@@ -364,20 +470,34 @@ export const spawnedSessionResponseSchema = z.object({
 	actorId: z.string().uuid(),
 	actorName: z.string(),
 	actionPrompt: z.string(),
+	createdAt: z.string().nullable(),
 	startedAt: z.string().nullable(),
 	completedAt: z.string().nullable(),
 	durationMs: z.number().nullable(),
 	result: jsonbField.nullable(),
 	currentActivity: z.string().nullable(),
 	depends_on_session_ids: z.array(z.string().uuid()),
+	awaiting: z.object({ message_id: z.number(), question: z.unknown() }).nullable(),
 })
 
 /**
  * List response only — the POST 201 path keeps `messageResponseSchema` so the
  * two surfaces can evolve independently.
  */
+export const messageReactionSchema = z.object({
+	emoji: z.string(),
+	count: z.number(),
+	/** The caller is one of the people who reacted. */
+	reactedByMe: z.boolean(),
+	actors: z.array(z.object({ actorId: z.string().uuid(), actorName: z.string() })),
+})
+
 export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
 	spawned_sessions: z.array(spawnedSessionResponseSchema),
+	/** Reactions grouped by emoji, in the order each emoji was first used. */
+	reactions: z.array(messageReactionSchema),
+	/** Present on a thread root that has replies. */
+	thread: threadSummarySchema.nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

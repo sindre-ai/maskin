@@ -1,5 +1,4 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest, readMetadataSql } from '../helpers'
 import { createTestApp } from '../setup'
@@ -20,23 +19,10 @@ const { default: triggersRoutes } = await import('../../routes/triggers')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 const testerActorId = 'test-actor-id'
-
-// The route reads its flag via `isFlagEnabled(actorId, 'slack-setup-ux-v2')`,
-// which resolves against `FF_TESTER_ACTOR_IDS` × `FF_TESTER_FEATURES`. Turn
-// both on for the test actor so the post-commit hook actually fires — a fresh
-// `_resetFeatureFlagConfig()` re-reads the env after every mutation.
-beforeAll(() => {
-	process.env.FF_TESTER_ACTOR_IDS = testerActorId
-	process.env.FF_TESTER_FEATURES = 'slack-setup-ux-v2'
-	_resetFeatureFlagConfig()
-})
+const targetActorId = '00000000-0000-0000-0000-0000000000a1'
 
 beforeEach(() => {
 	runSlackTriggerSetupMock.mockClear()
-})
-
-afterEach(() => {
-	_resetFeatureFlagConfig()
 })
 
 describe('Triggers Routes', () => {
@@ -45,11 +31,16 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(201)
@@ -76,6 +67,31 @@ describe('Triggers Routes', () => {
 			expect(body.error.code).toBe('VALIDATION_ERROR')
 		})
 
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and writes nothing',
+			async (field) => {
+				const { app, calls } = createTestApp(triggersRoutes, '/api/triggers')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/triggers',
+						buildCreateTriggerBody({
+							type: 'cron',
+							config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.inserts).toHaveLength(0)
+			},
+		)
+
 		it('fires runSlackTriggerSetup post-commit for a Slack event trigger with channel_ids', async () => {
 			const config = {
 				entity_type: 'slack.channel_message',
@@ -90,12 +106,19 @@ describe('Triggers Routes', () => {
 			})
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
 				jsonRequest(
 					'POST',
 					'/api/triggers',
-					buildCreateTriggerBody({ type: 'event', name: 'Sales alerts', config }),
+					buildCreateTriggerBody({
+						type: 'event',
+						name: 'Sales alerts',
+						config,
+						target_actor_id: targetActorId,
+					}),
 					{ 'x-workspace-id': wsId },
 				),
 			)
@@ -115,15 +138,38 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(201)
 			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and writes nothing when the target agent is not a member of the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// The membership lookup finds no row for the target agent in this workspace.
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 
@@ -181,6 +227,20 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('returns 404 and updates nothing when the new target agent is not a workspace member', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// Trigger row, the caller's membership, then no membership row for the target.
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { target_actor_id: targetActorId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
 		it('returns 404 when trigger not found', async () => {
 			const { app } = createTestApp(triggersRoutes, '/api/triggers')
 
@@ -192,6 +252,27 @@ describe('Triggers Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and updates nothing',
+			async (field) => {
+				const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })
+				const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+				mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+						config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.updates).toHaveLength(0)
+			},
+		)
 
 		it('returns 400 for invalid cron expression on cron trigger', async () => {
 			const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })

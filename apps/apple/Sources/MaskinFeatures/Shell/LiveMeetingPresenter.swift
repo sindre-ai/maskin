@@ -9,12 +9,15 @@ public enum LiveMeetingRequest: Identifiable {
 	case chiefOfStaff
 	/// An ad hoc call with `lead`, inside the thread `chat` shows. Ending posts a note into it.
 	case thread(chat: ChatStore, lead: ChatParticipant)
+	/// An ad hoc call with `lead` in a conversation that was just created (from New chat). Ending posts a note.
+	case conversation(id: String, lead: ChatParticipant)
 
 	public var id: String {
 		switch self {
 		case .dailyBriefing: "briefing"
 		case .chiefOfStaff: "chief-of-staff"
 		case .thread(let chat, _): "thread:\(chat.conversationID)"
+		case .conversation(let id, _): "thread:\(id)"
 		}
 	}
 }

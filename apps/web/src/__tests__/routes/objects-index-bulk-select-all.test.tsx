@@ -6,6 +6,7 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { api } from '@/lib/api'
 import { buildWorkspaceWithRole } from '../factories'
 
 // Follow-up to T5: when the DisplayPanel "Include archived" toggle is on, the
@@ -29,6 +30,11 @@ const searchState = vi.hoisted(() => ({
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
 const rows = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }))
+// The options the route hands the list query, so a test can run its queryFn and
+// see which filters it asks the server for.
+const listQueryCapture = vi.hoisted(() => ({
+	last: null as { queryFn: (ctx: { pageParam: number }) => unknown } | null,
+}))
 // The board reads its rows from a separate query, so a board-view test has to
 // seed them here rather than through the infinite list query.
 const boardRows = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }))
@@ -76,14 +82,17 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			isSuccess: true,
 			isError: false,
 		}),
-		useInfiniteQuery: () => ({
-			data: { pages: [rows.current] },
-			hasNextPage: false,
-			isFetchingNextPage: false,
-			isError: false,
-			fetchNextPage: vi.fn(),
-			isLoading: false,
-		}),
+		useInfiniteQuery: (options: { queryFn: (ctx: { pageParam: number }) => unknown }) => {
+			listQueryCapture.last = options
+			return {
+				data: { pages: [rows.current] },
+				hasNextPage: false,
+				isFetchingNextPage: false,
+				isError: false,
+				fetchNextPage: vi.fn(),
+				isLoading: false,
+			}
+		},
 		useQueryClient: () => ({
 			invalidateQueries: vi.fn(),
 			getQueriesData: vi.fn(() => []),
@@ -96,7 +105,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 })
 
 const bulkUpdateCapture = vi.hoisted(() => ({ mutate: vi.fn() }))
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: bulkUpdateCapture.mutate }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
@@ -300,10 +310,18 @@ describe('objects route — bulk select all / ask an agent', () => {
 		expect(typeof bulkBarCapture.lastProps?.onAskAgent).toBe('function')
 	})
 
-	it('never reaches past the Attention filter into rows the list is hiding', async () => {
+	it('narrows the list on the server, so Select all covers exactly the rows it returned', async () => {
 		searchState.current = { ...searchState.current, filterBy: 'attention', attention: 'working' }
+		// What the server answers when asked for working rows only.
+		rows.current = [WORKING]
 		render(<ObjectsPage />)
 		await waitFor(() => expect(bulkBarCapture.lastProps).not.toBeNull())
+
+		await listQueryCapture.last?.queryFn({ pageParam: 0 })
+		expect(api.objects.list).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ working: 'true' }),
+		)
 
 		// Only `WORKING` is rendered under `attention=working`.
 		expect(bulkBarCapture.lastProps?.totalCount).toBe(1)

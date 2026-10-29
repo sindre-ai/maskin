@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 
 /**
  * Check if an actor is a member of a workspace.
@@ -78,6 +78,34 @@ export function assertWorkspaceWriterRole(role: string | undefined): void {
 }
 
 /**
+ * Write check for actor routes whose X-Workspace-Id header is optional. With the
+ * header, the role authMiddleware put on the context decides. Without it, a
+ * viewer could skip the gate by leaving the header off, so look at every
+ * workspace the caller shares with the target (all of the caller's own when the
+ * target is the caller): refuse when the caller is a viewer in each of them.
+ * No shared workspace falls through, so the route keeps its own 404 or 403.
+ */
+export async function assertActorWriterAccess(
+	db: Database,
+	callerId: string,
+	targetId: string,
+	workspaceId: string | undefined,
+	contextRole: string | undefined,
+): Promise<void> {
+	if (workspaceId) return assertWorkspaceWriterRole(contextRole)
+	const roles = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, callerId),
+				sql`workspace_members.workspace_id in (select workspace_id from workspace_members where actor_id = ${targetId})`,
+			),
+		)
+	if (roles.length > 0 && roles.every((r) => r.role === 'viewer')) throw new ViewerReadOnlyError()
+}
+
+/**
  * Whether `callerId` may reach `targetId` through a workspace they both belong
  * to: the caller itself, or two members of one workspace. When `workspaceId`
  * is given (the X-Workspace-Id header) the shared workspace must be that one.
@@ -124,13 +152,23 @@ export async function actorsShareWorkspace(
  * given, the role must be held in that workspace and the target must be a
  * member of it; otherwise any shared workspace counts. Gates writes to another
  * actor's tools and llm_config, which decide what runs in its sessions.
+ * With `humanOnly`, an agent caller never passes, whatever its role.
  */
 export async function isAdminOfSharedWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
 	workspaceId?: string,
+	{ humanOnly = false }: { humanOnly?: boolean } = {},
 ): Promise<boolean> {
+	if (humanOnly) {
+		const [caller] = await db
+			.select({ type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, callerId))
+			.limit(1)
+		if (caller?.type !== 'human') return false
+	}
 	const callerAdminWorkspaces = await db
 		.select({ workspaceId: workspaceMembers.workspaceId })
 		.from(workspaceMembers)

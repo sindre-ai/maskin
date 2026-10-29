@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, integrations, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
@@ -29,12 +28,21 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import type { IntegrationConfig } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { resolvePublicOrigin } from './integrations'
 
 // "Connect with Maskin" from the Skjald app, see lib/integrations/providers/skjald/connect.ts. Mounted before the
 // generic /api/integrations routes, like the other providers that have their own.
 
-type Env = { Variables: { db: Database; actorId: string; actorType: string } }
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
+		actorType: string
+	}
+}
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -47,6 +55,7 @@ const allowExchange = createRateLimiter(30, 60_000)
 const authorizeRoute = createRoute({
 	method: 'post',
 	path: '/authorize',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Approve the Skjald app for this workspace and mint a one-time connect code',
 	request: {
@@ -67,6 +76,7 @@ app.openapi(authorizeRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
 	if (!isAllowedSkjaldRedirectUri(body.redirect_uri)) {
@@ -257,10 +267,7 @@ async function ensureSkjaldSystemActor(
 		.where(and(eq(actors.type, 'system'), eq(actors.name, name)))
 		.limit(1)
 	if (!systemActor) {
-		;[systemActor] = await db
-			.insert(actors)
-			.values({ type: 'system', name, apiKey: generateApiKey().key, createdBy })
-			.returning()
+		;[systemActor] = await db.insert(actors).values({ type: 'system', name, createdBy }).returning()
 	}
 	if (!systemActor) throw new Error('Failed to create system actor for integration')
 

@@ -1,6 +1,14 @@
 import type { SpawnedSession } from '@/lib/api'
 import { formatDurationMs } from '@/lib/format-duration'
-import { failureText, formatDepNames, resolveDepNames, statusToPill } from '@/lib/handed-off-strip'
+import {
+	failureText,
+	formatDepNames,
+	groupHandoffsByNextMessage,
+	handoffTitle,
+	resolveDepNames,
+	statusToPill,
+	statusToThreadGroup,
+} from '@/lib/handed-off-strip'
 import { describe, expect, it } from 'vitest'
 
 function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
@@ -16,6 +24,8 @@ function session(overrides: Partial<SpawnedSession> = {}): SpawnedSession {
 		result: null,
 		currentActivity: null,
 		depends_on_session_ids: [],
+		awaiting: null,
+		createdAt: '2026-09-23T08:00:00.000Z',
 		...overrides,
 	}
 }
@@ -120,5 +130,79 @@ describe('formatDurationMs (contract sanity)', () => {
 
 	it('renders minutes with seconds', () => {
 		expect(formatDurationMs(13 * 60_000)).toBe('13m 0s')
+	})
+})
+
+describe('statusToThreadGroup', () => {
+	it('groups queued and running sessions as working', () => {
+		expect(statusToThreadGroup('pending')).toBe('working')
+		expect(statusToThreadGroup('running')).toBe('working')
+	})
+
+	it('groups failed and timed-out sessions as failed, completed as done', () => {
+		expect(statusToThreadGroup('failed')).toBe('failed')
+		expect(statusToThreadGroup('timeout')).toBe('failed')
+		expect(statusToThreadGroup('completed')).toBe('done')
+	})
+
+	it('returns null for statuses the strip does not render', () => {
+		expect(statusToThreadGroup('paused')).toBeNull()
+	})
+})
+
+describe('statusToThreadGroup awaiting', () => {
+	it('puts a live session that asked a question in the waiting group', () => {
+		expect(statusToThreadGroup('running', true)).toBe('waiting')
+		expect(statusToThreadGroup('pending', true)).toBe('waiting')
+	})
+
+	it('ignores awaiting once the session has ended', () => {
+		expect(statusToThreadGroup('completed', true)).toBe('done')
+		expect(statusToThreadGroup('failed', true)).toBe('failed')
+	})
+})
+
+describe('groupHandoffsByNextMessage', () => {
+	const messages = [
+		{ id: 1, createdAt: '2026-09-23T10:01:00.000Z' },
+		{ id: 3, createdAt: '2026-09-23T10:03:00.000Z' },
+		{ id: 4, createdAt: '2026-09-23T10:04:00.000Z' },
+	]
+
+	it('puts a card before the first message written after its session was created', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:02:00.000Z' }],
+			messages,
+		)
+		expect([...grouped.keys()]).toEqual([3])
+	})
+
+	it('puts a card at the end when nothing was written after it', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:05:00.000Z' }],
+			messages,
+		)
+		expect([...grouped.keys()]).toEqual(['end'])
+	})
+
+	it('stacks handoffs created between the same two messages', () => {
+		const grouped = groupHandoffsByNextMessage(
+			[{ createdAt: '2026-09-23T10:02:00.000Z' }, { createdAt: '2026-09-23T10:02:30.000Z' }],
+			messages,
+		)
+		expect(grouped.get(3)).toHaveLength(2)
+	})
+})
+
+describe('handoffTitle', () => {
+	it('uses the first non-empty line of the prompt', () => {
+		expect(handoffTitle('\n  Draft pitch for emagine\nmore detail', 'Writer')).toBe(
+			'Draft pitch for emagine',
+		)
+	})
+
+	it('truncates long first lines and falls back to the agent name', () => {
+		expect(handoffTitle('x'.repeat(100), 'Writer')).toHaveLength(80)
+		expect(handoffTitle('   ', 'Writer')).toBe('Writer')
 	})
 })
