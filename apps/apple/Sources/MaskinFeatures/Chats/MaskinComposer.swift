@@ -95,6 +95,8 @@ struct MaskinComposer: View {
 
 	@FocusState private var focused: Bool
 	@State private var trayOpen = false
+	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
+	@State private var barTop: CGFloat = .infinity
 	@State private var dropTargeted = false
 	@State private var showPhotos = false
 	@State private var showFiles = false
@@ -181,6 +183,7 @@ struct MaskinComposer: View {
 		// Spec 7 §1: bar padding 6, gap 8.
 		.padding(MaskinSpace.s3)
 		.background { surface }
+		.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { barTop = $0 }
 		.overlay {
 			if isDropTargeted {
 				shape.strokeBorder(
@@ -336,10 +339,16 @@ struct MaskinComposer: View {
 		return actions
 	}
 
+	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
+	/// rows, so a short window scrolls the list instead of shrinking it to nothing.
+	private var attachMenuMaxHeight: CGFloat {
+		max(ComposerAttachMenu.contentHeight(rows: 3), barTop - 120)
+	}
+
 	@ViewBuilder
 	private var attachMenu: some View {
 		if isTrayOpen, !isDictating {
-			ComposerAttachMenu(actions: attachActions, onPick: pick)
+			ComposerAttachMenu(actions: attachActions, maxHeight: attachMenuMaxHeight, onPick: pick)
 				.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 		}
