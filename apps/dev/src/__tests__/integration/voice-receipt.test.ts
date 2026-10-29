@@ -255,7 +255,9 @@ describe('call receipt against real Postgres', () => {
 
 		const [summary] = await chatOf(seeded.session.id)
 		expect(summary?.content).toContain('Nothing was changed.')
-		expect(summary?.content).toContain('No card was handled; the top card was "Pricing page review".')
+		expect(summary?.content).toContain(
+			'No card was handled; the top card was "Pricing page review".',
+		)
 	})
 
 	it('a call that holds a send and then drops says the send was not done', async () => {
