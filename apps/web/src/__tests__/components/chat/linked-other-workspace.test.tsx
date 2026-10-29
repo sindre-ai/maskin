@@ -111,10 +111,10 @@ describe('renderLinkedCard and renderLinkedChip', () => {
 
 	it('draw the placeholder for each kind and fetch nothing for it', () => {
 		for (const kind of ['object', 'loop', 'trigger'] as const) {
-			const { unmount } = render(<>{renderLinkedCard(other(kind), null, { workspaceId: HERE })}</>)
+			const { unmount } = render(renderLinkedCard(other(kind), null, { workspaceId: HERE }))
 			expect(screen.getByRole('link')).toHaveAttribute('data-linked-card')
 			unmount()
-			const chip = render(<>{renderLinkedChip(other(kind), null, { workspaceId: HERE })}</>)
+			const chip = render(renderLinkedChip(other(kind), null, { workspaceId: HERE }))
 			expect(screen.getByRole('link').className).toContain('border-dashed')
 			chip.unmount()
 		}
@@ -125,22 +125,20 @@ describe('renderLinkedCard and renderLinkedChip', () => {
 
 	it('draw nothing under a sentence, and keep the chip in a list', () => {
 		const { container } = render(
-			<>{renderLinkedCard(other('object'), null, { workspaceId: HERE, after: true })}</>,
+			renderLinkedCard(other('object'), null, { workspaceId: HERE, after: true }),
 		)
 		expect(container).toBeEmptyDOMElement()
 		render(
-			<>
-				{renderLinkedCard(other('loop'), <span>the chip</span>, {
-					workspaceId: HERE,
-					inList: true,
-				})}
-			</>,
+			renderLinkedCard(other('loop'), <span>the chip</span>, {
+				workspaceId: HERE,
+				inList: true,
+			}),
 		)
 		expect(screen.getByText('the chip')).toBeInTheDocument()
 	})
 
 	it('no longer read "Deleted object" for a link into another workspace', () => {
-		render(<>{renderLinkedChip(other('object'), null, { workspaceId: HERE })}</>)
+		render(renderLinkedChip(other('object'), null, { workspaceId: HERE }))
 		expect(screen.queryByText(/Deleted/)).not.toBeInTheDocument()
 	})
 })
