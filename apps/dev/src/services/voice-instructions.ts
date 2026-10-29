@@ -119,6 +119,13 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 - If the caller says something is generic, wrong or not worth doing, move on or fix it. Look in the records you can read for the specifics before asking them to supply it.
 - Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
 
+/**
+ * Sent as a system message when the call connects, so the agent speaks first. A system item
+ * rather than per-response instructions, which would replace the whole briefing for that turn.
+ */
+export const VOICE_GREETING_INSTRUCTION =
+	'The call has just connected. Greet the person by first name in one short sentence, in their language, and stop. Do not call any tool, and do not start on any topic until they answer.'
+
 /** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
 export const VOICE_LANGUAGE_RULE =
 	'Reply in the language the person is speaking, and follow them if they switch. People on this call speak Danish and English and often mix them. When you speak Danish, use natural spoken Danish, not a word-for-word translation of English, and pronounce Danish words and names as Danish. When you read out text that is written in Danish, read it as Danish.'
