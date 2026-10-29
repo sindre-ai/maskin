@@ -72,6 +72,35 @@ describe('A helper that hits the Claude limit is stored with a retry time (Integ
 		expect(failure?.provider).toBe('anthropic')
 	})
 
+	it.each([
+		['oauth_expired', 'Failed to authenticate: OAuth session expired and could not be refreshed'],
+		['invalid_api_key', 'Invalid API key · Fix external API key'],
+	])('stores %s as an auth failure with no retry time', async (code, text) => {
+		const session = await helper()
+		if (!session) throw new Error('no session')
+
+		const row = await finish(session.id, { isError: true, text })
+
+		expect(row?.status).toBe('failed')
+		expect(row?.retryAt).toBeNull()
+		const failure = (row?.result as { failure_reason?: Record<string, unknown> } | null)
+			?.failure_reason
+		expect(failure?.reason_code).toBe(code)
+		expect(failure?.provider).toBe('anthropic')
+		expect(failure?.reset_at).toBeNull()
+	})
+
+	it('does not name an auth failure when the helper returned a result', async () => {
+		const session = await helper()
+		if (!session) throw new Error('no session')
+
+		const row = await finish(session.id, { isError: false, text: 'Invalid API key' })
+
+		expect(row?.status).toBe('completed')
+		const result = row?.result as { failure_reason?: unknown } | null
+		expect(result?.failure_reason).toBeUndefined()
+	})
+
 	it('leaves any other helper failure without a failure reason or retry time', async () => {
 		const session = await helper()
 		if (!session) throw new Error('no session')

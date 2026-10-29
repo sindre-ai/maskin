@@ -133,12 +133,6 @@ public final class ForYouStore {
 	public let decisions: DecisionService
 	/// Editing and approving drafts from the feed; nil where the runtime did not build one.
 	public var reviews: DraftReviewStore?
-	/// The v8 screen (date line and summary, grouped approvals, editable drafts, Drafts to review)
-	/// is on for this person. Off is the screen as it was. This is the one place the flag is read:
-	/// the accessors below fall back to the old behaviour, and the header checks it once.
-	public var v8Enabled = false
-	/// Reads the flag; set by the runtime. Nil leaves it off.
-	@ObservationIgnored public var flagReader: (@Sendable () async -> Bool)?
 	/// Cards approved from a group this sitting. They stay in it as "Approved" rows.
 	public private(set) var groupApprovedIds: Set<String> = []
 	/// Cards the reader deferred with Later (device-local).
@@ -280,12 +274,6 @@ public final class ForYouStore {
 	/// Initial load (or workspace change). Shows the loading state only when there is nothing yet.
 	public func load() async {
 		guard let ws = workspaceId() else { return }
-		if let flagReader {
-			Task { [weak self] in
-				let on = await flagReader()
-				self?.v8Enabled = on
-			}
-		}
 		if loadedWorkspace != ws {
 			cards = []
 			shownIds = []
@@ -614,7 +602,6 @@ public final class ForYouStore {
 
 	/// The "Needs you" list with related approvals folded into groups.
 	public var needsItems: [FeedItem] {
-		guard v8Enabled else { return entries.filter { $0.bucket == .needs }.map(FeedItem.card) }
 		// A finished group is a receipt with Undo. Once no card in it can be taken back it has nothing
 		// left to offer, and the same cards are in Handled today.
 		return ApprovalGrouping.items(
@@ -668,7 +655,7 @@ public final class ForYouStore {
 	/// Drafts waiting for the reader on open cards, ready to edit and approve. One that has been
 	/// approved is a receipt (`reviews.receiptDrafts`), not a draft.
 	public var reviewDrafts: [ReviewDraft] {
-		guard v8Enabled, let reviews else { return [] }
+		guard let reviews else { return [] }
 		var seen: Set<String> = []
 		var drafts: [ReviewDraft] = []
 		for entry in entries where entry.bucket == .needs && entry.record == nil {
@@ -683,7 +670,7 @@ public final class ForYouStore {
 
 	/// Whether this draft is shown in the strip, so its card does not show it a second time.
 	public func isInStrip(_ draft: DecisionDraft) -> Bool {
-		v8Enabled && reviews != nil && ReviewDraft.isReviewable(draft)
+		reviews != nil && ReviewDraft.isReviewable(draft)
 	}
 
 	public static let unsentEditNote = "Approve your edited message under Drafts to review"
@@ -692,7 +679,7 @@ public final class ForYouStore {
 	/// Why this card's own Send option is off: a message on the card has an edit that has not gone
 	/// out, and the option would send the saved text instead. Nil when nothing is in the way.
 	public func unsentEditNote(for card: ForYouCard) -> String? {
-		guard v8Enabled, let reviews else { return nil }
+		guard let reviews else { return nil }
 		var note: String?
 		for draft in ReviewDraft.drafts(in: card, agentName: nil) where reviews.isEdited(draft) {
 			switch reviews.phase(of: draft) {

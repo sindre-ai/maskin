@@ -94,11 +94,6 @@ public final class ForYouRuntime {
 			})
 		reviews.didSend = { [weak store] draft in store?.draftSent(draft) }
 		store.reviews = reviews
-		let flag = APIForYouV8Flag(
-			client: environment.client, credentials: environment.auth.credentialsProvider, actorId: actorId)
-		// The first draw uses the last answer this device got, so the screen does not swap after it.
-		store.v8Enabled = APIForYouV8Flag.remembered(actorId: actorId)
-		store.flagReader = { await flag.isEnabled() }
 		if start { store.widgetReloader = makeWidgetReloader() }
 		if start {
 			outbox.start(events: environment.events)

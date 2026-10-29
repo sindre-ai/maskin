@@ -138,12 +138,75 @@ describe('notifyChatReply', () => {
 		expect(calls.inserts).toHaveLength(0)
 	})
 
-	it('creates nothing when the author is not an agent', async () => {
-		const { db, calls } = ctx([[{ name: 'Bob', type: 'human' }], [{ actorId: human1 }], []])
+	it('creates nothing for a person writing in a group chat', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+				{ actorId: agent, type: 'agent', archived: false },
+			],
+		])
 
-		await notifyChatReply(db as Database, reply())
+		await notifyChatReply(db as Database, reply({ authorId: human1, metadata: null }))
 
 		expect(calls.inserts).toHaveLength(0)
+	})
+
+	it('pushes the other person when a person writes in a direct chat between two people', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+			],
+			[],
+		])
+
+		await notifyChatReply(
+			db as Database,
+			reply({ authorId: human1, content: 'Hey, got a minute?', metadata: null }),
+		)
+
+		const rows = notificationRows(calls.inserts)
+		expect(rows.map((r) => r.targetActorId)).toEqual([human2])
+		expect(rows[0]).toMatchObject({
+			title: 'Bob',
+			content: 'Hey, got a minute?',
+			sourceActorId: human1,
+			type: 'good_news',
+			status: 'seen',
+			metadata: {
+				push_category: 'conversation',
+				push_collapse_key: `chat:${conv}`,
+				push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+				push_only: true,
+				conversation_id: conv,
+				message_id: 42,
+			},
+		})
+	})
+
+	it('creates nothing in a chat with an agent, or when the other person archived the chat', async () => {
+		const withAgent = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: agent, type: 'agent', archived: false },
+			],
+		])
+		await notifyChatReply(withAgent.db as Database, reply({ authorId: human1, metadata: null }))
+		expect(withAgent.calls.inserts).toHaveLength(0)
+
+		const archived = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: true },
+			],
+		])
+		await notifyChatReply(archived.db as Database, reply({ authorId: human1, metadata: null }))
+		expect(archived.calls.inserts).toHaveLength(0)
 	})
 
 	it('creates nothing when no human is left to notify', async () => {

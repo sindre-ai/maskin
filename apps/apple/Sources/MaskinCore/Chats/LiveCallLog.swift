@@ -107,11 +107,28 @@ public struct LiveCallLog {
 	private let defaults: UserDefaults
 	private let key = "live.calls.v1"
 
+	/// The last decoded list with the bytes it came from. The thread asks for its calls on every render,
+	/// so decoding up to `limit` records each time stalled the main thread in a long chat.
+	private final class Decoded {
+		var data: Data?
+		var records: [LiveCallRecord] = []
+		var decodes = 0
+	}
+	private let decoded = Decoded()
+
+	/// How many times the stored list was actually decoded (tests pin that a re-read does not).
+	var decodeCount: Int { decoded.decodes }
+
 	public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
 	public func all() -> [LiveCallRecord] {
 		guard let data = defaults.data(forKey: key) else { return [] }
-		return (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		if decoded.data == data { return decoded.records }
+		let records = (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		decoded.data = data
+		decoded.records = records
+		decoded.decodes += 1
+		return records
 	}
 
 	public func records(for conversationID: String) -> [LiveCallRecord] {
@@ -122,7 +139,12 @@ public struct LiveCallLog {
 		var list = all()
 		if let index = list.firstIndex(where: { $0.id == record.id }) { list[index] = record } else { list.append(record) }
 		if list.count > Self.limit { list.removeFirst(list.count - Self.limit) }
-		if let data = try? JSONEncoder().encode(list) { defaults.set(data, forKey: key) }
+		if let data = try? JSONEncoder().encode(list) {
+			defaults.set(data, forKey: key)
+			// What was just written is what the next read gets: no decode for it.
+			decoded.data = data
+			decoded.records = list
+		}
 	}
 
 	public func update(_ id: String, _ change: (inout LiveCallRecord) -> Void) {

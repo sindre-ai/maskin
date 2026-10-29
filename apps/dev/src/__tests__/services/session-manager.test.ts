@@ -119,6 +119,8 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
+	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
 	// so the assertions below keep reading the tail + option the classifier got.
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.

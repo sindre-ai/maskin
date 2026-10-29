@@ -311,6 +311,13 @@ describe('buildAccessPreamble', () => {
 		)
 	})
 
+	it('tells a Gmail writer to say drafted for a draft and sent only with a message id', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')])
+		expect(text).toContain('report "drafted" for a draft')
+		expect(text).toContain('gmail_send_email returns a message id')
+		expect(buildAccessPreamble([row('gmail', 'read')])).not.toContain('drafted')
+	})
+
 	it('folds several accounts of one provider into one line when they differ', () => {
 		const text = buildAccessPreamble([row('github', 'read_write'), row('github', 'read')])
 		expect(text.match(/- github:/gi)).toHaveLength(1)
