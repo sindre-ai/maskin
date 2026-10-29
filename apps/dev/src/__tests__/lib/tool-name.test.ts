@@ -1,5 +1,5 @@
-import { formatToolName } from '../../lib/tool-name'
 import { describe, expect, it } from 'vitest'
+import { formatToolName } from '../../lib/tool-name'
 
 describe('formatToolName', () => {
 	it('drops the mcp prefix and server segment', () => {
