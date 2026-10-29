@@ -332,7 +332,18 @@ const CLI_AUTH_FAILURES: ReadonlyArray<{
 export function classifyClaudeAuthFailure(tail: string): SessionResultFailureReason | null {
 	const result = findFinalResult(tail)
 	if (result?.isError !== true) return null
-	const text = result.text.trimStart()
+	return classifyClaudeAuthFailureText(result.text)
+}
+
+/**
+ * Same rule on a final error text that is already isolated, which is what the
+ * helper close-out has (it never sees a stdout tail). The caller must only pass
+ * the text of an error result.
+ */
+export function classifyClaudeAuthFailureText(
+	errorText: string,
+): SessionResultFailureReason | null {
+	const text = errorText.trimStart()
 	const failure = CLI_AUTH_FAILURES.find((f) => text.startsWith(f.prefix))
 	if (!failure) return null
 	return {
