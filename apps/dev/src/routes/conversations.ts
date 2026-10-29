@@ -50,6 +50,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { findOrCreateDirectChat } from '../services/direct-chat'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -292,6 +293,15 @@ async function joinSubjectConversation(
 		entityId: conversation.id,
 		data: { added_actor_ids: participantIds },
 	})
+	return conversationDetailForCaller(db, conversation, callerId)
+}
+
+// The conversation as the caller sees it: their own pin, archive and read state.
+async function conversationDetailForCaller(
+	db: Database,
+	conversation: typeof conversations.$inferSelect,
+	callerId: string,
+) {
 	const [mine] = await db
 		.select()
 		.from(conversationParticipants)
@@ -312,6 +322,25 @@ async function joinSubjectConversation(
 	} as z.infer<typeof conversationDetailResponseSchema>
 }
 
+// A request is a 1-1 when a person asks for exactly one agent and nobody else,
+// with no subject. Returns that agent's id, or null for any other shape (group
+// chats, a person asking for another person, subject chats).
+async function soleAgentOfDirectRequest(
+	db: Database,
+	args: { callerType: string; participantIds: string[]; callerId: string; hasSubject: boolean },
+) {
+	if (args.callerType !== 'human' || args.hasSubject || args.participantIds.length !== 2)
+		return null
+	const otherId = args.participantIds.find((id) => id !== args.callerId)
+	if (!otherId) return null
+	const [other] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, otherId))
+		.limit(1)
+	return other?.type === 'agent' ? otherId : null
+}
+
 // POST / - Create conversation
 const createConversationRoute = createRoute({
 	method: 'post',
@@ -326,7 +355,8 @@ const createConversationRoute = createRoute({
 	responses: {
 		200: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
-			description: 'The existing chat for this subject; new participants were added to it',
+			description:
+				'The existing chat: the chat for this subject (new participants were added to it), or the 1-1 with this agent',
 		},
 		201: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
@@ -377,6 +407,13 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
+	const directAgentId = await soleAgentOfDirectRequest(db, {
+		callerType: c.get('actorType'),
+		participantIds,
+		callerId,
+		hasSubject: Boolean(body.subject),
+	})
+
 	if (body.subject) {
 		const { type, id } = body.subject
 		const [target] =
@@ -417,7 +454,7 @@ app.openapi(createConversationRoute, (async (c) => {
 		if (!existing) throw err
 		return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
 	}
-	const { conversation, initialMessage } = txResult
+	const { conversation, initialMessage, reused } = txResult
 	if (body.subject?.type === 'object') {
 		await importObjectComments(db, {
 			conversationId: conversation.id,
@@ -429,25 +466,48 @@ app.openapi(createConversationRoute, (async (c) => {
 
 	async function createInTransaction() {
 		return db.transaction(async (tx) => {
-			const [created] = await tx
-				.insert(conversations)
-				.values({
+			let reused = false
+			let created: typeof conversations.$inferSelect | undefined
+			if (directAgentId) {
+				// The 1-1 with this agent: reuse it, or create it under the pair's lock.
+				// The lock is held to the end of this transaction, so the first message
+				// below lands before a concurrent caller looks for the chat.
+				const direct = await findOrCreateDirectChat(tx, {
 					workspaceId,
+					humanId: callerId,
+					agentId: directAgentId,
 					title: body.title,
 					createdBy: callerId,
-					subjectType: body.subject?.type ?? null,
-					subjectId: body.subject?.id ?? null,
 				})
-				.returning()
+				reused = !direct.created
+				;[created] = await tx
+					.select()
+					.from(conversations)
+					.where(eq(conversations.id, direct.id))
+					.limit(1)
+			} else {
+				;[created] = await tx
+					.insert(conversations)
+					.values({
+						workspaceId,
+						title: body.title,
+						createdBy: callerId,
+						subjectType: body.subject?.type ?? null,
+						subjectId: body.subject?.id ?? null,
+					})
+					.returning()
+			}
 			if (!created) throw new Error('Failed to create conversation')
 
-			await tx.insert(conversationParticipants).values(
-				participantIds.map((actorId) => ({
-					conversationId: created.id,
-					actorId,
-					addedBy: callerId,
-				})),
-			)
+			if (!directAgentId) {
+				await tx.insert(conversationParticipants).values(
+					participantIds.map((actorId) => ({
+						conversationId: created.id,
+						actorId,
+						addedBy: callerId,
+					})),
+				)
+			}
 
 			let initialMessage: typeof messages.$inferSelect | undefined
 			if (body.initial_message) {
@@ -467,19 +527,22 @@ app.openapi(createConversationRoute, (async (c) => {
 					.where(eq(conversations.id, created.id))
 			}
 
-			await recordEvent(tx, {
-				workspaceId,
-				actorId: callerId,
-				action: 'conversation_created',
-				entityType: 'conversation',
-				entityId: created.id,
-				data: {
-					participant_actor_ids: participantIds,
-					...(body.subject ? { subject: body.subject } : {}),
-				},
-			})
+			// findOrCreateDirectChat records the event itself when it creates the chat.
+			if (!directAgentId) {
+				await recordEvent(tx, {
+					workspaceId,
+					actorId: callerId,
+					action: 'conversation_created',
+					entityType: 'conversation',
+					entityId: created.id,
+					data: {
+						participant_actor_ids: participantIds,
+						...(body.subject ? { subject: body.subject } : {}),
+					},
+				})
+			}
 
-			return { conversation: created, initialMessage }
+			return { conversation: created, initialMessage, reused }
 		})
 	}
 
@@ -515,6 +578,8 @@ app.openapi(createConversationRoute, (async (c) => {
 				}),
 		)
 	}
+
+	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
 	return c.json(

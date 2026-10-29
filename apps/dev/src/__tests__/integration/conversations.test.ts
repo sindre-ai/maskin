@@ -689,7 +689,15 @@ describe('Conversations Integration', () => {
 
 			const withHumanOld = await createChat(ownerId, 'human', [agent.id], 'older person chat')
 			const agentsOnly = await createChat(agent.id, 'agent', [otherAgent.id], 'agents only')
-			const withHumanNew = await createChat(ownerId, 'human', [agent.id], 'newer person chat')
+			// A different person: the same person and agent share one 1-1 chat.
+			const secondPerson = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, secondPerson.id)
+			const withHumanNew = await createChat(
+				secondPerson.id,
+				'human',
+				[agent.id],
+				'newer person chat',
+			)
 			// Make the order explicit rather than relying on insert timing.
 			const at = (iso: string) => new Date(iso)
 			await db
