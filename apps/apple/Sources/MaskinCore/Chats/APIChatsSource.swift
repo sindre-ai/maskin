@@ -496,9 +496,11 @@ extension APIChatsSource: ChatFileUploading {
 			return ChatAttachmentRef(
 				fileID: row.id, name: row.name, mimeType: row.mimeType, sizeBytes: Int(row.sizeBytes))
 		case .badRequest:
-			throw ChatsError("That file can't be attached.")
-		default:
-			throw ChatsError("Couldn't upload the file.")
+			throw ChatsError("The server didn't accept that file.")
+		case .internalServerError:
+			throw ChatsError("The upload failed on the server. Try again.")
+		case .undocumented(let status, _):
+			throw ChatsError("The upload failed (error \(status)).")
 		}
 	}
 }

@@ -408,7 +408,7 @@ struct MaskinComposer: View {
 		for drop in drops {
 			switch drop {
 			case .image(let data):
-				let name = "Pasted image.jpg"
+				let name = PastedImage.baseName()
 				model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
 			case .file(let url):
 				model.attach(
@@ -420,7 +420,10 @@ struct MaskinComposer: View {
 
 	#if os(iOS)
 	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
 		addFiles([.image(data)])
 	}
 
