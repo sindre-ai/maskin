@@ -63,16 +63,6 @@ export const FLAGS = {
 	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
 	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
-	/**
-	 * Gates the v8 changes to the native For you screen: the date line and one-sentence
-	 * summary, related approvals grouped under one Approve all, editable drafts and the
-	 * Drafts to review strip. Read by the iPhone app on each load of the feed from
-	 * GET /api/feature-flags, for the signed-in actor. Off means the screen is exactly as
-	 * it shipped before. Presentation only: the routes the screen calls are unchanged
-	 * (edits go through the existing object update and draft approval). Retire once the
-	 * v8 For you screen is on for everyone.
-	 */
-	APPLE_FORYOU_V8: 'apple-foryou-v8',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
