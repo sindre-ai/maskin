@@ -25,6 +25,8 @@ create_objects({
 
 Then mention the person with `create_comment`. No `decision` is needed; the object shows its own preview. `get_workspace_schema` does not list kinds yet; this table is the list, and the send tool's description names the shape.
 
+Agents learn this from the `draft-approval-tasks` skill, which every default agent carries (`DRAFT_APPROVAL_TASKS_SKILL` in `packages/shared/src/templates/default-workspace-agents.ts`; new workspaces get it when they are created). The `decision` field of `create_comment` repeats the one-line rule for agents without it.
+
 ## Kinds
 
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |

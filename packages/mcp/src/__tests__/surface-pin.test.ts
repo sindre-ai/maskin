@@ -182,6 +182,7 @@ describe('MCP surface pin', () => {
 			workspaceCoach: [shared.WORKSPACE_COACH_SYSTEM_PROMPT, shared.WORKSPACE_COACH_DEFAULT],
 			skills: [
 				shared.FOR_YOU_FORMAT_SKILL,
+				shared.DRAFT_APPROVAL_TASKS_SKILL,
 				shared.SHAPED_BET_FORMAT_SKILL,
 				shared.MASKIN_WAY_OF_WORKING_SKILL,
 				shared.CONTINUOUS_ONBOARDING_SKILL,
