@@ -641,7 +641,8 @@ export async function runSearch(
 		results = [...byGroup.flatMap(({ result }) => result.rows), ...typoRows].slice(0, query.limit)
 	} else {
 		// The top N of a union is inside the union of each source's top N.
-		const sorted = (rows: SearchResultRow[]) => rows.sort(compareRows(query.sort))
+		const sort = query.sort
+		const sorted = (rows: SearchResultRow[]) => rows.sort(compareRows(sort))
 		results = [
 			...sorted(ok.flatMap(({ result }) => result.rows)),
 			...sorted(ok.flatMap(({ result }) => result.typoRows.map(({ row }) => row))),
