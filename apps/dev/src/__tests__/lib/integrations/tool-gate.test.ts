@@ -35,6 +35,25 @@ describe('classifyTool', () => {
 		expect(classifyTool('google-meet', 'google_meet__create_space')).toBe('write')
 	})
 
+	it('classifies the five Drive reads as reads and everything else on Drive as a write', () => {
+		for (const tool of [
+			'search_files',
+			'list_folder',
+			'get_file_bytes',
+			'get_document_structured',
+			'get_sheet_range',
+		]) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('read')
+		}
+		for (const tool of ['write_file', 'comment_on_document', 'watch_folder', 'brand_new_tool']) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('write')
+		}
+		// No annotation can talk a Drive tool into being a read.
+		expect(classifyTool('google-drive', 'google_drive__write_file', { readOnlyHint: true })).toBe(
+			'write',
+		)
+	})
+
 	it('matches a LinkedIn verb behind its per-identity prefix', () => {
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__get_profile')).toBe('read')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__publish_post')).toBe('write')

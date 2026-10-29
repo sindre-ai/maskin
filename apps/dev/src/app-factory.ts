@@ -56,6 +56,9 @@ import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
+import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
+import integrationsGoogleDriveRoutes from './routes/integrations-google-drive'
+import integrationsGoogleDriveMcpRoutes from './routes/integrations-google-drive-mcp'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
@@ -473,6 +476,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Telnyx webhook: more specific than the generic /api/integrations catch-all, so mounted first.
 	app.route('/api/integrations/telnyx/webhook', integrationsTelnyxWebhookRoutes)
 	app.route('/api/integrations/telnyx/tools', integrationsTelnyxToolsRoutes)
+	// google-drive MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/google-drive/mcp', integrationsGoogleDriveMcpRoutes)
+	app.route('/api/integrations/google', integrationsGoogleDisconnectRoutes)
+	// folder watches list + stop for the Drive detail page; its own prefix, so the
+	// generic /api/integrations/{provider}/... routes never see these paths.
+	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
