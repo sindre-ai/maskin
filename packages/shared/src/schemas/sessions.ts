@@ -484,6 +484,9 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - startup_stalled       Launch never completed: the session sat in
  *                         `starting` past the zombie window with no container
  *                         and no sandbox, and was force-failed.
+ * - container_lost       The session's container was gone (exited, reaped or
+ *                         orphaned by a backend restart) while the row was
+ *                         still active; the row is closed out.
  * - plan_cap_exceeded     The session was deliberately stopped mid-run by
  *                         SessionManager's budget watchdog because workspace
  *                         usage crossed the plan cap with no usage credits
@@ -505,6 +508,7 @@ export const failureReasonCodeSchema = z.enum([
 	'invalid_api_key',
 	'insufficient_credits',
 	'agent_server_lost',
+	'container_lost',
 	'plan_cap_exceeded',
 	// The session could not be handed to any agent-server before the dispatch
 	// queue ran out of attempts. Recoverable by starting a new session.
