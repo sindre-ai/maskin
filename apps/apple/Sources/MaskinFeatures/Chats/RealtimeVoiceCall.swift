@@ -32,9 +32,9 @@ protocol RealtimeTransport: AnyObject {
 /// server holds the vendor key and the tools, this app only sends microphone audio and plays the
 /// agent's. The same flow as the web app's `use-voice-call.ts`.
 ///
-/// When the server says voice calls aren't available to this person (the `voice-mode-v1` flag is
-/// off) or WebRTC isn't built in, it calls `onFallBack` once and does nothing else, so the caller can
-/// use the dictation call instead.
+/// When the server says it can't take this call (the agent isn't in the workspace) or WebRTC isn't
+/// built in, it calls `onFallBack` once and does nothing else, so the caller can use the dictation
+/// call instead.
 @MainActor
 @Observable
 final class RealtimeVoiceCall: LiveVoiceDriving {

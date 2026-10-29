@@ -9,8 +9,8 @@ import Speech
 /// Live dictation into the composer. Prefers on-device recognition (no audio leaves the phone);
 /// when the device or language can't, the system's recogniser is used instead.
 ///
-/// With `start(backend: true)` and the `ios-backend-dictation` flag on, speech is sent to the Maskin
-/// server instead (`BackendDictationRun`), and the recogniser above takes over if that fails.
+/// With `start(backend: true)`, speech is sent to the Maskin server instead (`BackendDictationRun`),
+/// and the recogniser above takes over if that fails.
 ///
 /// Needs `NSSpeechRecognitionUsageDescription` and `NSMicrophoneUsageDescription` in Info.plist.
 @MainActor
@@ -58,8 +58,8 @@ final class Dictation {
 	/// transcript then accumulates across restarts. Without it (a live conversation, which treats
 	/// the end of an utterance as a turn) the session ends when the recogniser does.
 	///
-	/// `backend` lets the session dictate through the server when the feature flag is on for this
-	/// person; it is for the composer's mic, never for a live conversation.
+	/// `backend` dictates through the server, with the phone's recogniser as the fallback; it is for
+	/// the composer's mic, never for a live conversation.
 	func start(
 		continuous: Bool = false, backend: Bool = false, onText: @escaping @MainActor (String) -> Void
 	) async {
@@ -89,10 +89,10 @@ final class Dictation {
 		}
 	}
 
-	/// Starts dictating through the server when it is switched on for this person. False means use
-	/// the phone's recogniser: the flag is off, we're offline, or the microphone wouldn't open.
+	/// Starts dictating through the server. False means use the phone's recogniser: there is no
+	/// server service (previews, tests) or the microphone wouldn't open.
 	private func startBackend() async -> Bool {
-		guard let service = DictationBackend.service, await service.isEnabled() else { return false }
+		guard let service = DictationBackend.service else { return false }
 		let run = BackendDictationRun(
 			service: service, language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
 			onText: { [weak self] text in
