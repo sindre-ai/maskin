@@ -9,7 +9,11 @@ import {
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	type ChatSelectionFile,
+	EMPTY_CHAT_SELECTION,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
@@ -100,11 +104,12 @@ export function ThreadComposer({
 	}, [replyRootId, recipientId, recipientName])
 
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 			setError(null)
 			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
+			const files = [...selection.files, ...(extras?.files ?? [])]
+			if (files.length > 0) {
+				metadata.attachments = files.map((f) => ({
 					file_id: f.fileId,
 					name: f.name,
 					mime_type: f.mimeType ?? 'application/octet-stream',
@@ -217,6 +222,7 @@ export function ThreadComposer({
 		<Composer
 			workspaceId={workspaceId}
 			onSend={handleSend}
+			longTextAsFile
 			disabled={false}
 			pending={sendMessage.isPending}
 			surface="sheet"
