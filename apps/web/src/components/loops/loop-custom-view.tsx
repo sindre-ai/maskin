@@ -21,7 +21,7 @@ interface LoopCustomViewProps {
 
 export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
-	const html = file && file.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
+	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
 	const sources = useMemo(() => (html === null ? null : readViewSources(html)), [html])
 
 	const failure = isError
