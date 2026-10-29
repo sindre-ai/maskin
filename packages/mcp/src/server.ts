@@ -41,6 +41,14 @@ import {
 	toSnapshotAt,
 } from './cursor.js'
 import {
+	type IntegrationRow,
+	integrationSortKey,
+	leanIntegrationRow,
+	matchesIntegrationFilters,
+	summarizeIntegrations,
+} from './integrations-list.js'
+import { buildListPayload, listText } from './list-response.js'
+import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
@@ -4843,19 +4851,18 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const payload = buildListPayload({
+				key: 'workspaces',
+				rows: safeRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: rows.length,
+			})
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ workspaces: safeRows }),
-					},
-				],
-				structuredContent: {
-					heroCard,
-					workspaces: safeRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The card is presentation only; every datum is in the payload the text carries too.
+				structuredContent: { heroCard, ...payload },
 			}
 		},
 	)
@@ -6862,18 +6869,17 @@ export function createMcpServer(config: McpConfig) {
 					id: loop.id as string,
 				})
 			})
+			const payload = buildListPayload({
+				key: 'loops',
+				rows: enriched,
+				limit: pagination.limit,
+				nextCursor,
+				total: loops.length,
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ loops: enriched }),
-					},
-				],
-				structuredContent: {
-					loops: enriched,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7220,18 +7226,17 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.latest_activity_at ?? null,
 				getId: (row) => row.entity_id,
 			})
+			const payload = buildListPayload({
+				key: 'items',
+				rows: pagedItems,
+				limit: pagination.limit,
+				nextCursor,
+				total: items.length,
+			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ items: pagedItems }),
-					},
-				],
-				structuredContent: {
-					items: pagedItems,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7806,44 +7811,62 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const input = args as {
+				limit?: number
+				cursor?: string
+				provider?: string
+				status?: string
+				q?: string
+				verbose?: boolean
+				workspace_id?: string
+			}
+			// The whole list is fetched and paged here, so the full page size is available: there is
+			// no "+ 1" sentinel to leave room for.
 			const pagination = resolveListPagination({
-				limit: (args as { limit?: number }).limit,
-				cursor: (args as { cursor?: string }).cursor,
+				limit: input.limit,
+				cursor: input.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as unknown
-			const rows = Array.isArray(result)
-				? (result as Array<{
-						id: string
-						createdAt?: string | null
-						provider?: string
-						status?: string
-					}>)
-				: []
+			const allRows = Array.isArray(result) ? (result as IntegrationRow[]) : []
+			// Filters apply before paging, so `total` and `has_more` describe the matches. A row added
+			// after the walk began stays out of every hop of it.
+			const matching = allRows.filter(
+				(row) =>
+					matchesIntegrationFilters(row, input) &&
+					(!row.createdAt || row.createdAt <= pagination.snapshotAt),
+			)
+			// Live connections first, then the newest. The cursor carries that composite key, so the
+			// snapshot check above stands in for the one `paginateClientSide` would do on a timestamp.
 			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
+				rows: matching,
 				limit: pagination.limit,
 				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
+				order: 'desc',
 				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
+				getSortValue: integrationSortKey,
 				getId: (row) => row.id,
+				applySnapshotFilter: false,
 			})
-			const reconnectHint = buildReconnectHint(pagedRows)
-			const listText = buildListContentText({ integrations: pagedRows })
+			const rows = input.verbose ? pagedRows : pagedRows.map(leanIntegrationRow)
+			// Judged over every row, not just this page: a broken connection must not depend on
+			// which page it landed on.
+			const reconnectHint = buildReconnectHint(allRows)
+			const payload = buildListPayload({
+				key: 'integrations',
+				rows,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+				extra: { summary: summarizeIntegrations(allRows) },
+				notes: reconnectHint ? [reconnectHint] : [],
+			})
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
-					},
-				],
-				structuredContent: {
-					integrations: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -8518,18 +8541,17 @@ export function createMcpServer(config: McpConfig) {
 				getId: (row) => row.id,
 				applySnapshotFilter: false,
 			})
+			const payload = buildListPayload({
+				key: 'extensions',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: result.length,
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ extensions: pagedRows }),
-					},
-				],
-				structuredContent: {
-					extensions: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
