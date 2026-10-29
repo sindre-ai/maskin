@@ -1,5 +1,5 @@
 import { agentSkills, workspaceSkills } from '@maskin/db/schema'
-import { DRAFT_APPROVAL_TASKS_SKILL } from '@maskin/shared'
+import { DRAFT_APPROVAL_TASKS_SKILL, MASKIN_WAY_OF_WORKING_SKILL } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -52,6 +52,21 @@ async function draftSkillRows(workspaceId: string) {
 		)
 }
 
+// The agents the backfill targets: the ones that carry maskin-way-of-working.
+async function defaultAgentCount(workspaceId: string) {
+	const rows = await db
+		.select({ actorId: agentSkills.actorId })
+		.from(agentSkills)
+		.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
+		.where(
+			and(
+				eq(workspaceSkills.workspaceId, workspaceId),
+				eq(workspaceSkills.name, MASKIN_WAY_OF_WORKING_SKILL.name),
+			),
+		)
+	return rows.length
+}
+
 async function removeSkill(workspaceId: string) {
 	await db
 		.delete(workspaceSkills)
@@ -82,7 +97,8 @@ describe('draft-approval-tasks skill', () => {
 			.select()
 			.from(agentSkills)
 			.where(eq(agentSkills.workspaceSkillId, skill?.id as string))
-		expect(attached).toHaveLength(7)
+		expect(attached.length).toBeGreaterThan(0)
+		expect(attached).toHaveLength(await defaultAgentCount(workspaceId))
 	})
 
 	it('is backfilled into a workspace that predates it', async () => {
@@ -107,7 +123,7 @@ describe('draft-approval-tasks skill', () => {
 			.select()
 			.from(agentSkills)
 			.where(eq(agentSkills.workspaceSkillId, skill?.id as string))
-		expect(attached).toHaveLength(7)
+		expect(attached).toHaveLength(await defaultAgentCount(workspaceId))
 
 		// A second run changes nothing.
 		const again = await backfillDraftApprovalSkill(db, agentStorage)
