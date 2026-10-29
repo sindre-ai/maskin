@@ -371,6 +371,19 @@ public final class ConversationsStore {
 		return created
 	}
 
+	/// The person's one direct message with `participantID`, created the first time. Throws like
+	/// `create`. An archived direct message comes back as it is and is opened by id, so it is only
+	/// added to the list when it is already part of it.
+	@discardableResult
+	public func openDirect(with participantID: String, title: String) async throws -> ConversationSummary {
+		let direct = try await api.directChat(
+			with: participantID, title: title, idempotencyKey: IdempotencyKey.make())
+		if scope == .active, !direct.archived, !conversations.contains(where: { $0.id == direct.id }) {
+			conversations.insert(direct, at: 0)
+		}
+		return direct
+	}
+
 	// MARK: - Per-user state (optimistic, rolled back on failure)
 
 	@discardableResult
