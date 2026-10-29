@@ -47,7 +47,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  *   - the reconnect's `Last-Event-ID` must equal the cursor persisted before
  *     the drop — without it the client would restart at the live edge and
  *     silently lose the gap;
- *   - each `Using <tool>` step must render exactly once (the duplicate guard).
+ *   - each tool step must render exactly once (the duplicate guard).
  */
 
 /** Every distinct `tool_use` name in the session's canonical transcript, in row order. */
@@ -103,7 +103,7 @@ test.describe('Chats — SSE log stream reconnect recovery', () => {
 				'mcp__maskin__before_drop',
 				'mcp__maskin__before_drop_b',
 			])
-			await expect(activitySteps.getByText(/Using mcp__maskin__before_drop(?!_)/)).toBeVisible({
+			await expect(activitySteps.getByText(/before drop(?! b)/)).toBeVisible({
 				timeout: 10_000,
 			})
 
@@ -138,7 +138,7 @@ test.describe('Chats — SSE log stream reconnect recovery', () => {
 			await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 10_000 })
 
 			// Gap guard: the missed line arrives.
-			await expect(activitySteps.getByText('Using mcp__maskin__while_dropped')).toBeVisible({
+			await expect(activitySteps.getByText('while dropped')).toBeVisible({
 				timeout: 30_000,
 			})
 
@@ -157,7 +157,8 @@ test.describe('Chats — SSE log stream reconnect recovery', () => {
 			)
 			for (const name of distinct) {
 				expect(canonical.filter((n) => n === name)).toHaveLength(1)
-				await expect(activitySteps.getByText(`Using ${name}`)).toHaveCount(1)
+				const label = name.replace(/^mcp__maskin__/, '').replace(/_/g, ' ')
+				await expect(activitySteps.getByText(label)).toHaveCount(1)
 			}
 
 			await page.screenshot({ path: `/tmp/e2e-shots/reconnect-${vp.width}.png` })
