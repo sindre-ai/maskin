@@ -210,7 +210,8 @@ describe('A person-paused agent', () => {
 			// Resumed: the watcher's pause lands, as an auto-pause with no marker.
 			await runRoute(bot.id)
 			expect(await watcherWrite()).toHaveLength(1)
-			expect(isHumanPaused((await agentMetadata(bot.id))!)).toBe(false)
+			const resumed = await agentMetadata(bot.id)
+			expect(resumed && isHumanPaused(resumed)).toBe(false)
 		})
 	})
 
