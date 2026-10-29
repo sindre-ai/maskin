@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { conversationParticipants, messages, workspaceMembers } from '@maskin/db/schema'
+import { actors, conversationParticipants, messages, workspaceMembers } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -177,6 +177,43 @@ describe('chat card wake', () => {
 		expect(res.status).toBe(200)
 		await new Promise((resolve) => setTimeout(resolve, 200))
 		expect(s.sessionManager.writeInput).not.toHaveBeenCalled()
+	})
+
+	it('does not wake an agent a person has paused, on an approval or a status move', async () => {
+		const s = await setup()
+		await db
+			.update(actors)
+			.set({ agentState: 'paused', metadata: { paused_by: 'human' } })
+			.where(eq(actors.id, s.agent.id))
+
+		const approved = await post(s, `/api/objects/${s.draft.id}/approval`, 'POST', {
+			content_hash: await contentHash(s),
+			chat: s.chat,
+		})
+		expect(approved.status).toBe(200)
+		const moved = await post(s, `/api/objects/${s.draft.id}`, 'PATCH', {
+			status: 'in_progress',
+			chat: s.chat,
+		})
+		expect(moved.status).toBe(200)
+
+		await new Promise((resolve) => setTimeout(resolve, 200))
+		// No turn into the live session and no session started.
+		expect(s.sessionManager.writeInput).not.toHaveBeenCalled()
+		expect(s.sessionManager.findConversationSessionAnyActive).not.toHaveBeenCalled()
+	})
+
+	it('still wakes an agent only the idle watcher paused', async () => {
+		const s = await setup()
+		await db.update(actors).set({ agentState: 'paused' }).where(eq(actors.id, s.agent.id))
+
+		const res = await post(s, `/api/objects/${s.draft.id}/approval`, 'POST', {
+			content_hash: await contentHash(s),
+			chat: s.chat,
+		})
+		expect(res.status).toBe(200)
+
+		await vi.waitFor(() => expect(s.sessionManager.writeInput).toHaveBeenCalledTimes(1))
 	})
 
 	it('does not wake an agent that is not in the chat', async () => {

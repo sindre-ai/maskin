@@ -21,7 +21,7 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
 }))
 
-import { withoutHumanPauseMarker } from '../../lib/agent-pause'
+import { isHumanPaused, notHumanPaused, withoutHumanPauseMarker } from '../../lib/agent-pause'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -192,6 +192,26 @@ describe('A person-paused agent', () => {
 
 			expect((await agentMetadata(bot.id))?.metadata).toEqual({ voice_enabled: true })
 		})
+
+		it('the idle watcher’s write skips a person’s pause and lands once it is resumed', async () => {
+			const bot = await agent('Bot')
+			const watcherWrite = () =>
+				db
+					.update(actors)
+					.set({ agentState: 'paused', metadata: withoutHumanPauseMarker })
+					.where(and(eq(actors.id, bot.id), notHumanPaused))
+					.returning({ id: actors.id })
+
+			// A person pressed Pause between the watcher's check and its write.
+			await pauseRoute(bot.id)
+			expect(await watcherWrite()).toHaveLength(0)
+			expect((await agentMetadata(bot.id))?.metadata).toMatchObject({ paused_by: 'human' })
+
+			// Resumed: the watcher's pause lands, as an auto-pause with no marker.
+			await runRoute(bot.id)
+			expect(await watcherWrite()).toHaveLength(1)
+			expect(isHumanPaused((await agentMetadata(bot.id))!)).toBe(false)
+		})
 	})
 
 	describe('in a direct chat', () => {
@@ -349,6 +369,93 @@ describe('A person-paused agent', () => {
 				.where(eq(actors.id, bot.id))
 
 			await mention(bot.id)
+
+			expect(sessionStarts(sm)).toBe(1)
+		})
+	})
+
+	describe('on the comment fallback path (no @mention)', () => {
+		let bridge: EventEmitter & PgNotifyBridge
+		let dispatcher: CommentDispatcher
+
+		beforeEach(() => {
+			bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+			dispatcher = new CommentDispatcher(db, bridge, sm as unknown as SessionManager)
+			dispatcher.start()
+		})
+
+		afterEach(() => {
+			dispatcher.stop()
+		})
+
+		/** A person comments with no mention on an object, and the fallback ladder runs. */
+		async function commentOn(driverId: string | null) {
+			const object = await insertObject(db, workspaceId, ownerId, {
+				type: 'task',
+				title: 'look',
+				driver: driverId,
+			})
+			const [row] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: ownerId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: object.id,
+					data: { content: 'any news on this?' },
+				})
+				.returning({ id: events.id })
+			const event: PgEvent = {
+				workspace_id: workspaceId,
+				actor_id: ownerId,
+				action: 'commented',
+				entity_type: 'object',
+				entity_id: object.id,
+				event_id: String(row.id),
+			}
+			bridge.emit('event', event)
+			await new Promise((r) => setTimeout(r, 500))
+		}
+
+		const autoPause = (id: string) =>
+			db
+				.update(actors)
+				.set({ agentState: 'paused', agentStateUpdatedAt: new Date() })
+				.where(eq(actors.id, id))
+
+		it('starts no session for a paused driver', async () => {
+			const driver = await agent('Driver')
+			await pauseRoute(driver.id)
+
+			await commentOn(driver.id)
+
+			expect(sessionStarts(sm)).toBe(0)
+		})
+
+		it('starts no session for a paused Chief of Staff', async () => {
+			const cos = await agent('Chief of Staff')
+			await pauseRoute(cos.id)
+
+			await commentOn(null)
+
+			expect(sessionStarts(sm)).toBe(0)
+		})
+
+		it('still starts a session for a driver only the idle watcher paused', async () => {
+			const driver = await agent('Driver')
+			await autoPause(driver.id)
+
+			await commentOn(driver.id)
+
+			expect(sessionStarts(sm)).toBe(1)
+		})
+
+		it('still starts a session for a Chief of Staff only the idle watcher paused', async () => {
+			const cos = await agent('Chief of Staff')
+			await autoPause(cos.id)
+
+			await commentOn(null)
 
 			expect(sessionStarts(sm)).toBe(1)
 		})
