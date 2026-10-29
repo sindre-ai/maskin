@@ -612,6 +612,15 @@ describe('MarkdownContent linkedCards: links into another workspace', () => {
 		expect(screen.getAllByTestId('other-card')).toHaveLength(3)
 	})
 
+	it('draws an agent link alone on its line as a card and in a sentence as a chip', () => {
+		render_(
+			`[the developer](${otherUrl('agents', AGENT)})\n\nAsk [them](${otherUrl('agents', B)}).`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(1)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+		expect(lookedUp).toEqual([])
+	})
+
 	it('shares the three-card limit with the other kinds: the fourth link on its own line is a chip', () => {
 		render_(
 			`[a](${objectUrl(A)})\n\n[b](${otherUrl('loops', LOOP)})\n\n[c](${otherUrl('triggers', TRIGGER)})\n\n[d](${otherUrl('objects', B)})`,

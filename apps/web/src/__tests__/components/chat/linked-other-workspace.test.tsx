@@ -107,10 +107,14 @@ describe('OtherWorkspaceCard', () => {
 })
 
 describe('renderLinkedCard and renderLinkedChip', () => {
-	const other = (kind: 'object' | 'loop' | 'trigger') => ({ kind, id: ID, workspaceId: THERE })
+	const other = (kind: 'object' | 'loop' | 'trigger' | 'agent') => ({
+		kind,
+		id: ID,
+		workspaceId: THERE,
+	})
 
 	it('draw the placeholder for each kind and fetch nothing for it', () => {
-		for (const kind of ['object', 'loop', 'trigger'] as const) {
+		for (const kind of ['object', 'loop', 'trigger', 'agent'] as const) {
 			const { unmount } = render(renderLinkedCard(other(kind), null, { workspaceId: HERE }))
 			expect(screen.getByRole('link')).toHaveAttribute('data-linked-card')
 			unmount()

@@ -1440,12 +1440,13 @@ export function AgentReferenceCard({
 }
 
 /** What a link into another workspace points at, for the placeholder's words and its address. */
-type OtherWorkspaceKind = 'object' | 'loop' | 'trigger'
+type OtherWorkspaceKind = 'object' | 'loop' | 'trigger' | 'agent'
 
 const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
 	object: 'Object',
 	loop: 'Loop',
 	trigger: 'Trigger',
+	agent: 'Agent',
 }
 
 /**
@@ -1503,6 +1504,16 @@ export function OtherWorkspaceLink({
 				<Link
 					to="/$workspaceId/triggers/$triggerId"
 					params={{ workspaceId: otherWorkspaceId, triggerId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		case 'agent':
+			return (
+				<Link
+					to="/$workspaceId/agents/$agentId"
+					params={{ workspaceId: otherWorkspaceId, agentId: id }}
 					{...props}
 				>
 					{children}

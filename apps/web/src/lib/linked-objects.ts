@@ -188,8 +188,8 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		const linkedWorkspace = match[1].toLowerCase()
 		const kind = OWN_KIND[match[2].toLowerCase()]
 		const here = linkedWorkspace === workspaceId.toLowerCase()
-		// Another workspace's file or agent stays words; its object, loop or trigger is a placeholder.
-		const staysWords = kind === 'file' || kind === 'agent' || !WORKSPACE_ID.test(linkedWorkspace)
+		// Another workspace's file stays words; its object, loop, trigger or agent is a placeholder.
+		const staysWords = kind === 'file' || !WORKSPACE_ID.test(linkedWorkspace)
 		if (!here && staysWords) continue
 		const at = m.index ?? 0
 		pushText(content.slice(cursor, at))
@@ -245,18 +245,20 @@ export function targetOfHref(href: unknown): HrefTarget | null {
 /**
  * Whether a link's address names another workspace than `workspaceId`: it has a workspace
  * segment, that segment is a workspace id (not some other path) and it is not this workspace.
- * Only an object, loop or trigger is drawn as a placeholder then; a file or agent link is left alone.
+ * Only an object, loop, trigger or agent is drawn as a placeholder then; a file link is left alone.
  */
 export function isOtherWorkspace(
 	target: LinkedTarget,
 	workspaceId?: string,
-): target is LinkedTarget & { kind: 'object' | 'loop' | 'trigger'; workspaceId: string } {
+): target is LinkedTarget & {
+	kind: 'object' | 'loop' | 'trigger' | 'agent'
+	workspaceId: string
+} {
 	const named = target.workspaceId
 	return Boolean(
 		workspaceId &&
 			named &&
 			target.kind !== 'file' &&
-			target.kind !== 'agent' &&
 			WORKSPACE_ID.test(named) &&
 			named.toLowerCase() !== workspaceId.toLowerCase(),
 	)

@@ -625,7 +625,7 @@ function OwnLinkChip({
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
 	}
-	if (segment.otherWorkspaceId && segment.kind !== 'file' && segment.kind !== 'agent') {
+	if (segment.otherWorkspaceId && segment.kind !== 'file') {
 		return (
 			<OwnOtherWorkspaceChip
 				kind={segment.kind}
@@ -664,7 +664,7 @@ function OwnOtherWorkspaceChip({
 	otherWorkspaceId,
 	id,
 }: {
-	kind: 'object' | 'loop' | 'trigger'
+	kind: 'object' | 'loop' | 'trigger' | 'agent'
 	otherWorkspaceId: string
 	id: string
 }) {

@@ -206,9 +206,9 @@ describe('splitOwnLinks', () => {
 		])
 	})
 
-	it('leaves an agent address of another workspace as words', () => {
+	it('marks an agent address of another workspace with that workspace', () => {
 		const other = `https://maskin.io/${A}/agents/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'agent', id: B, otherWorkspaceId: A }])
 	})
 
 	it('marks an object, loop or trigger address of another workspace with that workspace', () => {
@@ -335,8 +335,8 @@ describe('splitOwnLinks with GitHub addresses', () => {
 describe('isOtherWorkspace', () => {
 	const other = '11111111-2222-4333-8444-555555555555'
 
-	it('is true for an object, loop or trigger whose address names a different workspace', () => {
-		for (const kind of ['object', 'loop', 'trigger'] as const) {
+	it('is true for an object, loop, trigger or agent whose address names a different workspace', () => {
+		for (const kind of ['object', 'loop', 'trigger', 'agent'] as const) {
 			expect(isOtherWorkspace({ kind, id: A, workspaceId: other }, WS)).toBe(true)
 		}
 	})
@@ -351,7 +351,6 @@ describe('isOtherWorkspace', () => {
 
 	it('is false for a file, for a segment that is not a workspace id and without a current workspace', () => {
 		expect(isOtherWorkspace({ kind: 'file', id: A, workspaceId: other }, WS)).toBe(false)
-		expect(isOtherWorkspace({ kind: 'agent', id: A, workspaceId: other }, WS)).toBe(false)
 		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: 'settings' }, WS)).toBe(false)
 		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: other })).toBe(false)
 	})
