@@ -212,7 +212,7 @@ beforeEach(() => {
 })
 
 describe('Agent intro — human creator (POST /api/actors)', () => {
-	it('opens one Meet chat with the creator, an intro from the agent, and unread 1', async () => {
+	it('opens one 1-1 titled with the agent name, an intro from the agent, and unread 1', async () => {
 		const { ws, human, key } = await setup()
 		const name = `Scout ${randomUUID()}`
 
@@ -311,6 +311,36 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		expect(chats).toHaveLength(1)
 		expect(chats[0]?.conversation.directPairKey).not.toBeNull()
 		expect(await messagesBy(created.id)).toHaveLength(0)
+	})
+
+	it('posts into the 1-1 the person already has with the agent and creates no second chat', async () => {
+		const { ws, human } = await setup()
+		const agent = await insertMember(ws.id, { type: 'agent', name: `Existing ${randomUUID()}` })
+		const existing = await insertConversation(db, ws.id, human.id)
+		await db.insert(conversationParticipants).values([
+			{ conversationId: existing.id, actorId: human.id, addedBy: human.id },
+			{ conversationId: existing.id, actorId: agent.id, addedBy: human.id },
+		])
+
+		await introduceAgentToRecipient({
+			db,
+			actor: agent,
+			workspaceId: ws.id,
+			creator: { id: human.id, type: 'human' },
+			claimedSessionId: undefined,
+			clientSource: undefined,
+		})
+
+		const inWorkspace = await db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(eq(conversations.workspaceId, ws.id))
+		expect(inWorkspace.map((c) => c.id)).toEqual([existing.id])
+		const msgs = await db.select().from(messages).where(eq(messages.conversationId, existing.id))
+		expect(msgs).toHaveLength(1)
+		expect(msgs[0]?.actorId).toBe(agent.id)
+		expect(msgs[0]?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
+		expect(capturesOf('agent_intro_sent')[0]?.[2]).toMatchObject({ conversation_id: existing.id })
 	})
 
 	it('makes one chat when two hook calls race for the same agent', async () => {
