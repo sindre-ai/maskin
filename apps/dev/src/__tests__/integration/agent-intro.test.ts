@@ -316,7 +316,9 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 	it('posts into the 1-1 the person already has with the agent and creates no second chat', async () => {
 		const { ws, human } = await setup()
 		const agent = await insertMember(ws.id, { type: 'agent', name: `Existing ${randomUUID()}` })
-		const existing = await insertConversation(db, ws.id, human.id)
+		const existing = await insertConversation(db, ws.id, human.id, {
+			directPairKey: directPairKey(human.id, agent.id),
+		})
 		await db.insert(conversationParticipants).values([
 			{ conversationId: existing.id, actorId: human.id, addedBy: human.id },
 			{ conversationId: existing.id, actorId: agent.id, addedBy: human.id },
