@@ -1,14 +1,15 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
-import { VIEWPORTS } from '../helpers/viewports'
+import { XL_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Linked-object cards and chip previews in the reply thread sidebar (the right rail, 400px at 1024
- * and 440px at 1280 and up). The rail is narrower than the 380px hover preview plus the gutter, so
- * the preview and the cards must fit the pane: no sideways scroll, nothing cut off.
+ * Linked-object cards and chip previews in the reply thread sidebar (the 440px right rail, shown
+ * from 1280 up; below that the Thread pane is a bottom sheet). The rail is narrower than the 380px
+ * hover preview plus the gutter, so the preview and the cards must fit the pane: no sideways
+ * scroll, nothing cut off.
  */
 
-const WIDTHS = [VIEWPORTS.tabletLandscape, VIEWPORTS.desktop]
+const WIDTHS = XL_VIEWPORTS
 
 test.describe('Chat — cards and chip previews fit the reply thread sidebar', () => {
 	for (const vp of WIDTHS) {
