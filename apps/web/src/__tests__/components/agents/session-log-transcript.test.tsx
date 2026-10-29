@@ -194,7 +194,7 @@ describe('getLatestActivityPreview', () => {
 				content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
 			},
 		})
-		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('search objects')
+		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Search objects')
 	})
 
 	it('returns "Awaiting input" when the latest envelope is a successful result', () => {
@@ -227,7 +227,7 @@ describe('getLatestActivityPreview', () => {
 		})
 		const systemInit = JSON.stringify({ type: 'system', subtype: 'init' })
 		expect(getLatestActivityPreview([log(1, 'stdout', tool), log(2, 'stdout', systemInit)])).toBe(
-			'list objects',
+			'List objects',
 		)
 	})
 
@@ -368,7 +368,7 @@ describe('segmentActivityByMessage', () => {
 		])
 		expect(segments).toEqual([])
 		expect(unassigned).toEqual([
-			{ id: '1-0', kind: 'tool_use', text: 'search objects' },
+			{ id: '1-0', kind: 'tool_use', text: 'Search objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
 	})
@@ -484,12 +484,12 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: false,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'search objects' }],
+				steps: [{ id: '2-0', kind: 'tool_use', text: 'Search objects' }],
 			},
 			{
 				conversationMessageId: 20,
 				containsReply: false,
-				steps: [{ id: '4-0', kind: 'tool_use', text: 'list objects' }],
+				steps: [{ id: '4-0', kind: 'tool_use', text: 'List objects' }],
 			},
 		])
 	})
@@ -506,7 +506,7 @@ describe('segmentActivityByMessage', () => {
 			log(1, 'stdout', tool),
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
-		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'search objects' }])
+		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Search objects' }])
 		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
@@ -592,7 +592,7 @@ describe('segmentActivityByMessage', () => {
 				conversationMessageId: 10,
 				containsReply: false,
 				steps: [
-					{ id: '2-0', kind: 'tool_use', text: 'search objects' },
+					{ id: '2-0', kind: 'tool_use', text: 'Search objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},
