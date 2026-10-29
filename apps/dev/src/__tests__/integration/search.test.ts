@@ -1,4 +1,4 @@
-// GET /api/search: five sources, true counts and AND matching. The SQL here is
+// GET /api/search: six sources, true counts and AND matching. The SQL here is
 // new and uses correlated subqueries, so it is pinned against real Postgres
 // (a mocked DB cannot catch unqualified-column bugs, see known-pitfalls.md).
 
@@ -182,7 +182,7 @@ describe('GET /api/search against real Postgres', () => {
 		await say(chat.id, otherUserId, 'the quarterly numbers look odd')
 		await say(chat.id, otherUserId, 'please review the budget')
 
-		expect((await search({ q: 'other person' })).results.map((r) => r.title)).toEqual([
+		expect((await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title)).toEqual([
 			'Weekly sync',
 		])
 		expect((await search({ q: 'budget' })).total).toBe(1)
