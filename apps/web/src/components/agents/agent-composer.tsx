@@ -4,7 +4,6 @@ import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import type { ActorResponse, MessageMetadata } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
-import { deriveConversationTitle } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useReducer } from 'react'
 import { toast } from 'sonner'
@@ -12,8 +11,9 @@ import { toast } from 'sonner'
 /**
  * Bottom composer on agent detail (mockup 2506–2516) — "Message {name}…".
  *
- * Sends via `useCreateConversation`, mirroring the `/chats/new` entry point so
- * every message-to-an-agent lands on the same conversation surface: the row
+ * Sends via `useCreateConversation` with `direct: true`, so the message lands in
+ * the person's one direct message with this agent (the backend gets or creates
+ * it) instead of a new chat on every send. The row
  * shows up in the Chats list and the reply thread is where the user sees the
  * agent respond. The conversation responder (`apps/dev/src/services/
  * conversation-responder.ts`) spawns the underlying agent session behind the
@@ -59,8 +59,11 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 			let conversation: Awaited<ReturnType<typeof createConversation.mutateAsync>>
 			try {
 				conversation = await createConversation.mutateAsync({
-					title: deriveConversationTitle(content, agent.name),
+					// Only used when the DM is created (first send); a chat started on
+					// purpose from "New Conversation" stays topical and sends no flag.
+					title: agent.name,
 					participant_actor_ids: [agent.id],
+					direct: true,
 					initial_message: content,
 					...(Object.keys(metadata).length > 0 ? { initial_message_metadata: metadata } : {}),
 				})
@@ -78,7 +81,7 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 				participant_count: 1,
 			})
 			dispatchSelection({ type: 'clear_all' })
-			toast.success(`${agent.name} picked it up — new chat started`)
+			toast.success(`${agent.name} picked it up`)
 			navigate({
 				to: '/$workspaceId/chats/$conversationId',
 				params: { workspaceId, conversationId: conversation.id },
@@ -104,7 +107,7 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 				onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 				onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 			/>
-			<p className="mt-1.5 px-1 text-[11.5px] text-muted-foreground">Starts a new chat</p>
+			<p className="mt-1.5 px-1 text-[11.5px] text-muted-foreground">Opens your chat with {agent.name}</p>
 		</div>
 	)
 }
