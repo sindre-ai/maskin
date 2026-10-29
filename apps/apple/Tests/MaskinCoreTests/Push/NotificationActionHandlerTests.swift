@@ -131,11 +131,12 @@ struct NotificationActionHandlerTests {
 	}
 
 	@Test func bothWritesShareOneDeadline() async {
-		// Each write alone fits in the 400 ms budget; together they do not.
+		// Each write alone fits in the 900 ms budget; together they do not. The 300 ms of slack on
+		// either side of the deadline keeps a stalled CI runner from letting the second write win.
 		let queue = FakeQueue()
 		let calls = Calls()
 		let outcome = await handler(
-			FakeBackend(calls: calls, delay: .milliseconds(250)), queue: queue, timeout: .milliseconds(400)
+			FakeBackend(calls: calls, delay: .milliseconds(600)), queue: queue, timeout: .milliseconds(900)
 		).perform(.option(label: "Ship it"), userText: nil, payload: payload)
 		#expect(outcome == .answered("Ship it"))
 		#expect(await calls.comments.count == 1)
