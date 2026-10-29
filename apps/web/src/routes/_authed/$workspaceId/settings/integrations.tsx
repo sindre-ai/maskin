@@ -51,8 +51,12 @@ function IntegrationsPage() {
 	// The backend registers google-drive unconditionally; only the connect entry
 	// point is hidden until `google-drive-integration-ui` is on.
 	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
+	// Telnyx credentials come from server env, not a UI connect. Its api_key card would open
+	// the PostHog-worded key dialog, so it stays hidden until a real connect flow exists.
 	const visibleProviders = sortBy(
-		(providers ?? []).filter((p) => p.name !== 'google-drive' || googleDriveVisible),
+		(providers ?? []).filter(
+			(p) => p.name !== 'telnyx' && (p.name !== 'google-drive' || googleDriveVisible),
+		),
 		(p) => p.displayName,
 		(p) => p.name,
 	)
