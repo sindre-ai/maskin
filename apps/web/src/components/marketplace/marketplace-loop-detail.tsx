@@ -14,6 +14,7 @@ import {
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { stepAsksYou } from '@/lib/marketplace-asks'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { Link } from '@tanstack/react-router'
 import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
@@ -53,7 +54,7 @@ export function MarketplaceLoopDetail({
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				<div className="mx-auto flex w-full max-w-3xl flex-col gap-7 py-6">
+				<div className={`mx-auto flex w-full ${PAGE_COLUMN} flex-col gap-7 py-6`}>
 					<MarketplaceDetailHeader
 						kind={kind}
 						name={loop.name}

@@ -17,6 +17,7 @@ import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -393,7 +394,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 					{/* `min-h-full` + the spacer below put the composer on the bottom of
 					    the viewport while the document is short, without giving up the
 					    sticky behaviour once it grows past one screen. */}
-					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col">
+					<div className={`mx-auto flex min-h-full w-full min-w-0 ${PAGE_COLUMN} flex-col`}>
 						<ObjectDetailIdentity
 							object={object}
 							statuses={statuses}

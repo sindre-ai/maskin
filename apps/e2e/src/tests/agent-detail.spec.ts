@@ -34,7 +34,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(stateToggle).toBeVisible()
 			// …and never duplicated into the page body beside the outcome line.
 			await expect(
-				page.locator('.max-w-3xl').getByRole('button', { name: /Disable agent|Enable agent/ }),
+				page.locator('.max-w-\\[860px\\]').getByRole('button', { name: /Disable agent|Enable agent/ }),
 			).toHaveCount(0)
 
 			// Usage block: label, tabs, both columns, budget line.

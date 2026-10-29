@@ -29,6 +29,7 @@ import {
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -606,7 +607,7 @@ function ForYouFeed() {
 			/>
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
-				<div className="mx-auto flex w-full max-w-[700px] flex-col">
+				<div className={`mx-auto flex w-full ${PAGE_COLUMN} flex-col`}>
 					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (

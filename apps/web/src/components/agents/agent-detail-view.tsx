@@ -17,6 +17,7 @@ import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
@@ -131,7 +132,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			    skills → tools and access (mockup 2442–2490). */}
 			{/* w-full: mx-auto stops a flex item stretching, so without it this shrink-wraps to its
 			    widest no-wrap text (an agent's description) and overflows a phone screen. */}
-			<div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+			<div className={`mx-auto flex w-full ${PAGE_COLUMN} flex-col gap-6`}>
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />

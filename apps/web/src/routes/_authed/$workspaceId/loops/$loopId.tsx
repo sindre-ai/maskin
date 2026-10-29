@@ -36,6 +36,7 @@ import { trackAskBannerDecideClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -374,7 +375,7 @@ function LoopDetailRoute() {
 					)
 				}
 			/>
-			<div className="mx-auto flex w-full max-w-3xl flex-col">
+			<div className={`mx-auto flex w-full ${PAGE_COLUMN} flex-col`}>
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}

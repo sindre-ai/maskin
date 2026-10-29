@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { typeLabel } from '@/lib/constants'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { Check, LayoutList, ListFilter, Rows3 } from 'lucide-react'
 
 export type FeedMode = 'cards' | 'list'
@@ -51,7 +52,7 @@ interface ForYouHeaderProps {
 /**
  * The control row above the feed (Feed v4, lines 27–103): an optional filter
  * pill rail on the left, then the `···` bulk menu and the view menu pinned to
- * the right of the same 700px column the feed itself uses.
+ * the right of the same page column the feed itself uses.
  *
  * The view menu carries everything that used to be three separate controls —
  * Cards/List, the filter-pill toggle, the per-type filter and the sort — and
@@ -82,7 +83,7 @@ export function ForYouHeader({
 	}
 
 	return (
-		<div className="mx-auto flex w-full max-w-[700px] items-center gap-1.5 pb-0.5">
+		<div className={`mx-auto flex w-full ${PAGE_COLUMN} items-center gap-1.5 pb-0.5`}>
 			<div className="min-w-0 flex-1">
 				{filterPills && (
 					<FilterTabs
