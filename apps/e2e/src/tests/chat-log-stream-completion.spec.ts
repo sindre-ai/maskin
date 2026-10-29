@@ -64,7 +64,7 @@ test.describe('Chats — SSE log stream session completion', () => {
 				'mcp__maskin__warmup_tool',
 				'mcp__maskin__warmup_tool_b',
 			])
-			await expect(activitySteps.getByText(/warmup tool(?! b)/)).toBeVisible({
+			await expect(activitySteps.getByText(/warmup tool(?! b)/i)).toBeVisible({
 				timeout: 10_000,
 			})
 
