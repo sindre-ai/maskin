@@ -40,6 +40,7 @@ import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
+import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -236,6 +237,10 @@ logger.info('GSC sync scheduler started')
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
+
+const driveWatchRenewer = new DriveWatchRenewer(db)
+driveWatchRenewer.start()
+logger.info('Drive watch renewer started')
 
 const resendDomainVerifier = new ResendDomainVerifier(db)
 resendDomainVerifier.start()

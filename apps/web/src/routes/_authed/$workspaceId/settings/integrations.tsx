@@ -16,6 +16,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
 	useIntegrations,
@@ -47,8 +48,11 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// The backend registers google-drive unconditionally; only the connect entry
+	// point is hidden until `google-drive-integration-ui` is on.
+	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
 	const visibleProviders = sortBy(
-		providers ?? [],
+		(providers ?? []).filter((p) => p.name !== 'google-drive' || googleDriveVisible),
 		(p) => p.displayName,
 		(p) => p.name,
 	)

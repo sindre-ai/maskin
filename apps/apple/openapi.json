@@ -24664,6 +24664,362 @@
 				}
 			}
 		},
+		"/api/integrations/google/disconnect": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Disconnect a human Google rows (Drive, Drive + Meet, or the whole account)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email",
+										"description": "Google email of the human, matched case-insensitively"
+									},
+									"scope": {
+										"type": "string",
+										"enum": [
+											"drive",
+											"drive-meet",
+											"google"
+										],
+										"description": "drive: Drive row. drive-meet: Drive and Meet. google: all four Google rows"
+									}
+								},
+								"required": [
+									"email",
+									"scope"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rows disconnected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"disconnected": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"provider"
+												]
+											}
+										}
+									},
+									"required": [
+										"disconnected"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No connected row for that email in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/google-drive/watched-folders": {
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "List the Drive folders this workspace is watching",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Folder watches across the workspace Drive connections",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"folderId": {
+												"type": "string"
+											},
+											"name": {
+												"type": "string"
+											},
+											"path": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"addedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"lastFiredAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"integrationId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"account": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"triggers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"name": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"id",
+														"name"
+													]
+												}
+											}
+										},
+										"required": [
+											"folderId",
+											"name",
+											"path",
+											"addedAt",
+											"lastFiredAt",
+											"integrationId",
+											"account",
+											"triggers"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/google-drive/watched-folders/{folderId}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Stop watching a Drive folder",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200,
+							"pattern": "^[A-Za-z0-9_-]+$"
+						},
+						"required": true,
+						"name": "folderId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The watch was removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										},
+										"folderId": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"ok",
+										"folderId"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "This workspace is not watching that folder",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/custom-mcp-servers": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -31013,6 +31369,12 @@
 											"needsReconnect": {
 												"type": "boolean"
 											},
+											"grantedScopes": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"source": {
 												"type": "string"
 											},
@@ -31420,6 +31782,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"
@@ -31866,6 +32234,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"
@@ -32681,6 +33055,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"

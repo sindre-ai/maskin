@@ -38102,6 +38102,8 @@ public enum Operations {
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/needsReconnect`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/grantedScopes`.
+                        public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/source`.
                         public var source: Swift.String?
                         /// - Remark: Generated from `#/paths/api/integrations/GET/responses/200/content/jsonPayload/originSessionId`.
@@ -38200,6 +38202,7 @@ public enum Operations {
                         ///   - updatedAt:
                         ///   - missingScopes:
                         ///   - needsReconnect:
+                        ///   - grantedScopes:
                         ///   - source:
                         ///   - originSessionId:
                         ///   - providerMode:
@@ -38220,6 +38223,7 @@ public enum Operations {
                             updatedAt: Swift.String? = nil,
                             missingScopes: [Swift.String]? = nil,
                             needsReconnect: Swift.Bool? = nil,
+                            grantedScopes: [Swift.String]? = nil,
                             source: Swift.String? = nil,
                             originSessionId: Swift.String? = nil,
                             providerMode: Operations.get_sol_api_sol_integrations.Output.Ok.Body.jsonPayloadPayload.providerModePayload? = nil,
@@ -38240,6 +38244,7 @@ public enum Operations {
                             self.updatedAt = updatedAt
                             self.missingScopes = missingScopes
                             self.needsReconnect = needsReconnect
+                            self.grantedScopes = grantedScopes
                             self.source = source
                             self.originSessionId = originSessionId
                             self.providerMode = providerMode
@@ -38261,6 +38266,7 @@ public enum Operations {
                             case updatedAt
                             case missingScopes
                             case needsReconnect
+                            case grantedScopes
                             case source
                             case originSessionId
                             case providerMode
@@ -39172,6 +39178,8 @@ public enum Operations {
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/needsReconnect`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/grantedScopes`.
+                        public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/source`.
                         public var source: Swift.String?
                         /// - Remark: Generated from `#/paths/api/integrations/github/select-installation/POST/responses/200/content/json/originSessionId`.
@@ -39270,6 +39278,7 @@ public enum Operations {
                         ///   - updatedAt:
                         ///   - missingScopes:
                         ///   - needsReconnect:
+                        ///   - grantedScopes:
                         ///   - source:
                         ///   - originSessionId:
                         ///   - providerMode:
@@ -39290,6 +39299,7 @@ public enum Operations {
                             updatedAt: Swift.String? = nil,
                             missingScopes: [Swift.String]? = nil,
                             needsReconnect: Swift.Bool? = nil,
+                            grantedScopes: [Swift.String]? = nil,
                             source: Swift.String? = nil,
                             originSessionId: Swift.String? = nil,
                             providerMode: Operations.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation.Output.Ok.Body.jsonPayload.providerModePayload? = nil,
@@ -39310,6 +39320,7 @@ public enum Operations {
                             self.updatedAt = updatedAt
                             self.missingScopes = missingScopes
                             self.needsReconnect = needsReconnect
+                            self.grantedScopes = grantedScopes
                             self.source = source
                             self.originSessionId = originSessionId
                             self.providerMode = providerMode
@@ -39331,6 +39342,7 @@ public enum Operations {
                             case updatedAt
                             case missingScopes
                             case needsReconnect
+                            case grantedScopes
                             case source
                             case originSessionId
                             case providerMode
@@ -40457,6 +40469,8 @@ public enum Operations {
                         public var missingScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/needsReconnect`.
                         public var needsReconnect: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/grantedScopes`.
+                        public var grantedScopes: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/source`.
                         public var source: Swift.String?
                         /// - Remark: Generated from `#/paths/api/integrations/{id}/PATCH/responses/200/content/json/originSessionId`.
@@ -40555,6 +40569,7 @@ public enum Operations {
                         ///   - updatedAt:
                         ///   - missingScopes:
                         ///   - needsReconnect:
+                        ///   - grantedScopes:
                         ///   - source:
                         ///   - originSessionId:
                         ///   - providerMode:
@@ -40575,6 +40590,7 @@ public enum Operations {
                             updatedAt: Swift.String? = nil,
                             missingScopes: [Swift.String]? = nil,
                             needsReconnect: Swift.Bool? = nil,
+                            grantedScopes: [Swift.String]? = nil,
                             source: Swift.String? = nil,
                             originSessionId: Swift.String? = nil,
                             providerMode: Operations.patch_sol_api_sol_integrations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.providerModePayload? = nil,
@@ -40595,6 +40611,7 @@ public enum Operations {
                             self.updatedAt = updatedAt
                             self.missingScopes = missingScopes
                             self.needsReconnect = needsReconnect
+                            self.grantedScopes = grantedScopes
                             self.source = source
                             self.originSessionId = originSessionId
                             self.providerMode = providerMode
@@ -40616,6 +40633,7 @@ public enum Operations {
                             case updatedAt
                             case missingScopes
                             case needsReconnect
+                            case grantedScopes
                             case source
                             case originSessionId
                             case providerMode
