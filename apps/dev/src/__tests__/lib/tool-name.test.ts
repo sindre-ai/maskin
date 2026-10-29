@@ -3,18 +3,20 @@ import { formatToolName } from '../../lib/tool-name'
 
 describe('formatToolName', () => {
 	it('drops the mcp prefix and server segment', () => {
-		expect(formatToolName('mcp__maskin__desktop_run')).toBe('desktop run')
+		expect(formatToolName('mcp__maskin__desktop_run')).toBe('Desktop run')
 	})
 
 	it('handles server names with hyphens', () => {
-		expect(formatToolName('mcp__github-sindre-ai__get_file_contents')).toBe('get file contents')
+		expect(formatToolName('mcp__github-sindre-ai__get_file_contents')).toBe('Get file contents')
 	})
 
 	it('keeps built-in tool names as they are', () => {
 		expect(formatToolName('Read')).toBe('Read')
 	})
 
-	it('leaves a name with no underscores alone', () => {
-		expect(formatToolName('search')).toBe('search')
+	it('capitalises only the first letter', () => {
+		expect(formatToolName('search')).toBe('Search')
+		expect(formatToolName('mcp__maskin__create_session')).toBe('Create session')
+		expect(formatToolName('mcp__x__getFooBar')).toBe('GetFooBar')
 	})
 })

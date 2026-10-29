@@ -44,6 +44,16 @@ describe('buildSessionActivity', () => {
 		expect(turns[1]?.steps[0]).toMatchObject({ status: 'running', finished_at: null })
 	})
 
+	it('labels redacted thinking the same as normal thinking', () => {
+		const rows = [
+			userTurn(10),
+			assistant({ type: 'thinking', thinking: '', signature: 'sig' }),
+			assistant({ type: 'tool_use', id: 't1', name: 'mcp__maskin__create_session', input: {} }),
+		]
+		const labels = buildSessionActivity(rows)[0]?.steps.map((s) => s.label)
+		expect(labels).toEqual(['Thinking…', 'Create session'])
+	})
+
 	it('marks failed tool results, error results and stderr', () => {
 		const rows = [
 			userTurn(1),
