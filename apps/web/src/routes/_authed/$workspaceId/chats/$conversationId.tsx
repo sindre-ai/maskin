@@ -359,7 +359,7 @@ function ConversationThreadPage() {
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
 						<LiveCallComposerSlot />
-						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
+						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 							<ThreadComposer
 								workspaceId={workspaceId}
 								conversationId={conversationId}
