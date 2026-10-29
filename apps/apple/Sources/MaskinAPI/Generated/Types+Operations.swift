@@ -52479,6 +52479,8 @@ public enum Operations {
                     public var thread_root_id: Swift.Int?
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/also_in_channel`.
                     public var also_in_channel: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/top_level`.
+                    public var top_level: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -52487,18 +52489,21 @@ public enum Operations {
                     ///   - session_id:
                     ///   - thread_root_id:
                     ///   - also_in_channel:
+                    ///   - top_level:
                     public init(
                         content: Swift.String,
                         metadata: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload? = nil,
                         session_id: Swift.String? = nil,
                         thread_root_id: Swift.Int? = nil,
-                        also_in_channel: Swift.Bool? = nil
+                        also_in_channel: Swift.Bool? = nil,
+                        top_level: Swift.Bool? = nil
                     ) {
                         self.content = content
                         self.metadata = metadata
                         self.session_id = session_id
                         self.thread_root_id = thread_root_id
                         self.also_in_channel = also_in_channel
+                        self.top_level = top_level
                     }
                     public enum CodingKeys: String, CodingKey {
                         case content
@@ -52506,6 +52511,7 @@ public enum Operations {
                         case session_id
                         case thread_root_id
                         case also_in_channel
+                        case top_level
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/content/application\/json`.
