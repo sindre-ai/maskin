@@ -174,21 +174,22 @@ describe('Deciding proposed changes (integration)', () => {
 		return { proposal, changes: rows.sort((a, b) => a.ordinal - b.ordinal) }
 	}
 
+	// With no body this sends a bare POST (no content-type), because the API
+	// rejects a JSON content-type with an empty body as malformed.
 	const accept = (
 		fileId: string,
 		pid: string,
 		cid: string,
 		key: string,
 		body?: { applied_text?: string },
-	) =>
-		app.request(
-			jsonRequest(
-				'POST',
-				`/api/files/${fileId}/proposals/${pid}/changes/${cid}/accept`,
-				body,
-				bearer(key),
-			),
+	) => {
+		const path = `/api/files/${fileId}/proposals/${pid}/changes/${cid}/accept`
+		return app.request(
+			body === undefined
+				? new Request(`http://localhost${path}`, { method: 'POST', headers: bearer(key) })
+				: jsonRequest('POST', path, body, bearer(key)),
 		)
+	}
 	const reject = (fileId: string, pid: string, cid: string, key: string) =>
 		app.request(
 			jsonRequest(
